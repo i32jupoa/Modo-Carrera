@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-  ALL_LEAGUES, finishMatchday, getMatchdayFixtures, getMyNextFixture,
+  ALL_LEAGUES, finishMatchday, advanceMatchdayLayered, getMatchdayFixtures, getMyNextFixture,
   getMyRecentResults, getMyUpcomingCupFixtures, getSortedStandings,
   loadSave, SaveGame, saveSave,
 } from "@/lib/store";
@@ -16,6 +16,8 @@ function SeasonPage() {
   const navigate = useNavigate();
   const [save, setSave] = useState<SaveGame | null>(null);
   const [viewLeague, setViewLeague] = useState<LeagueId>("laliga");
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [simProgress, setSimProgress] = useState({ done: 0, total: 0 });
 
   useEffect(() => {
     const s = loadSave();
@@ -35,29 +37,58 @@ function SeasonPage() {
   const seasonComplete = save.currentMatchday[save.myLeague] > myLeagueTotalMatchdays;
   const myPos = standings.findIndex((s) => s.teamId === save.myTeamId) + 1;
 
-  function simulateRest() {
-    if (!save) return;
+  async function simulateRest() {
+    if (!save || isSimulating) return;
+    setIsSimulating(true);
+    setSimProgress({ done: 0, total: 0 });
+    
     try {
-      const next = finishMatchday(save);
+      console.time('simulateRest');
+      
+      // Use Layered Simulation: deep for user's league, O(1) math for others
+      const next = await advanceMatchdayLayered(save, (done, total) => {
+        setSimProgress({ done, total });
+        console.log(`Matches: ${done}/${total}`);
+      });
+      
+      console.timeEnd('simulateRest');
       saveSave(next);
       setSave(next);
     } catch (err) {
       console.error("Error al simular jornada:", err);
       alert("Error al simular: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsSimulating(false);
+      setSimProgress({ done: 0, total: 0 });
     }
   }
 
-  function simulateUntilEnd() {
-    if (!save) return;
+  async function simulateUntilEnd() {
+    if (!save || isSimulating) return;
+    setIsSimulating(true);
+    
     try {
-      let cur = save; let safety = 0;
+      console.time('simulateUntilEnd');
+      let cur = save; 
+      let safety = 0;
+      
       while (cur.currentMatchday[cur.myLeague] <= myLeagueTotalMatchdays && safety < 100) {
-        cur = finishMatchday(cur); safety++;
+        cur = await advanceMatchdayLayered(cur);
+        safety++;
+        // Yield control every 5 matchdays
+        if (safety % 5 === 0) {
+          await new Promise(r => setTimeout(r, 0));
+        }
       }
-      saveSave(cur); setSave(cur);
+      
+      saveSave(cur);
+      setSave(cur);
+      console.timeEnd('simulateUntilEnd');
     } catch (err) {
       console.error("Error al simular temporada:", err);
       alert("Error al simular: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsSimulating(false);
     }
   }
 
@@ -111,9 +142,16 @@ function SeasonPage() {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={simulateRest}
-                className="px-5 py-2.5 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition"
+                disabled={isSimulating}
+                className={`px-5 py-2.5 rounded-lg bg-card border text-sm font-semibold transition ${
+                  isSimulating 
+                    ? 'opacity-50 cursor-not-allowed border-border' 
+                    : 'border-border hover:border-accent'
+                }`}
               >
-                Simular resto de la jornada →
+                {isSimulating 
+                  ? `Simulando... ${simProgress.total > 0 ? `${simProgress.done}/${simProgress.total}` : ''}` 
+                  : 'Simular resto de la jornada →'}
               </button>
               <button
                 onClick={simulateUntilEnd}
@@ -304,8 +342,12 @@ function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof 
   );
 }
 
+// Big 5 European leagues only
+const BIG5_LEAGUES: LeagueId[] = ["laliga", "premier", "bundesliga", "ligue1", "seriea"];
+
 function OtherLeaguesPanel({ save }: { save: SaveGame }) {
-  const others = ALL_LEAGUES.filter((l) => l !== save.myLeague);
+  // Only show Big 5 leagues (excluding user's current league if it's one of them)
+  const others = BIG5_LEAGUES.filter((l) => l !== save.myLeague);
   return (
     <div className="panel p-5">
       <h3 className="font-bold mb-4">Resultados en Europa</h3>

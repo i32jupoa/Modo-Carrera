@@ -110,9 +110,9 @@ export function initUCL(): { fixtures: Fixture[]; groups: UCLGroup[]; standings:
   // Dynamic UCL pool: get top 4 teams from each European league, then take top 32 overall
   const europeanLeagues = Object.keys(LEAGUES).filter(lg => {
     const country = LEAGUES[lg]?.country || "";
-    return ["España", "Inglaterra", "Italia", "Alemania", "Francia", "Portugal", "Países Bajos", 
-            "Turquía", "Bélgica", "Polonia", "Suiza", "Dinamarca", "Suecia", "Noruega", 
-            "Austria", "Escocia", "Rumanía", "Grecia", "Chequia", "Croacia", "Ucrania"].includes(country);
+    return ["España", "Inglaterra", "Italia", "Alemania", "Francia", "Portugal", "Países Bajos",
+            "Turquía", "Bélgica", "Polonia", "Suiza", "Dinamarca", "Suecia", "Noruega",
+            "Austria", "Escocia", "Rumanía"].includes(country);
   }) as LeagueId[];
   
   let pool: string[] = [];

@@ -1,4 +1,4 @@
-import { LeagueId, TEAMS, teamById, LEAGUES } from "@/data/teams";
+import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, Team } from "@/data/teams";
 import { Player } from "@/data/players";
 import {
   buildDefaultLineups,
@@ -16,7 +16,7 @@ import {
   sortStandings,
   Standing,
 } from "@/lib/season";
-import { simulateMatch, SimResult } from "@/lib/simulation";
+import { simulateMatch, simulateMatchFast, SimResult, MatchEvent, InjuryEvent } from "@/lib/simulation";
 import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE } from "@/lib/cups";
 
 export type SaveGame = {
@@ -173,7 +173,7 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture) {
   }
 }
 
-function simulateFixtureInline(save: SaveGame, fixture: Fixture): Fixture {
+function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false): Fixture {
   if (fixture.result) return fixture;
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
@@ -189,7 +189,10 @@ function simulateFixtureInline(save: SaveGame, fixture: Fixture): Fixture {
     console.warn(`simulateFixtureInline: Empty squad for fixture ${fixture.id}`, { homeId: fixture.homeId, awayId: fixture.awayId, homeXI: homeXI.length, awayXI: awayXI.length });
     return { ...fixture, result: { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 } };
   }
-  const result = simulateMatch(home, away, homeXI, awayXI);
+  // Use fast simulation for bulk matchdays, detailed for user's matches
+  const result = fast 
+    ? simulateMatchFast(home, away, homeXI, awayXI)
+    : simulateMatch(home, away, homeXI, awayXI);
   return { ...fixture, result };
 }
 
@@ -233,50 +236,227 @@ export function playMyNextMatch(save: SaveGame): { save: SaveGame; fixture: Fixt
   return { save: next, fixture: simmed };
 }
 
-/**
- * Finish the matchday in my league + advance ALL other leagues + advance cup/UCL if scheduled.
- */
-export function finishMatchday(save: SaveGame): SaveGame {
+// Fast synchronous version for UI responsiveness - only simulates essential leagues
+export function finishMatchdayFast(save: SaveGame, leaguesToSim?: LeagueId[]): SaveGame {
   const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const targetLeagues = leaguesToSim || [save.myLeague];
 
-  // 1) Sim rest of user's league matchday
-  const lg = next.myLeague;
-  const md = next.currentMatchday[lg];
-  const remaining = next.fixtures[lg].filter((f) => f.matchday === md && !f.result);
-  for (const f of remaining) {
-    const sim = simulateFixtureInline(next, f);
-    const idx = next.fixtures[lg].findIndex((x) => x.id === f.id);
-    next.fixtures[lg][idx] = sim;
-    next.standings[lg] = applyResult(next.standings[lg], sim);
-    applyMatchToStats(next, sim);
-  }
-  next.currentMatchday[lg] = md + 1;
-
-  // 2) Advance all other leagues one matchday
-  const allLeagues = Object.keys(save.fixtures) as LeagueId[];
-  for (const other of allLeagues) {
-    if (other === lg) continue;
-    const omd = next.currentMatchday[other];
-    const todays = next.fixtures[other].filter((f) => f.matchday === omd && !f.result);
-    for (const f of todays) {
-      const sim = simulateFixtureInline(next, f);
-      const idx = next.fixtures[other].findIndex((x) => x.id === f.id);
-      next.fixtures[other][idx] = sim;
-      next.standings[other] = applyResult(next.standings[other], sim);
+  for (const lg of targetLeagues) {
+    const md = next.currentMatchday[lg];
+    const remaining = next.fixtures[lg]?.filter((f) => f.matchday === md && !f.result) || [];
+    
+    for (const f of remaining) {
+      // Use fast simulation mode for all matches in fast mode
+      const sim = simulateFixtureInline(next, f, true);
+      const idx = next.fixtures[lg].findIndex((x) => x.id === f.id);
+      if (idx >= 0) next.fixtures[lg][idx] = sim;
+      next.standings[lg] = applyResult(next.standings[lg], sim);
       applyMatchToStats(next, sim);
     }
-    next.currentMatchday[other] = omd + 1;
+    next.currentMatchday[lg] = md + 1;
   }
 
-  // 3) Advance cup rounds whose matchday <= current league matchday
+  // Advance cup for simulated leagues only
+  for (const cupLg of targetLeagues) {
+    advanceCupForLeague(next, cupLg);
+  }
+  
+  if (targetLeagues.includes(save.myLeague)) {
+    advanceUCL(next);
+  }
+
+  return next;
+}
+
+// ULTRA-FAST: Generate fake but realistic match result (no squad lookup, O(1))
+function generateFakeMatchResult(home: Team, away: Team): SimResult {
+  const homeOvr = (home.att + home.mid + home.def) / 3;
+  const awayOvr = (away.att + away.mid + away.def) / 3;
+  const diff = homeOvr - awayOvr;
+  
+  // Simple RNG
+  const rng = () => Math.floor(Math.random() * 4) - 1;
+  
+  // Base goals
+  let homeGoals = Math.max(0, Math.round(1.2 + diff * 0.03 + rng() * 0.5));
+  let awayGoals = Math.max(0, Math.round(1.0 - diff * 0.03 + rng() * 0.5));
+  
+  homeGoals = Math.min(homeGoals, 6);
+  awayGoals = Math.min(awayGoals, 5);
+  
+  // Minimal events - just result, no individual scorers
+  return { 
+    homeGoals, 
+    awayGoals, 
+    events: [], // No events - we'll fake stats in batch at the end
+    injuries: [], 
+    xgHome: homeGoals * 0.85, 
+    xgAway: awayGoals * 0.85 
+  };
+}
+
+// Ultra-fast fake stats generation - simplified for speed
+function generateFakeStatsForBackgroundLeagues(save: SaveGame, leagues: LeagueId[]) {
+  const store = usePlayersStore.getState();
+  
+  // Limit stats generation to keep it fast
+  const MAX_PLAYERS_PER_LEAGUE = 50;
+  
+  for (const lg of leagues) {
+    const matchday = save.currentMatchday[lg];
+    if (matchday <= 2) continue; // Skip early matchdays
+    
+    const leagueTeamsList = teamsByLeague(lg);
+    let playersProcessed = 0;
+    
+    for (const team of leagueTeamsList) {
+      if (playersProcessed >= MAX_PLAYERS_PER_LEAGUE) break;
+      
+      const squad = store.getSimSquad(team.id);
+      if (squad.length === 0) continue;
+      
+      const gamesPlayed = matchday - 1;
+      
+      // Only process top players (faster)
+      const topPlayers = squad.slice(0, 5);
+      
+      for (const player of topPlayers) {
+        if (playersProcessed >= MAX_PLAYERS_PER_LEAGUE) break;
+        if (player.position === "GK") {
+          store.recordAppearance(player.id);
+          playersProcessed++;
+          continue;
+        }
+        
+        // Simple stat generation
+        const goalProb = player.position === "FWD" ? 0.5 : player.position === "MID" ? 0.2 : 0.05;
+        const expectedGoals = Math.floor(gamesPlayed * goalProb * (player.rating / 80));
+        const goals = Math.min(expectedGoals, gamesPlayed);
+        const assists = Math.floor(goals * 0.6);
+        const appearances = Math.max(goals, Math.min(gamesPlayed, 5));
+        
+        // Batch record (single calls)
+        if (appearances > 0) store.recordAppearance(player.id);
+        for (let g = 0; g < Math.min(goals, 3); g++) store.recordGoal(player.id);
+        for (let a = 0; a < Math.min(assists, 2); a++) store.recordAssist(player.id);
+        
+        playersProcessed++;
+      }
+    }
+  }
+}
+
+// Big 5 European leagues for VIP deep simulation
+const BIG5_LEAGUES: LeagueId[] = ["laliga", "premier", "seriea", "bundesliga", "ligue1"];
+
+function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
+  return leagueId === userLeague || BIG5_LEAGUES.includes(leagueId);
+}
+
+/**
+ * LAYERED SIMULATION - MAXIMUM PERFORMANCE:
+ * - VIP Leagues (Big 5 + User's league): Deep simulation
+ * - Background Leagues: O(1) fast math only
+ * - Ultra-small batches with forced UI updates
+ */
+export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
+  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const BATCH_SIZE = 20; // Ultra-small batches for UI responsiveness
+  
+  const userLeague = next.myLeague;
+  const backgroundLeagues: LeagueId[] = [];
+  const allFixtures: { fixture: Fixture; league: LeagueId; isVIP: boolean }[] = [];
+  
+  // Collect fixtures
+  for (const lg of Object.keys(next.fixtures) as LeagueId[]) {
+    const md = next.currentMatchday[lg];
+    const fixtures = next.fixtures[lg].filter(f => f.matchday === md && !f.result);
+    const isVIP = isVIPLeague(lg, userLeague);
+    if (!isVIP && fixtures.length > 0) backgroundLeagues.push(lg);
+    for (const f of fixtures) {
+      allFixtures.push({ fixture: f, league: lg, isVIP });
+    }
+  }
+  
+  const totalMatches = allFixtures.length;
+  let processed = 0;
+  
+  // Process in ultra-small batches with guaranteed UI updates
+  for (let i = 0; i < allFixtures.length; i += BATCH_SIZE) {
+    const batch = allFixtures.slice(i, i + BATCH_SIZE);
+    
+    // Process this batch synchronously (fast)
+    for (const { fixture, league, isVIP } of batch) {
+      const home = teamById(fixture.homeId);
+      const away = teamById(fixture.awayId);
+      if (!home || !away) continue;
+      
+      let result: SimResult;
+      
+      if (isVIP) {
+        // DEEP SIMULATION for VIP leagues only
+        const homeXI = getStarters(next, fixture.homeId);
+        const awayXI = getStarters(next, fixture.awayId);
+        if (homeXI.length === 0 || awayXI.length === 0) {
+          result = { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 };
+        } else {
+          result = simulateMatch(home, away, homeXI, awayXI);
+          applyMatchToStats(next, { ...fixture, result });
+        }
+      } else {
+        // ULTRA-FAST for background leagues
+        result = generateFakeMatchResult(home, away);
+      }
+      
+      // Apply result
+      const idx = next.fixtures[league].findIndex(x => x.id === fixture.id);
+      if (idx >= 0) {
+        next.fixtures[league][idx] = { ...fixture, result };
+        next.standings[league] = applyResult(next.standings[league], next.fixtures[league][idx]);
+      }
+      
+      processed++;
+    }
+    
+    // Advance matchday counters
+    const leaguesInBatch = new Set(batch.map(b => b.league));
+    for (const lg of leaguesInBatch) {
+      next.currentMatchday[lg]++;
+    }
+    
+    // Update progress
+    onProgress?.(processed, totalMatches);
+    
+    // CRITICAL: Yield to browser after EVERY batch to prevent freezing
+    // Use 0ms timeout with requestAnimationFrame for smooth UI
+    if (i + BATCH_SIZE < allFixtures.length) {
+      await new Promise(resolve => {
+        requestAnimationFrame(() => {
+          setTimeout(resolve, 0);
+        });
+      });
+    }
+  }
+  
+  // Generate stats for background leagues (fast mode)
+  generateFakeStatsForBackgroundLeagues(next, backgroundLeagues);
+  
+  // Advance cups/UCL
   const cupLeagues = Object.keys(next.cupFixtures) as LeagueId[];
   for (const cupLg of cupLeagues) {
     advanceCupForLeague(next, cupLg);
   }
-  // 4) Advance UCL
   advanceUCL(next);
-
+  
   return next;
+}
+
+/**
+ * Legacy function - kept for compatibility.
+ * Use advanceMatchdayLayered for better performance.
+ */
+export async function finishMatchday(save: SaveGame, onProgress?: (leaguesDone: number, total: number) => void): Promise<SaveGame> {
+  return advanceMatchdayLayered(save, onProgress);
 }
 
 function advanceCupForLeague(save: SaveGame, lg: LeagueId) {

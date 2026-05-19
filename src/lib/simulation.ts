@@ -24,12 +24,20 @@ function teamMomentum(xi: Player[]): number {
 }
 
 export function expectedGoals(home: Team, away: Team, homeXI: Player[] = [], awayXI: Player[] = []): { lh: number; la: number } {
-  const homeDiff = home.att - away.def;
-  const awayDiff = away.att - home.def;
+  // Safe fallbacks for team stats (minimum 65 for minor league teams)
+  const homeAtt = home.att || 65;
+  const homeDef = home.def || 65;
+  const awayAtt = away.att || 65;
+  const awayDef = away.def || 65;
+  
+  const homeDiff = homeAtt - awayDef;
+  const awayDiff = awayAtt - homeDef;
   const mh = teamMomentum(homeXI);
   const ma = teamMomentum(awayXI);
-  const lh = Math.max(0.15, (1.3 + homeDiff * 0.05 + HOME_ADVANTAGE) * mh);
-  const la = Math.max(0.15, (1.3 + awayDiff * 0.05) * ma);
+  
+  // Base expected goals with minimum floor for competitive matches
+  const lh = Math.max(0.5, (1.3 + homeDiff * 0.05 + HOME_ADVANTAGE) * mh);
+  const la = Math.max(0.5, (1.3 + awayDiff * 0.05) * ma);
   return { lh, la };
 }
 
@@ -105,6 +113,65 @@ function maybeInjury(xi: Player[], team: "home" | "away"): InjuryEvent | null {
     team, playerId: victim.id, playerName: victim.name, weeks,
     reason: INJURY_REASONS[Math.floor(rand() * INJURY_REASONS.length)],
   };
+}
+
+// Cache for team strength calculations
+const teamStrengthCache = new Map<string, number>();
+
+function getTeamStrength(xi: Player[]): number {
+  if (xi.length === 0) return 70;
+  const key = xi.map(p => p.id).sort().join(',');
+  if (teamStrengthCache.has(key)) return teamStrengthCache.get(key)!;
+  
+  const avg = xi.reduce((s, p) => s + p.rating, 0) / xi.length;
+  teamStrengthCache.set(key, avg);
+  return avg;
+}
+
+// Fast scorer pick without weighted calculations
+function fastPickScorer(xi: Player[]): Player {
+  const candidates = xi.filter((p) => p.position !== "GK");
+  if (candidates.length === 0) return xi[0];
+  // Simple random pick with slight bias toward forwards
+  const weights = candidates.map((p) => p.position === "FWD" ? 3 : p.position === "MID" ? 2 : 1);
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = rand() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
+}
+
+// Ultra-fast simulation for bulk matchdays (no detailed events, just results)
+export function simulateMatchFast(
+  home: Team, away: Team, homeXI: Player[], awayXI: Player[]
+): SimResult {
+  const { lh, la } = expectedGoals(home, away, homeXI, awayXI);
+  
+  // Use normal distribution approximation for speed (faster than poisson)
+  const homeGoals = Math.max(0, Math.round(lh + (rand() - 0.5) * Math.sqrt(lh)));
+  const awayGoals = Math.max(0, Math.round(la + (rand() - 0.5) * Math.sqrt(la)));
+  
+  // Minimal events - only scorers, no assists, no minute sorting
+  const events: MatchEvent[] = [];
+  for (let i = 0; i < homeGoals; i++) {
+    const scorer = fastPickScorer(homeXI);
+    events.push({
+      minute: Math.floor(rand() * 90) + 1, team: "home", type: "goal",
+      scorerId: scorer.id, scorerName: scorer.name,
+    });
+  }
+  for (let i = 0; i < awayGoals; i++) {
+    const scorer = fastPickScorer(awayXI);
+    events.push({
+      minute: Math.floor(rand() * 90) + 1, team: "away", type: "goal",
+      scorerId: scorer.id, scorerName: scorer.name,
+    });
+  }
+  
+  // No injuries in fast mode
+  return { homeGoals, awayGoals, events, injuries: [], xgHome: lh, xgAway: la };
 }
 
 export function simulateMatch(

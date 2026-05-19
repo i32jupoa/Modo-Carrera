@@ -45,26 +45,8 @@ const LEAGUE_TO_COUNTRY: Record<string, { country: string; flag: string }> = {
   "Allsvenskan":         { country: "Suecia",        flag: "🇸🇪" },
   "Eliteserien":         { country: "Noruega",       flag: "🇳🇴" },
   "ROSHN Saudi League":  { country: "Arabia Saudí",  flag: "🇸🇦" },
-  "CSL":                 { country: "China",         flag: "🇨🇳" },
-  "K League 1":          { country: "Corea del Sur", flag: "🇰🇷" },
-  "A-League":            { country: "Australia",     flag: "🇦🇺" },
-  "ISL":                 { country: "India",         flag: "🇮🇳" },
   // === AUSTRIAN LEAGUE (strictly separate from German Bundesliga) ===
   "Ö. Bundesliga":       { country: "Austria",       flag: "🇦🇹" },
-  // === CONTINENTAL/OTHER ===
-  "Libertadores":        { country: "Sudamérica",    flag: "🌎" },
-  "Sudamericana":        { country: "Sudamérica",    flag: "🌎" },
-  "Finnliiga":           { country: "Finlandia",     flag: "🇫🇮" },
-  "Hellas Liga":         { country: "Grecia",        flag: "🇬🇷" },
-  "Magyar Liga":         { country: "Hungría",       flag: "🇭🇺" },
-  "Česká Liga":          { country: "Chequia",       flag: "🇨🇿" },
-  "Liga Hrvatska":       { country: "Croacia",       flag: "🇭🇷" },
-  "Ukrayina Liha":       { country: "Ucrania",       flag: "🇺🇦" },
-  "United Emirates League": { country: "EAU",        flag: "🇦🇪" },
-  "Liga Chile":          { country: "Chile",         flag: "🇨🇱" },
-  "Liga Cyprus":         { country: "Chipre",        flag: "🇨🇾" },
-  "Liga Azerbaijan":     { country: "Azerbaiyán",    flag: "🇦🇿" },
-  "SSE Airtricity PD":   { country: "Irlanda",       flag: "🇮🇪" },
 };
 
 const LEAGUE_NAME_TO_ID: Record<string, string> = {
@@ -88,6 +70,27 @@ const LEAGUE_NAME_TO_ID: Record<string, string> = {
   "Ö. Bundesliga":       "austrianbundesliga",
 };
 
+// Excluded leagues (not loaded into the game)
+export const EXCLUDED_LEAGUES = new Set<string>([
+  "ligahrvatska",      // Croacia
+  "hellasliga",        // Grecia
+  "unitedemiratesleague", // EAU
+  "libertadores",      // Sudamérica
+  "sudamericana",      // Sudamérica
+  "ceskaliga",         // Chequia
+  "ukrayinaliha",      // Ucrania
+  "magyarliga",        // Hungría
+  "kleague1",          // Corea del Sur
+  "csl",               // China
+  "ligacyprus",        // Chipre
+  "ligachile",         // Chile
+  "aleague",           // Australia
+  "ligaazerbaijan",    // Azerbaiyán
+  "finnliiga",         // Finlandia
+  "isl",               // India
+  "sseairtricitypd",   // Irlanda
+]);
+
 export function leagueIdFromName(leagueName: string): string {
   return LEAGUE_NAME_TO_ID[leagueName] ?? leagueName.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -103,7 +106,13 @@ function extractLeaguesFromJSON(): Record<string, { id: string; name: string; co
     seen.add(leagueName);
     
     const id = leagueIdFromName(leagueName);
-    const mapping = LEAGUE_TO_COUNTRY[leagueName] || { country: leagueName, flag: "⚽" };
+    
+    // Skip excluded leagues - they should not appear in the menu
+    if (EXCLUDED_LEAGUES.has(id)) return;
+    
+    // Only include leagues that are properly mapped in LEAGUE_TO_COUNTRY
+    const mapping = LEAGUE_TO_COUNTRY[leagueName];
+    if (!mapping) return; // Skip unmapped leagues
     
     leagues[id] = { id, name: leagueName, country: mapping.country, flag: mapping.flag };
   });
@@ -265,26 +274,40 @@ function generateDynamicTeams(): Team[] {
   
   const teamMap = new Map<string, { name: string; league: string; players: any[] }>();
   
-  dataArray.forEach((p: any) => {
+  // First pass: collect all teams (excluding filtered leagues)
+  for (const p of dataArray) {
     const leagueName = p.League;
-    if (!leagueName) return;
+    if (!leagueName) continue;
     const leagueId = leagueIdFromName(leagueName);
-    if (staticLeagues.has(leagueId)) return;
+    
+    // Skip static leagues and excluded leagues
+    if (staticLeagues.has(leagueId)) continue;
+    if (EXCLUDED_LEAGUES.has(leagueId)) continue;
     
     const teamName = p.Team;
-    if (!teamName) return;
+    if (!teamName) continue;
     const teamKey = teamName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (staticTeamNames.has(teamKey)) return;
+    if (staticTeamNames.has(teamKey)) continue;
     
     if (!teamMap.has(teamKey)) {
       teamMap.set(teamKey, { name: teamName, league: leagueId, players: [] });
     }
     teamMap.get(teamKey)!.players.push(p);
-  });
+  }
+  
+  // Filter out teams with fewer than 11 players (not a valid squad)
+  const validTeams = Array.from(teamMap.entries()).filter(([_, data]) => data.players.length >= 11);
+  
+  // Filter out leagues with fewer than 2 teams
+  const leagueCounts = new Map<string, number>();
+  for (const [_, data] of validTeams) {
+    leagueCounts.set(data.league, (leagueCounts.get(data.league) || 0) + 1);
+  }
+  const playableTeams = validTeams.filter(([_, data]) => (leagueCounts.get(data.league) || 0) >= 2);
   
   const COLORS = ["#1a1a2e","#16213e","#0f3460","#533483","#e94560","#2c3e50","#8e44ad","#2980b9","#27ae60","#e67e22","#c0392b","#16a085"];
   
-  return Array.from(teamMap.entries()).map(([key, data], i) => {
+  return playableTeams.map(([key, data], i) => {
     const sorted = data.players.slice().sort((a, b) => (b.OVR || 70) - (a.OVR || 70));
     const top3 = sorted.slice(0, 3).map((p: any) => p.Name || "?");
     const avgOvr = sorted.length > 0 ? Math.round(sorted.reduce((s: number, p: any) => s + (p.OVR || 70), 0) / sorted.length) : 70;
@@ -297,9 +320,9 @@ function generateDynamicTeams(): Team[] {
       short: data.name.replace(/[^A-Z]/g, '').slice(0, 3) || data.name.slice(0, 3).toUpperCase(),
       city: data.name,
       league: data.league,
-      att: att || avgOvr,
-      mid: mid || avgOvr,
-      def: def || avgOvr,
+      att: Math.max(50, att || avgOvr),
+      mid: Math.max(50, mid || avgOvr),
+      def: Math.max(50, def || avgOvr),
       stars: top3,
       color: COLORS[i % COLORS.length],
     };
@@ -308,27 +331,52 @@ function generateDynamicTeams(): Team[] {
 
 let _dynamicTeams: Team[] | null = null;
 function getDynamicTeams(): Team[] {
-  if (!_dynamicTeams) _dynamicTeams = generateDynamicTeams();
+  if (!_dynamicTeams) {
+    _dynamicTeams = generateDynamicTeams();
+    // Invalidate teams map cache when dynamic teams are generated
+    _allTeamsMap = null;
+  }
   return _dynamicTeams;
 }
 
+let _allTeamsMap: Map<string, Team> | null = null;
 export function getAllTeams(): Team[] {
   return [...TEAMS, ...getDynamicTeams()];
 }
 
+function getTeamsMap(): Map<string, Team> {
+  if (!_allTeamsMap) {
+    _allTeamsMap = new Map();
+    for (const t of TEAMS) _allTeamsMap.set(t.id.toLowerCase(), t);
+    for (const t of getDynamicTeams()) _allTeamsMap.set(t.id.toLowerCase(), t);
+  }
+  return _allTeamsMap;
+}
+
 // 3. SÚPER RED DE SEGURIDAD: Esta función JAMÁS lanzará un "Team not found"
 export function teamById(id: string): Team {
-  const all = getAllTeams();
-  if (!id) return all.find(t => t.id === "liv") || all[0];
+  if (!id) {
+    const all = getAllTeams();
+    return all.find(t => t.id === "liv") || all[0];
+  }
   
   const query = id.toLowerCase().trim();
-  let found = all.find(t => t.id.toLowerCase() === query);
+  const map = getTeamsMap();
+  
+  // O(1) lookup by id
+  let found = map.get(query);
   if (found) return found;
+  
+  // Fallback: search by partial match
+  const all = getAllTeams();
   found = all.find(t => query.includes(t.id.toLowerCase()) || t.id.toLowerCase().includes(query));
   if (found) return found;
+  
+  // Fallback: search by normalized name
   const cleanQuery = query.replace(/[^a-z0-9]/g, '');
   found = all.find(t => t.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanQuery);
   if (found) return found;
+  
   return all.find(t => t.id === "liv") || all[0];
 }
 
