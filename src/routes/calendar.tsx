@@ -13,6 +13,10 @@ import {
   toDateOnly,
 } from "@/lib/transferWindows";
 import {
+  involvesTeam,
+  unplayedOnDate,
+} from "@/lib/matchEngine";
+import {
   opponentLabel,
   scheduleFixturesByDate,
   userFixtures,

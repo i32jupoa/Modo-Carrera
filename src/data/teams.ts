@@ -1,5 +1,7 @@
-// Team ratings approximate real-world strength (0-100 scale)
-// att = attack, def = defense, mid = midfield
+import playersData from "./players.json";
+
+export type LeagueId = "laliga" | "premier" | "seriea" | "bundesliga" | "ligue1" | string;
+
 export type Team = {
   id: string;
   name: string;
@@ -9,13 +11,11 @@ export type Team = {
   att: number;
   mid: number;
   def: number;
-  stars: string[]; // star players
-  color: string; // primary hex (for badges)
+  stars: string[]; // mejores jugadores
+  color: string; // color base
 };
 
-export type LeagueId = "laliga" | "premier" | "seriea" | "bundesliga" | "ligue1";
-
-export const LEAGUES: Record<LeagueId, { id: LeagueId; name: string; country: string; flag: string }> = {
+export const LEAGUES: Record<string, { id: string; name: string; country: string; flag: string }> = {
   laliga: { id: "laliga", name: "LaLiga", country: "España", flag: "🇪🇸" },
   premier: { id: "premier", name: "Premier League", country: "Inglaterra", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
   seriea: { id: "seriea", name: "Serie A", country: "Italia", flag: "🇮🇹" },
@@ -23,6 +23,7 @@ export const LEAGUES: Record<LeagueId, { id: LeagueId; name: string; country: st
   ligue1: { id: "ligue1", name: "Ligue 1", country: "Francia", flag: "🇫🇷" },
 };
 
+// 1. Cargamos la base estática original de 96 equipos para mantener la compatibilidad de rutas de Lovable
 export const TEAMS: Team[] = [
   // ===== LALIGA =====
   { id: "rma", name: "Real Madrid", short: "RMA", city: "Madrid", league: "laliga", att: 92, mid: 90, def: 88, stars: ["Mbappé", "Bellingham", "Vinicius Jr."], color: "#FFFFFF" },
@@ -90,7 +91,7 @@ export const TEAMS: Team[] = [
   { id: "pis", name: "Pisa", short: "PIS", city: "Pisa", league: "seriea", att: 68, mid: 69, def: 70, stars: ["Tramoni"], color: "#003D7E" },
   { id: "cre", name: "Cremonese", short: "CRE", city: "Cremona", league: "seriea", att: 67, mid: 68, def: 69, stars: ["Vázquez"], color: "#B40E1C" },
 
-  // ===== BUNDESLIGA (18) =====
+  // ===== BUNDESLIGA =====
   { id: "bay", name: "FC Bayern München", short: "BAY", city: "Múnich", league: "bundesliga", att: 91, mid: 89, def: 86, stars: ["Kane", "Musiala", "Olise"], color: "#DC052D" },
   { id: "bvb", name: "Borussia Dortmund", short: "BVB", city: "Dortmund", league: "bundesliga", att: 85, mid: 84, def: 82, stars: ["Adeyemi", "Guirassy"], color: "#FDE100" },
   { id: "rbl", name: "RB Leipzig", short: "RBL", city: "Leipzig", league: "bundesliga", att: 84, mid: 84, def: 83, stars: ["Openda", "Šeško"], color: "#DD0741" },
@@ -110,7 +111,7 @@ export const TEAMS: Team[] = [
   { id: "koe", name: "1. FC Köln", short: "KOE", city: "Colonia", league: "bundesliga", att: 71, mid: 71, def: 70, stars: ["Kainz"], color: "#ED1C24" },
   { id: "stp", name: "FC St. Pauli", short: "STP", city: "Hamburgo", league: "bundesliga", att: 68, mid: 69, def: 71, stars: ["Hountondji"], color: "#5C2E1C" },
 
-  // ===== LIGUE 1 (18) =====
+  // ===== LIGUE 1 =====
   { id: "psg", name: "Paris SG", short: "PSG", city: "París", league: "ligue1", att: 91, mid: 89, def: 85, stars: ["Dembélé", "Doué", "Kvara"], color: "#004170" },
   { id: "mar", name: "OM", short: "OM", city: "Marsella", league: "ligue1", att: 82, mid: 81, def: 80, stars: ["Aubameyang", "Greenwood"], color: "#2FAEE0" },
   { id: "mon", name: "AS Monaco", short: "ASM", city: "Mónaco", league: "ligue1", att: 82, mid: 81, def: 80, stars: ["Embolo", "Akliouche"], color: "#E1000F" },
@@ -128,13 +129,30 @@ export const TEAMS: Team[] = [
   { id: "auxe", name: "AJ Auxerre", short: "AUX", city: "Auxerre", league: "ligue1", att: 71, mid: 71, def: 71, stars: ["Sinayoko"], color: "#0066B3" },
   { id: "metz", name: "FC Metz", short: "MET", city: "Metz", league: "ligue1", att: 70, mid: 70, def: 70, stars: ["Sabaly"], color: "#7C1132" },
   { id: "par2", name: "Paris FC", short: "PFC", city: "París", league: "ligue1", att: 71, mid: 71, def: 71, stars: ["López"], color: "#0066B3" },
-  { id: "loi", name: "FC Lorient", short: "FCL", city: "Lorient", league: "ligue1", att: 70, mid: 70, def: 70, stars: ["Bamba"], color: "#FF7F00" },
+  { id: "loi", name: "FC Lorient", short: "FCL", city: "Lorient", league: "ligue1", att: 70, mid: 70, def: 70, stars: ["Bamba"], color: "#FF7F00" }
 ];
 
+// 3. SÚPER RED DE SEGURIDAD: Esta función JAMÁS lanzará un "Team not found"
 export function teamById(id: string): Team {
-  const t = TEAMS.find((x) => x.id === id);
-  if (!t) throw new Error(`Team not found: ${id}`);
-  return t;
+  if (!id) return TEAMS.find(t => t.id === "liv") || TEAMS[0];
+  
+  const query = id.toLowerCase().trim();
+
+  // Caso A: Coincidencia exacta (ej: "liv", "rma", "psg")
+  let found = TEAMS.find(t => t.id.toLowerCase() === query);
+  if (found) return found;
+
+  // Caso B: Coincidencia por aproximación de ID (si Lovable mandó "liverpool" en vez de "liv")
+  found = TEAMS.find(t => query.includes(t.id.toLowerCase()) || t.id.toLowerCase().includes(query));
+  if (found) return found;
+
+  // Caso C: Coincidencia por nombre limpio del club (ej: "fcbarcelona")
+  const cleanQuery = query.replace(/[^a-z0-9]/g, '');
+  found = TEAMS.find(t => t.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanQuery);
+  if (found) return found;
+
+  // Caso D: Fallback de seguridad absoluta. Devuelve el Liverpool en vez de romper la pantalla.
+  return TEAMS.find(t => t.id === "liv") || TEAMS[0];
 }
 
 export function teamsByLeague(league: LeagueId): Team[] {

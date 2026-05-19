@@ -9,7 +9,7 @@ export const MIN_REST_DAYS = 3;
 export const LEAGUE_MD1_FRIDAY = "2025-08-15";
 
 /** Day offsets from Friday: Vie, Sáb, Dom, Lun, Mar, Mié, Jue. */
-const MATCHDAY_SLOT_OFFSETS = [0, 1, 1, 2, 2, 2, 3, 4, 5, 6] as const;
+const MATCHDAY_SLOT_OFFSETS = [0, 1, 1, 2, 2, 0, 1, 1, 2, 2];
 
 function daysBetween(fromIso: string, toIso: string): number {
   const a = parseDateOnly(fromIso).getTime();

@@ -173,11 +173,14 @@ type PlayersState = {
   /** Resultado recién simulado (modal post-partido) */
   lastUserMatchResult: SimResult | null;
   stats: Record<string, PlayerStats>;
+  /** IDs de partidos cuyo modal de notificación ha sido descartado permanentemente */
+  dismissedMatchIds: string[];
 
   init: () => void;
   advanceTime: (days: number) => number;
   simulateMatch: (matchId: string) => void;
   clearPendingMatch: () => void;
+  dismissMatch: (matchId: string) => void;
   resetGameDate: () => void;
   isMarketOpen: () => boolean;
   generateLeagueSchedule: (myTeamId: string, league: LeagueId) => void;
@@ -222,6 +225,7 @@ export const usePlayersStore = create<PlayersState>()(
       pendingUserMatch: null,
       lastUserMatchResult: null,
       stats: {},
+      dismissedMatchIds: [],
 
       generateLeagueSchedule: (_myTeamId, league) => {
         set({
@@ -258,6 +262,13 @@ export const usePlayersStore = create<PlayersState>()(
       clearPendingMatch: () =>
         set({ pendingUserMatch: null, lastUserMatchResult: null }),
 
+      dismissMatch: (matchId) =>
+        set((state) => ({
+          dismissedMatchIds: [...state.dismissedMatchIds, matchId],
+          pendingUserMatch: null,
+          lastUserMatchResult: null,
+        })),
+
       simulateMatch: (matchId) => {
         const state = get();
         state.init();
@@ -291,13 +302,20 @@ export const usePlayersStore = create<PlayersState>()(
 
       advanceTime: (days) => {
         if (days <= 0) return 0;
-        if (get().pendingUserMatch) return 0;
         const state = get();
+        
         if (!state.myTeamId) {
           set({ currentDate: addDaysToIso(state.currentDate, days) });
           return days;
         }
+        
         state.init();
+
+        const onDay = unplayedOnDate(state.fixtures, state.currentDate);
+        const userMatch = onDay.find((f) => involvesTeam(f, state.myTeamId!));
+        if (userMatch) return 0;
+
+        if (get().pendingUserMatch) return 0;
 
         let date = state.currentDate;
         let fixtures = state.fixtures;
@@ -393,6 +411,7 @@ export const usePlayersStore = create<PlayersState>()(
           fixtures: [],
           pendingUserMatch: null,
           lastUserMatchResult: null,
+          dismissedMatchIds: [],
         }),
 
       resetAllStats: () => set({ stats: {} }),
@@ -586,6 +605,7 @@ export const usePlayersStore = create<PlayersState>()(
         budget: s.budget,
         currentDate: s.currentDate,
         fixtures: s.fixtures,
+        dismissedMatchIds: s.dismissedMatchIds,
       }),
     },
   ),

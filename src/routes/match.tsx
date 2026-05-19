@@ -5,6 +5,7 @@ import { Fixture } from "@/lib/season";
 import { teamById } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { MatchEvent } from "@/lib/simulation";
+import { usePlayersStore } from "@/store/playersStore";
 
 export const Route = createFileRoute("/match")({ component: MatchPage });
 
@@ -20,6 +21,16 @@ function MatchPage() {
   const [feed, setFeed] = useState<MatchEvent[]>([]);
   const allEventsRef = useRef<MatchEvent[]>([]);
   const fixtureRef = useRef<Fixture | null>(null);
+  const fixtures = usePlayersStore((s) => s.fixtures);
+
+  function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number) {
+    const updated = fixtures.map((f) =>
+      f.id === fixtureId
+        ? { ...f, isPlayed: true, homeScore, awayScore }
+        : f
+    );
+    usePlayersStore.setState({ fixtures: updated });
+  }
 
   useEffect(() => {
     const s = loadSave();
@@ -37,6 +48,9 @@ function MatchPage() {
     fixtureRef.current = fixture;
     setSave(newSave);
     saveSave(newSave);
+    if (fixture.result) {
+      updateFixtureInStore(fixture.id, fixture.result.homeGoals, fixture.result.awayGoals);
+    }
     setPhase("playing");
     runClock();
   }

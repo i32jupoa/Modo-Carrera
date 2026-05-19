@@ -8,6 +8,7 @@ import {
 import { Fixture } from "@/lib/season";
 import { LEAGUES, LeagueId, teamById, TEAMS } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { usePlayersStore } from "@/store/playersStore";
 
 export const Route = createFileRoute("/season")({ component: SeasonPage });
 
@@ -152,9 +153,26 @@ function SeasonPage() {
 }
 
 function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: string; matchday: number }) {
+  const navigate = useNavigate();
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
   const isHome = fixture.homeId === myId;
+  const fixtures = usePlayersStore((s) => s.fixtures);
+  const myTeamId = usePlayersStore((s) => s.myTeamId);
+  const dismissMatch = usePlayersStore((s) => s.dismissMatch);
+
+  function handlePlayMatch() {
+    if (!myTeamId) return;
+    const scheduleFixture = fixtures.find(
+      (f) => f.homeTeam === fixture.homeId && f.awayTeam === fixture.awayId && f.matchday === matchday
+    );
+    if (scheduleFixture?.date) {
+      usePlayersStore.setState({ currentDate: scheduleFixture.date });
+      dismissMatch(scheduleFixture.id);
+    }
+    navigate({ to: "/match" });
+  }
+
   return (
     <div className="panel-glow p-6">
       <div className="flex items-center justify-between mb-5">
@@ -173,12 +191,12 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
         >
           Editar alineación
         </Link>
-        <Link
-          to="/match"
+        <button
+          onClick={handlePlayMatch}
           className="text-center py-3 rounded-lg bg-primary text-primary-foreground font-black tracking-wide glow-neon hover:brightness-110 transition"
         >
           JUGAR
-        </Link>
+        </button>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { usePlayersStore } from "@/store/playersStore";
 import {
   applyFixtureResult,
@@ -18,19 +19,23 @@ import {
 import { Zap } from "lucide-react";
 
 export function MatchDayModal() {
+  const navigate = useNavigate();
   const pending = usePlayersStore((s) => s.pendingUserMatch);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const currentDate = usePlayersStore((s) => s.currentDate);
   const fixtures = usePlayersStore((s) => s.fixtures);
   const lastUserMatchResult = usePlayersStore((s) => s.lastUserMatchResult);
-  const simulateMatch = usePlayersStore((s) => s.simulateMatch);
   const clearPendingMatch = usePlayersStore((s) => s.clearPendingMatch);
+  const dismissMatch = usePlayersStore((s) => s.dismissMatch);
+  const dismissedMatchIds = usePlayersStore((s) => s.dismissedMatchIds);
 
   useEffect(() => {
     if (!myTeamId || pending) return;
     const onDay = unplayedOnDate(fixtures, currentDate);
     const today = onDay.find((f) => involvesTeam(f, myTeamId));
     if (!today) return;
+
+    if (dismissedMatchIds.includes(today.id)) return;
 
     const store = usePlayersStore.getState();
     let nextFixtures = store.fixtures;
@@ -46,7 +51,7 @@ export function MatchDayModal() {
       pendingUserMatch: today,
       lastUserMatchResult: null,
     });
-  }, [currentDate, fixtures, myTeamId, pending]);
+  }, [currentDate, fixtures, myTeamId, pending, dismissedMatchIds]);
 
   const live = useMemo(() => {
     if (!pending) return null;
@@ -78,13 +83,18 @@ export function MatchDayModal() {
   const scorers = lastUserMatchResult?.events ?? [];
 
   function handleDismiss() {
-    clearPendingMatch();
+    if (pending) {
+      dismissMatch(pending.id);
+    }
   }
 
-  function handleQuickSim(e: React.MouseEvent) {
+  function handleNavigateToMatch(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    simulateMatch(pending.id);
+    if (pending) {
+      dismissMatch(pending.id);
+    }
+    navigate({ to: "/match" });
   }
 
   return (
@@ -174,11 +184,11 @@ export function MatchDayModal() {
           {!played ? (
             <button
               type="button"
-              onClick={handleQuickSim}
+              onClick={handleNavigateToMatch}
               className="w-full inline-flex items-center justify-center gap-2 py-3.5 rounded-lg bg-primary text-primary-foreground font-bold text-sm hover:brightness-110 transition shadow-[0_0_20px_hsl(var(--primary)/0.4)]"
             >
               <Zap className="h-4 w-4" />
-              Simular partido rápido
+              Simular partido
             </button>
           ) : (
             <button

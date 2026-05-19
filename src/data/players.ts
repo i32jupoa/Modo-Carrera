@@ -1,5 +1,5 @@
-import { LeagueId, Team, TEAMS } from "./teams";
-import { REAL_PLAYERS } from "./realPlayers";
+import { Team, TEAMS, teamById } from "./teams";
+import playersData from "./players.json";
 
 export type Position = "GK" | "DEF" | "MID" | "FWD";
 
@@ -11,60 +11,16 @@ export type Player = {
   age: number;
   teamId: string;
   marketValue: number;
-  isReal: boolean; // true if name from real-world rosters
-  // mutable stats
+  isReal: boolean;
   goals: number;
   assists: number;
   appearances: number;
-  // injury: matchday number (in their league) when available again. 0 = healthy.
   injuredUntil: number;
   injuryReason?: string;
-  // morale 0-100, form 0-100
   morale: number;
-  formHistory: number[]; // last 5 ratings 0-10
+  formHistory: number[];
+  cardImage?: string;
 };
-
-function mulberry32(seed: number) {
-  return function () {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function hashSeed(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-// Backup pools for filler players (bench depth only)
-const FIRST_NAMES: Record<LeagueId, string[]> = {
-  laliga: ["Adrián", "Iván", "Rubén", "Jorge", "Andrés", "Raúl", "Marcos", "Hugo"],
-  premier: ["Tom", "Lewis", "Callum", "Ryan", "Conor", "Alfie", "Charlie"],
-  seriea: ["Alessandro", "Gabriele", "Riccardo", "Stefano", "Federico", "Giovanni"],
-  bundesliga: ["Jonas", "Moritz", "David", "Paul", "Tobias", "Julian", "Philipp"],
-  ligue1: ["Romain", "Quentin", "Adrien", "Bastien", "Clément", "Dorian"],
-};
-
-const LAST_NAMES: Record<LeagueId, string[]> = {
-  laliga: ["Vega", "Ortega", "Torres", "Navarro", "Molina", "Serrano", "Aguilar"],
-  premier: ["Roberts", "Walker", "Wright", "Hughes", "Green", "Hall", "Baker"],
-  seriea: ["Greco", "Bruno", "Gallo", "Conti", "Mancini", "Costa", "Giordano"],
-  bundesliga: ["Hoffmann", "Schäfer", "Koch", "Bauer", "Richter", "Klein", "Wolf"],
-  ligue1: ["Petit", "Durand", "Leroy", "Moreau", "Simon", "Laurent", "Lefebvre"],
-};
-
-const POSITION_PLAN: { pos: Position; count: number; ratingBias: keyof Pick<Team, "att" | "mid" | "def"> }[] = [
-  { pos: "GK", count: 3, ratingBias: "def" },
-  { pos: "DEF", count: 8, ratingBias: "def" },
-  { pos: "MID", count: 8, ratingBias: "mid" },
-  { pos: "FWD", count: 6, ratingBias: "att" },
-];
 
 function marketValueFor(rating: number, age: number): number {
   const peak = 1 - Math.abs(age - 26) * 0.06;
@@ -72,82 +28,124 @@ function marketValueFor(rating: number, age: number): number {
   return Math.max(0.5, Math.round(base * Math.max(0.25, peak) * 10) / 10);
 }
 
-export function generateSquad(team: Team): Player[] {
-  const rng = mulberry32(hashSeed(team.id));
-  const players: Player[] = [];
-  const seen = new Set<string>();
-
-  // 1) Real players first (from REAL_PLAYERS data)
-  const real = REAL_PLAYERS[team.id] ?? [];
-  real.forEach(([pos, name], i) => {
-    if (seen.has(name)) return;
-    seen.add(name);
-    // Real players rated based on team strength + position bias
-    const base = pos === "GK" || pos === "DEF" ? team.def : pos === "MID" ? team.mid : team.att;
-    // Top real players (first in list) are starters, get top ratings
-    const tier = i < 11 ? 0 : i < 18 ? 1 : 2;
-    const delta = tier === 0 ? Math.floor(rng() * 6) : tier === 1 ? -3 + Math.floor(rng() * 5) : -7 + Math.floor(rng() * 5);
-    const rating = Math.max(65, Math.min(94, base + delta));
-    const age = 20 + Math.floor(rng() * 14);
-    players.push({
-      id: `${team.id}-real-${i}`,
-      name, position: pos, rating, age, teamId: team.id,
-      marketValue: marketValueFor(rating, age),
-      isReal: true,
-      goals: 0, assists: 0, appearances: 0,
-      injuredUntil: 0, morale: 70, formHistory: [],
-    });
-  });
-
-  // 2) Fill remaining slots per position with procedural players
-  for (const plan of POSITION_PLAN) {
-    const already = players.filter((p) => p.position === plan.pos).length;
-    const need = Math.max(0, plan.count - already);
-    for (let i = 0; i < need; i++) {
-      const baseRating = team[plan.ratingBias];
-      const idx = already + i;
-      const tier = idx < 3 ? 0 : idx < 6 ? 1 : 2;
-      const delta = tier === 0 ? -2 + Math.floor(rng() * 6) : tier === 1 ? -8 + Math.floor(rng() * 6) : -16 + Math.floor(rng() * 8);
-      const rating = Math.max(55, Math.min(91, baseRating + delta));
-      const age = tier === 2 ? 17 + Math.floor(rng() * 6) : 21 + Math.floor(rng() * 14);
-      const firsts = FIRST_NAMES[team.league];
-      const lasts = LAST_NAMES[team.league];
-      const first = firsts[Math.floor(rng() * firsts.length)];
-      const last = lasts[Math.floor(rng() * lasts.length)];
-      const name = `${first} ${last}`;
-      players.push({
-        id: `${team.id}-${plan.pos}-${i}-${Math.floor(rng() * 99999)}`,
-        name, position: plan.pos, rating, age, teamId: team.id,
-        marketValue: marketValueFor(rating, age),
-        isReal: false,
-        goals: 0, assists: 0, appearances: 0,
-        injuredUntil: 0, morale: 60, formHistory: [],
-      });
-    }
-  }
-
-  const order: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
-  players.sort((a, b) => order[a.position] - order[b.position] || b.rating - a.rating);
-  return players;
+function mapPosition(pos: string): Position {
+  const up = String(pos || "MID").toUpperCase();
+  if (up === "GK") return "GK";
+  if (["CB", "LB", "RB", "LWB", "RWB", "DEF"].includes(up)) return "DEF";
+  if (["CM", "CDM", "CAM", "LM", "RM", "MID"].includes(up)) return "MID";
+  return "FWD"; // ST, LW, RW, CF
 }
 
+// Vincula de manera inteligente el string del JSON con los IDs compatibles de teams.ts
+function findTeamIdForPlayer(jsonTeamName: string): string {
+  if (!jsonTeamName) return "free_agent";
+  const normalizedJson = jsonTeamName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // Comparamos con los 96 equipos estáticos principales primero
+  const match = TEAMS.find(t => {
+    const cleanTeamName = t.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return normalizedJson === cleanTeamName || normalizedJson.includes(cleanTeamName) || cleanTeamName.includes(normalizedJson);
+  });
+
+  if (match) return match.id;
+
+  // Si es un equipo nuevo del JSON, devolvemos su ID formateado de forma segura
+  return jsonTeamName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+}
+
+let cachedSquads: Record<string, Player[]> | null = null;
+
 export function generateAllSquads(): Record<string, Player[]> {
+  if (cachedSquads) return cachedSquads;
+
   const map: Record<string, Player[]> = {};
-  for (const t of TEAMS) {
-    map[t.id] = generateSquad(t);
-  }
+  
+  // Inicializamos las listas de todos los equipos registrados en el sistema
+  TEAMS.forEach(t => {
+    map[t.id] = [];
+  });
+  map["free_agent"] = [];
+
+  const dataArray = Array.isArray(playersData) ? playersData : [];
+  
+  dataArray.forEach((p: any, idx: number) => {
+    const rating = p.OVR || p.rating || 70;
+    const age = p.Age || p.age || 24;
+    const position = mapPosition(p.Position || p.position || "MID");
+    const jsonTeamName = p.Team || p.Club || p.team || p.club || "";
+    
+    const teamId = findTeamIdForPlayer(jsonTeamName);
+
+    const playerObj: Player = {
+      id: p.ID ? String(p.ID) : `p-${idx}`,
+      name: p.Name || p.name || "Jugador",
+      position: position,
+      rating: rating,
+      age: age,
+      teamId: map[teamId] ? teamId : "free_agent",
+      marketValue: marketValueFor(rating, age),
+      isReal: true,
+      goals: 0,
+      assists: 0,
+      appearances: 0,
+      injuredUntil: 0,
+      morale: 70,
+      formHistory: [],
+      cardImage: p.card || p.cardImage || p.PhotoUrl || ""
+    };
+
+    if (map[teamId]) {
+      map[teamId].push(playerObj);
+    } else {
+      map["free_agent"].push(playerObj);
+    }
+  });
+
+  // Ordenamos las alineaciones para poner los mejores jugadores arriba y proteger de arrays vacíos
+  const order: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+  TEAMS.forEach(t => {
+    if (map[t.id]) {
+      map[t.id].sort((a, b) => order[a.position] - order[b.position] || b.rating - a.rating);
+      
+      // Si un equipo del JSON viene muy vacío (menos de 11), le inyectamos Agentes Libres para que no rompa la UI
+      while (map[t.id].length < 15 && map["free_agent"].length > 0) {
+        const filler = map["free_agent"].pop();
+        if (filler) {
+          map[t.id].push({ ...filler, teamId: t.id, id: `${t.id}-filler-${filler.id}` });
+        }
+      }
+    }
+  });
+
+  cachedSquads = map;
   return map;
+}
+
+export function generateSquad(team: Team): Player[] {
+  const all = generateAllSquads();
+  return all[team.id] || [];
 }
 
 export function defaultLineup(squad: Player[], unavailable: Set<string> = new Set()): string[] {
   const available = squad.filter((p) => !unavailable.has(p.id));
   const pickN = (pos: Position, n: number) =>
     available.filter((p) => p.position === pos).slice(0, n).map((p) => p.id);
-  return [...pickN("GK", 1), ...pickN("DEF", 4), ...pickN("MID", 3), ...pickN("FWD", 3)];
+  
+  const lineup = [...pickN("GK", 1), ...pickN("DEF", 4), ...pickN("MID", 3), ...pickN("FWD", 3)];
+  
+  // Si falta gente, rellenamos con lo que sea hasta tener 11 IDs
+  if (lineup.length < 11) {
+    const used = new Set(lineup);
+    const rest = available.filter(p => !used.has(p.id)).sort((a, b) => b.rating - a.rating);
+    while (lineup.length < 11 && rest.length > 0) {
+      lineup.push(rest.shift()!.id);
+    }
+  }
+  return lineup;
 }
 
 export function avgForm(p: Player): number {
   if (p.formHistory.length === 0) return 50;
   const avg = p.formHistory.reduce((a, b) => a + b, 0) / p.formHistory.length;
-  return Math.round(avg * 10); // scale 0-10 -> 0-100
+  return Math.round(avg * 10);
 }
