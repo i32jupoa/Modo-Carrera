@@ -16,7 +16,7 @@ import {
   sortStandings,
   Standing,
 } from "@/lib/season";
-import { simulateMatch } from "@/lib/simulation";
+import { simulateMatch, SimResult } from "@/lib/simulation";
 import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE } from "@/lib/cups";
 
 export type SaveGame = {
@@ -83,8 +83,8 @@ export function clearSave() {
 }
 
 export function newSave(myTeamId: string): SaveGame {
-  const team = TEAMS.find((t) => t.id === myTeamId);
-  if (!team) throw new Error("Equipo no encontrado");
+  const team = teamById(myTeamId);
+  if (!team || team.id !== myTeamId) throw new Error("Equipo no encontrado");
 
   playersStoreInit();
   usePlayersStore.getState().resetAllStats();
@@ -132,8 +132,13 @@ export function newSave(myTeamId: string): SaveGame {
 function getStarters(save: SaveGame, teamId: string): Player[] {
   const store = usePlayersStore.getState();
   store.init();
-  const lg = teamById(teamId).league;
-  const md = save.currentMatchday[lg];
+  const team = teamById(teamId);
+  if (!team) {
+    console.warn(`getStarters: Team not found for ID: ${teamId}`);
+    return [];
+  }
+  const lg = team.league;
+  const md = save.currentMatchday[lg] ?? 1;
   return store.getSimXI(teamId, save.lineups[teamId] ?? [], md);
 }
 
@@ -172,8 +177,18 @@ function simulateFixtureInline(save: SaveGame, fixture: Fixture): Fixture {
   if (fixture.result) return fixture;
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
+  if (!home || !away) {
+    console.warn(`simulateFixtureInline: Team not found for fixture ${fixture.id}`, { homeId: fixture.homeId, awayId: fixture.awayId, home, away });
+    // Return fixture with default result to avoid breaking the simulation
+    return { ...fixture, result: { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 } };
+  }
   const homeXI = getStarters(save, fixture.homeId);
   const awayXI = getStarters(save, fixture.awayId);
+  // If either team has no players, return a default result
+  if (homeXI.length === 0 || awayXI.length === 0) {
+    console.warn(`simulateFixtureInline: Empty squad for fixture ${fixture.id}`, { homeId: fixture.homeId, awayId: fixture.awayId, homeXI: homeXI.length, awayXI: awayXI.length });
+    return { ...fixture, result: { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 } };
+  }
   const result = simulateMatch(home, away, homeXI, awayXI);
   return { ...fixture, result };
 }

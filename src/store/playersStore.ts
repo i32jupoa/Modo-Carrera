@@ -557,7 +557,16 @@ export const usePlayersStore = create<PlayersState>()(
           return syncSquadFromRoster(rosterIds);
         }
         const team = teamById(teamId);
-        return PLAYERS_BY_TEAM[team.name] ?? [];
+        if (!team) {
+          console.warn(`Team not found for ID: ${teamId}`);
+          return [];
+        }
+        const squad = PLAYERS_BY_TEAM[team.name];
+        if (!squad) {
+          console.warn(`No players found for team: ${team.name} (ID: ${teamId})`);
+          return [];
+        }
+        return squad;
       },
 
       getSimPlayer: (playerId) => {
@@ -572,8 +581,12 @@ export const usePlayersStore = create<PlayersState>()(
 
       getSimSquad: (teamId) => {
         const posOrder: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
-        return get()
-          .getFcSquadByTeamId(teamId)
+        const squad = get().getFcSquadByTeamId(teamId);
+        if (!squad || squad.length === 0) {
+          console.warn(`Empty squad for team: ${teamId}`);
+          return [];
+        }
+        return squad
           .map((fc) => get().getSimPlayer(String(fc.ID)))
           .filter((p): p is Player => !!p)
           .sort(

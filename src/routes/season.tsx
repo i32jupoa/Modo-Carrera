@@ -6,7 +6,7 @@ import {
   loadSave, SaveGame, saveSave,
 } from "@/lib/store";
 import { Fixture } from "@/lib/season";
-import { LEAGUES, LeagueId, teamById, TEAMS } from "@/data/teams";
+import { LEAGUES, LeagueId, teamById, teamsByLeague } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { usePlayersStore } from "@/store/playersStore";
 
@@ -31,23 +31,34 @@ function SeasonPage() {
   const cupFixtures = getMyUpcomingCupFixtures(save);
   const recent = getMyRecentResults(save, 5);
   const standings = getSortedStandings(save, viewLeague);
-  const myLeagueTotalMatchdays = (TEAMS.filter((t) => t.league === save.myLeague).length - 1) * 2;
+  const myLeagueTotalMatchdays = (teamsByLeague(save.myLeague).length - 1) * 2;
   const seasonComplete = save.currentMatchday[save.myLeague] > myLeagueTotalMatchdays;
   const myPos = standings.findIndex((s) => s.teamId === save.myTeamId) + 1;
 
   function simulateRest() {
     if (!save) return;
-    const next = finishMatchday(save);
-    saveSave(next); setSave(next);
+    try {
+      const next = finishMatchday(save);
+      saveSave(next);
+      setSave(next);
+    } catch (err) {
+      console.error("Error al simular jornada:", err);
+      alert("Error al simular: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   function simulateUntilEnd() {
     if (!save) return;
-    let cur = save; let safety = 0;
-    while (cur.currentMatchday[cur.myLeague] <= myLeagueTotalMatchdays && safety < 100) {
-      cur = finishMatchday(cur); safety++;
+    try {
+      let cur = save; let safety = 0;
+      while (cur.currentMatchday[cur.myLeague] <= myLeagueTotalMatchdays && safety < 100) {
+        cur = finishMatchday(cur); safety++;
+      }
+      saveSave(cur); setSave(cur);
+    } catch (err) {
+      console.error("Error al simular temporada:", err);
+      alert("Error al simular: " + (err instanceof Error ? err.message : String(err)));
     }
-    saveSave(cur); setSave(cur);
   }
 
   return (
