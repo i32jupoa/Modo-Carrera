@@ -1,0 +1,21 @@
+/** Re-exports — use @/store/playersStore for new code. */
+export {
+  usePlayersStore,
+  usePlayersStore as useUserTeam,
+  type FcPlayer,
+  type PlayerStats,
+  type TransferResult,
+  PLAYERS_DB_SIZE,
+  INITIAL_BUDGET,
+  GAME_START_DATE,
+  playersStoreInit,
+  selectTopScorers,
+  selectTopAssisters,
+  selectInjuredPlayers,
+  buildDefaultLineups,
+  mapEaPosition,
+  marketValueEuros,
+  marketValueMillions,
+  formatEuro,
+  POS_LABEL_ES,
+} from "./playersStore";

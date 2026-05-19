@@ -1,0 +1,129 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-pitch: var(--pitch);
+  --color-neon: var(--neon);
+  --color-cyan: var(--cyan);
+  --font-display: var(--font-display);
+}
+
+:root {
+  --radius: 0.75rem;
+  --background: oklch(0.13 0.005 250);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.17 0.008 250);
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.17 0.008 250);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.86 0.22 152); /* neon green #00ff87 */
+  --primary-foreground: oklch(0.13 0.005 250);
+  --secondary: oklch(0.22 0.01 250);
+  --secondary-foreground: oklch(0.98 0 0);
+  --muted: oklch(0.2 0.008 250);
+  --muted-foreground: oklch(0.65 0.01 250);
+  --accent: oklch(0.85 0.16 220); /* cyan #60efff */
+  --accent-foreground: oklch(0.13 0.005 250);
+  --destructive: oklch(0.65 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.25 0.01 250);
+  --input: oklch(0.22 0.01 250);
+  --ring: oklch(0.86 0.22 152);
+  --pitch: oklch(0.32 0.12 145);
+  --neon: oklch(0.86 0.22 152);
+  --cyan: oklch(0.85 0.16 220);
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-display);
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, color-mix(in oklab, var(--color-primary) 12%, transparent), transparent),
+      radial-gradient(ellipse 60% 40% at 90% 100%, color-mix(in oklab, var(--color-accent) 8%, transparent), transparent);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4 {
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+}
+
+@layer utilities {
+  .glow-neon {
+    box-shadow: 0 0 24px -4px color-mix(in oklab, var(--color-primary) 60%, transparent),
+                0 0 1px 1px color-mix(in oklab, var(--color-primary) 40%, transparent);
+  }
+  .glow-cyan {
+    box-shadow: 0 0 20px -4px color-mix(in oklab, var(--color-accent) 60%, transparent);
+  }
+  .text-glow {
+    text-shadow: 0 0 16px color-mix(in oklab, var(--color-primary) 60%, transparent);
+  }
+  .panel {
+    background: linear-gradient(180deg, color-mix(in oklab, var(--color-card) 92%, transparent), color-mix(in oklab, var(--color-background) 95%, transparent));
+    border: 1px solid color-mix(in oklab, var(--color-border) 80%, transparent);
+    border-radius: var(--radius-lg);
+    backdrop-filter: blur(8px);
+  }
+  .panel-glow {
+    background: linear-gradient(180deg, color-mix(in oklab, var(--color-card) 92%, transparent), color-mix(in oklab, var(--color-background) 95%, transparent));
+    border: 1px solid color-mix(in oklab, var(--color-primary) 30%, transparent);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 0 32px -10px color-mix(in oklab, var(--color-primary) 50%, transparent);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-primary) 14%, transparent);
+    color: var(--color-primary);
+    border: 1px solid color-mix(in oklab, var(--color-primary) 30%, transparent);
+  }
+  .scoreline {
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+    letter-spacing: -0.05em;
+  }
+}
