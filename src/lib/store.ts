@@ -1,4 +1,4 @@
-import { LeagueId, TEAMS, teamById } from "@/data/teams";
+import { LeagueId, TEAMS, teamById, LEAGUES } from "@/data/teams";
 import { Player } from "@/data/players";
 import {
   buildDefaultLineups,
@@ -17,7 +17,7 @@ import {
   Standing,
 } from "@/lib/season";
 import { simulateMatch } from "@/lib/simulation";
-import { buildNextRound, CUP_SCHEDULE, initCup, initUCL, UCL_SCHEDULE } from "@/lib/cups";
+import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE } from "@/lib/cups";
 
 export type SaveGame = {
   version: 2;
@@ -39,9 +39,8 @@ export type SaveGame = {
 };
 
 const STORAGE_KEY = "fcsim:save:v2";
-const LEAGUES_LIST: LeagueId[] = ["laliga", "premier", "seriea", "bundesliga", "ligue1"];
-
-export const ALL_LEAGUES = LEAGUES_LIST;
+// Dynamically get all league IDs from the LEAGUES object (supports all 45+ leagues)
+export const ALL_LEAGUES: LeagueId[] = Object.keys(LEAGUES) as LeagueId[];
 
 type LegacySave = SaveGame & { players?: Record<string, Player> };
 
@@ -100,7 +99,9 @@ export function newSave(myTeamId: string): SaveGame {
   const cupFixtures: Record<LeagueId, Fixture[]> = {} as never;
   const cupChampion: Record<LeagueId, string | null> = {} as never;
 
-  for (const lg of LEAGUES_LIST) {
+  // Generate fixtures for ALL leagues dynamically, not just Big 5
+  const allLeagues = Object.keys(LEAGUES) as LeagueId[];
+  for (const lg of allLeagues) {
     fixtures[lg] = generateLeagueFixtures(lg);
     standings[lg] = emptyStandings(lg);
     currentMatchday[lg] = 1;
@@ -237,7 +238,8 @@ export function finishMatchday(save: SaveGame): SaveGame {
   next.currentMatchday[lg] = md + 1;
 
   // 2) Advance all other leagues one matchday
-  for (const other of LEAGUES_LIST) {
+  const allLeagues = Object.keys(save.fixtures) as LeagueId[];
+  for (const other of allLeagues) {
     if (other === lg) continue;
     const omd = next.currentMatchday[other];
     const todays = next.fixtures[other].filter((f) => f.matchday === omd && !f.result);
@@ -252,7 +254,8 @@ export function finishMatchday(save: SaveGame): SaveGame {
   }
 
   // 3) Advance cup rounds whose matchday <= current league matchday
-  for (const cupLg of LEAGUES_LIST) {
+  const cupLeagues = Object.keys(next.cupFixtures) as LeagueId[];
+  for (const cupLg of cupLeagues) {
     advanceCupForLeague(next, cupLg);
   }
   // 4) Advance UCL
@@ -263,11 +266,28 @@ export function finishMatchday(save: SaveGame): SaveGame {
 
 function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
   const list = save.cupFixtures[lg];
+  if (!list || list.length === 0) return; // No cup for this league
+  
   const leagueMd = save.currentMatchday[lg];
-  for (let roundIdx = 0; roundIdx < CUP_SCHEDULE.length; roundIdx++) {
-    const step = CUP_SCHEDULE[roundIdx];
+  
+  // Get unique rounds that exist in this cup and sort them in order
+  const roundOrder = ["R32", "R16", "QF", "SF", "Final"];
+  const existingRounds = [...new Set(list.map(f => f.round).filter((r): r is string => !!r))];
+  const sortedRounds = existingRounds.sort((a, b) => 
+    roundOrder.indexOf(a) - roundOrder.indexOf(b)
+  );
+  
+  // Build dynamic schedule based on existing rounds
+  const dynamicSchedule = sortedRounds.map((round, idx) => {
+    const matchday = round === "Final" ? 30 : round === "SF" ? 22 : round === "QF" ? 12 : round === "R16" ? 6 : 3;
+    return { matchday, round, size: 0 }; // size not used for advancement
+  });
+  
+  for (let roundIdx = 0; roundIdx < dynamicSchedule.length; roundIdx++) {
+    const step = dynamicSchedule[roundIdx];
     const roundFixtures = list.filter((f) => f.round === step.round);
-    if (roundFixtures.length === 0) continue; // not built yet
+    if (roundFixtures.length === 0) continue;
+    
     const allPlayed = roundFixtures.every((f) => f.result);
     if (!allPlayed && leagueMd > step.matchday) {
       // sim unplayed
@@ -275,13 +295,14 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
         if (f.result) continue;
         const sim = simulateFixtureInline(save, f);
         const idx = list.findIndex((x) => x.id === f.id);
-        list[idx] = sim;
+        if (idx >= 0) list[idx] = sim;
         applyMatchToStats(save, sim);
       }
     }
-    const playedAll = list.filter((f) => f.round === step.round).every((f) => f.result);
+    
+    const playedAll = roundFixtures.every((f) => f.result);
     if (playedAll) {
-      const next = CUP_SCHEDULE[roundIdx + 1];
+      const next = dynamicSchedule[roundIdx + 1];
       if (!next) {
         // final winner
         const final = list.find((f) => f.round === "Final");
@@ -293,13 +314,14 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
       }
       const alreadyBuilt = list.some((f) => f.round === next.round);
       if (!alreadyBuilt) {
-        const winners = list
-          .filter((f) => f.round === step.round)
+        const winners = roundFixtures
           .map((f) => {
             if (!f.result) return f.homeId;
             return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
           });
-        const built = buildNextRound("cup", lg, step.round, winners, next, roundIdx + 1);
+        if (!step.round || !next.round) continue;
+        const nextStep = { matchday: next.matchday, round: next.round };
+        const built = buildNextRound("cup", lg, step.round, winners, nextStep, roundIdx + 1);
         list.push(...built);
       }
     }

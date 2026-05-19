@@ -22,10 +22,30 @@ export type Player = {
   cardImage?: string;
 };
 
-function marketValueFor(rating: number, age: number): number {
-  const peak = 1 - Math.abs(age - 26) * 0.06;
-  const base = Math.pow(Math.max(0, rating - 55) / 10, 2.7);
-  return Math.max(0.5, Math.round(base * Math.max(0.25, peak) * 10) / 10);
+function positionCap(pos: string): number {
+  const up = String(pos || "").toUpperCase();
+  if (up === "GK") return 85;
+  if (["CB", "LB", "RB", "LWB", "RWB", "DEF"].includes(up)) return 140;
+  return 200;
+}
+
+function ageMultiplier(age: number): number {
+  if (age <= 20) return 1.0;
+  if (age <= 23) return 0.95;
+  if (age <= 27) return 0.85;
+  if (age <= 30) return 0.65;
+  if (age <= 33) return 0.4;
+  return 0.2;
+}
+
+export function marketValueFor(rating: number, age: number, pos = "MID", teamAvgOvr = 75): number {
+  if (rating < 50) return 0.1;
+  const cap = positionCap(pos);
+  const normalizedOvr = Math.max(0, Math.min(1, (rating - 50) / 45));
+  const base = Math.pow(normalizedOvr, 2.8) * cap;
+  const prestige = 1 + Math.max(0, (teamAvgOvr - 75) / 50) * 0.15;
+  const value = base * ageMultiplier(age) * prestige;
+  return Math.max(0.1, Math.min(cap, Math.round(value * 10) / 10));
 }
 
 function mapPosition(pos: string): Position {
@@ -83,7 +103,7 @@ export function generateAllSquads(): Record<string, Player[]> {
       rating: rating,
       age: age,
       teamId: map[teamId] ? teamId : "free_agent",
-      marketValue: marketValueFor(rating, age),
+      marketValue: marketValueFor(rating, age, p.Position || "MID"),  
       isReal: true,
       goals: 0,
       assists: 0,

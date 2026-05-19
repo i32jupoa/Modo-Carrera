@@ -99,14 +99,51 @@ export function mapEaPosition(pos: string): Position {
   return "MID";
 }
 
-export function marketValueMillions(ovr: number, age: number): number {
-  const peak = 1 - Math.abs(age - 26) * 0.06;
-  const base = Math.pow(Math.max(0, ovr - 55) / 10, 2.7);
-  return Math.max(0.5, Math.round(base * Math.max(0.25, peak) * 10) / 10);
+function _posCap(pos: string): number {
+  const u = pos.toUpperCase();
+  if (u === "GK") return 85;
+  if (["CB", "LB", "RB", "LWB", "RWB", "SW", "LCB", "RCB"].includes(u)) return 140;
+  return 200;
+}
+
+function _ageMult(age: number): number {
+  if (age <= 20) return 1.0;
+  if (age <= 23) return 0.95;
+  if (age <= 27) return 0.85;
+  if (age <= 30) return 0.65;
+  if (age <= 33) return 0.4;
+  return 0.2;
+}
+
+export function marketValueMillions(ovr: number, age: number, pos = "MID", teamAvgOvr = 75): number {
+  if (ovr < 50) return 0.1;
+  const cap = _posCap(pos);
+  const normalizedOvr = Math.max(0, Math.min(1, (ovr - 50) / 45));
+  const base = Math.pow(normalizedOvr, 2.8) * cap;
+  const prestige = 1 + Math.max(0, (teamAvgOvr - 75) / 50) * 0.15;
+  const value = base * _ageMult(age) * prestige;
+  return Math.max(0.1, Math.min(cap, Math.round(value * 10) / 10));
 }
 
 export function marketValueEuros(fc: FcPlayer): number {
-  return Math.round(marketValueMillions(fc.OVR, fc.Age) * 1_000_000);
+  return Math.round(marketValueMillions(fc.OVR, fc.Age, fc.Position) * 1_000_000);
+}
+
+export function teamInitialBudget(avgOvr: number): number {
+  // Piecewise linear interpolation with anchors: 90→160M, 85→125M, 75→35M, 70→13M
+  const anchors: [number, number][] = [[90, 160], [85, 125], [75, 35], [70, 13]];
+  if (avgOvr >= 90) return 160_000_000;
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const [ovrHi, budHi] = anchors[i];
+    const [ovrLo, budLo] = anchors[i + 1];
+    if (avgOvr >= ovrLo) {
+      const t = (avgOvr - ovrLo) / (ovrHi - ovrLo);
+      return Math.round((budLo + t * (budHi - budLo)) * 1_000_000);
+    }
+  }
+  // Below 70: steep drop to floor
+  const below = Math.max(1, 13 - (70 - avgOvr) * 2);
+  return Math.round(below * 1_000_000);
 }
 
 export function formatEuro(amount: number): string {
@@ -135,9 +172,9 @@ function fcToPlayer(
   fc: FcPlayer,
   stats: PlayerStats,
   teamIdOverride?: string,
-): Player | null {
+): Player | undefined {
   const teamId = teamIdOverride ?? TEAM_NAME_TO_ID[fc.Team];
-  if (!teamId) return null;
+  if (!teamId) return undefined;
   const id = String(fc.ID);
   return {
     id,
@@ -146,7 +183,7 @@ function fcToPlayer(
     rating: fc.OVR,
     age: fc.Age,
     teamId,
-    marketValue: marketValueMillions(fc.OVR, fc.Age),
+    marketValue: marketValueMillions(fc.OVR, fc.Age, fc.Position),
     isReal: true,
     goals: stats.goals,
     assists: stats.assists,
@@ -377,13 +414,16 @@ export const usePlayersStore = create<PlayersState>()(
         const defaultSquad = PLAYERS_BY_TEAM[team.name] ?? [];
         const rosterIds = defaultSquad.map((p) => String(p.ID));
         const prev = get();
+        const avgOvr = defaultSquad.length > 0
+          ? Math.round(defaultSquad.reduce((s, p) => s + p.OVR, 0) / defaultSquad.length)
+          : Math.round((team.att + team.mid + team.def) / 3);
         set({
           myTeamId: teamId,
           rosterIds,
           squad: defaultSquad,
           budget:
             opts?.resetBudget || prev.myTeamId !== teamId
-              ? INITIAL_BUDGET
+              ? teamInitialBudget(avgOvr)
               : prev.budget,
         });
       },

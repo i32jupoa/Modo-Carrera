@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { LEAGUES, LeagueId, TEAMS, teamsByLeague, overall } from "@/data/teams";
+import { LEAGUES_BY_COUNTRY, LeagueId, getAllTeams, teamsByLeague, overall } from "@/data/teams";
 import { loadSave, newSave, saveSave, clearSave } from "@/lib/store";
 import { usePlayersStore } from "@/store/playersStore";
 import { TeamBadge } from "@/components/TeamBadge";
@@ -13,6 +13,7 @@ function Index() {
   const navigate = useNavigate();
   const [hasSave, setHasSave] = useState(false);
   const [selectedLeague, setSelectedLeague] = useState<LeagueId>("laliga");
+  const [openCountry, setOpenCountry] = useState<string | null>("España");
   const [hoverTeam, setHoverTeam] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -31,11 +32,17 @@ function Index() {
   function pickTeam(id: string) {
     setLoading(true);
     setTimeout(() => {
-      initPlayers();
-      const s = newSave(id);
-      saveSave(s);
-      setMyTeam(id);
-      navigate({ to: "/season" });
+      try {
+        initPlayers();
+        const s = newSave(id);
+        saveSave(s);
+        setMyTeam(id);
+        navigate({ to: "/season" });
+      } catch (err) {
+        console.error("Failed to start career:", err);
+        setLoading(false);
+        alert("Error al iniciar la carrera. Intenta con otro equipo.");
+      }
     }, 50);
   }
 
@@ -80,23 +87,37 @@ function Index() {
       <section className="max-w-6xl mx-auto px-6 pb-20">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold">Elige tu equipo</h2>
-          <p className="text-xs text-muted-foreground">{TEAMS.length} clubes disponibles</p>
+          <p className="text-xs text-muted-foreground">{getAllTeams().length} clubes disponibles</p>
         </div>
 
-        <div className="flex flex-wrap gap-2 mb-6">
-          {(Object.values(LEAGUES) as { id: LeagueId; name: string; flag: string }[]).map((lg) => (
-            <button
-              key={lg.id}
-              onClick={() => setSelectedLeague(lg.id)}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition border ${
-                selectedLeague === lg.id
-                  ? "bg-primary text-primary-foreground border-primary glow-neon"
-                  : "bg-card text-foreground border-border hover:border-primary/60"
-              }`}
-            >
-              <span className="mr-1.5">{lg.flag}</span>
-              {lg.name}
-            </button>
+        <div className="mb-6 space-y-2">
+          {Object.entries(LEAGUES_BY_COUNTRY).map(([country, leagues]) => (
+            <div key={country} className="rounded-xl border border-border overflow-hidden">
+              <button
+                onClick={() => setOpenCountry(openCountry === country ? null : country)}
+                className="w-full flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/40 transition text-sm font-semibold"
+              >
+                <span>{leagues[0].flag} {country}</span>
+                <span className="text-muted-foreground text-xs">{openCountry === country ? "▲" : "▼"}</span>
+              </button>
+              {openCountry === country && (
+                <div className="flex flex-wrap gap-2 px-4 py-3 bg-secondary/20 border-t border-border">
+                  {leagues.map((lg) => (
+                    <button
+                      key={lg.id}
+                      onClick={() => setSelectedLeague(lg.id as LeagueId)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition border ${
+                        selectedLeague === lg.id
+                          ? "bg-primary text-primary-foreground border-primary glow-neon"
+                          : "bg-card text-foreground border-border hover:border-primary/60"
+                      }`}
+                    >
+                      {lg.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </div>
 

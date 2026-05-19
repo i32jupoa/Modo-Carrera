@@ -1,8 +1,8 @@
-import { LeagueId, TEAMS, teamById, teamsByLeague } from "@/data/teams";
+import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, getAllTeams } from "@/data/teams";
 import { Fixture } from "@/lib/season";
 
 /* ============================================================
- *  NATIONAL CUP  (per league, knockout, 16 teams)
+ *  NATIONAL CUP  (per league, dynamic size: supports 2-32 teams)
  * ============================================================ */
 export const CUP_SCHEDULE: { matchday: number; round: string; size: number }[] = [
   { matchday: 6, round: "R16", size: 16 },
@@ -11,19 +11,54 @@ export const CUP_SCHEDULE: { matchday: number; round: string; size: number }[] =
   { matchday: 30, round: "Final", size: 2 },
 ];
 
+// Generate dynamic cup schedule based on actual bracket size
+export function getCupScheduleForSize(teamCount: number): { matchday: number; round: string; size: number }[] {
+  let rounds: { matchday: number; round: string; size: number }[] = [];
+  if (teamCount >= 32) rounds.push({ matchday: 3, round: "R32", size: 32 });
+  if (teamCount >= 16) rounds.push({ matchday: 6, round: "R16", size: 16 });
+  if (teamCount >= 8) rounds.push({ matchday: 12, round: "QF", size: 8 });
+  if (teamCount >= 4) rounds.push({ matchday: 22, round: "SF", size: 4 });
+  rounds.push({ matchday: 30, round: "Final", size: 2 });
+  return rounds;
+}
+
 export function initCup(league: LeagueId): { fixtures: Fixture[]; participants: string[] } {
   const teams = teamsByLeague(league).slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
-  const sixteen = teams.slice(0, 16);
-  const seeded = seedKnockout(sixteen.map((t) => t.id));
+  
+  // Dynamically determine cup size: use nearest power of 2 (min 2 teams for a cup)
+  const teamCount = teams.length;
+  let cupSize = 16; // default
+  if (teamCount < 4) cupSize = 2;      // 2-team final only (very small leagues)
+  else if (teamCount < 8) cupSize = 4;  // SF + Final
+  else if (teamCount < 16) cupSize = 8; // QF + SF + Final
+  else if (teamCount < 32) cupSize = 16; // R16 + QF + SF + Final
+  else cupSize = 32; // R32 + R16 + QF + SF + Final
+  
+  // Get dynamic schedule for this cup size
+  const schedule = getCupScheduleForSize(cupSize);
+  const firstRound = schedule[0]; // First round of the cup
+  
+  const cupTeams = teams.slice(0, cupSize);
+  const ids = cupTeams.map((t) => t.id);
+  
+  // If odd number, add a bye placeholder that will be filtered out
+  if (ids.length % 2 !== 0) ids.push("__BYE__");
+  
+  const seeded = seedKnockout(ids);
   const fixtures: Fixture[] = [];
+  
   for (let i = 0; i < seeded.length; i += 2) {
+    const home = seeded[i];
+    const away = seeded[i + 1];
+    // Skip bye matches
+    if (home === "__BYE__" || away === "__BYE__") continue;
     fixtures.push({
-      id: `cup-${league}-R16-${i}`, competition: "cup", league,
-      matchday: CUP_SCHEDULE[0].matchday, round: "R16",
-      homeId: seeded[i], awayId: seeded[i + 1],
+      id: `cup-${league}-${firstRound.round}-${i}`, competition: "cup", league,
+      matchday: firstRound.matchday, round: firstRound.round,
+      homeId: home, awayId: away,
     });
   }
-  return { fixtures, participants: sixteen.map((t) => t.id) };
+  return { fixtures, participants: cupTeams.map((t) => t.id) };
 }
 
 /* ============================================================
@@ -71,17 +106,33 @@ export type UCLStanding = {
 
 export function initUCL(): { fixtures: Fixture[]; groups: UCLGroup[]; standings: Record<string, UCLStanding[]> } {
   const ovr = (id: string) => { const t = teamById(id); return t.att + t.mid + t.def; };
-  const pickTop = (lg: LeagueId, n: number) =>
-    teamsByLeague(lg).slice().sort((a, b) => ovr(b.id) - ovr(a.id)).slice(0, n).map((t) => t.id);
-
-  // 32 teams: 7 from LaLiga & Premier, 6 from Serie A/Bundesliga/Ligue 1
-  const pool = [
-    ...pickTop("laliga", 7),
-    ...pickTop("premier", 7),
-    ...pickTop("seriea", 6),
-    ...pickTop("bundesliga", 6),
-    ...pickTop("ligue1", 6),
-  ];
+  
+  // Dynamic UCL pool: get top 4 teams from each European league, then take top 32 overall
+  const europeanLeagues = Object.keys(LEAGUES).filter(lg => {
+    const country = LEAGUES[lg]?.country || "";
+    return ["España", "Inglaterra", "Italia", "Alemania", "Francia", "Portugal", "Países Bajos", 
+            "Turquía", "Bélgica", "Polonia", "Suiza", "Dinamarca", "Suecia", "Noruega", 
+            "Austria", "Escocia", "Rumanía", "Grecia", "Chequia", "Croacia", "Ucrania"].includes(country);
+  }) as LeagueId[];
+  
+  let pool: string[] = [];
+  for (const lg of europeanLeagues) {
+    const top = teamsByLeague(lg).slice().sort((a, b) => ovr(b.id) - ovr(a.id)).slice(0, 4).map(t => t.id);
+    pool.push(...top);
+  }
+  
+  // If not enough teams from European leagues, fill with best overall teams
+  if (pool.length < 32) {
+    const allTeams = getAllTeams().sort((a, b) => ovr(b.id) - ovr(a.id));
+    const existing = new Set(pool);
+    for (const t of allTeams) {
+      if (pool.length >= 32) break;
+      if (!existing.has(t.id)) pool.push(t.id);
+    }
+  }
+  
+  // Trim to 32 and deduplicate
+  pool = pool.slice(0, 32);
 
   // Pot-based seeding: pot 1 = top 8, pot 2 = next 8, etc.
   const sorted = pool.slice().sort((a, b) => ovr(b) - ovr(a));
@@ -191,7 +242,11 @@ export function buildUCLKnockout(groups: UCLGroup[], standings: Record<string, U
 function seedKnockout(ids: string[]): string[] {
   const n = ids.length;
   const out: string[] = [];
-  for (let i = 0; i < n / 2; i++) { out.push(ids[i]); out.push(ids[n - 1 - i]); }
+  // Safe pairing: high seeds vs low seeds
+  for (let i = 0; i < Math.floor(n / 2); i++) { 
+    out.push(ids[i]); 
+    out.push(ids[n - 1 - i]); 
+  }
   return out;
 }
 

@@ -15,17 +15,119 @@ export type Team = {
   color: string; // color base
 };
 
-export const LEAGUES: Record<string, { id: string; name: string; country: string; flag: string }> = {
-  laliga: { id: "laliga", name: "LaLiga", country: "España", flag: "🇪🇸" },
-  premier: { id: "premier", name: "Premier League", country: "Inglaterra", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  seriea: { id: "seriea", name: "Serie A", country: "Italia", flag: "🇮🇹" },
-  bundesliga: { id: "bundesliga", name: "Bundesliga", country: "Alemania", flag: "🇩🇪" },
-  ligue1: { id: "ligue1", name: "Ligue 1", country: "Francia", flag: "🇫🇷" },
+const LEAGUE_TO_COUNTRY: Record<string, { country: string; flag: string }> = {
+  "LALIGA EA SPORTS":    { country: "España",        flag: "🇪🇸" },
+  "LALIGA HYPERMOTION":  { country: "España",        flag: "🇪🇸" },
+  "Premier League":      { country: "Inglaterra",    flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  "EFL Championship":    { country: "Inglaterra",    flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  "EFL League One":      { country: "Inglaterra",    flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  "EFL League Two":      { country: "Inglaterra",    flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  "Serie A Enilive":     { country: "Italia",        flag: "🇮🇹" },
+  "Serie BKT":           { country: "Italia",        flag: "🇮🇹" },
+  // === GERMAN LEAGUES (strictly Germany/Alemania only) ===
+  "Bundesliga":          { country: "Alemania",      flag: "🇩🇪" },
+  "Bundesliga 2":        { country: "Alemania",      flag: "🇩🇪" },
+  "3. Liga":             { country: "Alemania",      flag: "🇩🇪" },
+  // === FRENCH LEAGUES ===
+  "Ligue 1 McDonald's": { country: "Francia",       flag: "🇫🇷" },
+  "Ligue 2 BKT":         { country: "Francia",       flag: "🇫🇷" },
+  "Liga Portugal":       { country: "Portugal",      flag: "🇵🇹" },
+  "Eredivisie":          { country: "Países Bajos",  flag: "🇳🇱" },
+  "Trendyol Süper Lig": { country: "Turquía",       flag: "🇹🇷" },
+  "MLS":                 { country: "EE.UU.",        flag: "🇺🇸" },
+  "LPF":                 { country: "Argentina",     flag: "🇦🇷" },
+  "SUPERLIGA":           { country: "Rumanía",       flag: "🇷🇴" },
+  "Scottish Prem":       { country: "Escocia",       flag: "🏴󠁧󠁢󠁳󠁣󠁴󠁿" },
+  "1A Pro League":       { country: "Bélgica",       flag: "🇧🇪" },
+  "PKO BP Ekstraklasa":  { country: "Polonia",       flag: "🇵🇱" },
+  "Brack Super League":  { country: "Suiza",         flag: "🇨🇭" },
+  "3F Superliga":        { country: "Dinamarca",     flag: "🇩🇰" },
+  "Allsvenskan":         { country: "Suecia",        flag: "🇸🇪" },
+  "Eliteserien":         { country: "Noruega",       flag: "🇳🇴" },
+  "ROSHN Saudi League":  { country: "Arabia Saudí",  flag: "🇸🇦" },
+  "CSL":                 { country: "China",         flag: "🇨🇳" },
+  "K League 1":          { country: "Corea del Sur", flag: "🇰🇷" },
+  "A-League":            { country: "Australia",     flag: "🇦🇺" },
+  "ISL":                 { country: "India",         flag: "🇮🇳" },
+  // === AUSTRIAN LEAGUE (strictly separate from German Bundesliga) ===
+  "Ö. Bundesliga":       { country: "Austria",       flag: "🇦🇹" },
+  // === CONTINENTAL/OTHER ===
+  "Libertadores":        { country: "Sudamérica",    flag: "🌎" },
+  "Sudamericana":        { country: "Sudamérica",    flag: "🌎" },
+  "Finnliiga":           { country: "Finlandia",     flag: "🇫🇮" },
+  "Hellas Liga":         { country: "Grecia",        flag: "🇬🇷" },
+  "Magyar Liga":         { country: "Hungría",       flag: "🇭🇺" },
+  "Česká Liga":          { country: "Chequia",       flag: "🇨🇿" },
+  "Liga Hrvatska":       { country: "Croacia",       flag: "🇭🇷" },
+  "Ukrayina Liha":       { country: "Ucrania",       flag: "🇺🇦" },
+  "United Emirates League": { country: "EAU",        flag: "🇦🇪" },
+  "Liga Chile":          { country: "Chile",         flag: "🇨🇱" },
+  "Liga Cyprus":         { country: "Chipre",        flag: "🇨🇾" },
+  "Liga Azerbaijan":     { country: "Azerbaiyán",    flag: "🇦🇿" },
+  "SSE Airtricity PD":   { country: "Irlanda",       flag: "🇮🇪" },
 };
+
+const LEAGUE_NAME_TO_ID: Record<string, string> = {
+  "LALIGA EA SPORTS":    "laliga",
+  "Premier League":      "premier",
+  "Serie A Enilive":     "seriea",
+  "Bundesliga":          "bundesliga",
+  "Ligue 1 McDonald's": "ligue1",
+  "LALIGA HYPERMOTION":  "laliga2",
+  "EFL Championship":    "championship",
+  "EFL League One":      "leagueone",
+  "EFL League Two":      "leaguetwo",
+  "Serie BKT":           "serieb",
+  "Bundesliga 2":        "bundesliga2",
+  "3. Liga":             "liga3",
+  "Ligue 2 BKT":         "ligue2",
+  "Liga Portugal":       "ligaportugal",
+  "Eredivisie":          "eredivisie",
+  "Scottish Prem":       "scottish",
+  // === AUSTRIAN LEAGUE (strictly separate from German Bundesliga) ===
+  "Ö. Bundesliga":       "austrianbundesliga",
+};
+
+export function leagueIdFromName(leagueName: string): string {
+  return LEAGUE_NAME_TO_ID[leagueName] ?? leagueName.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function extractLeaguesFromJSON(): Record<string, { id: string; name: string; country: string; flag: string }> {
+  const leagues: Record<string, { id: string; name: string; country: string; flag: string }> = {};
+  const dataArray = Array.isArray(playersData) ? playersData : [];
+  const seen = new Set<string>();
+  
+  dataArray.forEach((p: any) => {
+    const leagueName = p.League;
+    if (!leagueName || seen.has(leagueName)) return;
+    seen.add(leagueName);
+    
+    const id = leagueIdFromName(leagueName);
+    const mapping = LEAGUE_TO_COUNTRY[leagueName] || { country: leagueName, flag: "⚽" };
+    
+    leagues[id] = { id, name: leagueName, country: mapping.country, flag: mapping.flag };
+  });
+  
+  return leagues;
+}
+
+export const LEAGUES = extractLeaguesFromJSON();
+
+export type LeagueEntry = { id: string; name: string; country: string; flag: string };
+
+export const LEAGUES_BY_COUNTRY: Record<string, LeagueEntry[]> = Object.values(LEAGUES).reduce(
+  (acc, lg) => {
+    if (!acc[lg.country]) acc[lg.country] = [];
+    acc[lg.country].push(lg);
+    return acc;
+  },
+  {} as Record<string, LeagueEntry[]>,
+);
+
 
 // 1. Cargamos la base estática original de 96 equipos para mantener la compatibilidad de rutas de Lovable
 export const TEAMS: Team[] = [
-  // ===== LALIGA =====
+  // ===== LALIGA EA SPORTS (20 equipos) =====
   { id: "rma", name: "Real Madrid", short: "RMA", city: "Madrid", league: "laliga", att: 92, mid: 90, def: 88, stars: ["Mbappé", "Bellingham", "Vinicius Jr."], color: "#FFFFFF" },
   { id: "bar", name: "FC Barcelona", short: "BAR", city: "Barcelona", league: "laliga", att: 90, mid: 88, def: 84, stars: ["Lamine Yamal", "Pedri", "Lewandowski"], color: "#A50044" },
   { id: "atm", name: "Atlético de Madrid", short: "ATM", city: "Madrid", league: "laliga", att: 85, mid: 84, def: 87, stars: ["Griezmann", "Julián Álvarez", "Oblak"], color: "#CB3524" },
@@ -42,10 +144,34 @@ export const TEAMS: Team[] = [
   { id: "osa", name: "CA Osasuna", short: "OSA", city: "Pamplona", league: "laliga", att: 71, mid: 72, def: 73, stars: ["Budimir"], color: "#D91A21" },
   { id: "get", name: "Getafe CF", short: "GET", city: "Getafe", league: "laliga", att: 70, mid: 71, def: 74, stars: ["Mayoral"], color: "#005999" },
   { id: "ala", name: "D. Alavés", short: "ALA", city: "Vitoria", league: "laliga", att: 68, mid: 69, def: 71, stars: ["Kike García"], color: "#0F2F8C" },
-  { id: "lpa", name: "UD Las Palmas", short: "LPA", city: "Las Palmas", league: "laliga", att: 70, mid: 71, def: 70, stars: ["Munir"], color: "#FFE000" },
+  { id: "elc", name: "Elche CF", short: "ELC", city: "Elche", league: "laliga", att: 69, mid: 70, def: 70, stars: ["Mourad"], color: "#007FC4" },
   { id: "esp", name: "RCD Espanyol", short: "ESP", city: "Barcelona", league: "laliga", att: 69, mid: 70, def: 70, stars: ["Joselu"], color: "#007FC4" },
   { id: "lev", name: "Levante UD", short: "LEV", city: "Valencia", league: "laliga", att: 68, mid: 69, def: 69, stars: ["Brugué"], color: "#B5142C" },
-  { id: "ovi", name: "R. Oviedo", short: "OVI", city: "Oviedo", league: "laliga", att: 65, mid: 66, def: 68, stars: ["Santi Cazorla"], color: "#0058A3" },
+  { id: "ovi", name: "R. Oviedo", short: "OVI", city: "Oviedo", league: "laliga", att: 71, mid: 72, def: 72, stars: ["Santi Cazorla"], color: "#0058A3" },
+
+  // ===== LALIGA HYPERMOTION (22 equipos según JSON) =====
+  { id: "lpa", name: "UD Las Palmas", short: "LPA", city: "Las Palmas", league: "laliga2", att: 70, mid: 71, def: 70, stars: ["Munir"], color: "#FFE000" },
+  { id: "leg", name: "CD Leganés", short: "LEG", city: "Leganés", league: "laliga2", att: 66, mid: 67, def: 68, stars: ["Sergi González"], color: "#0043A8" },
+  { id: "racing", name: "R. Racing Club", short: "RAC", city: "Santander", league: "laliga2", att: 65, mid: 66, def: 65, stars: ["Marco Camus"], color: "#008747" },
+  { id: "hue", name: "SD Huesca", short: "HUE", city: "Huesca", league: "laliga2", att: 64, mid: 65, def: 65, stars: ["Joaquín"], color: "#8B2942" },
+  { id: "mir", name: "CD Mirandés", short: "MIR", city: "Miranda", league: "laliga2", att: 63, mid: 64, def: 64, stars: ["Carlos Martín"], color: "#EC1C24" },
+  { id: "alb", name: "Albacete BP", short: "ALB", city: "Albacete", league: "laliga2", att: 63, mid: 64, def: 63, stars: ["Juanma"], color: "#000000" },
+  { id: "burgos", name: "Burgos CF", short: "BUR", city: "Burgos", league: "laliga2", att: 62, mid: 63, def: 65, stars: ["Curro Sánchez"], color: "#FFFFFF" },
+  { id: "eibar", name: "SD Eibar", short: "EIB", city: "Eibar", league: "laliga2", att: 67, mid: 67, def: 67, stars: ["Ager Aketxe"], color: "#A21218" },
+  { id: "grana", name: "Granada CF", short: "GRA", city: "Granada", league: "laliga2", att: 66, mid: 66, def: 66, stars: ["Lucas Boyé"], color: "#C8102E" },
+  { id: "sporting", name: "R. Sporting", short: "SPO", city: "Gijón", league: "laliga2", att: 66, mid: 67, def: 66, stars: ["Gaspar"], color: "#FF0000" },
+  { id: "zaragoza", name: "Real Zaragoza", short: "ZAR", city: "Zaragoza", league: "laliga2", att: 65, mid: 66, def: 65, stars: ["Francho Serrano"], color: "#FFFFFF" },
+  { id: "castellon", name: "CD Castellón", short: "CAS", city: "Castellón", league: "laliga2", att: 62, mid: 63, def: 63, stars: ["Marc Mateu"], color: "#FFD700" },
+  { id: "depor", name: "RC Deportivo", short: "DEP", city: "La Coruña", league: "laliga2", att: 64, mid: 65, def: 65, stars: ["Yeremay"], color: "#FFFFFF" },
+  { id: "malaga", name: "Málaga CF", short: "MLG", city: "Málaga", league: "laliga2", att: 63, mid: 64, def: 64, stars: ["Antonio Cordero"], color: "#7CFC00" },
+  { id: "cordoba", name: "Córdoba CF", short: "COR", city: "Córdoba", league: "laliga2", att: 64, mid: 65, def: 64, stars: ["Antonio Casas"], color: "#FFFFFF" },
+  { id: "valladolid", name: "R. Valladolid CF", short: "VAD", city: "Valladolid", league: "laliga2", att: 65, mid: 66, def: 65, stars: ["Víctor Meseguer"], color: "#7B1F3E" },
+  { id: "cadiz", name: "Cádiz CF", short: "CAD", city: "Cádiz", league: "laliga2", att: 65, mid: 66, def: 66, stars: ["Chris Ramos"], color: "#FDF200" },
+  { id: "almeria", name: "UD Almería", short: "ALM", city: "Almería", league: "laliga2", att: 66, mid: 66, def: 65, stars: ["Luis Suárez"], color: "#FF0000" },
+  { id: "ceuta", name: "AD Ceuta FC", short: "CEU", city: "Ceuta", league: "laliga2", att: 62, mid: 63, def: 63, stars: ["Rodri"], color: "#0000FF" },
+  { id: "andorra", name: "FC Andorra", short: "AND", city: "Andorra", league: "laliga2", att: 63, mid: 64, def: 64, stars: ["Martí"], color: "#800080" },
+  { id: "cultural", name: "Cultural Leonesa", short: "CUL", city: "León", league: "laliga2", att: 62, mid: 63, def: 63, stars: ["Dioni"], color: "#008000" },
+  { id: "rsb", name: "Real Sociedad B", short: "RSB", city: "San Sebastián", league: "laliga2", att: 61, mid: 62, def: 62, stars: ["Jon Ander"], color: "#0067B1" },
 
   // ===== PREMIER LEAGUE =====
   { id: "mci", name: "Manchester City", short: "MCI", city: "Manchester", league: "premier", att: 92, mid: 91, def: 88, stars: ["Haaland", "De Bruyne", "Rodri"], color: "#6CABDD" },
@@ -132,31 +258,82 @@ export const TEAMS: Team[] = [
   { id: "loi", name: "FC Lorient", short: "FCL", city: "Lorient", league: "ligue1", att: 70, mid: 70, def: 70, stars: ["Bamba"], color: "#FF7F00" }
 ];
 
+function generateDynamicTeams(): Team[] {
+  const dataArray = Array.isArray(playersData) ? playersData : [];
+  const staticTeamNames = new Set(TEAMS.map(t => t.name.toLowerCase().replace(/[^a-z0-9]/g, '')));
+  const staticLeagues = new Set(TEAMS.map(t => t.league));
+  
+  const teamMap = new Map<string, { name: string; league: string; players: any[] }>();
+  
+  dataArray.forEach((p: any) => {
+    const leagueName = p.League;
+    if (!leagueName) return;
+    const leagueId = leagueIdFromName(leagueName);
+    if (staticLeagues.has(leagueId)) return;
+    
+    const teamName = p.Team;
+    if (!teamName) return;
+    const teamKey = teamName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (staticTeamNames.has(teamKey)) return;
+    
+    if (!teamMap.has(teamKey)) {
+      teamMap.set(teamKey, { name: teamName, league: leagueId, players: [] });
+    }
+    teamMap.get(teamKey)!.players.push(p);
+  });
+  
+  const COLORS = ["#1a1a2e","#16213e","#0f3460","#533483","#e94560","#2c3e50","#8e44ad","#2980b9","#27ae60","#e67e22","#c0392b","#16a085"];
+  
+  return Array.from(teamMap.entries()).map(([key, data], i) => {
+    const sorted = data.players.slice().sort((a, b) => (b.OVR || 70) - (a.OVR || 70));
+    const top3 = sorted.slice(0, 3).map((p: any) => p.Name || "?");
+    const avgOvr = sorted.length > 0 ? Math.round(sorted.reduce((s: number, p: any) => s + (p.OVR || 70), 0) / sorted.length) : 70;
+    const att = Math.round(sorted.filter((p: any) => ["ST","CF","LW","RW","LF","RF","CAM"].includes(p.Position)).reduce((s: number, p: any, _: number, arr: any[]) => s + (p.OVR || 70) / arr.length, 0)) || avgOvr;
+    const def = Math.round(sorted.filter((p: any) => ["CB","LB","RB","LWB","RWB"].includes(p.Position)).reduce((s: number, p: any, _: number, arr: any[]) => s + (p.OVR || 70) / arr.length, 0)) || avgOvr;
+    const mid = Math.round(sorted.filter((p: any) => ["CM","CDM","CAM","LM","RM"].includes(p.Position)).reduce((s: number, p: any, _: number, arr: any[]) => s + (p.OVR || 70) / arr.length, 0)) || avgOvr;
+    return {
+      id: key,
+      name: data.name,
+      short: data.name.replace(/[^A-Z]/g, '').slice(0, 3) || data.name.slice(0, 3).toUpperCase(),
+      city: data.name,
+      league: data.league,
+      att: att || avgOvr,
+      mid: mid || avgOvr,
+      def: def || avgOvr,
+      stars: top3,
+      color: COLORS[i % COLORS.length],
+    };
+  });
+}
+
+let _dynamicTeams: Team[] | null = null;
+function getDynamicTeams(): Team[] {
+  if (!_dynamicTeams) _dynamicTeams = generateDynamicTeams();
+  return _dynamicTeams;
+}
+
+export function getAllTeams(): Team[] {
+  return [...TEAMS, ...getDynamicTeams()];
+}
+
 // 3. SÚPER RED DE SEGURIDAD: Esta función JAMÁS lanzará un "Team not found"
 export function teamById(id: string): Team {
-  if (!id) return TEAMS.find(t => t.id === "liv") || TEAMS[0];
+  const all = getAllTeams();
+  if (!id) return all.find(t => t.id === "liv") || all[0];
   
   const query = id.toLowerCase().trim();
-
-  // Caso A: Coincidencia exacta (ej: "liv", "rma", "psg")
-  let found = TEAMS.find(t => t.id.toLowerCase() === query);
+  let found = all.find(t => t.id.toLowerCase() === query);
   if (found) return found;
-
-  // Caso B: Coincidencia por aproximación de ID (si Lovable mandó "liverpool" en vez de "liv")
-  found = TEAMS.find(t => query.includes(t.id.toLowerCase()) || t.id.toLowerCase().includes(query));
+  found = all.find(t => query.includes(t.id.toLowerCase()) || t.id.toLowerCase().includes(query));
   if (found) return found;
-
-  // Caso C: Coincidencia por nombre limpio del club (ej: "fcbarcelona")
   const cleanQuery = query.replace(/[^a-z0-9]/g, '');
-  found = TEAMS.find(t => t.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanQuery);
+  found = all.find(t => t.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanQuery);
   if (found) return found;
-
-  // Caso D: Fallback de seguridad absoluta. Devuelve el Liverpool en vez de romper la pantalla.
-  return TEAMS.find(t => t.id === "liv") || TEAMS[0];
+  return all.find(t => t.id === "liv") || all[0];
 }
 
 export function teamsByLeague(league: LeagueId): Team[] {
-  return TEAMS.filter((t) => t.league === league);
+  return getAllTeams().filter((t) => t.league === league);
 }
 
 export function overall(t: Team): number {
