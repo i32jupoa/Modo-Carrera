@@ -14,7 +14,7 @@ import playersData from "@/data/players.json";
 
 import { TEAMS, teamById, type LeagueId } from "@/data/teams";
 
-import { defaultLineup, type Player, type Position } from "@/data/players";
+import { defaultLineup, type Player, type Position, marketValueFor } from "@/data/players";
 
 import {
 
@@ -200,62 +200,15 @@ export function mapEaPosition(pos: string): Position {
 
 
 
-function _posCap(pos: string): number {
-
-  const u = pos.toUpperCase();
-
-  if (u === "GK") return 85;
-
-  if (["CB", "LB", "RB", "LWB", "RWB", "SW", "LCB", "RCB"].includes(u)) return 140;
-
-  return 200;
-
+// Sophisticated market valuation using the new Transfermarkt-style system
+export function marketValueMillions(ovr: number, age: number, pos = "MID", teamId = "", leagueId = "", isStar = false): number {
+  const result = marketValueFor(ovr, age, pos, teamId, leagueId, 0, 0, 0, isStar);
+  return result.value;
 }
 
-
-
-function _ageMult(age: number): number {
-
-  if (age <= 20) return 1.0;
-
-  if (age <= 23) return 0.95;
-
-  if (age <= 27) return 0.85;
-
-  if (age <= 30) return 0.65;
-
-  if (age <= 33) return 0.4;
-
-  return 0.2;
-
-}
-
-
-
-export function marketValueMillions(ovr: number, age: number, pos = "MID", teamAvgOvr = 75): number {
-
-  if (ovr < 50) return 0.1;
-
-  const cap = _posCap(pos);
-
-  const normalizedOvr = Math.max(0, Math.min(1, (ovr - 50) / 45));
-
-  const base = Math.pow(normalizedOvr, 2.8) * cap;
-
-  const prestige = 1 + Math.max(0, (teamAvgOvr - 75) / 50) * 0.15;
-
-  const value = base * _ageMult(age) * prestige;
-
-  return Math.max(0.1, Math.min(cap, Math.round(value * 10) / 10));
-
-}
-
-
-
-export function marketValueEuros(fc: FcPlayer): number {
-
-  return Math.round(marketValueMillions(fc.OVR, fc.Age, fc.Position) * 1_000_000);
-
+export function marketValueEuros(fc: FcPlayer, teamId = "", leagueId = ""): number {
+  const isStar = fc.OVR >= 82;
+  return Math.round(marketValueMillions(fc.OVR, fc.Age, fc.Position, teamId, leagueId, isStar) * 1_000_000);
 }
 
 
