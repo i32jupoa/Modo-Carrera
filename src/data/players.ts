@@ -76,12 +76,12 @@ function ageMultiplier(age: number, pos: string): number {
   // 36+: -20% (x0.80) - Very veteran
   let ageMult: number;
   if (age <= 17) ageMult = 1.1;
-  else if (age <= 19) ageMult = 1.4;
-  else if (age <= 21) ageMult = 1.45;
-  else if (age <= 23) ageMult = 1.55;
-  else if (age <= 26) ageMult = 1.6;  // Peak: 24-26
+  else if (age <= 19) ageMult = 1.5;
+  else if (age <= 21) ageMult = 1.6;
+  else if (age <= 23) ageMult = 1.6;
+  else if (age <= 26) ageMult = 1.64;  // Peak: 24-26
   else if (age <= 29) ageMult = 1.45;
-  else if (age <= 31) ageMult = 1.10;
+  else if (age <= 31) ageMult = 1.15;
   else if (age <= 33) ageMult = 1.00;
   else if (age <= 35) ageMult = 0.7;
   else ageMult = 0.4;  // 36+
@@ -202,10 +202,40 @@ export function marketValueFor(
   // Calculate final value with all multipliers + 25% global discount
   let finalValue = baseValue * ageMult * posMult * teamMult * GLOBAL_DISCOUNT;
   
+  // Progressive discounts based on rating (OVR)
+  // ≤82: -40%, ≤80: -20% adicional, ≤75: -20% adicional, ≤70: -20% adicional
+  if (rating <= 85) {
+    finalValue *= 0.75;  // -20%
+  }
+  if (rating <= 82) {
+    finalValue *= 0.65;  // -35%
+  }
+  if (rating <= 80) {
+    finalValue *= 0.60;  // -20% adicional
+  }
+  if (rating <= 75) {
+    finalValue *= 0.60;  // -20% adicional
+  }
+  if (rating <= 70) {
+    finalValue *= 0.60;  // -20% adicional
+  }
+  
   // Special rule: Players with <=85 OVR and 28+ years get -40% (except goalkeepers)
   const isGoalkeeper = pos === "GK" || pos === "POR";
   if (rating <= 85 && age >= 28 && !isGoalkeeper) {
     finalValue *= 0.60;  // 40% discount
+  }
+  
+  // 40% discount for players NOT in top 5 leagues (laliga, premier, seriea, bundesliga, ligue1)
+  const top5Leagues = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
+  if (!top5Leagues.has(leagueId)) {
+    finalValue *= 0.60;  // -40% for non-top-5 leagues
+  }
+  
+  // 25% discount for players in top 5 leagues with team average <= 80
+  if (top5Leagues.has(leagueId) && teamAvgRating <= 80) {
+    finalValue *= 0.85;  // -15% for weaker teams in top leagues
+    console.log(`DISCOUNT APPLIED: ${pos} player in ${leagueId}, teamAvg: ${teamAvgRating}`);
   }
   
   // Cap at global maximum (already reduced by 25%)
@@ -238,9 +268,30 @@ export function marketValueFor(
   else if (MID_LEAGUES.has(leagueId)) reasons.push("liga media");
   else reasons.push("liga menor");
   
-  // Add explanation for 40% discount
+  // Add explanation for rating discounts
+  if (rating <= 70) {
+    reasons.push("media baja ≤70 (descuento máximo)");
+  } else if (rating <= 75) {
+    reasons.push("media baja ≤75 (descuento alto)");
+  } else if (rating <= 80) {
+    reasons.push("media ≤80 (descuento medio)");
+  } else if (rating <= 82) {
+    reasons.push("media ≤82 (descuento 40%)");
+  }
+  
+  // Add explanation for 40% discount on veterans
   if (rating <= 85 && age >= 28 && !isGoalkeeper) {
-    reasons.push("jugador veterano con media baja (descuento 40%)");
+    reasons.push("jugador veterano con media baja (descuento adicional)");
+  }
+  
+  // Add explanation for non-top-5 league discount
+  if (!top5Leagues.has(leagueId)) {
+    reasons.push("liga fuera top 5 (descuento 40%)");
+  }
+  
+  // Add explanation for weak top-5 team discount
+  if (top5Leagues.has(leagueId) && teamAvgRating <= 80) {
+    reasons.push("equipo débil en top 5 (descuento 25%)");
   }
   
   const explanation = reasons.length > 0 
@@ -282,7 +333,7 @@ function findTeamIdForPlayer(jsonTeamName: string): string {
 }
 
 let cachedSquads: Record<string, Player[]> | null = null;
-const CACHE_VERSION = 8; // Added 40% discount for <85 OVR and 28+ years (except GKs)
+const CACHE_VERSION = 14; // Added discount logging for debugging
 
 export function invalidateSquadsCache() {
   cachedSquads = null;
@@ -303,6 +354,23 @@ export function generateAllSquads(): Record<string, Player[]> {
 
   const dataArray = Array.isArray(playersData) ? playersData : [];
   
+  // PASO 1: Primero recolectamos todos los jugadores sin calcular valores de mercado
+  const rawPlayers: Array<{
+    id: string;
+    name: string;
+    position: Position;
+    rating: number;
+    age: number;
+    teamId: string;
+    leagueId: string;
+    pos: string;
+    cardImage: string;
+    rawData: any;
+    idx: number;
+  }> = [];
+  
+  const teamRatings: Record<string, number[]> = {};
+  
   dataArray.forEach((p: any, idx: number) => {
     const rating = p.OVR || p.rating || 70;
     const age = p.Age || p.age || 24;
@@ -310,29 +378,61 @@ export function generateAllSquads(): Record<string, Player[]> {
     const jsonTeamName = p.Team || p.Club || p.team || p.club || "";
     
     const teamId = findTeamIdForPlayer(jsonTeamName);
-
-    // Calculate market value with percentage-based system
-    // Get team average rating (default 75 if not known)
-    const teamAvgRating = 75; // Will be updated later when team data is available
+    const team = teamById(teamId);
+    const leagueId = team?.league || "";
+    const effectiveTeamId = map[teamId] ? teamId : "free_agent";
+    
+    // Acumulamos ratings por equipo para calcular la media
+    if (!teamRatings[effectiveTeamId]) {
+      teamRatings[effectiveTeamId] = [];
+    }
+    teamRatings[effectiveTeamId].push(rating);
+    
+    rawPlayers.push({
+      id: p.ID ? String(p.ID) : `p-${idx}`,
+      name: p.Name || p.name || "Jugador",
+      position,
+      rating,
+      age,
+      teamId: effectiveTeamId,
+      leagueId,
+      pos: p.Position || "MID",
+      cardImage: p.card || p.cardImage || p.PhotoUrl || "",
+      rawData: p,
+      idx
+    });
+  });
+  
+  // Calculamos la media de cada equipo
+  const teamAverages: Record<string, number> = {};
+  for (const [tid, ratings] of Object.entries(teamRatings)) {
+    teamAverages[tid] = ratings.length > 0 
+      ? Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length)
+      : 75;
+  }
+  
+  // PASO 2: Calculamos valores de mercado con las medias de equipo reales
+  rawPlayers.forEach((rp) => {
+    const teamAvgRating = teamAverages[rp.teamId] || 75;
     
     const marketValueResult = marketValueFor(
-      rating, 
-      age, 
-      p.Position || "MID",
-      teamId,
-      "", // league will be resolved later
-      0, 0, 0, // no stats yet
-      false, // isStar - not used in new system
+      rp.rating, 
+      rp.age, 
+      rp.pos,
+      rp.teamId,
+      rp.leagueId,
+      0, 0, 0,
+      false,
       teamAvgRating
     );
     
     const playerObj: Player = {
-      id: p.ID ? String(p.ID) : `p-${idx}`,
-      name: p.Name || p.name || "Jugador",
-      position: position,
-      rating: rating,
-      age: age,
-      teamId: map[teamId] ? teamId : "free_agent",
+      id: rp.id,
+      name: rp.name,
+      position: rp.position,
+      rating: rp.rating,
+      age: rp.age,
+      teamId: rp.teamId,
       marketValue: marketValueResult.value,
       isReal: true,
       goals: 0,
@@ -341,11 +441,11 @@ export function generateAllSquads(): Record<string, Player[]> {
       injuredUntil: 0,
       morale: 70,
       formHistory: [],
-      cardImage: p.card || p.cardImage || p.PhotoUrl || ""
+      cardImage: rp.cardImage
     };
 
-    if (map[teamId]) {
-      map[teamId].push(playerObj);
+    if (map[rp.teamId]) {
+      map[rp.teamId].push(playerObj);
     } else {
       map["free_agent"].push(playerObj);
     }

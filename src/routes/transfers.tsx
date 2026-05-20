@@ -21,6 +21,7 @@ import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 // Filter option types
 type PriceBracket = "all" | "0-5" | "5-15" | "15-40" | "40-80" | "80+";
 type AgeBracket = "all" | "16-20" | "21-25" | "26-30" | "31-35" | "36+";
+type RatingBracket = "all" | "<70" | "70-75" | "75-80" | "80-85" | "85-90" | "90+";
 type SortField = "ovr" | "age" | "price";
 type SortOrder = "asc" | "desc";
 
@@ -30,6 +31,7 @@ interface FilterState {
   league: LeagueId | "all";
   team: string;
   age: AgeBracket;
+  rating: RatingBracket;
   sortField: SortField;
   sortOrder: SortOrder;
 }
@@ -64,6 +66,16 @@ const AGE_OPTIONS: FilterOption<AgeBracket>[] = [
   { value: "26-30", label: "26 - 30 años" },
   { value: "31-35", label: "31 - 35 años" },
   { value: "36+", label: "36+ años" },
+];
+
+const RATING_OPTIONS: FilterOption<RatingBracket>[] = [
+  { value: "all", label: "Media: Todas" },
+  { value: "<70", label: "Menos de 70" },
+  { value: "70-75", label: "70 - 75" },
+  { value: "75-80", label: "75 - 80" },
+  { value: "80-85", label: "80 - 85" },
+  { value: "85-90", label: "85 - 90" },
+  { value: "90+", label: "90+" },
 ];
 
 const SORT_FIELD_OPTIONS: FilterOption<SortField>[] = [
@@ -104,7 +116,8 @@ function applyFilters(
   players: FcPlayer[],
   filters: FilterState,
   inRoster: Set<string>,
-  searchQuery: string
+  searchQuery: string,
+  teamAverages: Record<string, number>
 ): FcPlayer[] {
   return players.filter((p) => {
     const id = String(p.ID);
@@ -121,7 +134,8 @@ function applyFilters(
 
     // Price filter
     if (filters.price !== "all") {
-      const cost = marketValueEuros(p);
+      const teamAvg = teamAverages[p.Team] || 75;
+      const cost = marketValueEuros(p, "", "", teamAvg);
       const costM = cost / 1_000_000;
       switch (filters.price) {
         case "0-5":
@@ -172,6 +186,30 @@ function applyFilters(
       }
     }
 
+    // Rating filter
+    if (filters.rating !== "all") {
+      switch (filters.rating) {
+        case "<70":
+          if (p.OVR >= 70) return false;
+          break;
+        case "70-75":
+          if (p.OVR < 70 || p.OVR > 75) return false;
+          break;
+        case "75-80":
+          if (p.OVR < 75 || p.OVR > 80) return false;
+          break;
+        case "80-85":
+          if (p.OVR < 80 || p.OVR > 85) return false;
+          break;
+        case "85-90":
+          if (p.OVR < 85 || p.OVR > 90) return false;
+          break;
+        case "90+":
+          if (p.OVR < 90) return false;
+          break;
+      }
+    }
+
     return true;
   });
 }
@@ -203,6 +241,28 @@ function TransfersPage() {
   const [search, setSearch] = useState("");
   const [showFilters, setShowFilters] = useState(false);
 
+  // Calculate team averages for proper discount application
+  const teamAverages = useMemo(() => {
+    const ratings: Record<string, number[]> = {};
+    
+    for (const p of rawPlayers) {
+      const teamName = p.Team;
+      if (!ratings[teamName]) {
+        ratings[teamName] = [];
+      }
+      ratings[teamName].push(p.OVR);
+    }
+    
+    const averages: Record<string, number> = {};
+    for (const [team, teamRatings] of Object.entries(ratings)) {
+      averages[team] = teamRatings.length > 0 
+        ? Math.round(teamRatings.reduce((a, b) => a + b, 0) / teamRatings.length)
+        : 75;
+    }
+    
+    return averages;
+  }, [rawPlayers]);
+
   // Advanced filter states
   const [filters, setFilters] = useState<FilterState>({
     position: "all",
@@ -210,6 +270,7 @@ function TransfersPage() {
     league: "all",
     team: "all",
     age: "all",
+    rating: "all",
     sortField: "ovr",
     sortOrder: "desc",
   });
@@ -238,7 +299,8 @@ function TransfersPage() {
       allPlayers,
       filters,
       inRoster,
-      search.trim().toLowerCase()
+      search.trim().toLowerCase(),
+      teamAverages
     );
     
     // Apply sorting based on selected field and order
@@ -252,14 +314,16 @@ function TransfersPage() {
           comparison = a.Age - b.Age;
           break;
         case "price":
-          comparison = marketValueEuros(a) - marketValueEuros(b);
+          const avgA = teamAverages[a.Team] || 75;
+          const avgB = teamAverages[b.Team] || 75;
+          comparison = marketValueEuros(a, "", "", avgA) - marketValueEuros(b, "", "", avgB);
           break;
       }
       // Apply sort order
       return filters.sortOrder === "asc" ? comparison : -comparison;
     });
     
-    return sorted.slice(0, 100);
+    return sorted.slice(0, 250);
   }, [ready, filters, inRoster, search, rawPlayers]);
 
   const activeFiltersCount = useMemo(() => {
@@ -269,6 +333,7 @@ function TransfersPage() {
       if (key === "league") return val !== "all";
       if (key === "team") return val !== "all";
       if (key === "age") return val !== "all";
+      if (key === "rating") return val !== "all";
       return false;
     }).length;
   }, [filters]);
@@ -286,6 +351,7 @@ function TransfersPage() {
       league: "all",
       team: "all",
       age: "all",
+      rating: "all",
       sortField: "ovr",
       sortOrder: "desc",
     });
@@ -322,7 +388,7 @@ function TransfersPage() {
         <div>
           <h1 className="text-2xl font-black">Mercado de fichajes</h1>
           <p className="text-xs text-muted-foreground mt-1">
-            Hasta 100 resultados · jugadores fuera de tu plantilla
+            Hasta 250 resultados · jugadores fuera de tu plantilla
             {myTeam ? ` · ${myTeam.name}` : ""}
           </p>
         </div>
@@ -452,6 +518,29 @@ function TransfersPage() {
               </select>
             </div>
 
+            {/* Rating Filter */}
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Media
+              </label>
+              <select
+                value={filters.rating}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    rating: e.target.value as RatingBracket,
+                  }))
+                }
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {RATING_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* League Filter */}
             <div className="space-y-1.5">
               <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
@@ -558,6 +647,8 @@ function TransfersPage() {
                         ?.label,
                     filters.age !== "all" &&
                       AGE_OPTIONS.find((o) => o.value === filters.age)?.label,
+                    filters.rating !== "all" &&
+                      RATING_OPTIONS.find((o) => o.value === filters.rating)?.label,
                     filters.league !== "all" &&
                       leagueOptions.find((o) => o.value === filters.league)
                         ?.label,
@@ -581,7 +672,8 @@ function TransfersPage() {
           {players.map((p) => {
             const id = String(p.ID);
             const pos = mapEaPosition(p.Position);
-            const cost = marketValueEuros(p);
+            const teamAvg = teamAverages[p.Team] || 75;
+            const cost = marketValueEuros(p, "", "", teamAvg);
             const clubId = TEAM_NAME_TO_ID[p.Team];
             const club = clubId ? teamById(clubId) : null;
             const canAfford = budget >= cost;

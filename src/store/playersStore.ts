@@ -12,7 +12,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 import playersData from "@/data/players.json";
 
-import { TEAMS, teamById, type LeagueId } from "@/data/teams";
+import { TEAMS, teamById, leagueIdFromName, type LeagueId } from "@/data/teams";
 
 import { defaultLineup, type Player, type Position, marketValueFor } from "@/data/players";
 
@@ -201,14 +201,16 @@ export function mapEaPosition(pos: string): Position {
 
 
 // Sophisticated market valuation using the new Transfermarkt-style system
-export function marketValueMillions(ovr: number, age: number, pos = "MID", teamId = "", leagueId = "", isStar = false): number {
-  const result = marketValueFor(ovr, age, pos, teamId, leagueId, 0, 0, 0, isStar);
+export function marketValueMillions(ovr: number, age: number, pos = "MID", teamId = "", leagueId = "", isStar = false, teamAvgRating = 75): number {
+  const result = marketValueFor(ovr, age, pos, teamId, leagueId, 0, 0, 0, isStar, teamAvgRating);
   return result.value;
 }
 
-export function marketValueEuros(fc: FcPlayer, teamId = "", leagueId = ""): number {
+export function marketValueEuros(fc: FcPlayer, teamId = "", leagueId = "", teamAvgRating = 75): number {
   const isStar = fc.OVR >= 82;
-  return Math.round(marketValueMillions(fc.OVR, fc.Age, fc.Position, teamId, leagueId, isStar) * 1_000_000);
+  // If leagueId not provided, get it from player's league name
+  const effectiveLeagueId = leagueId || leagueIdFromName(fc.League || "");
+  return Math.round(marketValueMillions(fc.OVR, fc.Age, fc.Position, teamId, effectiveLeagueId, isStar, teamAvgRating) * 1_000_000);
 }
 
 
