@@ -445,6 +445,8 @@ type PlayersState = {
 
   }) => FcPlayer[];
 
+  getRawPlayers: () => FcPlayer[];
+
 
 
   getFcSquadByTeamId: (teamId: string) => FcPlayer[];
@@ -1038,6 +1040,8 @@ export const usePlayersStore = create<PlayersState>()(
         return out.slice(0, limit);
 
       },
+
+      getRawPlayers: () => RAW_PLAYERS,
 
 
 

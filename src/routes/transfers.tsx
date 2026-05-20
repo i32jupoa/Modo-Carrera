@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
-import { TEAMS, teamById } from "@/data/teams";
+import { TEAMS, teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
 import type { Position } from "@/data/players";
 import { TeamBadge } from "@/components/TeamBadge";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
@@ -11,25 +11,157 @@ import {
   marketValueEuros,
   mapEaPosition,
   POS_LABEL_ES,
+  FcPlayer,
 } from "@/store/playersStore";
 import { toast } from "sonner";
-import { Search, Wallet, UserPlus } from "lucide-react";
+import { Search, Wallet, UserPlus, Filter, X } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
+
+// Filter option types
+type PriceBracket = "all" | "0-5" | "5-15" | "15-40" | "40-80" | "80+";
+type AgeBracket = "all" | "16-20" | "21-25" | "26-30" | "31+";
+
+interface FilterState {
+  position: Position | "all";
+  price: PriceBracket;
+  league: LeagueId | "all";
+  team: string;
+  age: AgeBracket;
+}
+
+interface FilterOption<T> {
+  value: T;
+  label: string;
+}
+
+// Filter definitions with explicit category labels
+const POSITION_OPTIONS: FilterOption<Position | "all">[] = [
+  { value: "all", label: "Posición: Todas" },
+  { value: "GK", label: "Portero" },
+  { value: "DEF", label: "Defensa" },
+  { value: "MID", label: "Mediocentro" },
+  { value: "FWD", label: "Delantero" },
+];
+
+const PRICE_OPTIONS: FilterOption<PriceBracket>[] = [
+  { value: "all", label: "Precio: Todos" },
+  { value: "0-5", label: "0 - 5M" },
+  { value: "5-15", label: "5M - 15M" },
+  { value: "15-40", label: "15M - 40M" },
+  { value: "40-80", label: "40M - 80M" },
+  { value: "80+", label: "80M+" },
+];
+
+const AGE_OPTIONS: FilterOption<AgeBracket>[] = [
+  { value: "all", label: "Edad: Todas" },
+  { value: "16-20", label: "16 - 20 años" },
+  { value: "21-25", label: "21 - 25 años" },
+  { value: "26-30", label: "26 - 30 años" },
+  { value: "31+", label: "31+ años" },
+];
+
+// Helper to get all leagues with proper names and flags
+function getLeaguesFromTeams(): FilterOption<LeagueId | "all">[] {
+  const allLeagues = Object.values(LEAGUES);
+  return [
+    { value: "all", label: "Liga: Todas" },
+    ...allLeagues.map((l) => ({
+      value: l.id as LeagueId,
+      label: `${l.flag} ${l.name}`,
+    })),
+  ];
+}
+
+// Helper to get teams for a specific league
+function getTeamsForLeague(league: LeagueId | "all"): FilterOption<string>[] {
+  if (league === "all") return [{ value: "all", label: "Equipo: Todos" }];
+  const teams = getAllTeams().filter((t) => t.league === league);
+  return [
+    { value: "all", label: "Equipo: Todos" },
+    ...teams.map((t) => ({ value: t.name, label: t.name })),
+  ];
+}
+
+// Combined filter logic
+function applyFilters(
+  players: FcPlayer[],
+  filters: FilterState,
+  inRoster: Set<string>,
+  searchQuery: string
+): FcPlayer[] {
+  return players.filter((p) => {
+    const id = String(p.ID);
+
+    // Exclude players in user's roster
+    if (inRoster.has(id)) return false;
+
+    // Search query filter
+    if (searchQuery && !p.Name.toLowerCase().includes(searchQuery)) return false;
+
+    // Position filter
+    if (filters.position !== "all" && mapEaPosition(p.Position) !== filters.position)
+      return false;
+
+    // Price filter
+    if (filters.price !== "all") {
+      const cost = marketValueEuros(p);
+      const costM = cost / 1_000_000;
+      switch (filters.price) {
+        case "0-5":
+          if (costM > 5) return false;
+          break;
+        case "5-15":
+          if (costM < 5 || costM > 15) return false;
+          break;
+        case "15-40":
+          if (costM < 15 || costM > 40) return false;
+          break;
+        case "40-80":
+          if (costM < 40 || costM > 80) return false;
+          break;
+        case "80+":
+          if (costM < 80) return false;
+          break;
+      }
+    }
+
+    // League filter - use player's League field converted to ID
+    if (filters.league !== "all") {
+      const playerLeagueId = leagueIdFromName(p.League);
+      if (playerLeagueId !== filters.league) return false;
+    }
+
+    // Team filter
+    if (filters.team !== "all" && p.Team !== filters.team) return false;
+
+    // Age filter
+    if (filters.age !== "all") {
+      switch (filters.age) {
+        case "16-20":
+          if (p.Age < 16 || p.Age > 20) return false;
+          break;
+        case "21-25":
+          if (p.Age < 21 || p.Age > 25) return false;
+          break;
+        case "26-30":
+          if (p.Age < 26 || p.Age > 30) return false;
+          break;
+        case "31+":
+          if (p.Age < 31) return false;
+          break;
+      }
+    }
+
+    return true;
+  });
+}
 
 export const Route = createFileRoute("/transfers")({ component: TransfersPage });
 
 const TEAM_NAME_TO_ID: Record<string, string> = Object.fromEntries(
   TEAMS.map((t) => [t.name, t.id]),
 );
-
-const POS_FILTERS: { value: Position | "all"; label: string }[] = [
-  { value: "all", label: "Todas" },
-  { value: "GK", label: "POR" },
-  { value: "DEF", label: "DEF" },
-  { value: "MID", label: "MED" },
-  { value: "FWD", label: "DEL" },
-];
 
 function ovrBadgeClass(ovr: number): string {
   if (ovr >= 85) return "bg-green-500/20 text-green-300 border-green-500/40";
@@ -42,14 +174,29 @@ function TransfersPage() {
   const { loading, ready } = usePlayersReady();
   const budget = usePlayersStore((s) => s.budget);
   const buyPlayer = usePlayersStore((s) => s.buyPlayer);
-  const searchMarket = usePlayersStore((s) => s.searchMarket);
+  const rawPlayers = usePlayersStore((s) => s.getRawPlayers?.() || []);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
+  const rosterIds = usePlayersStore((s) => s.rosterIds);
   const { isMarketOpen } = useTransferMarket();
 
   const [save, setSave] = useState<SaveGame | null>(null);
   const [search, setSearch] = useState("");
-  const [posFilter, setPosFilter] = useState<Position | "all">("all");
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Advanced filter states
+  const [filters, setFilters] = useState<FilterState>({
+    position: "all",
+    price: "all",
+    league: "all",
+    team: "all",
+    age: "all",
+  });
+
+  // Reset team filter when league changes
+  useEffect(() => {
+    setFilters((prev) => ({ ...prev, team: "all" }));
+  }, [filters.league]);
 
   useEffect(() => {
     const s = loadSave();
@@ -61,10 +208,47 @@ function TransfersPage() {
     if (!myTeamId) setMyTeam(s.myTeamId);
   }, [navigate, myTeamId, setMyTeam]);
 
+  const inRoster = useMemo(() => new Set(rosterIds), [rosterIds]);
+
   const players = useMemo(() => {
     if (!ready) return [];
-    return searchMarket({ search, position: posFilter, limit: 100 });
-  }, [ready, search, posFilter, searchMarket, budget]);
+    const allPlayers = rawPlayers.length > 0 ? rawPlayers : [];
+    const filtered = applyFilters(
+      allPlayers,
+      filters,
+      inRoster,
+      search.trim().toLowerCase()
+    );
+    return filtered.sort((a, b) => b.OVR - a.OVR).slice(0, 100);
+  }, [ready, filters, inRoster, search, rawPlayers]);
+
+  const activeFiltersCount = useMemo(() => {
+    return Object.entries(filters).filter(([key, val]) => {
+      if (key === "position") return val !== "all";
+      if (key === "price") return val !== "all";
+      if (key === "league") return val !== "all";
+      if (key === "team") return val !== "all";
+      if (key === "age") return val !== "all";
+      return false;
+    }).length;
+  }, [filters]);
+
+  const leagueOptions = useMemo(() => getLeaguesFromTeams(), []);
+  const teamOptions = useMemo(
+    () => getTeamsForLeague(filters.league),
+    [filters.league]
+  );
+
+  const resetFilters = () => {
+    setFilters({
+      position: "all",
+      price: "all",
+      league: "all",
+      team: "all",
+      age: "all",
+    });
+    setSearch("");
+  };
 
   function handleBuy(playerId: string, name: string, cost: number) {
     const result = buyPlayer(playerId, cost);
@@ -109,6 +293,7 @@ function TransfersPage() {
         </div>
       </div>
 
+      {/* Search and Filter Toggle */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -119,23 +304,185 @@ function TransfersPage() {
             className="w-full bg-secondary border border-border rounded-lg pl-9 pr-3 py-2 text-sm"
           />
         </div>
-        <div className="flex flex-wrap gap-2">
-          {POS_FILTERS.map((f) => (
-            <button
-              key={f.value}
-              type="button"
-              onClick={() => setPosFilter(f.value)}
-              className={`px-3 py-2 rounded-lg text-xs font-bold border transition ${
-                posFilter === f.value
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card border-border hover:border-primary/50"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowFilters(!showFilters)}
+          className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold border transition ${
+            showFilters || activeFiltersCount > 0
+              ? "bg-primary text-primary-foreground border-primary"
+              : "bg-card border-border hover:border-primary/50"
+          }`}
+        >
+          <Filter className="h-4 w-4" />
+          Filtros
+          {activeFiltersCount > 0 && (
+            <span className="ml-1 bg-primary-foreground text-primary rounded-full px-2 py-0.5 text-xs">
+              {activeFiltersCount}
+            </span>
+          )}
+        </button>
       </div>
+
+      {/* Advanced Filters Panel */}
+      {showFilters && (
+        <div className="panel p-4 mb-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold">Filtros avanzados</h3>
+            {activeFiltersCount > 0 && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1"
+              >
+                <X className="h-3 w-3" />
+                Limpiar filtros
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {/* Position Filter */}
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Posición
+              </label>
+              <select
+                value={filters.position}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    position: e.target.value as Position | "all",
+                  }))
+                }
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {POSITION_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Price Filter */}
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Precio
+              </label>
+              <select
+                value={filters.price}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    price: e.target.value as PriceBracket,
+                  }))
+                }
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {PRICE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Age Filter */}
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Edad
+              </label>
+              <select
+                value={filters.age}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    age: e.target.value as AgeBracket,
+                  }))
+                }
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {AGE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* League Filter */}
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Liga
+              </label>
+              <select
+                value={filters.league}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    league: e.target.value as LeagueId | "all",
+                  }))
+                }
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {leagueOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Team Filter - Disabled when no league selected */}
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Equipo
+              </label>
+              <select
+                value={filters.team}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, team: e.target.value }))
+                }
+                disabled={filters.league === "all"}
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {teamOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Active Filters Summary */}
+          {activeFiltersCount > 0 && (
+            <div className="pt-2 border-t border-border/40">
+              <p className="text-xs text-muted-foreground">
+                Filtros activos:{" "}
+                <span className="text-foreground">
+                  {[
+                    filters.position !== "all" &&
+                      POSITION_OPTIONS.find((o) => o.value === filters.position)
+                        ?.label,
+                    filters.price !== "all" &&
+                      PRICE_OPTIONS.find((o) => o.value === filters.price)
+                        ?.label,
+                    filters.age !== "all" &&
+                      AGE_OPTIONS.find((o) => o.value === filters.age)?.label,
+                    filters.league !== "all" &&
+                      leagueOptions.find((o) => o.value === filters.league)
+                        ?.label,
+                    filters.team !== "all" && filters.team,
+                  ]
+                    .filter(Boolean)
+                    .join(" • ")}
+                </span>
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {players.length === 0 ? (
         <div className="panel p-10 text-center text-sm text-muted-foreground">
