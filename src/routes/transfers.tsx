@@ -20,7 +20,9 @@ import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 
 // Filter option types
 type PriceBracket = "all" | "0-5" | "5-15" | "15-40" | "40-80" | "80+";
-type AgeBracket = "all" | "16-20" | "21-25" | "26-30" | "31+";
+type AgeBracket = "all" | "16-20" | "21-25" | "26-30" | "31-35" | "36+";
+type SortField = "ovr" | "age" | "price";
+type SortOrder = "asc" | "desc";
 
 interface FilterState {
   position: Position | "all";
@@ -28,6 +30,8 @@ interface FilterState {
   league: LeagueId | "all";
   team: string;
   age: AgeBracket;
+  sortField: SortField;
+  sortOrder: SortOrder;
 }
 
 interface FilterOption<T> {
@@ -58,7 +62,19 @@ const AGE_OPTIONS: FilterOption<AgeBracket>[] = [
   { value: "16-20", label: "16 - 20 años" },
   { value: "21-25", label: "21 - 25 años" },
   { value: "26-30", label: "26 - 30 años" },
-  { value: "31+", label: "31+ años" },
+  { value: "31-35", label: "31 - 35 años" },
+  { value: "36+", label: "36+ años" },
+];
+
+const SORT_FIELD_OPTIONS: FilterOption<SortField>[] = [
+  { value: "ovr", label: "Ordenar por: Valoración" },
+  { value: "age", label: "Ordenar por: Edad" },
+  { value: "price", label: "Ordenar por: Precio" },
+];
+
+const SORT_ORDER_OPTIONS: FilterOption<SortOrder>[] = [
+  { value: "desc", label: "↓ Descendente" },
+  { value: "asc", label: "↑ Ascendente" },
 ];
 
 // Helper to get all leagues with proper names and flags
@@ -147,8 +163,11 @@ function applyFilters(
         case "26-30":
           if (p.Age < 26 || p.Age > 30) return false;
           break;
-        case "31+":
-          if (p.Age < 31) return false;
+        case "31-35":
+          if (p.Age < 31 || p.Age > 35) return false;
+          break;
+        case "36+":
+          if (p.Age < 36) return false;
           break;
       }
     }
@@ -191,6 +210,8 @@ function TransfersPage() {
     league: "all",
     team: "all",
     age: "all",
+    sortField: "ovr",
+    sortOrder: "desc",
   });
 
   // Reset team filter when league changes
@@ -219,7 +240,26 @@ function TransfersPage() {
       inRoster,
       search.trim().toLowerCase()
     );
-    return filtered.sort((a, b) => b.OVR - a.OVR).slice(0, 100);
+    
+    // Apply sorting based on selected field and order
+    const sorted = filtered.sort((a, b) => {
+      let comparison = 0;
+      switch (filters.sortField) {
+        case "ovr":
+          comparison = a.OVR - b.OVR;
+          break;
+        case "age":
+          comparison = a.Age - b.Age;
+          break;
+        case "price":
+          comparison = marketValueEuros(a) - marketValueEuros(b);
+          break;
+      }
+      // Apply sort order
+      return filters.sortOrder === "asc" ? comparison : -comparison;
+    });
+    
+    return sorted.slice(0, 100);
   }, [ready, filters, inRoster, search, rawPlayers]);
 
   const activeFiltersCount = useMemo(() => {
@@ -246,6 +286,8 @@ function TransfersPage() {
       league: "all",
       team: "all",
       age: "all",
+      sortField: "ovr",
+      sortOrder: "desc",
     });
     setSearch("");
   };
@@ -447,6 +489,52 @@ function TransfersPage() {
                 className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {teamOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Sort Field */}
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Ordenar por
+              </label>
+              <select
+                value={filters.sortField}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    sortField: e.target.value as SortField,
+                  }))
+                }
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {SORT_FIELD_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Sort Order */}
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Dirección
+              </label>
+              <select
+                value={filters.sortOrder}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    sortOrder: e.target.value as SortOrder,
+                  }))
+                }
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {SORT_ORDER_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
