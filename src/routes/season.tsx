@@ -103,7 +103,7 @@ function SeasonPage() {
       {/* Header strip */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <TeamBadge team={myTeam} size={44} />
+          <TeamLogo teamName={myTeam.name} leagueName={getLeagueName(myTeam.league)} size={44} />
           <div>
             <h1 className="text-2xl font-black leading-tight">{myTeam.name}</h1>
             <p className="text-xs text-muted-foreground">
@@ -279,7 +279,7 @@ function CupFixtureRow({ fixture, myId }: { fixture: Fixture; myId: string }) {
     <div className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
       <span className="text-xs font-bold w-24 text-accent">{compLabel}</span>
       <span className="text-xs font-bold text-muted-foreground w-10">{fixture.round}</span>
-      <TeamBadge team={opponent} size={24} />
+      <TeamLogo teamName={opponent.name} leagueName={getLeagueName(opponent.league)} size={24} />
       <span className="text-sm flex-1 truncate">
         {isHome ? "vs" : "@"} {opponent.name}
       </span>
@@ -304,11 +304,11 @@ function ResultRow({ fixture, myId }: { fixture: Fixture; myId: string }) {
       <div className={`w-6 h-6 rounded grid place-items-center text-xs font-black ${outcomeColor}`}>
         {outcome}
       </div>
-      <TeamBadge team={home} size={24} />
+      <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
       <span className="text-sm flex-1 truncate">{home.short}</span>
       <span className="scoreline text-lg">{r.homeGoals} <span className="text-muted-foreground">-</span> {r.awayGoals}</span>
       <span className="text-sm flex-1 truncate text-right">{away.short}</span>
-      <TeamBadge team={away} size={24} />
+      <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
     </div>
   );
 }
@@ -332,7 +332,7 @@ function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof 
           >
             <span className="text-muted-foreground">{i + 1}</span>
             <span className="flex items-center gap-1.5 min-w-0">
-              <TeamBadge team={t} size={18} />
+              <TeamLogo teamName={t.name} leagueName={getLeagueName(t.league)} size={18} />
               <span className="truncate">{t.short}</span>
             </span>
             <span className="text-center scoreline">{s.played}</span>
@@ -375,9 +375,15 @@ function OtherLeaguesPanel({ save }: { save: SaveGame }) {
                     const a = teamById(f.awayId);
                     return (
                       <div key={f.id} className="flex items-center gap-2 text-xs">
-                        <span className="flex-1 text-right truncate">{h.short}</span>
+                        <span className="flex-1 text-right truncate flex items-center justify-end gap-1.5">
+                          {h.short}
+                          <TeamLogo teamName={h.name} leagueName={getLeagueName(h.league)} size={16} />
+                        </span>
                         <span className="scoreline font-bold">{f.result!.homeGoals}-{f.result!.awayGoals}</span>
-                        <span className="flex-1 truncate">{a.short}</span>
+                        <span className="flex-1 truncate flex items-center gap-1.5">
+                          <TeamLogo teamName={a.name} leagueName={getLeagueName(a.league)} size={16} />
+                          {a.short}
+                        </span>
                       </div>
                     );
                   })}

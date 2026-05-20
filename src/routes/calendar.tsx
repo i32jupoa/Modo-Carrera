@@ -5,6 +5,13 @@ import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
 import { usePlayersStore } from "@/store/playersStore";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
+import { TeamLogo } from "@/components/TeamLogo";
+import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 import {
   isSummerTransferWindow,
   isWinterTransferWindow,
@@ -214,15 +221,20 @@ function CalendarPage() {
                 <div className="flex flex-col gap-0.5 w-full mt-auto">
                   {inMonth &&
                     myTeamId &&
-                    dayFixtures.map((f) => (
-                      <span
-                        key={f.id}
-                        className="block w-full text-[0.5rem] leading-tight font-bold text-center px-0.5 py-0.5 rounded bg-red-600/90 text-white truncate"
-                        title={`Jornada ${f.matchday}`}
-                      >
-                        Liga: vs {opponentLabel(f, myTeamId)}
-                      </span>
-                    ))}
+                    dayFixtures.map((f) => {
+                      const opponentId = f.homeTeam === myTeamId ? f.awayTeam : f.homeTeam;
+                      const opponent = teamById(opponentId);
+                      return (
+                        <div
+                          key={f.id}
+                          className="flex items-center justify-center gap-1 w-full text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded bg-red-600/90 text-white"
+                          title={`Jornada ${f.matchday}`}
+                        >
+                          <span>J{f.matchday}</span>
+                          <TeamLogo teamName={opponent.name} leagueName={getLeagueName(opponent.league)} size={14} />
+                        </div>
+                      );
+                    })}
                   {windowHighlight && inMonth && !isToday && dayFixtures.length === 0 && (
                     <span
                       className="mx-auto w-1.5 h-1.5 rounded-full bg-emerald-400/80"
