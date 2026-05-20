@@ -7,7 +7,7 @@ import {
   simulateScheduleFixture,
   unplayedOnDate,
 } from "@/lib/matchEngine";
-import { teamById, overall } from "@/data/teams";
+import { teamById, overall, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import {
@@ -18,6 +18,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Zap } from "lucide-react";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 
 export function MatchDayModal() {
   const navigate = useNavigate();
@@ -128,7 +133,7 @@ export function MatchDayModal() {
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,hsl(var(--primary)/0.12),transparent_70%)] pointer-events-none" />
             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 relative">
               <div className="flex flex-col items-center gap-2 text-center">
-                <TeamLogo teamName={myTeam.name} leagueName={myTeam.league} size={56} />
+                <TeamLogo teamName={myTeam.name} leagueName={getLeagueName(myTeam.league)} size={56} />
                 <span className="font-black text-sm leading-tight">{myTeam.name}</span>
                 <span className="text-[0.65rem] text-muted-foreground uppercase tracking-wider">
                   OVR {overall(myTeam)}
@@ -149,7 +154,7 @@ export function MatchDayModal() {
                 )}
               </div>
               <div className="flex flex-col items-center gap-2 text-center">
-                <TeamLogo teamName={rival.name} leagueName={rival.league} size={56} />
+                <TeamLogo teamName={rival.name} leagueName={getLeagueName(rival.league)} size={56} />
                 <span className="font-black text-sm leading-tight">{rival.name}</span>
                 <span className="text-[0.65rem] text-muted-foreground uppercase tracking-wider">
                   OVR {overall(rival)}

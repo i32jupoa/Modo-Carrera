@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate, useLocation } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { loadSave, SaveGame, saveSave, setLineup, setFormation } from "@/lib/store";
 import { teamById } from "@/data/teams";
@@ -22,7 +22,7 @@ const POSITION_ROLES: Record<string, PositionRole> = {
   // Goalkeepers
   "GK": "GK",
   "POR": "GK",
-  
+
   // Defenders
   "CB": "DEF",
   "RB": "DEF",
@@ -34,7 +34,8 @@ const POSITION_ROLES: Record<string, PositionRole> = {
   "LI": "DEF",
   "CAD": "DEF",
   "CAI": "DEF",
-  
+  "DEF": "DEF",
+
   // Midfielders
   "CDM": "MID",
   "CM": "MID",
@@ -46,7 +47,8 @@ const POSITION_ROLES: Record<string, PositionRole> = {
   "MCO": "MID",
   "MD": "MID",
   "MI": "MID",
-  
+  "MID": "MID",
+
   // Attackers
   "ST": "ATT",
   "CF": "ATT",
@@ -56,6 +58,8 @@ const POSITION_ROLES: Record<string, PositionRole> = {
   "SD": "ATT",
   "ED": "ATT",
   "EI": "ATT",
+  "FWD": "ATT",
+  "ATT": "ATT",
 };
 
 function getPlayerRole(position: string): PositionRole | null {
@@ -70,7 +74,7 @@ function canPlayInRole(playerPosition: string, nodeRole: PositionRole): boolean 
 
 function LineupPage() {
   const navigate = useNavigate();
-  const location = useLocation();
+  const search = useSearch({ from: "/lineup" });
   const { ready, loading } = usePlayersReady();
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
   const [save, setSave] = useState<SaveGame | null>(null);
@@ -81,7 +85,7 @@ function LineupPage() {
   const [injuryProcessed, setInjuryProcessed] = useState(false);
 
   // Check if user navigated from "Temporada" screen
-  const fromSeason = (location.state as any)?.from === "season";
+  const fromSeason = (search as any)?.from === "season";
 
   useEffect(() => {
     const s = loadSave();
@@ -144,7 +148,7 @@ function LineupPage() {
   }, [save, squad, startingXI, bench, leagueMd, injuryProcessed]);
 
   const startingPlayers = useMemo(() => {
-    return startingXI.map(id => squad.find(p => p.id === id)).filter(Boolean);
+    return startingXI.map(id => squad.find(p => p.id === id));
   }, [startingXI, squad]);
 
   const benchPlayers = useMemo(() => {
@@ -157,15 +161,20 @@ function LineupPage() {
   const playerPositions = useMemo(() => {
     const positions: { [key: string]: any } = {};
     const positionKeys = Object.keys(FORMATION_COORDINATES[selectedFormation]);
-    
-    startingPlayers.forEach((player, index) => {
-      if (index < positionKeys.length) {
-        positions[positionKeys[index]] = player;
+
+    // Map directly from startingXI to position keys
+    // startingXI maintains the correct order as built in handleFormationChange
+    positionKeys.forEach((posKey, index) => {
+      if (index < startingXI.length && startingXI[index]) {
+        const player = squad.find(p => p.id === startingXI[index]);
+        if (player) {
+          positions[posKey] = player;
+        }
       }
     });
-    
+
     return positions;
-  }, [startingPlayers, selectedFormation]);
+  }, [startingXI, selectedFormation, squad]);
 
   // Get the position key for a player on the pitch
   function getPlayerPositionKey(playerId: string): string | null {
@@ -294,16 +303,16 @@ function LineupPage() {
   function handlePitchToBenchSwap(pitchPlayerId: string, benchPlayerId: string) {
     const pitchPlayer = squad.find(p => p.id === pitchPlayerId);
     const benchPlayer = squad.find(p => p.id === benchPlayerId);
-    
+
     if (!pitchPlayer || !benchPlayer) return;
-    
+
     // Get the position key where the pitch player is currently
     const posKey = getPlayerPositionKey(pitchPlayerId);
     if (!posKey) return;
-    
+
     // Get the role required for this position
     const requiredRole = getPositionRoleForKey(posKey);
-    
+
     // Validate that the bench player can play in this role
     if (!canPlayInRole(benchPlayer.position, requiredRole)) {
       const roleNames: Record<PositionRole, string> = {
@@ -318,26 +327,75 @@ function LineupPage() {
       setSelectedPlayer(null);
       return;
     }
-    
+
     // Perform the swap
     setStartingXI(prev => prev.map(id => id === pitchPlayerId ? benchPlayerId : id));
     setBench(prev => prev.map(id => id === benchPlayerId ? pitchPlayerId : id));
     setSelectedPlayer(null);
   }
 
-  function handleBenchToPitchSwap(benchPlayerId: string, pitchPlayerId: string) {
+  function handlePitchToEmptySwap(playerId: string, emptyPosKey: string) {
+    const player = squad.find(p => p.id === playerId);
+    if (!player) return;
+
+    // Get the role required for the empty position
+    const requiredRole = getPositionRoleForKey(emptyPosKey);
+
+    // Validate that the player can play in this role
+    if (!canPlayInRole(player.position, requiredRole)) {
+      const roleNames: Record<PositionRole, string> = {
+        GK: "portero",
+        DEF: "defensa",
+        MID: "centrocampista",
+        ATT: "delantero",
+      };
+      toast.error(
+        `Posición inválida: ${player.name} es ${player.position} y no puede jugar de ${roleNames[requiredRole]}.`
+      );
+      setSelectedPlayer(null);
+      return;
+    }
+
+    // Get the current position key of the player
+    const currentPlayerPosKey = getPlayerPositionKey(playerId);
+    if (!currentPlayerPosKey) return;
+
+    // Get the indices of both positions
+    const emptyPosIndex = formationPositions.indexOf(emptyPosKey);
+    const currentPlayerPosIndex = formationPositions.indexOf(currentPlayerPosKey);
+
+    // Swap: move player to empty position, make old position empty
+    setStartingXI(prev => {
+      const newStarting = [...prev];
+      newStarting[emptyPosIndex] = playerId;
+      newStarting[currentPlayerPosIndex] = "";
+      return newStarting;
+    });
+
+    setSelectedPlayer(null);
+  }
+
+  function handleBenchToPitchSwap(benchPlayerId: string, pitchTarget: string) {
     const benchPlayer = squad.find(p => p.id === benchPlayerId);
-    const pitchPlayer = squad.find(p => p.id === pitchPlayerId);
-    
-    if (!benchPlayer || !pitchPlayer) return;
-    
-    // Get the position key where the pitch player is currently
-    const posKey = getPlayerPositionKey(pitchPlayerId);
+    if (!benchPlayer) return;
+
+    // Check if pitchTarget is a position key (empty position) or a player ID
+    const isPositionKey = formationPositions.includes(pitchTarget);
+    let posKey: string | null = null;
+
+    if (isPositionKey) {
+      // Empty position - use the position key directly
+      posKey = pitchTarget;
+    } else {
+      // Existing player - get their position key
+      posKey = getPlayerPositionKey(pitchTarget);
+    }
+
     if (!posKey) return;
-    
+
     // Get the role required for this position
     const requiredRole = getPositionRoleForKey(posKey);
-    
+
     // Validate that the bench player can play in this role
     if (!canPlayInRole(benchPlayer.position, requiredRole)) {
       const roleNames: Record<PositionRole, string> = {
@@ -352,15 +410,34 @@ function LineupPage() {
       setSelectedPlayer(null);
       return;
     }
-    
-    // Perform the swap
-    setStartingXI(prev => prev.map(id => id === pitchPlayerId ? benchPlayerId : id));
-    setBench(prev => prev.map(id => id === benchPlayerId ? pitchPlayerId : id));
+
+    if (isPositionKey) {
+      // Empty position - add player to startingXI at the correct index
+      const posIndex = formationPositions.indexOf(posKey);
+      const newStartingXI = [...startingXI];
+      
+      // Ensure array is long enough
+      while (newStartingXI.length < posIndex) {
+        newStartingXI.push("");
+      }
+      
+      newStartingXI[posIndex] = benchPlayerId;
+      setStartingXI(newStartingXI);
+      setBench(prev => prev.filter(id => id !== benchPlayerId));
+    } else {
+      // Swap with existing player
+      setStartingXI(prev => prev.map(id => id === pitchTarget ? benchPlayerId : id));
+      setBench(prev => prev.map(id => id === benchPlayerId ? pitchTarget : id));
+    }
     setSelectedPlayer(null);
   }
 
   function save_() {
-    if (!save || startingXI.length !== 11) return;
+    if (!save) return;
+    if (startingXI.length !== 11) {
+      toast.error(`Debes tener 11 jugadores titulares. Actualmente tienes ${startingXI.length}.`);
+      return;
+    }
     const next = setLineup(save, save.myTeamId, startingXI);
     const nextWithFormation = setFormation(next, save.myTeamId, selectedFormation);
     saveSave(nextWithFormation);
@@ -382,6 +459,48 @@ function LineupPage() {
 
   function handleFormationChange(newFormation: FormationName) {
     setSelectedFormation(newFormation);
+
+    const newFormationPositions = getFormationPositions(newFormation);
+
+    // Group current starting players by role
+    const playersByRole: Record<PositionRole, string[]> = {
+      GK: [],
+      DEF: [],
+      MID: [],
+      ATT: [],
+    };
+
+    startingXI.forEach((playerId) => {
+      const player = squad.find(p => p.id === playerId);
+      if (player) {
+        const role = getPlayerRole(player.position);
+        if (role) {
+          playersByRole[role].push(playerId);
+        }
+      }
+    });
+
+    // Fill new formation positions in the order they appear in the formation
+    const newStartingXI: string[] = [];
+
+    newFormationPositions.forEach((posKey) => {
+      const requiredRole = FORMATION_COORDINATES[newFormation][posKey]?.role;
+
+      if (requiredRole && playersByRole[requiredRole].length > 0) {
+        newStartingXI.push(playersByRole[requiredRole].shift()!);
+      } else {
+        // No player available for this position - leave empty
+        newStartingXI.push("");
+      }
+    });
+
+    // Keep empty strings to maintain correct position mapping
+    // The rendering will handle empty strings as empty positions
+    // Array must have exactly 11 elements
+    setStartingXI(newStartingXI);
+    const newBench = squad.filter((p) => !newStartingXI.includes(p.id)).map((p) => p.id);
+    setBench(newBench);
+
     // Auto-save formation to global state
     if (save) {
       const next = setFormation(save, save.myTeamId, newFormation);
@@ -460,23 +579,54 @@ function LineupPage() {
             {formationPositions.map((posKey, index) => {
               const player = playerPositions[posKey];
               const coords = FORMATION_COORDINATES[selectedFormation][posKey];
-              if (!player || !coords) return null;
-              
-              return (
-                <PlayerNode
-                  key={player.id}
-                  player={{
-                    id: player.id,
-                    name: player.name,
-                    rating: player.rating,
-                    position: player.position,
-                    injured: player.injuredUntil > leagueMd,
-                  }}
-                  coordinates={coords}
-                  isSelected={selectedPlayer === player.id}
-                  onClick={() => handlePitchPlayerClick(player.id)}
-                />
-              );
+              if (!coords) return null;
+
+              if (player) {
+                return (
+                  <PlayerNode
+                    key={player.id}
+                    player={{
+                      id: player.id,
+                      name: player.name,
+                      rating: player.rating,
+                      position: player.position,
+                      injured: player.injuredUntil > leagueMd,
+                    }}
+                    coordinates={coords}
+                    isSelected={selectedPlayer === player.id}
+                    onClick={() => handlePitchPlayerClick(player.id)}
+                  />
+                );
+              } else {
+                // Render empty placeholder for empty positions
+                return (
+                  <div
+                    key={posKey}
+                    onClick={() => {
+                      if (selectedPlayer) {
+                        if (bench.includes(selectedPlayer)) {
+                          handleBenchToPitchSwap(selectedPlayer, posKey);
+                        } else if (startingXI.includes(selectedPlayer)) {
+                          // Swap starting player with empty position
+                          handlePitchToEmptySwap(selectedPlayer, posKey);
+                        }
+                      }
+                    }}
+                    className="absolute cursor-pointer hover:scale-110 transition-transform"
+                    style={{
+                      top: `${coords.top}%`,
+                      left: `${coords.left}%`,
+                      transform: 'translate(-50%, -50%)',
+                    }}
+                  >
+                    <div
+                      className="w-10 h-10 rounded-full border-2 border-dashed border-muted-foreground/50 bg-muted/20 flex items-center justify-center text-muted-foreground/50 text-xs font-bold"
+                    >
+                      +
+                    </div>
+                  </div>
+                );
+              }
             })}
           </FootballPitch>
         </div>

@@ -149,15 +149,13 @@ function SeasonPage() {
               <button
                 onClick={simulateRest}
                 disabled={isSimulating}
-                className={`px-5 py-2.5 rounded-lg bg-card border text-sm font-semibold transition ${
+                className={`px-5 py-2.5 rounded-lg border text-sm font-semibold transition ${
                   isSimulating 
                     ? 'opacity-50 cursor-not-allowed border-border' 
                     : 'border-border hover:border-accent'
                 }`}
               >
-                {isSimulating 
-                  ? `Simulando... ${simProgress.total > 0 ? `${simProgress.done}/${simProgress.total}` : ''}` 
-                  : 'Simular resto de la jornada →'}
+                {isSimulating ? 'Simulando...' : 'Simular resto de la jornada →'}
               </button>
               <button
                 onClick={simulateUntilEnd}
@@ -240,12 +238,12 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
         <TeamSide team={away} side="right" />
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Link
-          to="/lineup"
+        <button
+          onClick={() => navigate({ to: "/lineup", search: { from: "season" } })}
           className="text-center py-3 rounded-lg bg-card border border-border font-semibold hover:border-accent transition"
         >
           Editar alineación
-        </Link>
+        </button>
         <button
           onClick={handlePlayMatch}
           className="text-center py-3 rounded-lg bg-primary text-primary-foreground font-black tracking-wide glow-neon hover:brightness-110 transition"
@@ -354,23 +352,37 @@ const BIG5_LEAGUES: LeagueId[] = ["laliga", "premier", "bundesliga", "ligue1", "
 function OtherLeaguesPanel({ save }: { save: SaveGame }) {
   // Only show Big 5 leagues (excluding user's current league if it's one of them)
   const others = BIG5_LEAGUES.filter((l) => l !== save.myLeague);
+  
   return (
     <div className="panel p-5">
       <h3 className="font-bold mb-4">Resultados en Europa</h3>
       <div className="grid sm:grid-cols-2 gap-4">
         {others.map((lg) => {
-          const md = Math.max(1, save.currentMatchday[lg] - 1);
-          const fixtures = getMatchdayFixtures(save, lg, md).filter((f) => f.result);
+          // Find the highest matchday with results that is <= current matchday
+          const fixtures = save.fixtures[lg];
+          const currentMd = save.currentMatchday[lg];
+          const matchdaysWithResults = new Set(
+            fixtures.filter(f => f.result && f.matchday <= currentMd).map(f => f.matchday)
+          );
+          const highestMd = matchdaysWithResults.size > 0 ? Math.max(1, ...matchdaysWithResults) : currentMd;
+          
+          const allFixtures = getMatchdayFixtures(save, lg, highestMd);
+          const fixturesWithResults = allFixtures.filter((f) => f.result);
+          
           return (
             <div key={lg}>
               <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">
-                {LEAGUES[lg].flag} {LEAGUES[lg].name} · J{md}
+                {LEAGUES[lg].flag} {LEAGUES[lg].name} · J{highestMd}
               </div>
-              {fixtures.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Sin partidos aún</p>
+              {fixturesWithResults.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {allFixtures.length === 0 
+                    ? `Sin partidos en esta jornada (MD actual: ${save.currentMatchday[lg]}, fixtures totales: ${save.fixtures[lg]?.length || 0})` 
+                    : `Partidos no jugados aún (${allFixtures.length} partidos) - Usa "Simular resto de la jornada"`}
+                </p>
               ) : (
                 <div className="space-y-1">
-                  {fixtures.slice(0, 5).map((f) => {
+                  {fixturesWithResults.slice(0, 5).map((f) => {
                     const h = teamById(f.homeId);
                     const a = teamById(f.awayId);
                     return (

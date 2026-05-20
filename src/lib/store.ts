@@ -365,7 +365,7 @@ function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
  */
 export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
   const next: SaveGame = JSON.parse(JSON.stringify(save));
-  const BATCH_SIZE = 20; // Ultra-small batches for UI responsiveness
+  const BATCH_SIZE = 50; // Balance between speed and UI responsiveness
   
   const userLeague = next.myLeague;
   const backgroundLeagues: LeagueId[] = [];
@@ -382,10 +382,13 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
     }
   }
   
+  console.log(`advanceMatchdayLayered: Total fixtures to simulate: ${allFixtures.length}`);
+  console.log(`advanceMatchdayLayered: Leagues with fixtures:`, [...new Set(allFixtures.map(f => f.league))]);
+  
   const totalMatches = allFixtures.length;
   let processed = 0;
   
-  // Process in ultra-small batches with guaranteed UI updates
+  // Process in batches with yield control
   for (let i = 0; i < allFixtures.length; i += BATCH_SIZE) {
     const batch = allFixtures.slice(i, i + BATCH_SIZE);
     
@@ -402,6 +405,7 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
       const awayXI = getStarters(next, fixture.awayId);
       
       if (homeXI.length === 0 || awayXI.length === 0) {
+        console.warn(`Empty squad for fixture ${fixture.id}: ${fixture.homeId} (${homeXI.length}) vs ${fixture.awayId} (${awayXI.length})`);
         result = { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 };
       } else if (isVIP) {
         // DEEP SIMULATION for VIP leagues only
@@ -418,6 +422,8 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
       if (idx >= 0) {
         next.fixtures[league][idx] = { ...fixture, result };
         next.standings[league] = applyResult(next.standings[league], next.fixtures[league][idx]);
+      } else {
+        console.warn(`Fixture not found in array: ${fixture.id} in league ${league}`);
       }
       
       processed++;
@@ -432,19 +438,17 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
     // Update progress
     onProgress?.(processed, totalMatches);
     
-    // CRITICAL: Yield to browser after EVERY batch to prevent freezing
-    // Use 0ms timeout with requestAnimationFrame for smooth UI
-    if (i + BATCH_SIZE < allFixtures.length) {
-      await new Promise(resolve => {
-        requestAnimationFrame(() => {
-          setTimeout(resolve, 0);
-        });
-      });
-    }
+    // Yield control to prevent UI blocking
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
   
-  // Stats are now recorded during simulation for ALL leagues (VIP and background)
-  // No need for fake stats generation anymore
+  console.log(`advanceMatchdayLayered: Completed. Processed ${processed}/${totalMatches} matches`);
+  
+  // Verify results were saved for Serie A and Ligue 1
+  console.log(`Serie A fixtures with results: ${next.fixtures['seriea']?.filter(f => f.result).length || 0}`);
+  console.log(`Ligue 1 fixtures with results: ${next.fixtures['ligue1']?.filter(f => f.result).length || 0}`);
+  console.log(`Serie A current matchday: ${next.currentMatchday['seriea']}`);
+  console.log(`Ligue 1 current matchday: ${next.currentMatchday['ligue1']}`);
   
   // Advance cups/UCL
   const cupLeagues = Object.keys(next.cupFixtures) as LeagueId[];
