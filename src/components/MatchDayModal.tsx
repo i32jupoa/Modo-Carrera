@@ -9,6 +9,7 @@ import {
 } from "@/lib/matchEngine";
 import { teamById, overall } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
 import {
   Dialog,
   DialogContent,
@@ -127,7 +128,7 @@ export function MatchDayModal() {
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,hsl(var(--primary)/0.12),transparent_70%)] pointer-events-none" />
             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 relative">
               <div className="flex flex-col items-center gap-2 text-center">
-                <TeamBadge team={myTeam} size={56} />
+                <TeamLogo teamName={myTeam.name} leagueName={myTeam.league} size={56} />
                 <span className="font-black text-sm leading-tight">{myTeam.name}</span>
                 <span className="text-[0.65rem] text-muted-foreground uppercase tracking-wider">
                   OVR {overall(myTeam)}
@@ -148,7 +149,7 @@ export function MatchDayModal() {
                 )}
               </div>
               <div className="flex flex-col items-center gap-2 text-center">
-                <TeamBadge team={rival} size={56} />
+                <TeamLogo teamName={rival.name} leagueName={rival.league} size={56} />
                 <span className="font-black text-sm leading-tight">{rival.name}</span>
                 <span className="text-[0.65rem] text-muted-foreground uppercase tracking-wider">
                   OVR {overall(rival)}

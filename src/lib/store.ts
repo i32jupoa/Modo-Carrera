@@ -30,6 +30,8 @@ export type SaveGame = {
   currentMatchday: Record<LeagueId, number>;
   // lineups per team: ordered XI player ids (EA FC player IDs as strings)
   lineups: Record<string, string[]>;
+  // formations per team
+  formations: Record<string, string>;
   // cups (per league)
   cupFixtures: Record<LeagueId, Fixture[]>;
   cupChampion: Record<LeagueId, string | null>;
@@ -98,6 +100,7 @@ export function newSave(myTeamId: string): SaveGame {
   const currentMatchday: Record<LeagueId, number> = {} as never;
   const cupFixtures: Record<LeagueId, Fixture[]> = {} as never;
   const cupChampion: Record<LeagueId, string | null> = {} as never;
+  const formations: Record<string, string> = {} as never;
 
   // Generate fixtures for ALL leagues dynamically, not just Big 5
   const allLeagues = Object.keys(LEAGUES) as LeagueId[];
@@ -119,6 +122,7 @@ export function newSave(myTeamId: string): SaveGame {
     season: "2025/26",
     fixtures, standings, currentMatchday,
     lineups,
+    formations,
     cupFixtures, cupChampion,
     uclFixtures: ucl,
     uclChampion: null,
@@ -604,5 +608,11 @@ export function isPlayerInjured(save: SaveGame, playerId: string): boolean {
 export function setLineup(save: SaveGame, teamId: string, xi: string[]): SaveGame {
   const next: SaveGame = JSON.parse(JSON.stringify(save));
   next.lineups[teamId] = xi;
+  return next;
+}
+
+export function setFormation(save: SaveGame, teamId: string, formation: string): SaveGame {
+  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  next.formations[teamId] = formation;
   return next;
 }
