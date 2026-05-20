@@ -1,8 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
-import { teamById } from "@/data/teams";
+import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { selectInjuredPlayers } from "@/store/playersStore";
 
@@ -71,7 +77,7 @@ function InjuriesPage() {
             const out = p.injuredUntil - md;
             return (
               <div key={p.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-3">
-                <TeamBadge team={team} size={32} />
+                <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={32} />
                 <div className="min-w-0">
                   <div className="font-bold truncate">{p.name}</div>
                   <div className="text-xs text-muted-foreground capitalize">

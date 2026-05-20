@@ -2,10 +2,16 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { getMyNextFixture, loadSave, playMyNextMatch, SaveGame, saveSave } from "@/lib/store";
 import { Fixture } from "@/lib/season";
-import { teamById } from "@/data/teams";
+import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
 import { MatchEvent } from "@/lib/simulation";
 import { usePlayersStore } from "@/store/playersStore";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 
 export const Route = createFileRoute("/match")({ component: MatchPage });
 
@@ -103,7 +109,7 @@ function MatchPage() {
 
         <div className="grid grid-cols-[1fr_auto_1fr] gap-4 md:gap-6 items-center text-center">
           <div className="flex flex-col items-center gap-2 md:gap-3">
-            <TeamBadge team={home} size={64} />
+            <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={64} />
             <div className="font-bold text-sm md:text-base">{home.name}</div>
             {isMe(home.id) && <span className="chip text-[0.6rem]">Tú</span>}
           </div>
@@ -113,7 +119,7 @@ function MatchPage() {
             {phase === "preview" ? "–" : awayScore}
           </div>
           <div className="flex flex-col items-center gap-2 md:gap-3">
-            <TeamBadge team={away} size={64} />
+            <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={64} />
             <div className="font-bold text-sm md:text-base">{away.name}</div>
             {isMe(away.id) && <span className="chip text-[0.6rem]">Tú</span>}
           </div>
@@ -160,7 +166,7 @@ function MatchPage() {
                 <div key={i} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
                   <span className="scoreline text-sm text-primary font-bold w-10">{e.minute}'</span>
                   <span className="text-lg">⚽</span>
-                  <TeamBadge team={scoringTeam} size={22} />
+                  <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
                   <div className="text-sm min-w-0">
                     <span className="font-bold">{e.scorerName}</span>
                     {e.assistName && (

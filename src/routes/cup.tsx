@@ -3,6 +3,12 @@ import { useEffect, useState } from "react";
 import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
 import { LEAGUES, LeagueId, teamById } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 import { CUP_SCHEDULE } from "@/lib/cups";
 import { Fixture } from "@/lib/season";
 
@@ -95,13 +101,13 @@ export function KOFixtureRow({ f, myId }: { f: Fixture; myId: string }) {
         <span className={`truncate text-sm ${winner === "home" ? "font-bold text-primary" : winner === "away" ? "text-muted-foreground line-through" : "font-semibold"}`}>
           {home.name}
         </span>
-        <TeamBadge team={home} size={26} />
+        <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={26} />
       </div>
       <div className="scoreline font-bold text-base text-center min-w-[70px]">
         {f.result ? `${f.result.homeGoals} - ${f.result.awayGoals}` : <span className="text-muted-foreground text-xs">vs</span>}
       </div>
       <div className="flex items-center gap-2 min-w-0">
-        <TeamBadge team={away} size={26} />
+        <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={26} />
         <span className={`truncate text-sm ${winner === "away" ? "font-bold text-primary" : winner === "home" ? "text-muted-foreground line-through" : "font-semibold"}`}>
           {away.name}
         </span>

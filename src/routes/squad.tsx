@@ -1,8 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import { loadSave, saveSave } from "@/lib/store";
-import { teamById } from "@/data/teams";
+import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 import {
   usePlayersStore,
   type FcPlayer,
@@ -109,7 +115,7 @@ function SquadPage() {
       <MarketStatusBanner className="mb-6" />
 
       <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <TeamBadge team={team} size={48} />
+        <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={48} />
         <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-black truncate">Mi Plantilla — {team.name}</h1>
           <p className="text-xs text-muted-foreground">

@@ -3,6 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
 import { LEAGUES, LeagueId, teamById } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { selectTopAssisters } from "@/store/playersStore";
 
@@ -59,7 +65,7 @@ function AssistsPage() {
             return (
               <div key={p.id} className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3">
                 <span className={`text-sm font-black ${i < 3 ? "text-accent" : "text-muted-foreground"}`}>{i + 1}</span>
-                <TeamBadge team={team} size={28} />
+                <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
                 <div className="min-w-0">
                   <div className="font-bold truncate">{p.name}</div>
                   <div className="text-xs text-muted-foreground">{team.name} · {p.goals} goles</div>

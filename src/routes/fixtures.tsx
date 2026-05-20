@@ -3,6 +3,12 @@ import { useEffect, useState } from "react";
 import { ALL_LEAGUES, getMatchdayFixtures, loadSave, SaveGame } from "@/lib/store";
 import { LEAGUES, LeagueId, teamById } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 
 export const Route = createFileRoute("/fixtures")({ component: FixturesPage });
 
@@ -53,13 +59,13 @@ function FixturesPage() {
                 <span className={`font-semibold truncate ${isMine && f.homeId === save.myTeamId ? "text-primary" : ""}`}>
                   {home.name}
                 </span>
-                <TeamBadge team={home} size={30} />
+                <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={30} />
               </div>
               <div className="scoreline font-bold text-lg min-w-[70px] text-center">
                 {f.result ? `${f.result.homeGoals} - ${f.result.awayGoals}` : <span className="text-muted-foreground text-sm font-normal">vs</span>}
               </div>
               <div className="flex items-center gap-3 min-w-0">
-                <TeamBadge team={away} size={30} />
+                <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={30} />
                 <span className={`font-semibold truncate ${isMine && f.awayId === save.myTeamId ? "text-primary" : ""}`}>
                   {away.name}
                 </span>

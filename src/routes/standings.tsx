@@ -2,9 +2,14 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { loadSave, ALL_LEAGUES, getSortedStandings, type SaveGame } from "@/lib/store";
 import { usePlayersStore } from "@/store/playersStore";
-import { LEAGUES, type LeagueId } from "@/data/teams";
-import { teamById } from "@/data/teams";
+import { LEAGUES, type LeagueId, teamById } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 
 export const Route = createFileRoute("/standings")({
   component: StandingsPage,
@@ -92,7 +97,7 @@ function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof 
           >
             <span className="text-muted-foreground">{i + 1}</span>
             <span className="flex items-center gap-1.5 min-w-0">
-              <TeamBadge team={t} size={18} />
+              <TeamLogo teamName={t.name} leagueName={getLeagueName(t.league)} size={18} />
               <span className="truncate">{t.name}</span>
             </span>
             <span className="text-center scoreline">{s.played}</span>

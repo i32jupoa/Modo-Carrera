@@ -1,9 +1,15 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { LEAGUES_BY_COUNTRY, LeagueId, getAllTeams, teamsByLeague, overall } from "@/data/teams";
+import { LEAGUES_BY_COUNTRY, LEAGUES, LeagueId, getAllTeams, teamsByLeague, overall } from "@/data/teams";
 import { loadSave, newSave, saveSave, clearSave } from "@/lib/store";
 import { usePlayersStore } from "@/store/playersStore";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -137,7 +143,7 @@ function Index() {
                 }`}
               >
                 <div className="flex items-center gap-3 mb-3">
-                  <TeamBadge team={t} size={44} />
+                  <TeamLogo teamName={t.name} leagueName={getLeagueName(t.league)} size={44} />
                   <div className="min-w-0 flex-1">
                     <div className="font-bold truncate">{t.name}</div>
                     <div className="text-xs text-muted-foreground truncate">{t.city}</div>
