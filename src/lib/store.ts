@@ -393,19 +393,20 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
       
       let result: SimResult;
       
-      if (isVIP) {
+      // Get squads for both teams
+      const homeXI = getStarters(next, fixture.homeId);
+      const awayXI = getStarters(next, fixture.awayId);
+      
+      if (homeXI.length === 0 || awayXI.length === 0) {
+        result = { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 };
+      } else if (isVIP) {
         // DEEP SIMULATION for VIP leagues only
-        const homeXI = getStarters(next, fixture.homeId);
-        const awayXI = getStarters(next, fixture.awayId);
-        if (homeXI.length === 0 || awayXI.length === 0) {
-          result = { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 };
-        } else {
-          result = simulateMatch(home, away, homeXI, awayXI);
-          applyMatchToStats(next, { ...fixture, result });
-        }
+        result = simulateMatch(home, away, homeXI, awayXI);
+        applyMatchToStats(next, { ...fixture, result });
       } else {
-        // ULTRA-FAST for background leagues
-        result = generateFakeMatchResult(home, away);
+        // ULTRA-FAST for background leagues - now with player stats!
+        result = simulateMatchFast(home, away, homeXI, awayXI);
+        applyMatchToStats(next, { ...fixture, result });
       }
       
       // Apply result
@@ -438,8 +439,8 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
     }
   }
   
-  // Generate stats for background leagues (fast mode)
-  generateFakeStatsForBackgroundLeagues(next, backgroundLeagues);
+  // Stats are now recorded during simulation for ALL leagues (VIP and background)
+  // No need for fake stats generation anymore
   
   // Advance cups/UCL
   const cupLeagues = Object.keys(next.cupFixtures) as LeagueId[];

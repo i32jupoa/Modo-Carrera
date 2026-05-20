@@ -244,10 +244,29 @@ export function teamInitialBudget(avgOvr: number, leagueId = ""): number {
     }
   }
 
-  // 20% discount for teams NOT in top 5 leagues
+  // +40% global increase for all teams
+  budget = Math.round(budget * 1.40);
+
+  // 20% discount for teams NOT in top 5 leagues (except specific leagues)
   const top5Leagues = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
-  if (leagueId && !top5Leagues.has(leagueId)) {
-    budget = Math.round(budget * 0.8); // -20% for non-top-5 leagues
+  
+  // Leagues that should NOT have the 20% discount: Portugal, Belgium, Turkey, Netherlands
+  const noDiscountLeagues = new Set([
+    "ligaportugal",      // Liga Portugal
+    "1aproleague",       // 1A Pro League (Belgium)
+    "trendyolsperlig",   // Trendyol Süper Lig (Turkey)
+    "eredivisie",        // Eredivisie (Netherlands)
+  ]);
+  
+  // Saudi League gets +450% bonus instead of discount
+  const saudiLeagueId = "roshnsaudileague"; // ROSHN Saudi League
+  
+  if (leagueId === saudiLeagueId) {
+    // +450% bonus for Saudi teams (budget * 5.5 = original + 450%)
+    budget = Math.round(budget * 5.5);
+  } else if (leagueId && !top5Leagues.has(leagueId) && !noDiscountLeagues.has(leagueId)) {
+    // -20% for non-top-5 leagues (except the ones listed above)
+    budget = Math.round(budget * 0.8);
   }
 
   return budget;
@@ -702,13 +721,35 @@ export const usePlayersStore = create<PlayersState>()(
 
         const simFixture = (f: ScheduleFixture) => {
 
-          const scores = simulateScheduleFixture(f, (teamId, md) =>
+          const result = simulateScheduleFixtureDetailed(f, (teamId, md) =>
 
             get().getSimXI(teamId, [], md),
 
           );
 
-          fixtures = applyFixtureResult(fixtures, f.id, scores);
+          // Record stats from simulation events
+          const homeXI = get().getSimXI(f.homeTeam, [], f.matchday);
+          const awayXI = get().getSimXI(f.awayTeam, [], f.matchday);
+          
+          // Record appearances for all starters
+          for (const p of [...homeXI, ...awayXI]) {
+            get().recordAppearance(p.id);
+          }
+          
+          // Record goals and assists from events
+          for (const ev of result.events) {
+            if (ev.type === "goal") {
+              get().recordGoal(ev.scorerId);
+              if (ev.assistId) {
+                get().recordAssist(ev.assistId);
+              }
+            }
+          }
+
+          fixtures = applyFixtureResult(fixtures, f.id, { 
+            homeScore: result.homeGoals, 
+            awayScore: result.awayGoals 
+          });
 
         };
 

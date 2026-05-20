@@ -3,6 +3,49 @@ import { Player } from "@/data/players";
 
 function rand(): number { return Math.random(); }
 
+// Weighted scorer pick considering position and OVR for fast simulation
+function fastPickScorerWeighted(xi: Player[]): Player {
+  const candidates = xi.filter((p) => p.position !== "GK");
+  if (candidates.length === 0) return xi[0];
+  
+  // Weight = position factor * (rating / 70) to favor high-OVR players
+  const weights = candidates.map((p) => {
+    const posFactor = p.position === "FWD" ? 5 : p.position === "MID" ? 2 : 0.5;
+    const ratingFactor = p.rating / 70; // Normalize around 70
+    return posFactor * ratingFactor;
+  });
+  
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = rand() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
+}
+
+// Fast assister pick with 75% probability, excluding scorer
+function fastPickAssister(xi: Player[], scorerId: string): Player | null {
+  if (rand() > 0.75) return null; // 75% of goals have an assist
+  const candidates = xi.filter((p) => p.id !== scorerId && p.position !== "GK");
+  if (candidates.length === 0) return null;
+  
+  // Weight toward midfielders and high-OVR players
+  const weights = candidates.map((p) => {
+    const posFactor = p.position === "MID" ? 3 : p.position === "FWD" ? 2 : 1;
+    const ratingFactor = p.rating / 70;
+    return posFactor * ratingFactor;
+  });
+  
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = rand() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
+}
+
 function poisson(lambda: number): number {
   const L = Math.exp(-lambda);
   let k = 0; let p = 1;
@@ -144,6 +187,7 @@ function fastPickScorer(xi: Player[]): Player {
 }
 
 // Ultra-fast simulation for bulk matchdays (no detailed events, just results)
+// NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatchFast(
   home: Team, away: Team, homeXI: Player[], awayXI: Player[]
 ): SimResult {
@@ -153,20 +197,31 @@ export function simulateMatchFast(
   const homeGoals = Math.max(0, Math.round(lh + (rand() - 0.5) * Math.sqrt(lh)));
   const awayGoals = Math.max(0, Math.round(la + (rand() - 0.5) * Math.sqrt(la)));
   
-  // Minimal events - only scorers, no assists, no minute sorting
+  // Minimal events - with weighted scorer selection and assists
+  // Stats are recorded later by applyMatchToStats to avoid duplicates
   const events: MatchEvent[] = [];
+  
+  // Home team goals
   for (let i = 0; i < homeGoals; i++) {
-    const scorer = fastPickScorer(homeXI);
+    const scorer = fastPickScorerWeighted(homeXI);
+    const assister = fastPickAssister(homeXI, scorer.id);
+    
     events.push({
       minute: Math.floor(rand() * 90) + 1, team: "home", type: "goal",
       scorerId: scorer.id, scorerName: scorer.name,
+      assistId: assister?.id, assistName: assister?.name,
     });
   }
+  
+  // Away team goals
   for (let i = 0; i < awayGoals; i++) {
-    const scorer = fastPickScorer(awayXI);
+    const scorer = fastPickScorerWeighted(awayXI);
+    const assister = fastPickAssister(awayXI, scorer.id);
+    
     events.push({
       minute: Math.floor(rand() * 90) + 1, team: "away", type: "goal",
       scorerId: scorer.id, scorerName: scorer.name,
+      assistId: assister?.id, assistName: assister?.name,
     });
   }
   
@@ -174,6 +229,8 @@ export function simulateMatchFast(
   return { homeGoals, awayGoals, events, injuries: [], xgHome: lh, xgAway: la };
 }
 
+// Detailed simulation with events and injuries
+// NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatch(
   home: Team, away: Team, homeXI: Player[], awayXI: Player[]
 ): SimResult {
@@ -181,7 +238,9 @@ export function simulateMatch(
   const homeGoals = poisson(lh);
   const awayGoals = poisson(la);
 
+  // Stats are recorded later by applyMatchToStats to avoid duplicates
   const events: MatchEvent[] = [];
+  
   for (let i = 0; i < homeGoals; i++) {
     const scorer = pickScorer(homeXI);
     const assister = pickAssister(homeXI, scorer.id);
