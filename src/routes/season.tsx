@@ -7,7 +7,13 @@ import {
 } from "@/lib/store";
 import { Fixture } from "@/lib/season";
 import { LEAGUES, LeagueId, teamById, teamsByLeague } from "@/data/teams";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
 import { usePlayersStore } from "@/store/playersStore";
 
 export const Route = createFileRoute("/season")({ component: SeasonPage });
@@ -254,7 +260,7 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
 function TeamSide({ team, side }: { team: ReturnType<typeof teamById>; side: "left" | "right" }) {
   return (
     <div className={`flex items-center gap-3 ${side === "right" ? "flex-row-reverse" : ""}`}>
-      <TeamBadge team={team} size={56} />
+      <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={56} />
       <div className={side === "right" ? "text-right" : "text-left"}>
         <div className="font-bold leading-tight">{team.name}</div>
         <div className="text-xs text-muted-foreground">{team.stars[0] ?? team.city}</div>

@@ -2,8 +2,14 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
-import { LEAGUES_BY_COUNTRY, LeagueId, overall, teamsByLeague, teamById, getAllTeams, type Team } from "@/data/teams";
+import { LEAGUES_BY_COUNTRY, LEAGUES, LeagueId, overall, teamsByLeague, teamById, getAllTeams, type Team } from "@/data/teams";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
 import { usePlayersStore, type PlayerStats } from "@/store/playersStore";
 import type { FcPlayer } from "@/store/playersStore";
 
@@ -134,7 +140,7 @@ function TeamsPage() {
                   }`}
                 >
                   <div className="flex items-center gap-3 mb-3">
-                    <TeamBadge team={t} size={44} />
+                    <TeamLogo teamName={t.name} leagueName={getLeagueName(t.league)} size={44} />
                     <div className="min-w-0 flex-1">
                       <div className="font-bold truncate text-sm">{t.name}</div>
                       <div className="text-xs text-muted-foreground truncate">{t.city}</div>
@@ -160,7 +166,7 @@ function TeamsPage() {
         <div className="panel p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <TeamBadge team={selectedTeam} size={48} />
+              <TeamLogo teamName={selectedTeam.name} leagueName={getLeagueName(selectedTeam.league)} size={48} />
               <div>
                 <h2 className="font-bold text-lg">{selectedTeam.name}</h2>
                 <p className="text-xs text-muted-foreground">

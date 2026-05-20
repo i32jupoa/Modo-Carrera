@@ -2,8 +2,14 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
 import { TEAMS, teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 import type { Position } from "@/data/players";
 import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import {
   usePlayersStore,
@@ -703,7 +709,7 @@ function TransfersPage() {
                     </p>
                     {club && (
                       <div className="flex items-center gap-1.5 mt-1.5">
-                        <TeamBadge team={club} size={18} />
+                        <TeamLogo teamName={club.name} leagueName={getLeagueName(club.league)} size={18} />
                         <span className="text-[0.65rem] text-muted-foreground truncate">{p.Team}</span>
                       </div>
                     )}
