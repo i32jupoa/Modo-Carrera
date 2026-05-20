@@ -215,35 +215,42 @@ export function marketValueEuros(fc: FcPlayer, teamId = "", leagueId = "", teamA
 
 
 
-export function teamInitialBudget(avgOvr: number): number {
+export function teamInitialBudget(avgOvr: number, leagueId = ""): number {
 
   // Piecewise linear interpolation with anchors: 90→160M, 85→125M, 75→35M, 70→13M
 
   const anchors: [number, number][] = [[90, 160], [85, 125], [75, 35], [70, 13]];
 
-  if (avgOvr >= 90) return 160_000_000;
+  let budget = 160_000_000;
 
-  for (let i = 0; i < anchors.length - 1; i++) {
-
-    const [ovrHi, budHi] = anchors[i];
-
-    const [ovrLo, budLo] = anchors[i + 1];
-
-    if (avgOvr >= ovrLo) {
-
-      const t = (avgOvr - ovrLo) / (ovrHi - ovrLo);
-
-      return Math.round((budLo + t * (budHi - budLo)) * 1_000_000);
-
+  if (avgOvr >= 90) {
+    budget = 160_000_000;
+  } else {
+    let found = false;
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const [ovrHi, budHi] = anchors[i];
+      const [ovrLo, budLo] = anchors[i + 1];
+      if (avgOvr >= ovrLo) {
+        const t = (avgOvr - ovrLo) / (ovrHi - ovrLo);
+        budget = Math.round((budLo + t * (budHi - budLo)) * 1_000_000);
+        found = true;
+        break;
+      }
     }
-
+    if (!found) {
+      // Below 70: steep drop to floor
+      const below = Math.max(1, 13 - (70 - avgOvr) * 2);
+      budget = Math.round(below * 1_000_000);
+    }
   }
 
-  // Below 70: steep drop to floor
+  // 20% discount for teams NOT in top 5 leagues
+  const top5Leagues = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
+  if (leagueId && !top5Leagues.has(leagueId)) {
+    budget = Math.round(budget * 0.8); // -20% for non-top-5 leagues
+  }
 
-  const below = Math.max(1, 13 - (70 - avgOvr) * 2);
-
-  return Math.round(below * 1_000_000);
+  return budget;
 
 }
 
@@ -821,7 +828,7 @@ export const usePlayersStore = create<PlayersState>()(
 
             opts?.resetBudget || prev.myTeamId !== teamId
 
-              ? teamInitialBudget(avgOvr)
+              ? teamInitialBudget(avgOvr, team.league)
 
               : prev.budget,
 
