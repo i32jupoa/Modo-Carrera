@@ -229,7 +229,7 @@ export function marketValueFor(
   // 40% discount for players NOT in top 5 leagues (laliga, premier, seriea, bundesliga, ligue1)
   const top5Leagues = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
   if (!top5Leagues.has(leagueId)) {
-    finalValue *= 0.60;  // -40% for non-top-5 leagues
+    finalValue *= 0.85;  // -40% for non-top-5 leagues
   }
   
   // 25% discount for players in top 5 leagues with team average <= 80

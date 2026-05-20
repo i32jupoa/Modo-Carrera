@@ -1,10 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
-import { loadSave } from "@/lib/store";
+import { useEffect, useState } from "react";
+import { loadSave, ALL_LEAGUES, getSortedStandings, type SaveGame } from "@/lib/store";
 import { usePlayersStore } from "@/store/playersStore";
-import { LeagueTable } from "@/components/LeagueTable";
-import { LEAGUES } from "@/data/teams";
+import { LEAGUES, type LeagueId } from "@/data/teams";
 import { teamById } from "@/data/teams";
+import { TeamBadge } from "@/components/TeamBadge";
 
 export const Route = createFileRoute("/standings")({
   component: StandingsPage,
@@ -12,19 +12,22 @@ export const Route = createFileRoute("/standings")({
 
 function StandingsPage() {
   const navigate = useNavigate();
-  const myTeamId = usePlayersStore((s) => s.myTeamId);
-  const ensureLeagueSchedule = usePlayersStore((s) => s.ensureLeagueSchedule);
+  const [save, setSave] = useState<SaveGame | null>(null);
+  const [viewLeague, setViewLeague] = useState<LeagueId>("laliga");
 
   useEffect(() => {
-    const save = loadSave();
-    if (!save) {
+    const s = loadSave();
+    if (!s) {
       navigate({ to: "/" });
       return;
     }
-    ensureLeagueSchedule();
-  }, [navigate, ensureLeagueSchedule]);
+    setSave(s);
+    setViewLeague(s.myLeague);
+  }, [navigate]);
 
-  const league = myTeamId ? teamById(myTeamId).league : "laliga";
+  if (!save) return null;
+
+  const standings = getSortedStandings(save, viewLeague);
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -38,19 +41,69 @@ function StandingsPage() {
           </Link>
           <h1 className="text-2xl font-black mt-2">Clasificación</h1>
           <p className="text-xs text-muted-foreground mt-1">
-            {LEAGUES[league].flag} {LEAGUES[league].name} · calculada en vivo desde
-            los partidos jugados
+            {LEAGUES[viewLeague].name} · calculada en vivo desde los partidos jugados
           </p>
         </div>
-        <Link
-          to="/fixtures"
-          className="text-xs font-semibold text-primary hover:underline"
-        >
-          Ver calendario de jornadas →
-        </Link>
+        <div className="flex items-center gap-3">
+          <select
+            value={viewLeague}
+            onChange={(e) => setViewLeague(e.target.value as LeagueId)}
+            className="bg-secondary border border-border rounded px-3 py-1.5 text-sm"
+          >
+            {ALL_LEAGUES.map((lg) => (
+              <option key={lg} value={lg}>{LEAGUES[lg].name}</option>
+            ))}
+          </select>
+          <Link
+            to="/fixtures"
+            className="text-xs font-semibold text-primary hover:underline"
+          >
+            Ver calendario de jornadas →
+          </Link>
+        </div>
       </div>
 
-      <LeagueTable league={league} />
+      <div className="panel p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold">Clasificación</h3>
+        </div>
+        <StandingsTable standings={standings} myTeamId={save.myTeamId} />
+      </div>
+    </div>
+  );
+}
+
+function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof getSortedStandings>; myTeamId: string }) {
+  return (
+    <div className="text-xs">
+      <div className="grid grid-cols-[24px_1fr_24px_28px_32px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
+        <span>#</span><span>Equipo</span><span className="text-center">PJ</span><span className="text-center">DG</span><span className="text-center">Pts</span>
+      </div>
+      {standings.map((s, i) => {
+        const t = teamById(s.teamId);
+        const isMe = s.teamId === myTeamId;
+        const zoneColor =
+          i < 4 ? "border-l-primary" : i < 6 ? "border-l-accent" :
+          i >= standings.length - 3 ? "border-l-destructive" : "border-l-transparent";
+        return (
+          <div
+            key={s.teamId}
+            className={`grid grid-cols-[24px_1fr_24px_28px_32px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : ""}`}
+          >
+            <span className="text-muted-foreground">{i + 1}</span>
+            <span className="flex items-center gap-1.5 min-w-0">
+              <TeamBadge team={t} size={18} />
+              <span className="truncate">{t.name}</span>
+            </span>
+            <span className="text-center scoreline">{s.played}</span>
+            <span className="text-center scoreline">{s.gd > 0 ? `+${s.gd}` : s.gd}</span>
+            <span className="text-center scoreline font-bold">{s.points}</span>
+          </div>
+        );
+      })}
+      <p className="text-[0.65rem] text-muted-foreground mt-3 leading-relaxed">
+        <span className="text-primary">●</span> Champions · <span className="text-accent">●</span> Europa · <span className="text-destructive">●</span> Descenso
+      </p>
     </div>
   );
 }
