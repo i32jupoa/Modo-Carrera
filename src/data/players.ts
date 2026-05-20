@@ -30,7 +30,8 @@ export type Player = {
 // 4. Nivel del equipo (15%) - Team prestige
 // Max value: €220M
 
-const MAX_GLOBAL_VALUE = 220; // €220M maximum for any player
+const MAX_GLOBAL_VALUE = 220; // €165M maximum (220 * 0.75 after 25% global discount)
+const GLOBAL_DISCOUNT = 0.75; // 25% cheaper for all players
 
 // Base value table per rating - maps OVR to realistic market value
 // This represents 50% of the final calculation
@@ -56,33 +57,47 @@ function getBaseValueFromRating(rating: number): number {
   return lower + (upper - lower) * fraction;
 }
 
-// 2. EDAD (20%) - Age multiplier as specified + custom modifiers
-// <22 años → +10% (x1.10)
-// 23–29 años → +20% (x1.20) - edad óptima  
-// 30-34 años → -10% (x0.90)
-// 35+ años → -50% (x0.50) - 50% cheaper as requested
+// 2. EDAD - Detailed age multiplier table as specified
+// Applied AFTER 25% global discount
 function ageMultiplier(age: number, pos: string): number {
-  // Special case: Midfielders 23 or younger get +25% extra
+  // Special case: Midfielders 23 or younger get +25% extra (kept from previous)
   const isYoungMidfielder = age <= 23 && (pos === "CM" || pos === "MC" || pos === "MID" || pos === "CAM" || pos === "MCO" || pos === "CDM" || pos === "MCD");
   
-  // Base age multiplier
-  let baseMult: number;
-  if (age < 22) baseMult = 1.10;   // Young with potential
-  else if (age <= 29) baseMult = 1.20;  // Peak years - optimal
-  else if (age <= 34) baseMult = 0.90;  // 30-34 depreciation
-  else baseMult = 0.50;  // 35+ 50% cheaper as requested
+  // Age table as specified:
+  // 16-17: +5% (x1.05) - Young talents
+  // 18-19: +14% (x1.14) - Emerging talent
+  // 20-21: +16% (x1.16) - High projection
+  // 22-23: +20% (x1.20) - Start of optimal age
+  // 24-26: +23% (x1.23) - Maximum optimal age
+  // 27-29: +16% (x1.16) - Still high, good experience
+  // 30-31: +7% (x1.07) - Depreciation begins
+  // 32-33: 0% (x1.00) - Base price, veteran
+  // 34-35: -10% (x0.90) - Clear depreciation
+  // 36+: -20% (x0.80) - Very veteran
+  let ageMult: number;
+  if (age <= 17) ageMult = 1.1;
+  else if (age <= 19) ageMult = 1.4;
+  else if (age <= 21) ageMult = 1.45;
+  else if (age <= 23) ageMult = 1.55;
+  else if (age <= 26) ageMult = 1.6;  // Peak: 24-26
+  else if (age <= 29) ageMult = 1.45;
+  else if (age <= 31) ageMult = 1.10;
+  else if (age <= 33) ageMult = 1.00;
+  else if (age <= 35) ageMult = 0.7;
+  else ageMult = 0.4;  // 36+
   
-  // Young midfielders (≤23): +25% extra
+  // Young midfielders (≤23): +25% extra (kept from previous request)
   if (isYoungMidfielder) {
-    return baseMult * 1.25;
+    return ageMult * 1.4;
   }
   
-  return baseMult;
+  return ageMult;
 }
 
 // 3. POSICIÓN (15%) - Position adjustment as specified + custom modifiers
 // Attacking positions: +5% base + 25% extra for forwards = +30% total (x1.30)
 // Defensive/GK: -5% base - 40% extra for keepers = -45% total (x0.55)
+// Ei, Ed, Md, Mi: +30% extra (as requested)
 // Midfield: 0% base
 function positionMultiplier(pos: string, age: number): number {
   const forwardPositions = new Set(["ST", "CF", "DC", "FWD"]);
@@ -108,6 +123,18 @@ function positionMultiplier(pos: string, age: number): number {
   // Forwards: 25% more expensive (additional x1.25 on top of base +5%)
   if (forwardPositions.has(pos)) {
     return baseMult * 1.25;  // Forwards 25% extra = 1.05 * 1.25 = 1.3125 (~+31%)
+  }
+  
+  // Ei (Extremo Izquierdo/LW), Ed (Extremo Derecho/RW), 
+  // Mi (Medio Izquierdo/LM), Md (Medio Derecho/RM) +30% extra
+  const expensiveWingers = new Set(["LW", "RW", "LM", "RM"]);
+  if (expensiveWingers.has(pos)) {
+    return baseMult * 1.30;  // +30% extra for Ei, Ed, Mi, Md
+  }
+  
+  // Mediocentro Defensivo (MD/CDM/MCD) also gets +30%
+  if (pos === "CDM" || pos === "MCD") {
+    return baseMult * 1.30;  // +30% extra for Md (Mediocentro Defensivo)
   }
   
   return baseMult;
@@ -172,10 +199,16 @@ export function marketValueFor(
   // 4. NIVEL DEL EQUIPO (15%) - Team/club multiplier
   const teamMult = teamMultiplier(teamAvgRating, leagueId);
   
-  // Calculate final value with all multipliers
-  let finalValue = baseValue * ageMult * posMult * teamMult;
+  // Calculate final value with all multipliers + 25% global discount
+  let finalValue = baseValue * ageMult * posMult * teamMult * GLOBAL_DISCOUNT;
   
-  // Cap at global maximum
+  // Special rule: Players with <=85 OVR and 28+ years get -40% (except goalkeepers)
+  const isGoalkeeper = pos === "GK" || pos === "POR";
+  if (rating <= 85 && age >= 28 && !isGoalkeeper) {
+    finalValue *= 0.60;  // 40% discount
+  }
+  
+  // Cap at global maximum (already reduced by 25%)
   finalValue = Math.min(finalValue, MAX_GLOBAL_VALUE);
   
   // Minimum value floor
@@ -204,6 +237,11 @@ export function marketValueFor(
   if (TOP_LEAGUES.has(leagueId)) reasons.push("liga top");
   else if (MID_LEAGUES.has(leagueId)) reasons.push("liga media");
   else reasons.push("liga menor");
+  
+  // Add explanation for 40% discount
+  if (rating <= 85 && age >= 28 && !isGoalkeeper) {
+    reasons.push("jugador veterano con media baja (descuento 40%)");
+  }
   
   const explanation = reasons.length > 0 
     ? `Valorado en ${formatMarketValue(finalValue)}: ${reasons.join(", ")}.`
@@ -244,7 +282,7 @@ function findTeamIdForPlayer(jsonTeamName: string): string {
 }
 
 let cachedSquads: Record<string, Player[]> | null = null;
-const CACHE_VERSION = 5; // Force regeneration with price adjustments (keepers -40%, young mids +25%, forwards +25%, 35+ -50%)
+const CACHE_VERSION = 8; // Added 40% discount for <85 OVR and 28+ years (except GKs)
 
 export function invalidateSquadsCache() {
   cachedSquads = null;
