@@ -1469,7 +1469,7 @@ export function selectInjuredPlayers(
 
     if (st.injuredUntil <= md) continue;
 
-    if (teamId && p.teamId !== teamId) continue;
+    if (teamId && String(p.teamId) !== String(teamId)) continue;
 
     out.push(p);
 

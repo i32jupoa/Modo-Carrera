@@ -1,7 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   Home, Trophy, Users, ClipboardList, Activity, Target,
-  Repeat, Calendar, CalendarDays, Globe, Shield, ChevronRight, Award,
+  Repeat, Calendar, CalendarDays, Globe, Shield, ChevronRight, Award, Swords,
 } from "lucide-react";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -27,7 +27,7 @@ const MI_EQUIPO: Item[] = [
 ];
 
 const COMPETICIONES: Item[] = [
-  { title: "Liga", url: "/fixtures", icon: Trophy },
+  { title: "Partidos", url: "/fixtures", icon: Swords },
   { title: "Clasificación", url: "/standings", icon: Trophy },
   { title: "Copa nacional", url: "/cup", icon: Shield },
   { title: "Champions League", url: "/champions", icon: Award },
