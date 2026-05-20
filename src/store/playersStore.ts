@@ -12,7 +12,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 import playersData from "@/data/players.json";
 
-import { TEAMS, teamById, leagueIdFromName, type LeagueId } from "@/data/teams";
+import { TEAMS, teamById, leagueIdFromName, type LeagueId, teamsByLeague } from "@/data/teams";
 
 import { defaultLineup, type Player, type Position, marketValueFor } from "@/data/players";
 
@@ -45,51 +45,111 @@ import { generateLeagueFixtures } from "@/lib/season";
 import type { SimResult } from "@/lib/simulation";
 
 import {
-
   applyFixtureResult,
-
   involvesTeam,
-
   simulateScheduleFixture,
-
   simulateScheduleFixtureDetailed,
-
   unplayedOnDate,
-
 } from "@/lib/matchEngine";
 
+import { loadSave, generateRealisticStatsForO1Leagues, type SaveGame } from "@/lib/store";
+
+// Big 5 European leagues for VIP deep simulation
+const BIG5_LEAGUES: LeagueId[] = ["laliga", "premier", "seriea", "bundesliga", "ligue1"];
+
+// Additional important leagues for VIP deep simulation
+const IMPORTANT_LEAGUES: LeagueId[] = ["ligaportugal", "1aproleague", "eredivisie", "trendyolsperlig"];
+
+function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
+  return leagueId === userLeague || BIG5_LEAGUES.includes(leagueId) || IMPORTANT_LEAGUES.includes(leagueId);
+}
+
+// Track which matchdays have already generated stats to avoid duplicates
+const GENERATED_STATS_KEY = "fcsim:generated_stats";
+
+function getGeneratedMatchdays(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(GENERATED_STATS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function setGeneratedMatchday(leagueId: LeagueId, matchday: number) {
+  const current = getGeneratedMatchdays();
+  current[leagueId] = Math.max(current[leagueId] || 0, matchday);
+  localStorage.setItem(GENERATED_STATS_KEY, JSON.stringify(current));
+}
+
+function hasGeneratedMatchday(leagueId: LeagueId, matchday: number): boolean {
+  const current = getGeneratedMatchdays();
+  return (current[leagueId] || 0) >= matchday;
+}
+
+// Clear the tracker to force regeneration
+export function clearGeneratedStatsTracker() {
+  localStorage.removeItem(GENERATED_STATS_KEY);
+}
+
+// Generate stats on-demand for a specific league if it's O(1
+export function ensureStatsForLeague(leagueId: LeagueId) {
+  const save = loadSave();
+  if (!save) return;
+  if (!isVIPLeague(leagueId, save.myLeague)) {
+    const currentMatchday = save.currentMatchday[leagueId] - 1;
+    if (currentMatchday < 1) return;
+    
+    // Get the last matchday we generated stats for
+    const lastGenerated = getGeneratedMatchdays()[leagueId] || 0;
+    
+    // Only generate stats for matchdays we haven't processed yet
+    if (lastGenerated < currentMatchday) {
+      // Clear existing stats for this league's players to avoid accumulation
+      const store = usePlayersStore.getState();
+      const leagueTeams = teamsByLeague(leagueId);
+      for (const team of leagueTeams) {
+        const squad = store.getSimSquad(team.id);
+        for (const player of squad) {
+          // Reset stats for this player
+          const currentStats = store.stats[player.id];
+          if (currentStats) {
+            store.stats = {
+              ...store.stats,
+              [player.id]: {
+                ...currentStats,
+                appearances: 0,
+                goals: 0,
+                assists: 0,
+              }
+            };
+          }
+        }
+      }
+      
+      generateRealisticStatsForO1Leagues(save, [leagueId], save.currentMatchday[save.myLeague], lastGenerated + 1);
+      setGeneratedMatchday(leagueId, currentMatchday);
+    }
+  }
+}
+
+// ...
 
 
 export type FcPlayer = {
-
   ID: number;
-
   Name: string;
-
   OVR: number;
-
   PAC: number;
-
   SHO: number;
-
   PAS: number;
-
   DRI: number;
-
   DEF: number;
-
   PHY: number;
-
   Position: string;
-
   Age: number;
-
   Team: string;
-
   League: string;
-
   card?: string;
-
 };
 
 
@@ -1360,91 +1420,74 @@ export const useUserTeam = usePlayersStore;
 
 
 export function playersStoreInit() {
-
   usePlayersStore.getState().init();
-
 }
 
-
-
 export function selectTopScorers(
-
   leagueFilter?: LeagueId,
-
   limit = 30,
-
 ): Player[] {
-
   const store = usePlayersStore.getState();
-
   store.init();
-
+  
+  // Generate stats on-demand for O(1) leagues
+  if (leagueFilter) {
+    const save = loadSave();
+    if (save && !isVIPLeague(leagueFilter, save.myLeague)) {
+      generateRealisticStatsForO1Leagues(save, [leagueFilter]);
+    }
+  }
+  
   const out: Player[] = [];
 
   for (const [id, st] of Object.entries(store.stats)) {
-
     if (st.goals <= 0) continue;
-
     const p = store.getSimPlayer(id);
-
     if (!p) continue;
-
     if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
-
     out.push(p);
-
   }
 
   return out
-
     .sort((a, b) => b.goals - a.goals || b.assists - a.assists)
-
     .slice(0, limit);
-
 }
 
 
 
 export function selectTopAssisters(
-
   leagueFilter?: LeagueId,
-
   limit = 30,
-
 ): Player[] {
-
   const store = usePlayersStore.getState();
-
   store.init();
+  
+  // Generate stats on-demand for O(1) leagues
+  if (leagueFilter) {
+    const save = loadSave();
+    if (save && !isVIPLeague(leagueFilter, save.myLeague)) {
+      generateRealisticStatsForO1Leagues(save, [leagueFilter]);
+    }
+  }
 
   const out: Player[] = [];
 
   for (const [id, st] of Object.entries(store.stats)) {
-
     if (st.assists <= 0) continue;
-
     const p = store.getSimPlayer(id);
-
     if (!p) continue;
-
     if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
-
     out.push(p);
-
   }
 
   return out
-
     .sort((a, b) => b.assists - a.assists || b.goals - a.goals)
-
     .slice(0, limit);
-
 }
 
 
 
 export function selectInjuredPlayers(
-
   matchdaysByLeague: Record<LeagueId, number>,
 
   teamId?: string,

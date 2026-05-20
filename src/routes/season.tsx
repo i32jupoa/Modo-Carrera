@@ -1,20 +1,16 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import {
-  ALL_LEAGUES, finishMatchday, advanceMatchdayLayered, getMatchdayFixtures, getMyNextFixture,
-  getMyRecentResults, getMyUpcomingCupFixtures, getSortedStandings,
-  loadSave, SaveGame, saveSave,
-} from "@/lib/store";
-import { Fixture } from "@/lib/season";
-import { LEAGUES, LeagueId, teamById, teamsByLeague } from "@/data/teams";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
+import { ALL_LEAGUES, loadSave, SaveGame, advanceMatchdayLayered, getSortedStandings, getMatchdayFixtures, getMyNextFixture, getMyUpcomingCupFixtures, getMyRecentResults } from "@/lib/store";
+import { LEAGUES, teamById, teamsByLeague, type LeagueId, type Team } from "@/data/teams";
+import { type Fixture } from "@/lib/season";
+import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
+import { TeamLogo } from "@/components/TeamLogo";
+import { saveSave } from "@/lib/store";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
-import { TeamBadge } from "@/components/TeamBadge";
-import { TeamLogo } from "@/components/TeamLogo";
-import { usePlayersStore } from "@/store/playersStore";
 
 export const Route = createFileRoute("/season")({ component: SeasonPage });
 
@@ -31,6 +27,13 @@ function SeasonPage() {
     setSave(s);
     setViewLeague(s.myLeague);
   }, [navigate]);
+  
+  // Generate stats on-demand when league changes
+  useEffect(() => {
+    if (viewLeague) {
+      ensureStatsForLeague(viewLeague);
+    }
+  }, [viewLeague]);
 
   if (!save) return null;
 

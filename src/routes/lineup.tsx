@@ -155,6 +155,13 @@ function LineupPage() {
     return bench.map(id => squad.find(p => p.id === id)).filter(Boolean);
   }, [bench, squad]);
 
+  // Count only valid, non-null players in starting XI
+  const activeStartersCount = useMemo(() => {
+    return startingXI.filter(id => id && id.trim() !== "").length;
+  }, [startingXI]);
+
+  const isLineupComplete = activeStartersCount === 11;
+
   const formationPositions = getFormationPositions(selectedFormation);
 
   // Map players to formation positions
@@ -434,8 +441,8 @@ function LineupPage() {
 
   function save_() {
     if (!save) return;
-    if (startingXI.length !== 11) {
-      toast.error(`Debes tener 11 jugadores titulares. Actualmente tienes ${startingXI.length}.`);
+    if (!isLineupComplete) {
+      toast.error("Plantilla incompleta. Faltan jugadores titulares.");
       return;
     }
     const next = setLineup(save, save.myTeamId, startingXI);
@@ -443,18 +450,6 @@ function LineupPage() {
     saveSave(nextWithFormation);
     setSave(nextWithFormation);
     toast.success("Alineación guardada correctamente");
-  }
-
-  function autoFill() {
-    if (!save) return;
-    const available = squad.filter((p) => p.injuredUntil <= leagueMd);
-    const pick = (pos: Position, n: number) =>
-      available.filter((p) => p.position === pos).slice(0, n).map((p) => p.id);
-    const newStarting = [...pick("GK", 1), ...pick("DEF", 4), ...pick("MID", 3), ...pick("FWD", 3)];
-    setStartingXI(newStarting);
-    const newBench = squad.filter(p => !newStarting.includes(p.id)).map(p => p.id);
-    setBench(newBench);
-    toast.success("Alineación completada automáticamente");
   }
 
   function handleFormationChange(newFormation: FormationName) {
@@ -501,8 +496,8 @@ function LineupPage() {
     const newBench = squad.filter((p) => !newStartingXI.includes(p.id)).map((p) => p.id);
     setBench(newBench);
 
-    // Auto-save formation to global state
-    if (save) {
+    // Only auto-save formation to global state if NOT from season (main menu editing)
+    if (save && !fromSeason) {
       const next = setFormation(save, save.myTeamId, newFormation);
       saveSave(next);
       setSave(next);
@@ -547,21 +542,23 @@ function LineupPage() {
               <option key={f} value={f}>{f}</option>
             ))}
           </select>
-          <button onClick={autoFill} className="px-4 py-2 rounded-lg bg-card border border-border text-sm hover:border-accent transition">
-            Auto
-          </button>
-          <button onClick={save_} disabled={startingXI.length !== 11}
-            className="px-5 py-2 rounded-lg bg-primary text-primary-foreground font-bold text-sm glow-neon disabled:opacity-40 disabled:glow-cyan-0">
-            Guardar
-          </button>
+          {!fromSeason && (
+            <button onClick={save_} disabled={!isLineupComplete}
+              className="px-5 py-2 rounded-lg bg-primary text-primary-foreground font-bold text-sm glow-neon disabled:opacity-40 disabled:glow-cyan-0">
+              Guardar
+            </button>
+          )}
         </div>
       </div>
 
       <div className="panel-glow p-4 mb-6">
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center gap-4">
-            <span className="font-bold text-primary">Titulares: {startingXI.length}/11</span>
+            <span className="font-bold text-primary">Titulares: {activeStartersCount}/11</span>
             <span className="font-bold text-muted-foreground">Suplentes: {bench.length}</span>
+            {!isLineupComplete && (
+              <span className="text-destructive font-bold">⚠️ La plantilla no está completa.</span>
+            )}
           </div>
           <div className="text-2xl font-black scoreline text-primary">
             {selectedFormation}
@@ -675,9 +672,27 @@ function LineupPage() {
 
       {fromSeason && (
         <div className="mt-8 flex justify-end">
-          <Link to="/match" className={`px-6 py-3 rounded-lg font-black ${startingXI.length === 11 ? "bg-primary text-primary-foreground glow-neon" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}>
+          <button
+            onClick={() => {
+              if (!isLineupComplete) {
+                toast.error("Plantilla incompleta. Faltan jugadores titulares.");
+                return;
+              }
+              // Pass temporary lineup to match engine via router state
+              // This allows one-off changes for this specific match only
+              navigate({
+                to: "/match",
+                state: {
+                  matchLineup: startingXI,
+                  matchFormation: selectedFormation,
+                } as any,
+              });
+            }}
+            disabled={!isLineupComplete}
+            className={`px-6 py-3 rounded-lg font-black ${isLineupComplete ? "bg-primary text-primary-foreground glow-neon" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}
+          >
             Jugar Partido →
-          </Link>
+          </button>
         </div>
       )}
     </div>

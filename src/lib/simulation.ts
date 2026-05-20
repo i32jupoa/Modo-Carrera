@@ -55,6 +55,43 @@ function poisson(lambda: number): number {
 
 const HOME_ADVANTAGE = 0.25;
 
+// Calculate the dynamic average OVR of exactly 11 players on the pitch
+export function calculateActiveOVR(activePlayers: Player[]): number {
+  if (activePlayers.length === 0) return 70; // Fallback
+  const sum = activePlayers.reduce((s, p) => s + p.rating, 0);
+  return sum / activePlayers.length;
+}
+
+// Calculate attack strength from XI (forwards and midfielders weighted)
+function calculateAttackStrength(xi: Player[]): number {
+  if (xi.length === 0) return 65;
+  const forwards = xi.filter(p => p.position === "FWD");
+  const mids = xi.filter(p => p.position === "MID");
+  const defenders = xi.filter(p => p.position === "DEF");
+  
+  // Attack is heavily weighted by forwards (70%), midfielders (25%), defenders (5%)
+  const fwdAvg = forwards.length > 0 ? forwards.reduce((s, p) => s + p.rating, 0) / forwards.length : 0;
+  const midAvg = mids.length > 0 ? mids.reduce((s, p) => s + p.rating, 0) / mids.length : 0;
+  const defAvg = defenders.length > 0 ? defenders.reduce((s, p) => s + p.rating, 0) / defenders.length : 0;
+  
+  return (fwdAvg * 0.7) + (midAvg * 0.25) + (defAvg * 0.05);
+}
+
+// Calculate defense strength from XI (defenders and goalkeepers weighted)
+function calculateDefenseStrength(xi: Player[]): number {
+  if (xi.length === 0) return 65;
+  const goalkeepers = xi.filter(p => p.position === "GK");
+  const defenders = xi.filter(p => p.position === "DEF");
+  const mids = xi.filter(p => p.position === "MID");
+  
+  // Defense is heavily weighted by defenders (60%), goalkeepers (25%), midfielders (15%)
+  const gkAvg = goalkeepers.length > 0 ? goalkeepers.reduce((s, p) => s + p.rating, 0) / goalkeepers.length : 0;
+  const defAvg = defenders.length > 0 ? defenders.reduce((s, p) => s + p.rating, 0) / defenders.length : 0;
+  const midAvg = mids.length > 0 ? mids.reduce((s, p) => s + p.rating, 0) / mids.length : 0;
+  
+  return (defAvg * 0.6) + (gkAvg * 0.25) + (midAvg * 0.15);
+}
+
 // Team form factor from XI's average morale+form (0.85 - 1.15)
 function teamMomentum(xi: Player[]): number {
   if (xi.length === 0) return 1;
@@ -67,20 +104,34 @@ function teamMomentum(xi: Player[]): number {
 }
 
 export function expectedGoals(home: Team, away: Team, homeXI: Player[] = [], awayXI: Player[] = []): { lh: number; la: number } {
-  // Safe fallbacks for team stats (minimum 65 for minor league teams)
-  const homeAtt = home.att || 65;
-  const homeDef = home.def || 65;
-  const awayAtt = away.att || 65;
-  const awayDef = away.def || 65;
+  // Use dynamic attack/defense strength from actual XI instead of static team ratings
+  const homeAtt = calculateAttackStrength(homeXI) || 65;
+  const homeDef = calculateDefenseStrength(homeXI) || 65;
+  const awayAtt = calculateAttackStrength(awayXI) || 65;
+  const awayDef = calculateDefenseStrength(awayXI) || 65;
   
   const homeDiff = homeAtt - awayDef;
   const awayDiff = awayAtt - homeDef;
   const mh = teamMomentum(homeXI);
   const ma = teamMomentum(awayXI);
   
-  // Base expected goals with minimum floor for competitive matches
-  const lh = Math.max(0.5, (1.3 + homeDiff * 0.05 + HOME_ADVANTAGE) * mh);
-  const la = Math.max(0.5, (1.3 + awayDiff * 0.05) * ma);
+  // Progressive weight for OVR difference - every 2 points has increasingly pronounced effect
+  // Uses quadratic scaling for more dramatic impact at higher differences
+  const homeProgressiveFactor = 0.10 + (Math.abs(homeDiff) / 100) * 0.15;
+  const awayProgressiveFactor = 0.10 + (Math.abs(awayDiff) / 100) * 0.15;
+  
+  const baseHome = 1.3 + homeDiff * homeProgressiveFactor + HOME_ADVANTAGE;
+  const baseAway = 1.3 + awayDiff * awayProgressiveFactor;
+  
+  // Add randomness factor to allow for upsets (David vs Goliath scenarios)
+  // Uses normal distribution with higher variance to enable surprises
+  const homeRandom = (rand() - 0.5) * 0.8; // ±0.4 variance
+  const awayRandom = (rand() - 0.5) * 0.8;
+  
+  // Apply momentum and randomness
+  const lh = Math.max(0.3, (baseHome + homeRandom) * mh);
+  const la = Math.max(0.3, (baseAway + awayRandom) * ma);
+  
   return { lh, la };
 }
 

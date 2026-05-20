@@ -1,9 +1,8 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { loadSave, ALL_LEAGUES, getSortedStandings, type SaveGame } from "@/lib/store";
-import { usePlayersStore } from "@/store/playersStore";
-import { LEAGUES, type LeagueId, teamById } from "@/data/teams";
-import { TeamBadge } from "@/components/TeamBadge";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
+import { ALL_LEAGUES, loadSave, SaveGame, getSortedStandings } from "@/lib/store";
+import { LEAGUES, teamById, teamsByLeague, type LeagueId } from "@/data/teams";
+import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
 import { TeamLogo } from "@/components/TeamLogo";
 
 // Helper to get league name from league ID
@@ -29,6 +28,13 @@ function StandingsPage() {
     setSave(s);
     setViewLeague(s.myLeague);
   }, [navigate]);
+  
+  // Generate stats on-demand when league changes
+  useEffect(() => {
+    if (viewLeague) {
+      ensureStatsForLeague(viewLeague);
+    }
+  }, [viewLeague]);
 
   if (!save) return null;
 

@@ -353,8 +353,138 @@ function generateFakeStatsForBackgroundLeagues(save: SaveGame, leagues: LeagueId
 // Big 5 European leagues for VIP deep simulation
 const BIG5_LEAGUES: LeagueId[] = ["laliga", "premier", "seriea", "bundesliga", "ligue1"];
 
+// Additional important leagues for VIP deep simulation
+const IMPORTANT_LEAGUES: LeagueId[] = ["ligaportugal", "1aproleague", "eredivisie", "trendyolsperlig"];
+
 function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
-  return leagueId === userLeague || BIG5_LEAGUES.includes(leagueId);
+  return leagueId === userLeague || BIG5_LEAGUES.includes(leagueId) || IMPORTANT_LEAGUES.includes(leagueId);
+}
+
+// Generate realistic player stats for O(1) leagues based on match results (OPTIMIZED)
+export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: LeagueId[], maxMatchday?: number, startMatchday?: number) {
+  const store = usePlayersStore.getState();
+  
+  for (const lg of o1Leagues) {
+    const currentMatchday = save.currentMatchday[lg] - 1; // Current matchday just finished
+    if (currentMatchday < 1) continue;
+    
+    // Limit to the user's current matchday to keep stats in sync
+    const limitMatchday = maxMatchday ? Math.min(currentMatchday, maxMatchday) : currentMatchday;
+    
+    // Start from the specified matchday (or 1 if not specified)
+    const startFrom = startMatchday || 1;
+    
+    // Process matchdays from startFrom to limitMatchday
+    for (let md = startFrom; md <= limitMatchday; md++) {
+      const leagueFixtures = save.fixtures[lg].filter(f => f.matchday === md && f.result);
+      if (leagueFixtures.length === 0) continue;
+      
+      // Batch process all fixtures in this matchday
+      const allPlayersToRecord = new Map<string, Player[]>(); // teamId -> players
+      
+      // First pass: collect all players who played
+      for (const fixture of leagueFixtures) {
+        const homeTeam = teamById(fixture.homeId);
+        const awayTeam = teamById(fixture.awayId);
+        if (!homeTeam || !awayTeam) continue;
+        
+        const homeSquad = store.getSimSquad(homeTeam.id);
+        const awaySquad = store.getSimSquad(awayTeam.id);
+        
+        // Quick selection without detailed formation constraints for speed
+        const selectMatchPlayers = (squad: Player[]): Player[] => {
+          const gks = squad.filter(p => p.position === "GK").slice(0, 1);
+          const defs = squad.filter(p => p.position === "DEF").slice(0, 4);
+          const mids = squad.filter(p => p.position === "MID").slice(0, 4);
+          const fwds = squad.filter(p => p.position === "FWD").slice(0, 2);
+          let players = [...gks, ...defs, ...mids, ...fwds];
+          if (players.length < 11) {
+            const remaining = squad.filter(p => !players.includes(p));
+            players = [...players, ...remaining.slice(0, 11 - players.length)];
+          }
+          return players.slice(0, 11);
+        };
+        
+        const homePlayers = selectMatchPlayers(homeSquad);
+        const awayPlayers = selectMatchPlayers(awaySquad);
+        
+        allPlayersToRecord.set(homeTeam.id, homePlayers);
+        allPlayersToRecord.set(awayTeam.id, awayPlayers);
+      }
+      
+      // Second pass: record appearances (batch)
+      for (const [teamId, players] of allPlayersToRecord) {
+        for (const player of players) {
+          store.recordAppearance(player.id);
+        }
+      }
+      
+      // Third pass: generate injuries (6% chance per team)
+      for (const [teamId, players] of allPlayersToRecord) {
+        if (Math.random() > 0.06) continue;
+        const victim = players[Math.floor(Math.random() * players.length)];
+        const weeks = 1 + Math.floor(Math.random() * 5);
+        const reasons = ["Muscular", "Rodilla", "Tobillo", "Lesión menor", "Fatiga"];
+        const reason = reasons[Math.floor(Math.random() * reasons.length)];
+        store.recordInjury(victim.id, md + weeks, reason);
+      }
+      
+      // Fourth pass: assign goals and assists based on fixture results
+      for (const fixture of leagueFixtures) {
+        if (!fixture.result) continue;
+        
+        const homePlayers = allPlayersToRecord.get(fixture.homeId) || [];
+        const awayPlayers = allPlayersToRecord.get(fixture.awayId) || [];
+        
+        if (homePlayers.length === 0 || awayPlayers.length === 0) continue;
+        
+        const assignGoals = (teamGoals: number, players: Player[]) => {
+          const forwards = players.filter(p => p.position === "FWD");
+          const mids = players.filter(p => p.position === "MID");
+          const defs = players.filter(p => p.position === "DEF");
+          
+          for (let i = 0; i < teamGoals; i++) {
+            const rand = Math.random();
+            let scorer: Player | undefined;
+            
+            if (rand < 0.70 && forwards.length > 0) {
+              scorer = forwards[Math.floor(Math.random() * forwards.length)];
+            } else if (rand < 0.95 && mids.length > 0) {
+              scorer = mids[Math.floor(Math.random() * mids.length)];
+            } else if (defs.length > 0) {
+              scorer = defs[Math.floor(Math.random() * defs.length)];
+            }
+            
+            if (scorer) store.recordGoal(scorer.id);
+          }
+        };
+        
+        const assignAssists = (teamGoals: number, players: Player[]) => {
+          const mids = players.filter(p => p.position === "MID");
+          const forwards = players.filter(p => p.position === "FWD");
+          const assists = Math.floor(teamGoals * 0.7);
+          
+          for (let i = 0; i < assists; i++) {
+            const rand = Math.random();
+            let assister: Player | undefined;
+            
+            if (rand < 0.60 && mids.length > 0) {
+              assister = mids[Math.floor(Math.random() * mids.length)];
+            } else if (forwards.length > 0) {
+              assister = forwards[Math.floor(Math.random() * forwards.length)];
+            }
+            
+            if (assister) store.recordAssist(assister.id);
+          }
+        };
+        
+        assignGoals(fixture.result.homeGoals, homePlayers);
+        assignGoals(fixture.result.awayGoals, awayPlayers);
+        assignAssists(fixture.result.homeGoals, homePlayers);
+        assignAssists(fixture.result.awayGoals, awayPlayers);
+      }
+    }
+  }
 }
 
 /**
@@ -365,7 +495,7 @@ function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
  */
 export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
   const next: SaveGame = JSON.parse(JSON.stringify(save));
-  const BATCH_SIZE = 50; // Balance between speed and UI responsiveness
+  const BATCH_SIZE = 100; // Larger batches since we're using O(1) math for background leagues
   
   const userLeague = next.myLeague;
   const backgroundLeagues: LeagueId[] = [];
@@ -400,21 +530,22 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
       
       let result: SimResult;
       
-      // Get squads for both teams
-      const homeXI = getStarters(next, fixture.homeId);
-      const awayXI = getStarters(next, fixture.awayId);
-      
-      if (homeXI.length === 0 || awayXI.length === 0) {
-        console.warn(`Empty squad for fixture ${fixture.id}: ${fixture.homeId} (${homeXI.length}) vs ${fixture.awayId} (${awayXI.length})`);
-        result = { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 };
-      } else if (isVIP) {
+      if (isVIP) {
         // DEEP SIMULATION for VIP leagues only
-        result = simulateMatch(home, away, homeXI, awayXI);
-        applyMatchToStats(next, { ...fixture, result });
+        const homeXI = getStarters(next, fixture.homeId);
+        const awayXI = getStarters(next, fixture.awayId);
+        
+        if (homeXI.length === 0 || awayXI.length === 0) {
+          console.warn(`Empty squad for VIP fixture ${fixture.id}: ${fixture.homeId} (${homeXI.length}) vs ${fixture.awayId} (${awayXI.length})`);
+          result = { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 };
+        } else {
+          result = simulateMatch(home, away, homeXI, awayXI);
+          applyMatchToStats(next, { ...fixture, result });
+        }
       } else {
-        // ULTRA-FAST for background leagues - now with player stats!
-        result = simulateMatchFast(home, away, homeXI, awayXI);
-        applyMatchToStats(next, { ...fixture, result });
+        // O(1) MATH SIMULATION for background leagues (ULTRA FAST)
+        result = generateFakeMatchResult(home, away);
+        // No stats recording for background leagues to save time
       }
       
       // Apply result
@@ -438,24 +569,22 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
     // Update progress
     onProgress?.(processed, totalMatches);
     
-    // Yield control to prevent UI blocking
-    await new Promise(resolve => setTimeout(resolve, 0));
+    // Yield control every few batches to prevent UI blocking
+    if (i % (BATCH_SIZE * 2) === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
   }
   
   console.log(`advanceMatchdayLayered: Completed. Processed ${processed}/${totalMatches} matches`);
   
-  // Verify results were saved for Serie A and Ligue 1
-  console.log(`Serie A fixtures with results: ${next.fixtures['seriea']?.filter(f => f.result).length || 0}`);
-  console.log(`Ligue 1 fixtures with results: ${next.fixtures['ligue1']?.filter(f => f.result).length || 0}`);
-  console.log(`Serie A current matchday: ${next.currentMatchday['seriea']}`);
-  console.log(`Ligue 1 current matchday: ${next.currentMatchday['ligue1']}`);
-  
+  console.time('advanceCupUCL');
   // Advance cups/UCL
   const cupLeagues = Object.keys(next.cupFixtures) as LeagueId[];
   for (const cupLg of cupLeagues) {
     advanceCupForLeague(next, cupLg);
   }
   advanceUCL(next);
+  console.timeEnd('advanceCupUCL');
   
   return next;
 }

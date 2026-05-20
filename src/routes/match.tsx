@@ -1,6 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { getMyNextFixture, loadSave, playMyNextMatch, SaveGame, saveSave } from "@/lib/store";
+import { getMyNextFixture, loadSave, playMyNextMatch, SaveGame, saveSave, setLineup, setFormation } from "@/lib/store";
 import { Fixture } from "@/lib/season";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
@@ -19,6 +19,7 @@ type Phase = "preview" | "playing" | "done";
 
 function MatchPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [save, setSave] = useState<SaveGame | null>(null);
   const [phase, setPhase] = useState<Phase>("preview");
   const [minute, setMinute] = useState(0);
@@ -28,6 +29,11 @@ function MatchPage() {
   const allEventsRef = useRef<MatchEvent[]>([]);
   const fixtureRef = useRef<Fixture | null>(null);
   const fixtures = usePlayersStore((s) => s.fixtures);
+
+  // Extract temporary lineup from router state (if passed from lineup page)
+  const routerState = location.state as any;
+  const matchLineup = routerState?.matchLineup as string[] | undefined;
+  const matchFormation = routerState?.matchFormation as string | undefined;
 
   function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number) {
     const updated = fixtures.map((f) =>
@@ -41,19 +47,47 @@ function MatchPage() {
   useEffect(() => {
     const s = loadSave();
     if (!s) { navigate({ to: "/" }); return; }
-    setSave(s);
-    fixtureRef.current = getMyNextFixture(s);
+    
+    // Prioritize router state temporary lineup over global store
+    let saveToUse = s;
+    const usedTemporaryLineup = !!matchLineup && !!matchFormation;
+    
+    if (usedTemporaryLineup) {
+      // Apply temporary lineup as absolute source of truth for this match
+      saveToUse = setLineup(s, s.myTeamId, matchLineup);
+      saveToUse = setFormation(saveToUse, s.myTeamId, matchFormation);
+    }
+    
+    setSave(saveToUse);
+    fixtureRef.current = getMyNextFixture(saveToUse);
     if (!fixtureRef.current) navigate({ to: "/season" });
-  }, [navigate]);
+  }, [navigate, matchLineup, matchFormation]);
 
   function startMatch() {
     if (!save) return;
+    
+    // Check if we used a temporary lineup for this match
+    const usedTemporaryLineup = !!matchLineup && !!matchFormation;
+    const originalLineup = save.lineups[save.myTeamId];
+    const originalFormation = save.formations[save.myTeamId];
+    
     const { save: newSave, fixture } = playMyNextMatch(save);
     if (!fixture || !fixture.result) return;
     allEventsRef.current = fixture.result.events;
     fixtureRef.current = fixture;
-    setSave(newSave);
-    saveSave(newSave);
+    
+    // If we used a temporary lineup, restore the original base lineup before saving
+    // This ensures only stats/results are saved, not the temporary lineup changes
+    if (usedTemporaryLineup && originalLineup && originalFormation) {
+      const saveWithOriginalLineup = setLineup(newSave, newSave.myTeamId, originalLineup);
+      const saveWithOriginalFormation = setFormation(saveWithOriginalLineup, newSave.myTeamId, originalFormation);
+      setSave(saveWithOriginalFormation);
+      saveSave(saveWithOriginalFormation);
+    } else {
+      setSave(newSave);
+      saveSave(newSave);
+    }
+    
     if (fixture.result) {
       updateFixtureInStore(fixture.id, fixture.result.homeGoals, fixture.result.awayGoals);
     }

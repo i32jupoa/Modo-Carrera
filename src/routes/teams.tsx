@@ -1,17 +1,16 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { loadSave, SaveGame } from "@/lib/store";
-import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
-import { LEAGUES_BY_COUNTRY, LEAGUES, LeagueId, overall, teamsByLeague, teamById, getAllTeams, type Team } from "@/data/teams";
+import { useState, useEffect, useMemo } from "react";
+import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
+import { teamsByLeague, teamById, overall, type LeagueId, type Team, getAllTeams, LEAGUES_BY_COUNTRY, LEAGUES } from "@/data/teams";
+import { usePlayersStore, ensureStatsForLeague, type PlayerStats } from "@/store/playersStore";
+import { TeamBadge } from "@/components/TeamBadge";
+import { TeamLogo } from "@/components/TeamLogo";
+import type { FcPlayer } from "@/store/playersStore";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
-import { TeamBadge } from "@/components/TeamBadge";
-import { TeamLogo } from "@/components/TeamLogo";
-import { usePlayersStore, type PlayerStats } from "@/store/playersStore";
-import type { FcPlayer } from "@/store/playersStore";
 
 // Map team names to players - same logic as playersStore but without affecting global state
 const PLAYERS_BY_TEAM: Record<string, FcPlayer[]> = {};
@@ -41,7 +40,6 @@ export const Route = createFileRoute("/teams")({ component: TeamsPage });
 
 function TeamsPage() {
   const navigate = useNavigate();
-  const { loading, ready } = usePlayersReady();
   const [save, setSave] = useState<SaveGame | null>(null);
   const [selectedLeague, setSelectedLeague] = useState<LeagueId>("laliga");
   const [openCountry, setOpenCountry] = useState<string | null>(null);
@@ -53,6 +51,13 @@ function TeamsPage() {
     setSave(s);
     setSelectedLeague(s.myLeague);
   }, [navigate]);
+  
+  // Generate stats on-demand when league changes
+  useEffect(() => {
+    if (selectedLeague) {
+      ensureStatsForLeague(selectedLeague);
+    }
+  }, [selectedLeague]);
 
   // Get teams for selected league
   const teams = useMemo(() => {
@@ -67,13 +72,6 @@ function TeamsPage() {
   }, [selectedTeam]);
 
   if (!save) return null;
-  if (loading) {
-    return (
-      <div className="p-4 md:p-6 max-w-5xl mx-auto">
-        <PlayersLoading message="Cargando datos de jugadores…" />
-      </div>
-    );
-  }
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">

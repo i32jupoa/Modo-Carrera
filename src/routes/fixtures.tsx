@@ -1,8 +1,8 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { ALL_LEAGUES, getMatchdayFixtures, loadSave, SaveGame } from "@/lib/store";
-import { LEAGUES, LeagueId, teamById } from "@/data/teams";
-import { TeamBadge } from "@/components/TeamBadge";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
+import { ALL_LEAGUES, loadSave, SaveGame, getMatchdayFixtures } from "@/lib/store";
+import { LEAGUES, teamById, type LeagueId } from "@/data/teams";
+import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
 import { TeamLogo } from "@/components/TeamLogo";
 
 // Helper to get league name from league ID
@@ -23,6 +23,13 @@ function FixturesPage() {
     if (!s) { navigate({ to: "/" }); return; }
     setSave(s); setLeague(s.myLeague); setViewMd(s.currentMatchday[s.myLeague]);
   }, [navigate]);
+  
+  // Generate stats on-demand when league changes
+  useEffect(() => {
+    if (league) {
+      ensureStatsForLeague(league);
+    }
+  }, [league]);
 
   if (!save) return null;
   const fixtures = getMatchdayFixtures(save, league, viewMd);
