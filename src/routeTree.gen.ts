@@ -20,7 +20,6 @@ import { Route as LineupRouteImport } from './routes/lineup'
 import { Route as InjuriesRouteImport } from './routes/injuries'
 import { Route as FixturesRouteImport } from './routes/fixtures'
 import { Route as CupRouteImport } from './routes/cup'
-import { Route as ChampionsRouteImport } from './routes/champions'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as AssistsRouteImport } from './routes/assists'
 import { Route as IndexRouteImport } from './routes/index'
@@ -80,11 +79,6 @@ const CupRoute = CupRouteImport.update({
   path: '/cup',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ChampionsRoute = ChampionsRouteImport.update({
-  id: '/champions',
-  path: '/champions',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const CalendarRoute = CalendarRouteImport.update({
   id: '/calendar',
   path: '/calendar',
@@ -105,7 +99,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/assists': typeof AssistsRoute
   '/calendar': typeof CalendarRoute
-  '/champions': typeof ChampionsRoute
   '/cup': typeof CupRoute
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
@@ -122,7 +115,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/assists': typeof AssistsRoute
   '/calendar': typeof CalendarRoute
-  '/champions': typeof ChampionsRoute
   '/cup': typeof CupRoute
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
@@ -140,7 +132,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/assists': typeof AssistsRoute
   '/calendar': typeof CalendarRoute
-  '/champions': typeof ChampionsRoute
   '/cup': typeof CupRoute
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
@@ -159,7 +150,6 @@ export interface FileRouteTypes {
     | '/'
     | '/assists'
     | '/calendar'
-    | '/champions'
     | '/cup'
     | '/fixtures'
     | '/injuries'
@@ -176,7 +166,6 @@ export interface FileRouteTypes {
     | '/'
     | '/assists'
     | '/calendar'
-    | '/champions'
     | '/cup'
     | '/fixtures'
     | '/injuries'
@@ -193,7 +182,6 @@ export interface FileRouteTypes {
     | '/'
     | '/assists'
     | '/calendar'
-    | '/champions'
     | '/cup'
     | '/fixtures'
     | '/injuries'
@@ -211,7 +199,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AssistsRoute: typeof AssistsRoute
   CalendarRoute: typeof CalendarRoute
-  ChampionsRoute: typeof ChampionsRoute
   CupRoute: typeof CupRoute
   FixturesRoute: typeof FixturesRoute
   InjuriesRoute: typeof InjuriesRoute
@@ -304,13 +291,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CupRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/champions': {
-      id: '/champions'
-      path: '/champions'
-      fullPath: '/champions'
-      preLoaderRoute: typeof ChampionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/calendar': {
       id: '/calendar'
       path: '/calendar'
@@ -339,7 +319,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AssistsRoute: AssistsRoute,
   CalendarRoute: CalendarRoute,
-  ChampionsRoute: ChampionsRoute,
   CupRoute: CupRoute,
   FixturesRoute: FixturesRoute,
   InjuriesRoute: InjuriesRoute,

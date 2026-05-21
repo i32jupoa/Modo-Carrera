@@ -29,7 +29,6 @@ const COMPETICIONES: Item[] = [
   { title: "Partidos", url: "/fixtures", icon: Swords },
   { title: "Clasificación", url: "/standings", icon: Trophy },
   { title: "Copa nacional", url: "/cup", icon: Shield },
-  { title: "Champions League", url: "/champions", icon: Award },
 ];
 
 const ESTADISTICAS: Item[] = [

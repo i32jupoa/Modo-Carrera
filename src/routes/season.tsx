@@ -445,8 +445,6 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
   let headerText = "";
   if (fixture.competition === "cup") {
     headerText = `🛡 Copa Nacional · ${roundNames[fixture.round || ""] || fixture.round || ""}`;
-  } else if (fixture.competition === "ucl") {
-    headerText = `🏆 Champions League · Jornada ${fixture.matchday}`;
   } else {
     headerText = `Liga · Jornada ${fixture.matchday}`;
   }
@@ -729,9 +727,7 @@ function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof 
       })}
 
       <p className="text-[0.65rem] text-muted-foreground mt-3 leading-relaxed">
-
-        <span className="text-primary">●</span> Champions · <span className="text-accent">●</span> Europa · <span className="text-destructive">●</span> Descenso
-
+        <span className="text-primary">●</span> Europa · <span className="text-destructive">●</span> Descenso
       </p>
 
     </div>

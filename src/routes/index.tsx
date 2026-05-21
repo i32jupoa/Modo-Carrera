@@ -20,8 +20,8 @@ export const Route = createFileRoute("/")({
 function Index() {
   const navigate = useNavigate();
   const [hasSave, setHasSave] = useState(false);
-  const [selectedLeague, setSelectedLeague] = useState<LeagueId>("laliga");
-  const [openCountry, setOpenCountry] = useState<string | null>("España");
+  const [selectedLeague, setSelectedLeague] = useState<LeagueId | null>(null);
+  const [openCountry, setOpenCountry] = useState<string | null>(null);
   const [hoverTeam, setHoverTeam] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -30,7 +30,7 @@ function Index() {
   }, []);
 
   const teams = useMemo(
-    () => teamsByLeague(selectedLeague).slice().sort((a, b) => overall(b) - overall(a)),
+    () => selectedLeague ? teamsByLeague(selectedLeague).slice().sort((a, b) => overall(b) - overall(a)) : [],
     [selectedLeague]
   );
 
@@ -64,14 +64,20 @@ function Index() {
   return (
     <div className="min-h-screen">
       <section className="max-w-6xl mx-auto px-6 pt-12 pb-10 text-center">
-        <span className="chip mb-5 inline-flex">Top 5 Ligas · Copa · Champions</span>
-        <h1 className="text-4xl md:text-6xl font-black tracking-tight">
-          Vive la temporada<br />
-          <span className="text-primary text-glow">como un mánager</span>
-        </h1>
-        <p className="mt-5 text-muted-foreground max-w-xl mx-auto text-sm md:text-base">
-          Plantillas, alineaciones, lesiones, goleadores, copa nacional y Champions League.
-          Todo el ecosistema del fútbol europeo en una simulación.
+        <div className="mb-6">
+          <h1 className="text-5xl md:text-7xl font-black tracking-tight mb-4">
+            <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient">
+              Dynasty Manager
+            </span>
+          </h1>
+          <div className="flex items-center justify-center gap-2 mb-4">
+            <div className="h-px w-16 bg-gradient-to-r from-transparent to-primary/50"></div>
+            <span className="text-2xl">⚽</span>
+            <div className="h-px w-16 bg-gradient-to-l from-transparent to-primary/50"></div>
+          </div>
+        </div>
+        <p className="text-muted-foreground max-w-2xl mx-auto text-sm md:text-base leading-relaxed">
+          Cada temporada cuenta una historia. Lleva a tu equipo desde la lucha por el descenso hasta conquistar Europa. Fichajes, tácticas, desarrollo y gloria: el futuro de tu club está en tus manos.
         </p>
 
         {hasSave && (

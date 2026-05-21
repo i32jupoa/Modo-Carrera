@@ -466,10 +466,6 @@ function CalendarPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-purple-400/80" />
             Sorteo de copa
           </span>
-          <span className="inline-flex items-center gap-2 opacity-60">
-            <span className={`w-3 h-3 rounded ${COMP_COLORS.ucl.bg} border ${COMP_COLORS.ucl.border}`} />
-            Champions (próximamente)
-          </span>
         </div>
       </div>
     </div>
