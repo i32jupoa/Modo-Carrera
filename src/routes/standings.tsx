@@ -87,8 +87,8 @@ function StandingsPage() {
 function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof getSortedStandings>; myTeamId: string }) {
   return (
     <div className="text-xs">
-      <div className="grid grid-cols-[24px_1fr_24px_28px_32px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
-        <span>#</span><span>Equipo</span><span className="text-center">PJ</span><span className="text-center">DG</span><span className="text-center">Pts</span>
+      <div className="grid grid-cols-[24px_1fr_24px_28px_28px_28px_32px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
+        <span>#</span><span>Equipo</span><span className="text-center">PJ</span><span className="text-center">GF</span><span className="text-center">GC</span><span className="text-center">DG</span><span className="text-center">Pts</span>
       </div>
       {standings.map((s, i) => {
         const t = teamById(s.teamId);
@@ -99,7 +99,7 @@ function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof 
         return (
           <div
             key={s.teamId}
-            className={`grid grid-cols-[24px_1fr_24px_28px_32px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : ""}`}
+            className={`grid grid-cols-[24px_1fr_24px_28px_28px_28px_32px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : ""}`}
           >
             <span className="text-muted-foreground">{i + 1}</span>
             <span className="flex items-center gap-1.5 min-w-0">
@@ -107,13 +107,15 @@ function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof 
               <span className="truncate">{t.name}</span>
             </span>
             <span className="text-center scoreline">{s.played}</span>
+            <span className="text-center scoreline">{s.gf}</span>
+            <span className="text-center scoreline">{s.ga}</span>
             <span className="text-center scoreline">{s.gd > 0 ? `+${s.gd}` : s.gd}</span>
             <span className="text-center scoreline font-bold">{s.points}</span>
           </div>
         );
       })}
       <p className="text-[0.65rem] text-muted-foreground mt-3 leading-relaxed">
-        <span className="text-primary">●</span> Champions · <span className="text-accent">●</span> Europa · <span className="text-destructive">●</span> Descenso
+        <span className="text-primary">●</span> Europa · <span className="text-destructive">●</span> Descenso
       </p>
     </div>
   );

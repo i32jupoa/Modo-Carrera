@@ -36,6 +36,7 @@ function Index() {
 
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const initPlayers = usePlayersStore((s) => s.init);
+  const getSimSquad = usePlayersStore((s) => s.getSimSquad);
 
   function pickTeam(id: string) {
     setLoading(true);
@@ -143,6 +144,8 @@ function Index() {
           {teams.map((t) => {
             const ov = overall(t);
             const isHover = hoverTeam === t.id;
+            const squad = getSimSquad(t.id);
+            const bestPlayer = squad.length > 0 ? squad.reduce((best, current) => current.rating > best.rating ? current : best) : null;
             return (
               <button
                 key={t.id}
@@ -169,9 +172,9 @@ function Index() {
                   <Stat label="MED" value={t.mid} />
                   <Stat label="DEF" value={t.def} />
                 </div>
-                {t.stars.length > 0 && (
+                {bestPlayer && (
                   <div className="mt-3 pt-3 border-t border-border/60 text-xs text-muted-foreground truncate">
-                    ★ {t.stars.slice(0, 2).join(" · ")}
+                    ★ {bestPlayer.name}
                   </div>
                 )}
               </button>

@@ -158,20 +158,6 @@ function FixturesPage() {
 
               </div>
 
-              {isMine && (
-
-                <div className="col-span-3 flex justify-center mt-1">
-
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider font-bold">
-
-                    {isHome ? "H" : "A"}
-
-                  </span>
-
-                </div>
-
-              )}
-
             </div>
 
           );

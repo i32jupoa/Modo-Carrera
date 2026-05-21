@@ -340,9 +340,6 @@ function SeasonPage() {
             <div className="flex items-center justify-between mb-4">
 
               <h3 className="font-bold">Últimos resultados</h3>
-
-              <Link to="/fixtures" className="text-xs text-muted-foreground hover:text-primary">Ver todos →</Link>
-
             </div>
 
             {recent.length === 0 ? (
@@ -547,6 +544,9 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
 
 
 function TeamSide({ team, side, recentResults }: { team: ReturnType<typeof teamById>; side: "left" | "right"; recentResults: Fixture[] }) {
+  const getSimSquad = usePlayersStore((s) => s.getSimSquad);
+  const squad = getSimSquad(team.id);
+  const bestPlayer = squad.length > 0 ? squad.reduce((best, current) => current.rating > best.rating ? current : best) : null;
 
   return (
 
@@ -560,7 +560,7 @@ function TeamSide({ team, side, recentResults }: { team: ReturnType<typeof teamB
 
           <div className="font-bold leading-tight">{team.name}</div>
 
-          <div className="text-xs text-muted-foreground">{team.stars[0] ?? team.city}</div>
+          <div className="text-xs text-muted-foreground">{bestPlayer ? bestPlayer.name : team.city}</div>
 
         </div>
 

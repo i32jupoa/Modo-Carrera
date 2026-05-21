@@ -16,19 +16,19 @@ type Item = { title: string; url: string; icon: React.ComponentType<{ className?
 
 const PRINCIPAL: Item[] = [
   { title: "Calendario", url: "/calendar", icon: CalendarDays },
-  { title: "Temporada", url: "/season", icon: Calendar },
+  { title: "Central", url: "/season", icon: Calendar },
 ];
 
 const MI_EQUIPO: Item[] = [
   { title: "Plantilla", url: "/squad", icon: Users },
-  { title: "Alineación", url: "/lineup", icon: ClipboardList },
+  { title: "Dirección de equipo", url: "/lineup", icon: ClipboardList },
   { title: "Lesiones", url: "/injuries", icon: Activity },
 ];
 
 const COMPETICIONES: Item[] = [
-  { title: "Partidos", url: "/fixtures", icon: Swords },
-  { title: "Clasificación", url: "/standings", icon: Trophy },
-  { title: "Copa nacional", url: "/cup", icon: Shield },
+  { title: "Jornadas", url: "/fixtures", icon: Swords },
+  { title: "Liga", url: "/standings", icon: Trophy },
+  { title: "Copa", url: "/cup", icon: Shield },
 ];
 
 const ESTADISTICAS: Item[] = [
