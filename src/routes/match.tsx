@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { getMyNextFixture, loadSave, playMyNextMatch, SaveGame, saveSave, setLineup, setFormation } from "@/lib/store";
+import { getMyNextFixture, loadSave, playMyNextMatch, playMyNextCupMatch, SaveGame, saveSave, setLineup, setFormation, getMyNextFixtureAny, playSpecificFixture, simulateCupMatchday, simulateUCLMatchday, advanceMatchdayLayered, simulateRemainingCupMatches } from "@/lib/store";
 import { Fixture } from "@/lib/season";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
@@ -32,28 +32,110 @@ function MatchPage() {
   const clockTimeoutRef = useRef<number | null>(null);
   const fixtures = usePlayersStore((s) => s.fixtures);
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
+  const pendingUserMatch = usePlayersStore((s) => s.pendingUserMatch);
+  const [isCupMatch, setIsCupMatch] = useState(false);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [matchType, setMatchType] = useState<'LEAGUE' | 'CUP' | 'UCL'>('LEAGUE');
+  const [cupRound, setCupRound] = useState<string | undefined>(undefined);
 
   // Extract temporary lineup from router state (if passed from lineup page)
   const routerState = location.state as any;
   const matchLineup = routerState?.matchLineup as string[] | undefined;
   const matchFormation = routerState?.matchFormation as string | undefined;
 
+  // Extract match type from router state (if passed from season page)
+  useEffect(() => {
+    if (routerState?.matchType) {
+      setMatchType(routerState.matchType);
+      setCupRound(routerState.cupRound);
+      setIsCupMatch(routerState.matchType === 'CUP');
+    }
+  }, [routerState]);
+
+  // FAILSAFE: If matchType is not in router state, determine it from the fixture
+  useEffect(() => {
+    const fixture = fixtureRef.current;
+    if (!matchType && fixture) {
+      const determinedMatchType = fixture.competition === "league" ? "LEAGUE" : 
+                                   fixture.competition === "cup" ? "CUP" : "UCL";
+      setMatchType(determinedMatchType);
+      setCupRound(fixture.competition === "cup" ? fixture.round : undefined);
+      setIsCupMatch(determinedMatchType === 'CUP');
+      console.log("FAILSAFE: Determined matchType from fixture:", determinedMatchType);
+    }
+  }, [matchType]);
+
   // Store original lineup BEFORE applying temporary changes
   const originalLineupRef = useRef<string[] | null>(null);
   const originalFormationRef = useRef<string | null>(null);
 
-  function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number) {
-    const updated = fixtures.map((f) =>
-      f.id === fixtureId
-        ? { ...f, isPlayed: true, homeScore, awayScore }
-        : f
-    );
-    usePlayersStore.setState({ fixtures: updated });
+  async function handleReturnToSeason() {
+    if (!save || isSimulating) return;
+
+    setIsSimulating(true);
+
+    try {
+      let next: SaveGame;
+
+      // STRICT BRANCHING by matchType - ensure correct simulation for each competition
+      if (matchType === 'CUP') {
+        // CUP: Simulate ALL remaining Cup fixtures for the current cup round across ALL active countries
+        // DO NOT touch league standings or league matchday counter
+        console.log("Post-match: Simulating CUP matches for round:", cupRound);
+        next = await simulateRemainingCupMatches(save, cupRound || 'R32');
+      } else if (matchType === 'UCL') {
+        // UCL: Simulate UCL fixtures for the matchday ONLY
+        console.log("Post-match: Simulating UCL matches for matchday:", fixture.matchday);
+        next = simulateUCLMatchday(save, fixture.matchday);
+      } else {
+        // LEAGUE: Execute the league matchday simulation
+        console.log("Post-match: Simulating LEAGUE matches");
+        next = await advanceMatchdayLayered(save, (done, total) => {
+          console.log(`Matches: ${done}/${total}`);
+        });
+      }
+
+      saveSave(next);
+      setSave(next);
+
+      navigate({ to: "/season" });
+    } catch (err) {
+      console.error("Error al simular jornada:", err);
+      alert("Error al simular: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsSimulating(false);
+    }
+  }
+
+  function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number, isCup: boolean = false) {
+    if (isCup) {
+      const s = loadSave();
+      if (s) {
+        const updated = s.cupFixtures[s.myLeague].map((f) =>
+          f.id === fixtureId
+            ? { ...f, result: { homeGoals: homeScore, awayGoals: awayScore, events: [], injuries: [], xgHome: 0, xgAway: 0 } }
+            : f
+        );
+        const newSave = { ...s, cupFixtures: { ...s.cupFixtures, [s.myLeague]: updated } };
+        saveSave(newSave);
+      }
+    } else {
+      const updated = fixtures.map((f) =>
+        f.id === fixtureId
+          ? { ...f, isPlayed: true, homeScore, awayScore }
+          : f
+      );
+      usePlayersStore.setState({ fixtures: updated });
+    }
   }
 
   useEffect(() => {
     const s = loadSave();
     if (!s) { navigate({ to: "/" }); return; }
+    
+    // Check if this is a cup match from pendingUserMatch
+    const isCup = pendingUserMatch?.competition === "cup";
+    setIsCupMatch(!!isCup);
     
     // Store original lineup BEFORE applying temporary changes
     if (matchLineup && matchFormation) {
@@ -72,12 +154,26 @@ function MatchPage() {
     }
     
     setSave(saveToUse);
-    fixtureRef.current = getMyNextFixture(saveToUse);
+    
+    // Get the fixture based on match type
+    if (isCup && pendingUserMatch) {
+      // Find cup fixture
+      const cupFixture = s.cupFixtures[s.myLeague].find(
+        f => f.homeId === pendingUserMatch.homeTeam && f.awayId === pendingUserMatch.awayTeam && !f.result
+      );
+      fixtureRef.current = cupFixture || null;
+    } else {
+      // Use getMyNextFixtureAny to find next match from any competition
+      fixtureRef.current = getMyNextFixtureAny(saveToUse);
+    }
+    
     if (!fixtureRef.current) navigate({ to: "/season" });
-  }, [navigate, matchLineup, matchFormation]);
+  }, [navigate, matchLineup, matchFormation, pendingUserMatch]);
 
   function startMatch() {
     if (!save) return;
+    
+    if (!fixtureRef.current) return;
     
     // Check if we used a temporary lineup for this match
     const usedTemporaryLineup = !!matchLineup && !!matchFormation;
@@ -85,7 +181,9 @@ function MatchPage() {
     const originalLineup = originalLineupRef.current;
     const originalFormation = originalFormationRef.current;
     
-    const { save: newSave, fixture } = playMyNextMatch(save);
+    // Simulate the specific fixture that's currently loaded
+    const { save: newSave, fixture } = playSpecificFixture(save, fixtureRef.current.id);
+      
     if (!fixture || !fixture.result) return;
     allEventsRef.current = fixture.result.events;
     fixtureRef.current = fixture;
@@ -103,8 +201,14 @@ function MatchPage() {
     }
     
     if (fixture.result) {
-      updateFixtureInStore(fixture.id, fixture.result.homeGoals, fixture.result.awayGoals);
+      updateFixtureInStore(fixture.id, fixture.result.homeGoals, fixture.result.awayGoals, isCupMatch);
     }
+    
+    // Clear pending match after simulation
+    if (isCupMatch) {
+      usePlayersStore.setState({ pendingUserMatch: null });
+    }
+    
     setPhase("playing");
     runClock();
   }
@@ -203,12 +307,28 @@ function MatchPage() {
   // Check if user's lineup is complete (11 players)
   const userLineup = isMe(fixture.homeId) ? homeLineup : awayLineup;
   const isUserLineupComplete = userLineup.length === 11;
+  
+  // Round names mapping for cup matches
+  const roundNames: Record<string, string> = {
+    "R32": "Octavos de Final",
+    "R16": "Dieciseisavos",
+    "QF": "Cuartos de Final",
+    "SF": "Semifinales",
+    "Final": "Final"
+  };
+  
+  // Determine header text based on match type
+  const headerText = matchType === 'CUP'
+    ? `🛡 Copa Nacional · ${cupRound || fixture.round || ""}`
+    : matchType === 'UCL'
+    ? `⭐ Champions League · Jornada ${fixture.matchday}`
+    : `Liga · Jornada ${fixture.matchday}`;
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">
       <div className="panel-glow p-6 md:p-8">
         <div className="flex items-center justify-between mb-6">
-          <span className="chip">Jornada {fixture.matchday}</span>
+          <span className="chip">{headerText}</span>
           <div className="text-sm scoreline font-bold text-primary">
             {phase === "preview" ? "00'" : `${minute}'`}
           </div>
@@ -242,7 +362,15 @@ function MatchPage() {
           {phase === "preview" && (
             <>
               <button
-                onClick={() => navigate({ to: "/lineup", state: { fromMatch: true } as any })}
+                onClick={() => navigate({ 
+                  to: "/lineup", 
+                  state: { 
+                    fromMatch: true,
+                    matchType,
+                    cupRound,
+                    fixtureId: fixture.id
+                  } as any 
+                })}
                 className="px-8 py-3 rounded-lg bg-card border border-border font-semibold hover:border-accent transition"
               >
                 Editar Alineación
@@ -262,8 +390,8 @@ function MatchPage() {
             </button>
           )}
           {phase === "done" && (
-            <button onClick={() => navigate({ to: "/season" })} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition">
-              Volver a la temporada →
+            <button onClick={handleReturnToSeason} disabled={isSimulating} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition disabled:opacity-50">
+              {isSimulating ? 'Simulando...' : 'Volver a la temporada →'}
             </button>
           )}
         </div>

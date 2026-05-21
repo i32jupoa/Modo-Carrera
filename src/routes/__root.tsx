@@ -13,8 +13,12 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { GameDayBar } from "@/components/GameDayBar";
 import { MatchDayModal } from "@/components/MatchDayModal";
+import { CupDrawModal } from "@/components/CupDrawModal";
 import { usePlayersReady } from "@/components/PlayersLoading";
+import { usePlayersStore } from "@/store/playersStore";
 import { Toaster } from "@/components/ui/sonner";
+import { loadSave, applyCupDraw, saveSave } from "@/lib/store";
+import { useState, useEffect } from "react";
 
 function NotFoundComponent() {
   return (
@@ -116,12 +120,67 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const [showCupDrawModal, setShowCupDrawModal] = useState(false);
+  const [save, setSave] = useState(loadSave());
+  const currentDate = usePlayersStore((s) => s.currentDate);
+
+  useEffect(() => {
+    const s = loadSave();
+    setSave(s);
+    
+    if (s && s.cupDrawPending) {
+      // Check if current date matches the draw day for the pending round
+      const seasonStart = new Date("2025-08-16T12:00:00Z");
+      const roundToDrawMatchday: Record<string, number> = {
+        "R32": 1,
+        "R16": 5,
+        "QF": 9,
+        "SF": 14,
+        "Final": 19
+      };
+      
+      const pendingRound = s.cupDrawPending.round;
+      const drawMatchday = roundToDrawMatchday[pendingRound];
+      
+      if (drawMatchday) {
+        // Calculate the draw date: 2 days after the league matchday
+        const leagueMatchdayDate = new Date(seasonStart.getTime() + (drawMatchday - 1) * 7 * 86400000);
+        const drawDate = new Date(leagueMatchdayDate.getTime() + 2 * 86400000);
+        const drawDateIso = drawDate.toISOString().split('T')[0];
+        
+        // Only show modal if current date is the draw date
+        if (currentDate === drawDateIso && !showCupDrawModal) {
+          setShowCupDrawModal(true);
+        }
+      }
+    }
+  }, [currentDate]);
+
+  const handleCupDrawComplete = (matchups: [string, string][]) => {
+    const s = loadSave();
+    if (s && s.cupDrawPending) {
+      const next = applyCupDraw(s, s.cupDrawPending.league, s.cupDrawPending.round, matchups);
+      saveSave(next);
+      setSave(next);
+      setShowCupDrawModal(false);
+    }
+  };
 
   return (
     <QueryClientProvider client={queryClient}>
       <AppShell />
       <Toaster richColors position="top-center" />
       <MatchDayModal />
+      {save?.cupDrawPending && showCupDrawModal && (
+        <CupDrawModal
+          isOpen={showCupDrawModal}
+          onClose={() => setShowCupDrawModal(false)}
+          round={save.cupDrawPending.round}
+          teams={save.cupDrawPending.teams}
+          league={save.cupDrawPending.league}
+          onComplete={handleCupDrawComplete}
+        />
+      )}
     </QueryClientProvider>
   );
 }

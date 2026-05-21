@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Zap } from "lucide-react";
+import { loadSave, type SaveGame } from "@/lib/store";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -34,30 +35,102 @@ export function MatchDayModal() {
   const clearPendingMatch = usePlayersStore((s) => s.clearPendingMatch);
   const dismissMatch = usePlayersStore((s) => s.dismissMatch);
   const dismissedMatchIds = usePlayersStore((s) => s.dismissedMatchIds);
+  const save = loadSave();
 
   useEffect(() => {
     if (!myTeamId || pending) return;
+    
+    // Check league fixtures first
     const onDay = unplayedOnDate(fixtures, currentDate);
     const today = onDay.find((f) => involvesTeam(f, myTeamId));
-    if (!today) return;
-
-    if (dismissedMatchIds.includes(today.id)) return;
-
-    const store = usePlayersStore.getState();
-    let nextFixtures = store.fixtures;
-    for (const f of onDay) {
-      if (f.id === today.id) continue;
-      const scores = simulateScheduleFixture(f, (teamId, md) =>
-        store.getSimXI(teamId, [], md),
-      );
-      nextFixtures = applyFixtureResult(nextFixtures, f.id, scores);
+    
+    if (today && !dismissedMatchIds.includes(today.id)) {
+      const store = usePlayersStore.getState();
+      let nextFixtures = store.fixtures;
+      for (const f of onDay) {
+        if (f.id === today.id) continue;
+        const scores = simulateScheduleFixture(f, (teamId, md) =>
+          store.getSimXI(teamId, [], md),
+        );
+        nextFixtures = applyFixtureResult(nextFixtures, f.id, scores);
+      }
+      usePlayersStore.setState({
+        fixtures: nextFixtures,
+        pendingUserMatch: today,
+        lastUserMatchResult: null,
+      });
+      return;
     }
-    usePlayersStore.setState({
-      fixtures: nextFixtures,
-      pendingUserMatch: today,
-      lastUserMatchResult: null,
-    });
-  }, [currentDate, fixtures, myTeamId, pending, dismissedMatchIds]);
+    
+    // Check cup fixtures if no league match today
+    if (save) {
+      const seasonStart = new Date("2025-08-16T12:00:00Z");
+      
+      // Check cup fixtures
+      for (const lg of Object.keys(save.cupFixtures)) {
+        const cupList = save.cupFixtures[lg as LeagueId];
+        if (!cupList) continue;
+        
+        for (const f of cupList) {
+          if (f.result) continue;
+          if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
+          
+          // Calculate cup match date: 3 days after league matchday
+          const leagueMatchdayDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
+          const cupMatchDate = new Date(leagueMatchdayDate.getTime() + 3 * 86400000);
+          const cupMatchDateIso = cupMatchDate.toISOString().split('T')[0];
+          
+          if (cupMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
+            usePlayersStore.setState({
+              pendingUserMatch: {
+                id: f.id,
+                date: currentDate,
+                homeTeam: f.homeId,
+                awayTeam: f.awayId,
+                isPlayed: false,
+                homeScore: null,
+                awayScore: null,
+                competition: "cup" as const,
+                matchday: f.matchday
+              },
+              lastUserMatchResult: null,
+            });
+            return;
+          }
+        }
+      }
+      
+      // Check UCL fixtures
+      if (save.uclFixtures) {
+        for (const f of save.uclFixtures) {
+          if (f.result) continue;
+          if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
+          
+          // UCL matches are on the same day as league matchday
+          const uclMatchDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
+          const uclMatchDateIso = uclMatchDate.toISOString().split('T')[0];
+          
+          if (uclMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
+            usePlayersStore.setState({
+              pendingUserMatch: {
+                id: f.id,
+                date: currentDate,
+                homeTeam: f.homeId,
+                awayTeam: f.awayId,
+                isPlayed: false,
+                homeScore: null,
+                awayScore: null,
+                competition: "ucl" as const,
+                matchday: f.matchday
+              },
+              lastUserMatchResult: null,
+            });
+            return;
+          }
+        }
+      }
+    }
+  }, [currentDate, fixtures, myTeamId, pending, dismissedMatchIds, save]);
 
   const live = useMemo(() => {
     if (!pending) return null;
@@ -99,8 +172,12 @@ export function MatchDayModal() {
     e.stopPropagation();
     if (pending) {
       dismissMatch(pending.id);
+      // Determine match type from pending match
+      const matchType = pending.competition === "cup" ? "CUP" : 
+                       pending.competition === "ucl" ? "UCL" : "LEAGUE";
+      const cupRound = pending.competition === "cup" ? `R${pending.matchday}` : undefined;
+      navigate({ to: "/match", state: { matchType, cupRound } as any });
     }
-    navigate({ to: "/match" });
   }
 
   return (

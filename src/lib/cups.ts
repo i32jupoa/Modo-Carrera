@@ -1,64 +1,64 @@
-import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, getAllTeams } from "@/data/teams";
+import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getAllTeams } from "@/data/teams";
 import { Fixture } from "@/lib/season";
 
 /* ============================================================
  *  NATIONAL CUP  (per league, dynamic size: supports 2-32 teams)
+ *  Modeled after Spanish Copa del Rey with realistic scheduling
+ *  First draw is 2 days after first league match (Aug 18)
  * ============================================================ */
-export const CUP_SCHEDULE: { matchday: number; round: string; size: number }[] = [
-  { matchday: 6, round: "R16", size: 16 },
-  { matchday: 12, round: "QF", size: 8 },
-  { matchday: 22, round: "SF", size: 4 },
-  { matchday: 30, round: "Final", size: 2 },
+export const CUP_SCHEDULE: { matchday: number; round: string; size: number; drawMatchday: number }[] = [
+  { matchday: 2, round: "R32", size: 32, drawMatchday: 1 },   // First draw: Aug 18 (2 days after Aug 16), Match: Aug 21
+  { matchday: 6, round: "R16", size: 16, drawMatchday: 5 },  // Draw: Sep 19, Match: Sep 24
+  { matchday: 10, round: "QF", size: 8, drawMatchday: 9 },   // Draw: Oct 17, Match: Oct 22
+  { matchday: 15, round: "SF", size: 4, drawMatchday: 14 },  // Draw: Nov 21, Match: Nov 26
+  { matchday: 20, round: "Final", size: 2, drawMatchday: 19 }, // Draw: Dec 26, Match: Dec 31
 ];
 
 // Generate dynamic cup schedule based on actual bracket size
-export function getCupScheduleForSize(teamCount: number): { matchday: number; round: string; size: number }[] {
-  let rounds: { matchday: number; round: string; size: number }[] = [];
-  if (teamCount >= 32) rounds.push({ matchday: 3, round: "R32", size: 32 });
-  if (teamCount >= 16) rounds.push({ matchday: 6, round: "R16", size: 16 });
-  if (teamCount >= 8) rounds.push({ matchday: 12, round: "QF", size: 8 });
-  if (teamCount >= 4) rounds.push({ matchday: 22, round: "SF", size: 4 });
-  rounds.push({ matchday: 30, round: "Final", size: 2 });
+export function getCupScheduleForSize(teamCount: number): { matchday: number; round: string; size: number; drawMatchday: number }[] {
+  let rounds: { matchday: number; round: string; size: number; drawMatchday: number }[] = [];
+  if (teamCount >= 32) rounds.push({ matchday: 2, round: "R32", size: 32, drawMatchday: 1 });
+  if (teamCount >= 16) rounds.push({ matchday: 6, round: "R16", size: 16, drawMatchday: 5 });
+  if (teamCount >= 8) rounds.push({ matchday: 10, round: "QF", size: 8, drawMatchday: 9 });
+  if (teamCount >= 4) rounds.push({ matchday: 15, round: "SF", size: 4, drawMatchday: 14 });
+  rounds.push({ matchday: 20, round: "Final", size: 2, drawMatchday: 19 });
   return rounds;
 }
 
-export function initCup(league: LeagueId): { fixtures: Fixture[]; participants: string[] } {
-  const teams = teamsByLeague(league).slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
+export function initCup(league: LeagueId, includeSecondDivision = false): { fixtures: Fixture[]; participants: string[] } {
+  let teams = teamsByLeague(league).slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
+  
+  // Include second division teams if requested (for national cups like Copa del Rey)
+  if (includeSecondDivision) {
+    const country = LEAGUES[league]?.country;
+    if (country) {
+      const countryLeagues = LEAGUES_BY_COUNTRY[country] || [];
+      const secondDivisions = countryLeagues.filter(l => l.id !== league);
+      
+      for (const secondLeague of secondDivisions) {
+        const secondDivTeams = teamsByLeague(secondLeague.id as LeagueId);
+        teams = [...teams, ...secondDivTeams];
+      }
+      
+      // Sort all teams by overall rating
+      teams = teams.slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
+    }
+  }
   
   // Dynamically determine cup size: use nearest power of 2 (min 2 teams for a cup)
   const teamCount = teams.length;
-  let cupSize = 16; // default
+  let cupSize = 32; // default for national cups
   if (teamCount < 4) cupSize = 2;      // 2-team final only (very small leagues)
   else if (teamCount < 8) cupSize = 4;  // SF + Final
   else if (teamCount < 16) cupSize = 8; // QF + SF + Final
   else if (teamCount < 32) cupSize = 16; // R16 + QF + SF + Final
-  else cupSize = 32; // R32 + R16 + QF + SF + Final
-  
-  // Get dynamic schedule for this cup size
-  const schedule = getCupScheduleForSize(cupSize);
-  const firstRound = schedule[0]; // First round of the cup
+  else cupSize = 32; // R32 + R16 + QF + SF + Full
   
   const cupTeams = teams.slice(0, cupSize);
   const ids = cupTeams.map((t) => t.id);
   
-  // If odd number, add a bye placeholder that will be filtered out
-  if (ids.length % 2 !== 0) ids.push("__BYE__");
-  
-  const seeded = seedKnockout(ids);
-  const fixtures: Fixture[] = [];
-  
-  for (let i = 0; i < seeded.length; i += 2) {
-    const home = seeded[i];
-    const away = seeded[i + 1];
-    // Skip bye matches
-    if (home === "__BYE__" || away === "__BYE__") continue;
-    fixtures.push({
-      id: `cup-${league}-${firstRound.round}-${i}`, competition: "cup", league,
-      matchday: firstRound.matchday, round: firstRound.round,
-      homeId: home, awayId: away,
-    });
-  }
-  return { fixtures, participants: cupTeams.map((t) => t.id) };
+  // DO NOT create fixtures initially - fixtures are only created after the draw
+  return { fixtures: [], participants: ids };
 }
 
 /* ============================================================

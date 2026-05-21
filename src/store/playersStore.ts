@@ -1423,6 +1423,10 @@ export function playersStoreInit() {
   usePlayersStore.getState().init();
 }
 
+export function useCurrentDate(): string {
+  return usePlayersStore((s) => s.currentDate);
+}
+
 export function selectTopScorers(
   leagueFilter?: LeagueId,
   limit = 30,

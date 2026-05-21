@@ -20,7 +20,7 @@ export type ScheduleFixture = {
   isPlayed: boolean;
   homeScore: number | null;
   awayScore: number | null;
-  competition: "Liga";
+  competition: "Liga" | "cup" | "ucl";
   matchday: number;
 };
 

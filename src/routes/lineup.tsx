@@ -91,6 +91,11 @@ function LineupPage() {
   const routerState = location.state as any;
   const fromMatch = routerState?.fromMatch === true;
 
+  // Extract match metadata from router state (if passed from season or match page)
+  const matchType = routerState?.matchType as 'LEAGUE' | 'CUP' | 'UCL' | undefined;
+  const cupRound = routerState?.cupRound as string | undefined;
+  const fixtureId = routerState?.fixtureId as string | undefined;
+
   useEffect(() => {
     const s = loadSave();
     if (!s) { navigate({ to: "/" }); return; }
@@ -679,11 +684,15 @@ function LineupPage() {
               }
               // Pass temporary lineup to match engine via router state
               // This allows one-off changes for this specific match only
+              // Also forward ALL match metadata (matchType, cupRound, fixtureId) for correct post-match simulation
               navigate({
                 to: "/match",
                 state: {
                   matchLineup: startingXI,
                   matchFormation: selectedFormation,
+                  matchType: matchType || 'LEAGUE',  // Default to LEAGUE if undefined
+                  cupRound,
+                  fixtureId,
                 } as any,
               });
             }}
