@@ -234,7 +234,7 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
     }
     if (!myTeamId) return;
     const scheduleFixture = fixtures.find(
-      (f) => f.homeId === fixture.homeId && f.awayId === fixture.awayId && f.matchday === matchday
+      (f) => f.homeTeam === fixture.homeId && f.awayTeam === fixture.awayId && f.matchday === matchday
     );
     if (scheduleFixture?.date) {
       usePlayersStore.setState({ currentDate: scheduleFixture.date });
@@ -254,25 +254,17 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
         <div className="text-3xl font-black text-muted-foreground">VS</div>
         <TeamSide team={away} side="right" recentResults={awayRecent} />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <button
-          onClick={() => navigate({ to: "/lineup", search: { from: "season" } })}
-          className="text-center py-3 rounded-lg bg-card border border-border font-semibold hover:border-accent transition"
-        >
-          Editar alineación
-        </button>
-        <button
-          onClick={handlePlayMatch}
-          disabled={!isLineupComplete}
-          className={`text-center py-3 rounded-lg font-black tracking-wide transition ${
-            isLineupComplete 
-              ? "bg-primary text-primary-foreground glow-neon hover:brightness-110" 
-              : "bg-secondary text-muted-foreground pointer-events-none opacity-40"
-          }`}
-        >
-          {isLineupComplete ? "JUGAR" : "ALINEACIÓN INCOMPLETA"}
-        </button>
-      </div>
+      <button
+        onClick={handlePlayMatch}
+        disabled={!isLineupComplete}
+        className={`w-full py-3 rounded-lg font-black tracking-wide transition ${
+          isLineupComplete 
+            ? "bg-primary text-primary-foreground glow-neon hover:brightness-110" 
+            : "bg-secondary text-muted-foreground pointer-events-none opacity-40"
+        }`}
+      >
+        {isLineupComplete ? "JUGAR" : "ALINEACIÓN INCOMPLETA"}
+      </button>
     </div>
   );
 }

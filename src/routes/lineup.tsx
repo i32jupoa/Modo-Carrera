@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useSearch, useLocation } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { loadSave, SaveGame, saveSave, setLineup, setFormation } from "@/lib/store";
 import { teamById } from "@/data/teams";
@@ -74,6 +74,7 @@ function canPlayInRole(playerPosition: string, nodeRole: PositionRole): boolean 
 
 function LineupPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const search = useSearch({ from: "/lineup" });
   const { ready, loading } = usePlayersReady();
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
@@ -86,6 +87,9 @@ function LineupPage() {
 
   // Check if user navigated from "Temporada" screen
   const fromSeason = (search as any)?.from === "season";
+  // Check if user navigated from "Match" screen
+  const routerState = location.state as any;
+  const fromMatch = routerState?.fromMatch === true;
 
   useEffect(() => {
     const s = loadSave();
@@ -542,7 +546,7 @@ function LineupPage() {
               <option key={f} value={f}>{f}</option>
             ))}
           </select>
-          {!fromSeason && (
+          {!fromSeason && !fromMatch && (
             <button onClick={save_} disabled={!isLineupComplete}
               className="px-5 py-2 rounded-lg bg-primary text-primary-foreground font-bold text-sm glow-neon disabled:opacity-40 disabled:glow-cyan-0">
               Guardar
@@ -670,7 +674,7 @@ function LineupPage() {
         </div>
       </div>
 
-      {fromSeason && (
+      {(fromSeason || fromMatch) && (
         <div className="mt-8 flex justify-end">
           <button
             onClick={() => {
@@ -691,7 +695,7 @@ function LineupPage() {
             disabled={!isLineupComplete}
             className={`px-6 py-3 rounded-lg font-black ${isLineupComplete ? "bg-primary text-primary-foreground glow-neon" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}
           >
-            Jugar Partido →
+            Iniciar Partido →
           </button>
         </div>
       )}

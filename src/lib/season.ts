@@ -30,43 +30,70 @@ export type Standing = {
 export function generateLeagueFixtures(league: LeagueId): Fixture[] {
   const teams = teamsByLeague(league);
   const ids = teams.map((t) => t.id);
-  if (ids.length % 2 !== 0) ids.push("__BYE__");
   const n = ids.length;
-  const rounds = n - 1;
-  const half = n / 2;
+  
+  // Handle odd number of teams by adding a bye
+  if (n % 2 !== 0) {
+    ids.push("__BYE__");
+  }
+  
+  const numTeams = ids.length;
+  const rounds = numTeams - 1;
+  const matchesPerRound = numTeams / 2;
 
   const fixtures: Fixture[] = [];
-  let arr = ids.slice();
-
-  // First half of season (first leg): each team plays every other team once
-  for (let r = 0; r < rounds; r++) {
-    for (let i = 0; i < half; i++) {
-      const home = arr[i];
-      const away = arr[n - 1 - i];
-      if (home !== "__BYE__" && away !== "__BYE__") {
-        fixtures.push({
-          id: `${league}-r${r + 1}-${home}-${away}`,
-          competition: "league",
-          league,
-          matchday: r + 1,
-          homeId: home,
-          awayId: away,
-        });
+  
+  // Create a copy of the team array for rotation
+  let teamArray = ids.slice();
+  
+  // Generate first half of the season (rounds 1 to N-1)
+  for (let round = 0; round < rounds; round++) {
+    const roundFixtures: Fixture[] = [];
+    
+    // Pair teams for this round using circle method
+    for (let i = 0; i < matchesPerRound; i++) {
+      const team1 = teamArray[i];
+      const team2 = teamArray[numTeams - 1 - i];
+      
+      // Skip bye teams
+      if (team1 === "__BYE__" || team2 === "__BYE__") {
+        continue;
       }
+      
+      // Alternate home/away to ensure better distribution
+      // For even rounds, invert the home/away assignment
+      const isEvenRound = round % 2 === 0;
+      const home = isEvenRound ? team1 : team2;
+      const away = isEvenRound ? team2 : team1;
+      
+      roundFixtures.push({
+        id: `${league}-r${round + 1}-${home}-${away}`,
+        competition: "league",
+        league,
+        matchday: round + 1,
+        homeId: home,
+        awayId: away,
+      });
     }
-    arr = [arr[0], arr[n - 1], ...arr.slice(1, n - 1)];
+    
+    fixtures.push(...roundFixtures);
+    
+    // Rotate the array for the next round (keep first team fixed, rotate others)
+    // Standard circle method: first element stays, rest rotate
+    teamArray = [teamArray[0], teamArray[numTeams - 1], ...teamArray.slice(1, numTeams - 1)];
   }
-
-  // Second half of season (second leg): reverse home/away for each fixture
-  const firstHalf = fixtures.slice();
-  for (const f of firstHalf) {
+  
+  // Generate second half of the season as perfect mirror of first half
+  // Each fixture from the first half is duplicated with inverted home/away
+  const firstHalfFixtures = fixtures.slice();
+  for (const f of firstHalfFixtures) {
     fixtures.push({
       id: `${f.league}-r${f.matchday + rounds}-${f.awayId}-${f.homeId}`,
       competition: "league",
       league: f.league,
       matchday: f.matchday + rounds,
-      homeId: f.awayId,
-      awayId: f.homeId,
+      homeId: f.awayId,  // Inverted: away becomes home
+      awayId: f.homeId,  // Inverted: home becomes away
     });
   }
 

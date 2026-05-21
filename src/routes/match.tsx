@@ -38,6 +38,10 @@ function MatchPage() {
   const matchLineup = routerState?.matchLineup as string[] | undefined;
   const matchFormation = routerState?.matchFormation as string | undefined;
 
+  // Store original lineup BEFORE applying temporary changes
+  const originalLineupRef = useRef<string[] | null>(null);
+  const originalFormationRef = useRef<string | null>(null);
+
   function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number) {
     const updated = fixtures.map((f) =>
       f.id === fixtureId
@@ -50,6 +54,12 @@ function MatchPage() {
   useEffect(() => {
     const s = loadSave();
     if (!s) { navigate({ to: "/" }); return; }
+    
+    // Store original lineup BEFORE applying temporary changes
+    if (matchLineup && matchFormation) {
+      originalLineupRef.current = s.lineups[s.myTeamId];
+      originalFormationRef.current = s.formations[s.myTeamId];
+    }
     
     // Prioritize router state temporary lineup over global store
     let saveToUse = s;
@@ -71,8 +81,9 @@ function MatchPage() {
     
     // Check if we used a temporary lineup for this match
     const usedTemporaryLineup = !!matchLineup && !!matchFormation;
-    const originalLineup = save.lineups[save.myTeamId];
-    const originalFormation = save.formations[save.myTeamId];
+    // Use the stored original lineup/formation from refs (saved before temporary changes)
+    const originalLineup = originalLineupRef.current;
+    const originalFormation = originalFormationRef.current;
     
     const { save: newSave, fixture } = playMyNextMatch(save);
     if (!fixture || !fixture.result) return;
@@ -227,13 +238,21 @@ function MatchPage() {
 
         <div className="mt-6 flex gap-3 justify-center flex-wrap">
           {phase === "preview" && (
-            <button 
-              onClick={startMatch} 
-              disabled={!isUserLineupComplete}
-              className={`px-8 py-3 rounded-lg font-black ${isUserLineupComplete ? "bg-primary text-primary-foreground glow-neon hover:brightness-110 transition" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}
-            >
-              {isUserLineupComplete ? "INICIAR PARTIDO" : "ALINEACIÓN INCOMPLETA"}
-            </button>
+            <>
+              <button 
+                onClick={startMatch} 
+                disabled={!isUserLineupComplete}
+                className={`px-8 py-3 rounded-lg font-black ${isUserLineupComplete ? "bg-primary text-primary-foreground glow-neon hover:brightness-110 transition" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}
+              >
+                {isUserLineupComplete ? "INICIAR PARTIDO" : "ALINEACIÓN INCOMPLETA"}
+              </button>
+              <button
+                onClick={() => navigate({ to: "/lineup", state: { fromMatch: true } as any })}
+                className="px-8 py-3 rounded-lg bg-card border border-border font-semibold hover:border-accent transition"
+              >
+                Editar Alineación
+              </button>
+            </>
           )}
           {phase === "playing" && (
             <button onClick={skipToEnd} className="px-6 py-2.5 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition">

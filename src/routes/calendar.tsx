@@ -222,18 +222,21 @@ function CalendarPage() {
                   {inMonth &&
                     myTeamId &&
                     dayFixtures.map((f) => {
-                      const opponentId = f.homeTeam === myTeamId ? f.awayTeam : f.homeTeam;
-                      const opponent = teamById(opponentId);
                       const isHome = f.homeTeam === myTeamId;
+                      const opponentId = isHome ? f.awayTeam : f.homeTeam;
+                      const opponent = teamById(opponentId);
+                      const myTeam = teamById(myTeamId);
                       return (
                         <div
                           key={f.id}
                           className="flex items-center justify-center gap-1 w-full text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded bg-red-600/90 text-white"
-                          title={`Jornada ${f.matchday}`}
+                          title={`Jornada ${f.matchday} - ${isHome ? "Local" : "Visitante"}`}
                         >
+                          {isHome && <TeamLogo teamName={myTeam.name} leagueName={getLeagueName(myTeam.league)} size={12} />}
+                          {!isHome && <TeamLogo teamName={opponent.name} leagueName={getLeagueName(opponent.league)} size={12} />}
                           <span>J{f.matchday}</span>
-                          <TeamLogo teamName={opponent.name} leagueName={getLeagueName(opponent.league)} size={14} />
-                          <span className="text-[0.5rem]">{isHome ? "H" : "A"}</span>
+                          {isHome && <TeamLogo teamName={opponent.name} leagueName={getLeagueName(opponent.league)} size={14} />}
+                          {!isHome && <TeamLogo teamName={myTeam.name} leagueName={getLeagueName(myTeam.league)} size={14} />}
                         </div>
                       );
                     })}
