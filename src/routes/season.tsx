@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { ALL_LEAGUES, loadSave, SaveGame, advanceMatchdayLayered, getSortedStandings, getMatchdayFixtures, getMyNextFixture, getMyUpcomingCupFixtures, getMyRecentResults } from "@/lib/store";
+import { ALL_LEAGUES, loadSave, SaveGame, advanceMatchdayLayered, getSortedStandings, getMatchdayFixtures, getMyNextFixture, getMyUpcomingCupFixtures, getMyRecentResults, getTeamRecentResults } from "@/lib/store";
 import { LEAGUES, teamById, teamsByLeague, type LeagueId, type Team } from "@/data/teams";
 import { type Fixture } from "@/lib/season";
 import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
@@ -223,6 +223,10 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
   const activeStartersCount = myLineup.filter((id: string) => id && id.trim() !== "").length;
   const isLineupComplete = activeStartersCount === 11;
 
+  // Get recent results for both teams
+  const homeRecent = save ? getTeamRecentResults(save, fixture.homeId, save.myLeague, 5) : [];
+  const awayRecent = save ? getTeamRecentResults(save, fixture.awayId, save.myLeague, 5) : [];
+
   function handlePlayMatch() {
     if (!isLineupComplete) {
       alert("La alineación no está completa. Debes tener 11 jugadores titulares para jugar el partido.");
@@ -230,7 +234,7 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
     }
     if (!myTeamId) return;
     const scheduleFixture = fixtures.find(
-      (f) => f.homeTeam === fixture.homeId && f.awayTeam === fixture.awayId && f.matchday === matchday
+      (f) => f.homeId === fixture.homeId && f.awayId === fixture.awayId && f.matchday === matchday
     );
     if (scheduleFixture?.date) {
       usePlayersStore.setState({ currentDate: scheduleFixture.date });
@@ -246,9 +250,9 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
         <span className="text-xs text-muted-foreground uppercase tracking-wider">{isHome ? "Local" : "Visitante"}</span>
       </div>
       <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-center text-center mb-6">
-        <TeamSide team={home} side="left" />
+        <TeamSide team={home} side="left" recentResults={homeRecent} />
         <div className="text-3xl font-black text-muted-foreground">VS</div>
-        <TeamSide team={away} side="right" />
+        <TeamSide team={away} side="right" recentResults={awayRecent} />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <button
@@ -273,14 +277,35 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
   );
 }
 
-function TeamSide({ team, side }: { team: ReturnType<typeof teamById>; side: "left" | "right" }) {
+function TeamSide({ team, side, recentResults }: { team: ReturnType<typeof teamById>; side: "left" | "right"; recentResults: Fixture[] }) {
   return (
-    <div className={`flex items-center gap-3 ${side === "right" ? "flex-row-reverse" : ""}`}>
-      <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={56} />
-      <div className={side === "right" ? "text-right" : "text-left"}>
-        <div className="font-bold leading-tight">{team.name}</div>
-        <div className="text-xs text-muted-foreground">{team.stars[0] ?? team.city}</div>
+    <div className="flex flex-col items-center gap-2">
+      <div className={`flex items-center gap-3 ${side === "right" ? "flex-row-reverse" : ""}`}>
+        <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={56} />
+        <div className={side === "right" ? "text-right" : "text-left"}>
+          <div className="font-bold leading-tight">{team.name}</div>
+          <div className="text-xs text-muted-foreground">{team.stars[0] ?? team.city}</div>
+        </div>
       </div>
+      {recentResults.length > 0 && (
+        <div className="flex gap-1">
+          {recentResults.map((f) => {
+            const r = f.result!;
+            const teamGoals = f.homeId === team.id ? r.homeGoals : r.awayGoals;
+            const oppGoals = f.homeId === team.id ? r.awayGoals : r.homeGoals;
+            const outcome = teamGoals > oppGoals ? "V" : teamGoals < oppGoals ? "D" : "E";
+            const outcomeColor =
+              outcome === "V" ? "bg-primary text-primary-foreground" :
+              outcome === "D" ? "bg-destructive text-destructive-foreground" :
+              "bg-muted text-foreground";
+            return (
+              <div key={f.id} className={`w-5 h-5 rounded grid place-items-center text-[0.65rem] font-black ${outcomeColor}`}>
+                {outcome}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

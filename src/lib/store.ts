@@ -715,6 +715,13 @@ export function getMyRecentResults(save: SaveGame, limit = 5): Fixture[] {
     .reverse();
 }
 
+export function getTeamRecentResults(save: SaveGame, teamId: string, leagueId: string, limit = 5): Fixture[] {
+  return save.fixtures[leagueId]
+    .filter((f) => f.result && (f.homeId === teamId || f.awayId === teamId))
+    .slice(-limit)
+    .reverse();
+}
+
 export function getMatchdayFixtures(save: SaveGame, league: LeagueId, matchday: number): Fixture[] {
   return save.fixtures[league].filter((f) => f.matchday === matchday);
 }
