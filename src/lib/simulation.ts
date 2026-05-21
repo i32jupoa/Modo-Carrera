@@ -105,7 +105,8 @@ function teamMomentum(xi: Player[]): number {
 
 export function expectedGoals(home: Team, away: Team, homeXI: Player[] = [], awayXI: Player[] = []): { lh: number; la: number } {
   // Use dynamic attack/defense strength from actual XI instead of static team ratings
-  const homeAtt = calculateAttackStrength(homeXI) || 65;
+  // Apply 5% home advantage buff to home team's attack strength
+  const homeAtt = (calculateAttackStrength(homeXI) || 65) * 1.05;
   const homeDef = calculateDefenseStrength(homeXI) || 65;
   const awayAtt = calculateAttackStrength(awayXI) || 65;
   const awayDef = calculateDefenseStrength(awayXI) || 65;

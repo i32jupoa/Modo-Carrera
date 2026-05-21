@@ -340,6 +340,7 @@ function ResultRow({ fixture, myId }: { fixture: Fixture; myId: string }) {
     outcome === "V" ? "bg-primary text-primary-foreground" :
     outcome === "D" ? "bg-destructive text-destructive-foreground" :
     "bg-muted text-foreground";
+  const isHome = fixture.homeId === myId;
   return (
     <div className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
       <div className={`w-6 h-6 rounded grid place-items-center text-xs font-black ${outcomeColor}`}>
@@ -350,6 +351,9 @@ function ResultRow({ fixture, myId }: { fixture: Fixture; myId: string }) {
       <span className="scoreline text-lg">{r.homeGoals} <span className="text-muted-foreground">-</span> {r.awayGoals}</span>
       <span className="text-sm flex-1 truncate text-right">{away.short}</span>
       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
+      <span className="text-xs text-muted-foreground uppercase tracking-wider font-bold w-6 text-center">
+        {isHome ? "H" : "A"}
+      </span>
     </div>
   );
 }

@@ -224,6 +224,7 @@ function CalendarPage() {
                     dayFixtures.map((f) => {
                       const opponentId = f.homeTeam === myTeamId ? f.awayTeam : f.homeTeam;
                       const opponent = teamById(opponentId);
+                      const isHome = f.homeTeam === myTeamId;
                       return (
                         <div
                           key={f.id}
@@ -232,6 +233,7 @@ function CalendarPage() {
                         >
                           <span>J{f.matchday}</span>
                           <TeamLogo teamName={opponent.name} leagueName={getLeagueName(opponent.league)} size={14} />
+                          <span className="text-[0.5rem]">{isHome ? "H" : "A"}</span>
                         </div>
                       );
                     })}

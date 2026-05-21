@@ -38,27 +38,26 @@ export function generateLeagueFixtures(league: LeagueId): Fixture[] {
   const fixtures: Fixture[] = [];
   let arr = ids.slice();
 
+  // First half of season (first leg): each team plays every other team once
   for (let r = 0; r < rounds; r++) {
     for (let i = 0; i < half; i++) {
       const home = arr[i];
       const away = arr[n - 1 - i];
       if (home !== "__BYE__" && away !== "__BYE__") {
-        const isFlipped = r % 2 === 1 && i === 0;
-        const h = isFlipped ? away : home;
-        const a = isFlipped ? home : away;
         fixtures.push({
-          id: `${league}-r${r + 1}-${h}-${a}`,
+          id: `${league}-r${r + 1}-${home}-${away}`,
           competition: "league",
           league,
           matchday: r + 1,
-          homeId: h,
-          awayId: a,
+          homeId: home,
+          awayId: away,
         });
       }
     }
     arr = [arr[0], arr[n - 1], ...arr.slice(1, n - 1)];
   }
 
+  // Second half of season (second leg): reverse home/away for each fixture
   const firstHalf = fixtures.slice();
   for (const f of firstHalf) {
     fixtures.push({
