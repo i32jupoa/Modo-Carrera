@@ -5,6 +5,8 @@ import { teamsByLeague, teamById, overall, type LeagueId, type Team, getAllTeams
 import { usePlayersStore, ensureStatsForLeague, type PlayerStats } from "@/store/playersStore";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
+import { CountryFlag } from "@/components/CountryFlag";
+import { LeagueLogo } from "@/components/LeagueLogo";
 import type { FcPlayer } from "@/store/playersStore";
 
 // Helper to get league name from league ID
@@ -88,10 +90,10 @@ function TeamsPage() {
               onClick={() => setOpenCountry(openCountry === country ? null : country)}
               className="w-full flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/40 transition text-sm font-semibold"
             >
-              <span className="flex items-center gap-2">
-                <span className="text-lg">{leagues[0]?.flag}</span>
-                {country}
-              </span>
+              <div className="flex items-center gap-2">
+                <CountryFlag country={country} />
+                <span>{country}</span>
+              </div>
               <span className="text-muted-foreground text-xs">{openCountry === country ? "▲" : "▼"}</span>
             </button>
             {openCountry === country && (
@@ -104,12 +106,13 @@ function TeamsPage() {
                       setSelectedTeam(null);
                       setOpenCountry(null);
                     }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition border ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition border flex items-center gap-2 ${
                       selectedLeague === lg.id
                         ? "bg-primary text-primary-foreground border-primary glow-neon"
                         : "bg-card text-foreground border-border hover:border-primary/60"
                     }`}
                   >
+                    <LeagueLogo league={lg.name} size="sm" />
                     {lg.name}
                   </button>
                 ))}

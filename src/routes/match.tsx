@@ -8,6 +8,8 @@ import { TeamLogo } from "@/components/TeamLogo";
 import { MatchEvent } from "@/lib/simulation";
 import { usePlayersStore } from "@/store/playersStore";
 import { MiniPitch, generateCPULineup } from "@/components/MiniPitch";
+import { CountryFlag } from "@/components/CountryFlag";
+import { LeagueLogo } from "@/components/LeagueLogo";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -337,7 +339,11 @@ function MatchPage() {
         <div className="grid grid-cols-[1fr_auto_1fr] gap-4 md:gap-6 items-center text-center">
           <div className="flex flex-col items-center gap-2 md:gap-3">
             <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={64} />
-            <div className="font-bold text-sm md:text-base">{home.name}</div>
+            <div className="flex items-center gap-2">
+              <LeagueLogo league={LEAGUES[home.league]?.name || ""} size="sm" />
+              <CountryFlag country={LEAGUES[home.league]?.country || ""} />
+              <div className="font-bold text-sm md:text-base">{home.name}</div>
+            </div>
             <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" />
           </div>
           <div className="scoreline text-5xl md:text-7xl font-black">
@@ -347,7 +353,11 @@ function MatchPage() {
           </div>
           <div className="flex flex-col items-center gap-2 md:gap-3">
             <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={64} />
-            <div className="font-bold text-sm md:text-base">{away.name}</div>
+            <div className="flex items-center gap-2">
+              <LeagueLogo league={LEAGUES[away.league]?.name || ""} size="sm" />
+              <CountryFlag country={LEAGUES[away.league]?.country || ""} />
+              <div className="font-bold text-sm md:text-base">{away.name}</div>
+            </div>
             <MiniPitch startingXI={awayLineup} formation={awayFormation} teamId={fixture.awayId} className="mt-2" />
           </div>
         </div>

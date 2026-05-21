@@ -5,6 +5,8 @@ import { loadSave, newSave, saveSave, clearSave } from "@/lib/store";
 import { usePlayersStore } from "@/store/playersStore";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
+import { CountryFlag } from "@/components/CountryFlag";
+import { LeagueLogo } from "@/components/LeagueLogo";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -103,7 +105,10 @@ function Index() {
                 onClick={() => setOpenCountry(openCountry === country ? null : country)}
                 className="w-full flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/40 transition text-sm font-semibold"
               >
-                <span>{leagues[0].flag} {country}</span>
+                <div className="flex items-center gap-2">
+                  <CountryFlag country={country} />
+                  <span>{country}</span>
+                </div>
                 <span className="text-muted-foreground text-xs">{openCountry === country ? "▲" : "▼"}</span>
               </button>
               {openCountry === country && (
@@ -112,12 +117,13 @@ function Index() {
                     <button
                       key={lg.id}
                       onClick={() => setSelectedLeague(lg.id as LeagueId)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition border ${
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition border flex items-center gap-2 ${
                         selectedLeague === lg.id
                           ? "bg-primary text-primary-foreground border-primary glow-neon"
                           : "bg-card text-foreground border-border hover:border-primary/60"
                       }`}
                     >
+                      <LeagueLogo league={lg.name} size="sm" />
                       {lg.name}
                     </button>
                   ))}

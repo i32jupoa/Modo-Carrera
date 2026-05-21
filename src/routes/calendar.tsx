@@ -7,8 +7,6 @@ import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { TeamLogo } from "@/components/TeamLogo";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
-import { CupDrawModal } from "@/components/CupDrawModal";
-import { toast } from "sonner";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -101,20 +99,10 @@ function CalendarPage() {
         
         // Show the modal for the user's draw
         setShowCupDrawModal(true);
-        
-        // Show notification for user's draw (only if not already shown recently)
-        if (!sessionStorage.getItem('cupDrawNotified')) {
-          toast.info("¡Día de Sorteo de Copa Nacional!");
-          sessionStorage.setItem('cupDrawNotified', 'true');
-        }
       } catch (err) {
         console.error("Error en auto-draw de copas:", err);
         // If auto-draw fails, still show the modal for the user
         setShowCupDrawModal(true);
-        if (!sessionStorage.getItem('cupDrawNotified')) {
-          toast.info("¡Día de Sorteo de Copa Nacional!");
-          sessionStorage.setItem('cupDrawNotified', 'true');
-        }
       }
     }
   }, [save?.cupDrawPending, save?.currentMatchday]); // Only re-run when cupDrawPending or matchday changes
@@ -151,7 +139,7 @@ function CalendarPage() {
       const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
       const cupKey = (primaryLeague || save.myLeague) as LeagueId;
       return save.cupFixtures[cupKey]?.filter(
-        f => !f.result && (f.homeId === myTeamId || f.awayId === myTeamId)
+        f => f.homeId === myTeamId || f.awayId === myTeamId
       ) || [];
     } catch (err) {
       console.error("Error al cargar fixtures de copa:", err);
@@ -272,11 +260,9 @@ function CalendarPage() {
       // User is eliminated from cup - auto-simulate the cup round
       const currentRound = getCurrentCupRound(save, cupKey);
       if (currentRound) {
-        toast.info("Simulando jornada de Copa...");
         const simulated = await simulateRemainingCupMatches(save, currentRound);
         saveSave(simulated);
         setSave(simulated);
-        toast.success("Jornada de Copa simulada");
       }
     }
     

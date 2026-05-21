@@ -1,9 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
-import { LEAGUES, LeagueId, teamById } from "@/data/teams";
+import { useEffect, useState, useRef } from "react";
+import { loadSave, SaveGame } from "@/lib/store";
+import { LEAGUES, LeagueId, teamById, LEAGUES_BY_COUNTRY } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
+import { CountryFlag } from "@/components/CountryFlag";
+import { LeagueLogo } from "@/components/LeagueLogo";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -18,20 +20,80 @@ const ROUND_LABEL: Record<string, string> = {
   R16: "Octavos", QF: "Cuartos", SF: "Semifinales", Final: "Final",
 };
 
+function CountryDropdown({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[] }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedOption = options.find(o => o === value);
+
+  return (
+    <div ref={dropdownRef} className="relative">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="bg-secondary border border-border rounded px-3 py-1.5 text-sm flex items-center gap-2 min-w-[150px] justify-between"
+      >
+        <div className="flex items-center gap-2">
+          <CountryFlag country={value} />
+          <span>{value}</span>
+        </div>
+        <span className="text-muted-foreground">{isOpen ? "▲" : "▼"}</span>
+      </button>
+      {isOpen && (
+        <div className="absolute right-0 mt-1 bg-card border border-border rounded shadow-lg max-h-60 overflow-y-auto z-50">
+          {options.map((c) => (
+            <button
+              key={c}
+              onClick={() => { onChange(c); setIsOpen(false); }}
+              className="w-full px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-secondary/40 transition text-left"
+            >
+              <CountryFlag country={c} />
+              <span>{c}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CupPage() {
   const navigate = useNavigate();
   const [save, setSave] = useState<SaveGame | null>(null);
-  const [league, setLeague] = useState<LeagueId>("laliga");
+  const [country, setCountry] = useState<string>("");
 
   useEffect(() => {
     const s = loadSave();
     if (!s) { navigate({ to: "/" }); return; }
-    setSave(s); setLeague(s.myLeague);
+    setSave(s);
+    // Set initial country based on user's league
+    const userCountry = LEAGUES[s.myLeague]?.country;
+    if (userCountry) {
+      setCountry(userCountry);
+    }
   }, [navigate]);
 
   if (!save) return null;
-  const fixtures = save.cupFixtures[league];
-  const champion = save.cupChampion[league];
+  
+  // Get unique countries from all leagues
+  const uniqueCountries = Object.keys(LEAGUES_BY_COUNTRY).sort();
+  
+  // Get the primary league for the selected country
+  const countryLeagues = LEAGUES_BY_COUNTRY[country] || [];
+  const primaryLeague = countryLeagues[0]?.id as LeagueId;
+  
+  // Get fixtures for the selected country's cup
+  const fixtures = primaryLeague ? save.cupFixtures[primaryLeague] : [];
+  const champion = primaryLeague ? save.cupChampion[primaryLeague] : null;
   const myId = save.myTeamId;
 
   return (
@@ -39,15 +101,17 @@ function CupPage() {
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-black">🛡 Copa nacional</h1>
-          <p className="text-xs text-muted-foreground">Eliminatoria a partido único · 16 mejores equipos</p>
+          <p className="text-xs text-muted-foreground">Eliminatoria a partido único · Todos los equipos del país</p>
         </div>
-        <select value={league} onChange={(e) => setLeague(e.target.value as LeagueId)}
-          className="bg-secondary border border-border rounded px-3 py-1.5 text-sm">
-          {ALL_LEAGUES.map((lg) => (
-            <option key={lg} value={lg}>{LEAGUES[lg].flag} {LEAGUES[lg].name}</option>
-          ))}
-        </select>
+        <CountryDropdown value={country} onChange={setCountry} options={uniqueCountries} />
       </div>
+
+      {primaryLeague && (
+        <div className="flex items-center gap-2 mb-4">
+          <LeagueLogo league={primaryLeague} size="md" />
+          <span className="text-sm font-semibold text-muted-foreground">{LEAGUES[primaryLeague]?.name}</span>
+        </div>
+      )}
 
       {champion && (
         <div className="panel-glow p-6 mb-6 text-center">
