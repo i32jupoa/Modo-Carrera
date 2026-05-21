@@ -29,6 +29,7 @@ function MatchPage() {
   const [feed, setFeed] = useState<MatchEvent[]>([]);
   const allEventsRef = useRef<MatchEvent[]>([]);
   const fixtureRef = useRef<Fixture | null>(null);
+  const clockTimeoutRef = useRef<number | null>(null);
   const fixtures = usePlayersStore((s) => s.fixtures);
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
 
@@ -111,12 +112,18 @@ function MatchPage() {
         }
       }
       if (m >= 90) { setPhase("done"); return; }
-      setTimeout(tick, 50);
+      clockTimeoutRef.current = window.setTimeout(tick, 50);
     };
-    setTimeout(tick, 300);
+    clockTimeoutRef.current = window.setTimeout(tick, 300);
   }
 
   function skipToEnd() {
+    // Clear the running clock timeout immediately
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+    
     if (!fixtureRef.current?.result) return;
     setHomeScore(fixtureRef.current.result.homeGoals);
     setAwayScore(fixtureRef.current.result.awayGoals);
@@ -124,6 +131,15 @@ function MatchPage() {
     setMinute(90);
     setPhase("done");
   }
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (clockTimeoutRef.current !== null) {
+        window.clearTimeout(clockTimeoutRef.current);
+      }
+    };
+  }, []);
 
   if (!save || !fixtureRef.current) return null;
   const fixture = fixtureRef.current;
