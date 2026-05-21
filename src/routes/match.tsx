@@ -7,6 +7,7 @@ import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import { MatchEvent } from "@/lib/simulation";
 import { usePlayersStore } from "@/store/playersStore";
+import { MiniPitch, generateCPULineup } from "@/components/MiniPitch";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -29,6 +30,7 @@ function MatchPage() {
   const allEventsRef = useRef<MatchEvent[]>([]);
   const fixtureRef = useRef<Fixture | null>(null);
   const fixtures = usePlayersStore((s) => s.fixtures);
+  const getSimSquad = usePlayersStore((s) => s.getSimSquad);
 
   // Extract temporary lineup from router state (if passed from lineup page)
   const routerState = location.state as any;
@@ -131,6 +133,48 @@ function MatchPage() {
   const isMe = (id: string) => id === myId;
   const injuries = fixture.result?.injuries ?? [];
 
+  // Get lineups for both teams
+  const homeSquad = getSimSquad(fixture.homeId);
+  const awaySquad = getSimSquad(fixture.awayId);
+  
+  // Determine home team lineup and formation
+  let homeLineup: any[] = [];
+  let homeFormation: any = "Táctica 4-4-2";
+  
+  if (isMe(fixture.homeId)) {
+    // User's team - use temporary lineup if available, otherwise use global
+    const homeLineupIds = matchLineup || save.lineups[fixture.homeId] || [];
+    const homeSquadPlayers = homeSquad.filter(p => homeLineupIds.includes(p.id));
+    homeLineup = homeSquadPlayers;
+    homeFormation = matchFormation || save.formations[fixture.homeId] || "Táctica 4-4-2";
+  } else {
+    // CPU team - generate lineup
+    const { lineup: cpuLineup, formation: cpuFormation } = generateCPULineup(homeSquad);
+    homeLineup = cpuLineup;
+    homeFormation = cpuFormation;
+  }
+  
+  // Determine away team lineup and formation
+  let awayLineup: any[] = [];
+  let awayFormation: any = "Táctica 4-4-2";
+  
+  if (isMe(fixture.awayId)) {
+    // User's team - use temporary lineup if available, otherwise use global
+    const awayLineupIds = matchLineup || save.lineups[fixture.awayId] || [];
+    const awaySquadPlayers = awaySquad.filter(p => awayLineupIds.includes(p.id));
+    awayLineup = awaySquadPlayers;
+    awayFormation = matchFormation || save.formations[fixture.awayId] || "Táctica 4-4-2";
+  } else {
+    // CPU team - generate lineup
+    const { lineup: cpuLineup, formation: cpuFormation } = generateCPULineup(awaySquad);
+    awayLineup = cpuLineup;
+    awayFormation = cpuFormation;
+  }
+  
+  // Check if user's lineup is complete (11 players)
+  const userLineup = isMe(fixture.homeId) ? homeLineup : awayLineup;
+  const isUserLineupComplete = userLineup.length === 11;
+
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">
       <div className="panel-glow p-6 md:p-8">
@@ -145,7 +189,7 @@ function MatchPage() {
           <div className="flex flex-col items-center gap-2 md:gap-3">
             <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={64} />
             <div className="font-bold text-sm md:text-base">{home.name}</div>
-            {isMe(home.id) && <span className="chip text-[0.6rem]">Tú</span>}
+            <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" />
           </div>
           <div className="scoreline text-5xl md:text-7xl font-black">
             {phase === "preview" ? "–" : homeScore}
@@ -155,7 +199,7 @@ function MatchPage() {
           <div className="flex flex-col items-center gap-2 md:gap-3">
             <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={64} />
             <div className="font-bold text-sm md:text-base">{away.name}</div>
-            {isMe(away.id) && <span className="chip text-[0.6rem]">Tú</span>}
+            <MiniPitch startingXI={awayLineup} formation={awayFormation} teamId={fixture.awayId} className="mt-2" />
           </div>
         </div>
 
@@ -167,8 +211,12 @@ function MatchPage() {
 
         <div className="mt-6 flex gap-3 justify-center flex-wrap">
           {phase === "preview" && (
-            <button onClick={startMatch} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition">
-              INICIAR PARTIDO
+            <button 
+              onClick={startMatch} 
+              disabled={!isUserLineupComplete}
+              className={`px-8 py-3 rounded-lg font-black ${isUserLineupComplete ? "bg-primary text-primary-foreground glow-neon hover:brightness-110 transition" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}
+            >
+              {isUserLineupComplete ? "INICIAR PARTIDO" : "ALINEACIÓN INCOMPLETA"}
             </button>
           )}
           {phase === "playing" && (

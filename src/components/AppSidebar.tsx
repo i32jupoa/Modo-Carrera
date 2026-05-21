@@ -15,7 +15,6 @@ import { useEffect, useState } from "react";
 type Item = { title: string; url: string; icon: React.ComponentType<{ className?: string }> };
 
 const PRINCIPAL: Item[] = [
-  { title: "Inicio", url: "/", icon: Home },
   { title: "Calendario", url: "/calendar", icon: CalendarDays },
   { title: "Temporada", url: "/season", icon: Calendar },
 ];

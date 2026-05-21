@@ -216,8 +216,18 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
   const fixtures = usePlayersStore((s) => s.fixtures);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const dismissMatch = usePlayersStore((s) => s.dismissMatch);
+  const save = loadSave();
+
+  // Check if user's lineup is complete (11 valid players)
+  const myLineup = save?.lineups[myId] || [];
+  const activeStartersCount = myLineup.filter((id: string) => id && id.trim() !== "").length;
+  const isLineupComplete = activeStartersCount === 11;
 
   function handlePlayMatch() {
+    if (!isLineupComplete) {
+      alert("La alineación no está completa. Debes tener 11 jugadores titulares para jugar el partido.");
+      return;
+    }
     if (!myTeamId) return;
     const scheduleFixture = fixtures.find(
       (f) => f.homeTeam === fixture.homeId && f.awayTeam === fixture.awayId && f.matchday === matchday
@@ -249,9 +259,14 @@ function NextMatchCard({ fixture, myId, matchday }: { fixture: Fixture; myId: st
         </button>
         <button
           onClick={handlePlayMatch}
-          className="text-center py-3 rounded-lg bg-primary text-primary-foreground font-black tracking-wide glow-neon hover:brightness-110 transition"
+          disabled={!isLineupComplete}
+          className={`text-center py-3 rounded-lg font-black tracking-wide transition ${
+            isLineupComplete 
+              ? "bg-primary text-primary-foreground glow-neon hover:brightness-110" 
+              : "bg-secondary text-muted-foreground pointer-events-none opacity-40"
+          }`}
         >
-          JUGAR
+          {isLineupComplete ? "JUGAR" : "ALINEACIÓN INCOMPLETA"}
         </button>
       </div>
     </div>
