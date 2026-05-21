@@ -500,12 +500,7 @@ function LineupPage() {
     const newBench = squad.filter((p) => !newStartingXI.includes(p.id)).map((p) => p.id);
     setBench(newBench);
 
-    // Only auto-save formation to global state if NOT from season (main menu editing)
-    if (save && !fromSeason) {
-      const next = setFormation(save, save.myTeamId, newFormation);
-      saveSave(next);
-      setSave(next);
-    }
+    // No auto-save - only save when user explicitly clicks "Guardar" button
   }
 
   if (!save) return null;

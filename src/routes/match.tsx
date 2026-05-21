@@ -171,7 +171,8 @@ function MatchPage() {
   if (isMe(fixture.homeId)) {
     // User's team - use temporary lineup if available, otherwise use global
     const homeLineupIds = matchLineup || save.lineups[fixture.homeId] || [];
-    const homeSquadPlayers = homeSquad.filter(p => homeLineupIds.includes(p.id));
+    // Use map to preserve the exact order of players as they were positioned
+    const homeSquadPlayers = homeLineupIds.map(id => homeSquad.find(p => p.id === id)).filter(Boolean);
     homeLineup = homeSquadPlayers;
     homeFormation = matchFormation || save.formations[fixture.homeId] || "Táctica 4-4-2";
   } else {
@@ -188,7 +189,8 @@ function MatchPage() {
   if (isMe(fixture.awayId)) {
     // User's team - use temporary lineup if available, otherwise use global
     const awayLineupIds = matchLineup || save.lineups[fixture.awayId] || [];
-    const awaySquadPlayers = awaySquad.filter(p => awayLineupIds.includes(p.id));
+    // Use map to preserve the exact order of players as they were positioned
+    const awaySquadPlayers = awayLineupIds.map(id => awaySquad.find(p => p.id === id)).filter(Boolean);
     awayLineup = awaySquadPlayers;
     awayFormation = matchFormation || save.formations[fixture.awayId] || "Táctica 4-4-2";
   } else {
@@ -239,18 +241,18 @@ function MatchPage() {
         <div className="mt-6 flex gap-3 justify-center flex-wrap">
           {phase === "preview" && (
             <>
+              <button
+                onClick={() => navigate({ to: "/lineup", state: { fromMatch: true } as any })}
+                className="px-8 py-3 rounded-lg bg-card border border-border font-semibold hover:border-accent transition"
+              >
+                Editar Alineación
+              </button>
               <button 
                 onClick={startMatch} 
                 disabled={!isUserLineupComplete}
                 className={`px-8 py-3 rounded-lg font-black ${isUserLineupComplete ? "bg-primary text-primary-foreground glow-neon hover:brightness-110 transition" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}
               >
                 {isUserLineupComplete ? "INICIAR PARTIDO" : "ALINEACIÓN INCOMPLETA"}
-              </button>
-              <button
-                onClick={() => navigate({ to: "/lineup", state: { fromMatch: true } as any })}
-                className="px-8 py-3 rounded-lg bg-card border border-border font-semibold hover:border-accent transition"
-              >
-                Editar Alineación
               </button>
             </>
           )}
