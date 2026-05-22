@@ -172,7 +172,7 @@ function MatchPage() {
     if (!fixtureRef.current) navigate({ to: "/season" });
   }, [navigate, matchLineup, matchFormation, pendingUserMatch]);
 
-  function startMatch() {
+  async function startMatch() {
     if (!save) return;
     
     if (!fixtureRef.current) return;
@@ -209,6 +209,17 @@ function MatchPage() {
     // Clear pending match after simulation
     if (isCupMatch) {
       usePlayersStore.setState({ pendingUserMatch: null });
+      
+      // Simulate remaining cup matches for the current round
+      try {
+        const cupRound = fixture.round;
+        console.log("Post-match: Simulating remaining CUP matches for round:", cupRound);
+        const updatedSave = await simulateRemainingCupMatches(newSave, cupRound || 'R32');
+        saveSave(updatedSave);
+        setSave(updatedSave);
+      } catch (err) {
+        console.error("Error simulating remaining cup matches:", err);
+      }
     }
     
     setPhase("playing");

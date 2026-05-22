@@ -17,7 +17,7 @@ import { Fixture } from "@/lib/season";
 export const Route = createFileRoute("/cup")({ component: CupPage });
 
 const ROUND_LABEL: Record<string, string> = {
-  R16: "Octavos", QF: "Cuartos", SF: "Semifinales", Final: "Final",
+  R32: "Dieciseisavos", R16: "Octavos", QF: "Cuartos", SF: "Semifinales", Final: "Final",
 };
 
 function CountryDropdown({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[] }) {
@@ -109,7 +109,7 @@ function CupPage() {
       {primaryLeague && (
         <div className="flex items-center gap-2 mb-4">
           <LeagueLogo league={primaryLeague} size="md" />
-          <span className="text-sm font-semibold text-muted-foreground">{LEAGUES[primaryLeague]?.name}</span>
+          <span className="text-sm font-semibold text-muted-foreground">Copa Nacional · {country}</span>
         </div>
       )}
 
