@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound } from "@/lib/store";
+import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound, getRoundNameByTeamCount, getSurvivingCupTeams } from "@/lib/store";
 import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 import { usePlayersStore } from "@/store/playersStore";
@@ -85,9 +85,11 @@ function CalendarPage() {
       // Get user's team to filter relevant rounds
       const myTeamId = save.myTeamId;
       let isInPreliminary = false;
+      let preliminaryTeams: string[] = [];
       try {
         const cupData = initCup(userCountry || "");
         isInPreliminary = cupData.preliminaryParticipants?.includes(myTeamId) || false;
+        preliminaryTeams = cupData.preliminaryParticipants || [];
       } catch (err) {
         console.error("Error checking preliminary participants:", err);
       }
@@ -97,6 +99,9 @@ function CalendarPage() {
         if (step.round === "Preliminar") return isInPreliminary;
         return true; // All other rounds are relevant
       });
+      
+      const firstScheduleRound = cupSchedule[0]; // Use full schedule to check for prelim
+      const firstRelevantRound = relevantSchedule[0]; // Use filtered schedule for draw logic
       
       // Convert drawMatchdays to actual dates (cup starts July 7, 2025)
       // drawMatchday = days offset from July 7th (0=Jul7, 1=Jul8, etc.)
@@ -122,15 +127,60 @@ function CalendarPage() {
         ? cupFixtures.some(f => f.round === currentDrawRound.round)
         : false;
       
+      // Check if we are 2 days before the first draw day (for auto-simulating preliminary)
+      // Use the full schedule to get the preliminary round draw day
+      const prelimRound = cupSchedule.find(s => s.round === "Preliminar");
+      const prelimDrawDay = prelimRound?.drawMatchday;
+      const todayOffset = Math.floor((new Date(today).getTime() - new Date("2025-07-07T00:00:00Z").getTime()) / 86400000);
+      const isTwoDaysBeforePrelimDraw = prelimDrawDay !== undefined && todayOffset === prelimDrawDay - 2;
+      
       console.log(`[Calendar cup check] userCountry: ${userCountry}, myTeamId: ${myTeamId}, isInPreliminary: ${isInPreliminary}`);
       console.log(`[Calendar cup check] today: ${today}, isDrawDay: ${isDrawDay}, hasCurrentRoundFixtures: ${hasCurrentRoundFixtures}, cupDrawPending: ${!!save.cupDrawPending}`);
+      console.log(`[Calendar cup check] isTwoDaysBeforePrelimDraw: ${isTwoDaysBeforePrelimDraw}, prelimDrawDay: ${prelimDrawDay}, todayOffset: ${todayOffset}`);
+      
+      // Auto-simulate preliminary round 2 days before prelim draw if user not in prelim
+      console.log(`[Calendar] Prelim auto-sim check: isTwoDaysBeforePrelimDraw=${isTwoDaysBeforePrelimDraw}, !isInPreliminary=${!isInPreliminary}, prelimRound?.round=${prelimRound?.round}`);
+      if (isTwoDaysBeforePrelimDraw && !isInPreliminary && prelimRound?.round === "Preliminar") {
+        const prelimFixturesExist = cupFixtures.some(f => f.round === "Preliminar");
+        console.log(`[Calendar] Prelim fixtures exist: ${prelimFixturesExist}, preliminaryTeams.length: ${preliminaryTeams.length}`);
+        if (!prelimFixturesExist) {
+          console.log(`[Calendar] Auto-simulating preliminary round 2 days before first draw`);
+          const updated = loadSave();
+          if (!updated) return;
+          
+          const prelimFixtures: any[] = [];
+          for (let i = 0; i + 1 < preliminaryTeams.length; i += 2) {
+            prelimFixtures.push({
+              id: `cup-${cupKey}-prelim-${i}`,
+              competition: "cup",
+              league: cupKey,
+              matchday: firstScheduleRound.matchday,
+              round: "Preliminar",
+              homeId: preliminaryTeams[i],
+              awayId: preliminaryTeams[i + 1],
+            });
+          }
+          // Add preliminary fixtures to save
+          if (!updated.cupFixtures[cupKey]) updated.cupFixtures[cupKey] = [];
+          for (const f of prelimFixtures) {
+            // Simple simulation: random winner
+            const homeGoals = Math.floor(Math.random() * 4);
+            const awayGoals = Math.floor(Math.random() * 4);
+            updated.cupFixtures[cupKey].push({
+              ...f,
+              result: { homeGoals, awayGoals, events: [], injuries: [], xgHome: homeGoals, xgAway: awayGoals }
+            });
+          }
+          saveSave(updated);
+          setSave(updated);
+        }
+      }
       
       // Show notification if it's a draw day and this round hasn't been drawn yet
       if (isDrawDay && !hasCurrentRoundFixtures && !save.cupDrawPending) {
         const cupData = initCup(userCountry || "");
         const preliminaryTeams = cupData.preliminaryParticipants || [];
         const userIsInPreliminary = preliminaryTeams.includes(myTeamId);
-        const firstScheduleRound = cupSchedule[0];
         
         // Get the round for this specific draw day
         const currentRound = relevantSchedule.find(s => {
@@ -142,50 +192,26 @@ function CalendarPage() {
           const updated = loadSave();
           if (!updated) return;
           
-          if (firstScheduleRound?.round === "Preliminar" && !userIsInPreliminary) {
-            // Auto-simulate preliminary round silently, then set draw for next round
-            const prelimFixtures: any[] = [];
-            for (let i = 0; i + 1 < preliminaryTeams.length; i += 2) {
-              prelimFixtures.push({
-                id: `cup-${cupKey}-prelim-${i}`,
-                competition: "cup",
-                league: cupKey,
-                matchday: firstScheduleRound.matchday,
-                round: "Preliminar",
-                homeId: preliminaryTeams[i],
-                awayId: preliminaryTeams[i + 1],
-              });
-            }
-            // Add preliminary fixtures to save
-            if (!updated.cupFixtures[cupKey]) updated.cupFixtures[cupKey] = [];
-            for (const f of prelimFixtures) {
-              // Simple simulation: random winner
-              const homeGoals = Math.floor(Math.random() * 4);
-              const awayGoals = Math.floor(Math.random() * 4);
-              updated.cupFixtures[cupKey].push({
-                ...f,
-                result: { homeGoals, awayGoals, events: [], injuries: [], xgHome: homeGoals, xgAway: awayGoals }
-              });
-            }
-            // Collect winners for next round
-            const winners = prelimFixtures.map(f => {
-              const simmed = updated.cupFixtures[cupKey]!.find(x => x.id === f.id);
-              if (!simmed?.result) return f.homeId;
-              return simmed.result.homeGoals >= simmed.result.awayGoals ? simmed.homeId : simmed.awayId;
-            });
+          // Use surviving teams if available, otherwise use initial participants
+          console.log(`[Calendar] About to call getSurvivingCupTeams for round: ${currentRound.round}`);
+          const survivingTeams = getSurvivingCupTeams(updated, cupKey);
+          console.log(`[Calendar] getSurvivingCupTeams returned ${survivingTeams.length} teams`);
+          
+          let drawTeams: string[];
+          if (currentRound.round === "Preliminar") {
+            drawTeams = preliminaryTeams;
+          } else if (currentRound.round === "R16" && firstScheduleRound?.round === "Preliminar") {
+            // R16 is the first round after prelim: combine prelim winners with main bracket
+            const prelimWinners = getSurvivingCupTeams(updated, cupKey);
             const mainBracketTeams = cupData.participants.filter(id => !preliminaryTeams.includes(id));
-            updated.cupDrawPending = {
-              league: cupKey,
-              round: currentRound.round,
-              teams: [...winners, ...mainBracketTeams]
-            };
+            drawTeams = [...prelimWinners, ...mainBracketTeams];
+            console.log(`[Calendar] R16 after prelim: combining ${prelimWinners.length} prelim winners with ${mainBracketTeams.length} main bracket teams`);
           } else {
-            // User is in preliminary, or no preliminary: show draw for current round
-            const drawTeams = currentRound.round === "Preliminar"
-              ? preliminaryTeams
-              : cupData.participants;
-            updated.cupDrawPending = { league: cupKey, round: currentRound.round, teams: drawTeams };
+            // For all other rounds (Octavos, QF, SF, Final), use surviving teams from previous round
+            drawTeams = survivingTeams.length > 0 ? survivingTeams : cupData.participants;
           }
+          console.log(`[Calendar] Using ${drawTeams.length} teams for draw of round ${currentRound.round}`);
+          updated.cupDrawPending = { league: cupKey, round: currentRound.round, teams: drawTeams };
           
           saveSave(updated);
           setSave(updated);

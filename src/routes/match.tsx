@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { getMyNextFixture, loadSave, playMyNextMatch, playMyNextCupMatch, SaveGame, saveSave, setLineup, setFormation, getMyNextFixtureAny, playSpecificFixture, simulateCupMatchday, simulateUCLMatchday, advanceMatchdayLayered, simulateRemainingCupMatches } from "@/lib/store";
+import { getMyNextFixture, loadSave, playMyNextMatch, playMyNextCupMatch, SaveGame, saveSave, setLineup, setFormation, getMyNextFixtureAny, playSpecificFixture, simulateCupMatchday, simulateUCLMatchday, advanceMatchdayLayered, simulateCupMatchdayLayered } from "@/lib/store";
 import { Fixture } from "@/lib/season";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
@@ -83,10 +83,12 @@ function MatchPage() {
 
       // STRICT BRANCHING by matchType - ensure correct simulation for each competition
       if (matchType === 'CUP') {
-        // CUP: Simulate ALL remaining Cup fixtures for the current cup round across ALL active countries
-        // DO NOT touch league standings or league matchday counter
-        console.log("Post-match: Simulating CUP matches for round:", cupRound);
-        next = await simulateRemainingCupMatches(save, cupRound || 'R32');
+        // CUP: Simulate ALL Cup fixtures for the matchday across ALL VIP countries
+        // Uses the same layered simulation format as league matches
+        console.log("Post-match: Simulating CUP matches for matchday:", fixture.matchday);
+        next = await simulateCupMatchdayLayered(save, fixture.matchday, (done, total) => {
+          console.log(`Cup matches: ${done}/${total}`);
+        });
       } else if (matchType === 'UCL') {
         // UCL: Simulate UCL fixtures for the matchday ONLY
         console.log("Post-match: Simulating UCL matches for matchday:", fixture.matchday);
@@ -213,11 +215,12 @@ function MatchPage() {
     if (isCupMatch) {
       usePlayersStore.setState({ pendingUserMatch: null });
       
-      // Simulate remaining cup matches for the current round
+      // Simulate remaining cup matches for the matchday
       try {
-        const cupRound = fixture.round;
-        console.log("Post-match: Simulating remaining CUP matches for round:", cupRound);
-        const updatedSave = await simulateRemainingCupMatches(newSave, cupRound || 'R32');
+        console.log("Post-match: Simulating remaining CUP matches for matchday:", fixture.matchday);
+        const updatedSave = await simulateCupMatchdayLayered(newSave, fixture.matchday, (done, total) => {
+          console.log(`Cup matches: ${done}/${total}`);
+        });
         saveSave(updatedSave);
         setSave(updatedSave);
       } catch (err) {

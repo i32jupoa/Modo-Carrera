@@ -474,6 +474,67 @@ export function getMyUpcomingCupFixtures(save: SaveGame): Fixture[] {
 }
 
 /**
+ * Get round name based on team count (pure mathematical calculation)
+ * Used for dynamic round naming in cup draws
+ */
+export function getRoundNameByTeamCount(teamCount: number): string {
+  if (teamCount === 128) return "64avos de Final";
+  if (teamCount === 64) return "32avos de Final";
+  if (teamCount === 32) return "16avos de Final";
+  if (teamCount === 16) return "Octavos de Final";
+  if (teamCount === 8) return "Cuartos de Final";
+  if (teamCount === 4) return "Semifinales";
+  if (teamCount === 2) return "Final";
+  return "Fase Previa";
+}
+
+/**
+ * Get surviving teams for the next cup round based on current fixtures
+ * This calculates winners from the most recent completed round
+ */
+export function getSurvivingCupTeams(save: SaveGame, league: LeagueId): string[] {
+  const list = save.cupFixtures[league];
+  if (!list || list.length === 0) return [];
+  
+  const roundOrder = ["Preliminar", "R32", "R16", "Octavos", "QF", "SF", "Final"];
+  const existingRounds = [...new Set(list.map(f => f.round).filter((r): r is string => !!r))];
+  const sortedRounds = existingRounds.sort((a, b) => roundOrder.indexOf(a) - roundOrder.indexOf(b));
+  
+  console.log(`getSurvivingCupTeams: Existing rounds: ${sortedRounds.join(', ')}`);
+  
+  // Find the most recent completed round
+  let mostRecentCompletedRound: string | null = null;
+  for (let i = sortedRounds.length - 1; i >= 0; i--) {
+    const round = sortedRounds[i];
+    const roundFixtures = list.filter(f => f.round === round);
+    const allHaveResults = roundFixtures.every(f => f.result);
+    console.log(`getSurvivingCupTeams: Round ${round} has ${roundFixtures.length} fixtures, all have results: ${allHaveResults}`);
+    if (allHaveResults) {
+      mostRecentCompletedRound = round;
+      break;
+    }
+  }
+  
+  if (!mostRecentCompletedRound) {
+    console.log(`getSurvivingCupTeams: No completed rounds found`);
+    return [];
+  }
+  
+  console.log(`getSurvivingCupTeams: Most recent completed round: ${mostRecentCompletedRound}`);
+  
+  // Get winners from the most recent completed round
+  const completedRoundFixtures = list.filter(f => f.round === mostRecentCompletedRound);
+  const winners = completedRoundFixtures.map(f => {
+    if (!f.result) return f.homeId;
+    return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
+  });
+  
+  console.log(`getSurvivingCupTeams: Found ${winners.length} winners from ${mostRecentCompletedRound}`);
+  
+  return winners;
+}
+
+/**
  * Simulate all unplayed cup fixtures for a specific matchday
  */
 export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: number): SaveGame {
@@ -495,6 +556,96 @@ export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: 
   // Process cup draws after simulating matches
   processCupDrawsOnly(next, league);
 
+  return next;
+}
+
+/**
+ * Simulate all unplayed cup fixtures for a specific matchday across ALL VIP countries
+ * Uses the EXACT same logic format as advanceMatchdayLayered:
+ * - VIP countries (Big 5 + Belgium + Netherlands + Portugal + Turkey + user's country): detailed simulation
+ * - Background countries: O(1) mathematical simulation
+ */
+export async function simulateCupMatchdayLayered(save: SaveGame, matchday: number, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  const BATCH_SIZE = 100;
+  
+  const userLeague = next.myLeague;
+  const allFixtures: { fixture: Fixture; league: LeagueId; isVIP: boolean }[] = [];
+  
+  // Collect cup fixtures from all leagues for this matchday
+  for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
+    const cupFixtures = next.cupFixtures[lg];
+    if (!cupFixtures) continue;
+    
+    const isVIP = isVIPLeague(lg, userLeague);
+    const fixtures = cupFixtures.filter(f => f.matchday === matchday && !f.result);
+    
+    for (const f of fixtures) {
+      allFixtures.push({ fixture: f, league: lg, isVIP });
+    }
+  }
+  
+  console.log(`simulateCupMatchdayLayered: Total fixtures to simulate: ${allFixtures.length}`);
+  console.log(`simulateCupMatchdayLayered: Leagues with fixtures:`, [...new Set(allFixtures.map(f => f.league))]);
+  
+  const totalMatches = allFixtures.length;
+  let processed = 0;
+  
+  // Process in batches with yield control
+  for (let i = 0; i < allFixtures.length; i += BATCH_SIZE) {
+    const batch = allFixtures.slice(i, i + BATCH_SIZE);
+    
+    // Process this batch synchronously (fast)
+    for (const { fixture, league, isVIP } of batch) {
+      const home = teamById(fixture.homeId);
+      const away = teamById(fixture.awayId);
+      if (!home || !away) continue;
+      
+      let result: SimResult;
+      
+      if (isVIP) {
+        // DEEP SIMULATION for VIP countries only
+        const homeXI = getStarters(next, fixture.homeId);
+        const awayXI = getStarters(next, fixture.awayId);
+        
+        if (homeXI.length === 0 || awayXI.length === 0) {
+          console.warn(`Empty squad for VIP cup fixture ${fixture.id}: ${fixture.homeId} (${homeXI.length}) vs ${fixture.awayId} (${awayXI.length})`);
+          result = { homeGoals: 0, awayGoals: 0, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 };
+        } else {
+          result = simulateMatch(home, away, homeXI, awayXI);
+          next = applyMatchToStats(next, { ...fixture, result });
+        }
+      } else {
+        // O(1) MATH SIMULATION for background countries (ULTRA FAST)
+        result = generateFakeMatchResult(home, away);
+        // No stats recording for background countries to save time
+      }
+      
+      // Apply result to cup fixtures
+      const cupFixtures = next.cupFixtures[league];
+      if (cupFixtures) {
+        const idx = cupFixtures.findIndex(x => x.id === fixture.id);
+        if (idx >= 0) {
+          cupFixtures[idx] = { ...fixture, result };
+        }
+      }
+      
+      processed++;
+    }
+    
+    // Report progress
+    if (onProgress) {
+      onProgress(processed, totalMatches);
+    }
+    
+    // Yield control every batch
+    if (i + BATCH_SIZE < allFixtures.length) {
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  
+  console.log(`simulateCupMatchdayLayered: Completed ${processed}/${totalMatches} fixtures`);
+  
   return next;
 }
 
@@ -561,10 +712,8 @@ export async function simulateRemainingCupMatches(save: SaveGame, currentRound: 
     }
   }
   
-  // Process cup draws after simulating matches (advance bracket)
-  for (const lg of allLeagues) {
-    processCupDrawsOnly(next, lg);
-  }
+  // DO NOT call processCupDrawsOnly here - it's for advancing bracket after league matchdays
+  // Cup draws are handled separately in the calendar
   
   return next;
 }
