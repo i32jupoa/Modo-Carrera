@@ -35,6 +35,8 @@ function getPlayerStats(playerId: string): PlayerStats {
     injuryReason: undefined,
     morale: 70,
     formHistory: [],
+    yellowCards: 0,
+    redCards: 0,
   };
 }
 
@@ -224,8 +226,8 @@ function TeamsPage() {
                         <td className="py-2 px-1 text-center font-semibold text-primary">{stats.goals}</td>
                         <td className="py-2 px-1 text-center font-semibold text-accent">{stats.assists}</td>
                         <td className="py-2 px-1 text-center font-bold">{goalContributions}</td>
-                        <td className="py-2 px-1 text-center text-yellow-500">🟨 0</td>
-                        <td className="py-2 px-1 text-center text-red-500">🟥 0</td>
+                        <td className="py-2 px-1 text-center text-yellow-500">🟨 {stats.yellowCards}</td>
+                        <td className="py-2 px-1 text-center text-red-500">🟥 {stats.redCards}</td>
                       </tr>
                     );
                   })}

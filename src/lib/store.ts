@@ -16,8 +16,14 @@ import {
   sortStandings,
   Standing,
 } from "@/lib/season";
-import { simulateMatch, simulateMatchFast, SimResult, MatchEvent, InjuryEvent } from "@/lib/simulation";
+import { simulateMatch, simulateMatchFast, SimResult, MatchEvent, InjuryEvent, CardEvent } from "@/lib/simulation";
 import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE, getCupStructureForCountry } from "@/lib/cups";
+
+export type Suspension = {
+  playerId: string;
+  playerName: string;
+  matchdaysRemaining: number; // Number of matchdays the suspension lasts
+};
 
 export type SaveGame = {
   version: 2;
@@ -32,6 +38,8 @@ export type SaveGame = {
   lineups: Record<string, string[]>;
   // formations per team
   formations: Record<string, string>;
+  // player suspensions (red cards)
+  suspensions: Record<string, Suspension[]>; // teamId -> suspensions
   // cups (per league)
   cupFixtures: Record<LeagueId, Fixture[]>;
   cupChampion: Record<LeagueId, string | null>;
@@ -148,6 +156,7 @@ export function newSave(myTeamId: string): SaveGame {
   const cupFixtures: Record<LeagueId, Fixture[]> = {} as never;
   const cupChampion: Record<LeagueId, string | null> = {} as never;
   const formations: Record<string, string> = {} as never;
+  const suspensions: Record<string, Suspension[]> = {} as never;
 
   // Generate fixtures for ALL leagues dynamically, not just Big 5
   const allLeagues = Object.keys(LEAGUES) as LeagueId[];
@@ -203,6 +212,7 @@ export function newSave(myTeamId: string): SaveGame {
     fixtures, standings, currentMatchday,
     lineups,
     formations,
+    suspensions,
     cupFixtures, cupChampion,
     cupDrawPending: null,
     uclFixtures: ucl,
@@ -214,6 +224,53 @@ export function newSave(myTeamId: string): SaveGame {
  *  SIMULATION CORE
  * ============================================================ */
 
+// Process red cards and create suspensions
+function processRedCards(save: SaveGame, cards: CardEvent[], homeTeamId: string, awayTeamId: string): SaveGame {
+  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  
+  for (const card of cards) {
+    if (card.cardType === "red") {
+      const teamId = card.team === "home" ? homeTeamId : awayTeamId;
+      
+      // Random suspension length: 1 or 2 matchdays
+      const suspensionLength = Math.random() < 0.5 ? 1 : 2;
+      
+      const suspension: Suspension = {
+        playerId: card.playerId,
+        playerName: card.playerName,
+        matchdaysRemaining: suspensionLength,
+      };
+      
+      // Add suspension to the team's suspension list
+      if (!next.suspensions[teamId]) {
+        next.suspensions[teamId] = [];
+      }
+      next.suspensions[teamId].push(suspension);
+      
+      console.log(`Red card for ${card.playerName} (${teamId}): ${suspensionLength} matchday suspension`);
+    }
+  }
+  
+  return next;
+}
+
+// Decrease suspension counters for all teams (called after each matchday)
+function decreaseSuspensions(save: SaveGame): SaveGame {
+  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  
+  for (const teamId in next.suspensions) {
+    const suspensions = next.suspensions[teamId];
+    if (suspensions && suspensions.length > 0) {
+      // Decrease matchdaysRemaining for each suspension
+      next.suspensions[teamId] = suspensions
+        .map(s => ({ ...s, matchdaysRemaining: s.matchdaysRemaining - 1 }))
+        .filter(s => s.matchdaysRemaining > 0); // Remove completed suspensions
+    }
+  }
+  
+  return next;
+}
+
 function getStarters(save: SaveGame, teamId: string): Player[] {
   const store = usePlayersStore.getState();
   store.init();
@@ -224,7 +281,18 @@ function getStarters(save: SaveGame, teamId: string): Player[] {
   }
   const lg = team.league;
   const md = save.currentMatchday[lg] ?? 1;
-  return store.getSimXI(teamId, save.lineups[teamId] ?? [], md);
+  
+  // Get the lineup
+  const lineup = save.lineups[teamId] ?? [];
+  
+  // Get suspended players for this team
+  const suspensions = save.suspensions[teamId] ?? [];
+  const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+  
+  // Filter out suspended players from the lineup
+  const filteredLineup = lineup.filter(playerId => !suspendedPlayerIds.has(playerId));
+  
+  return store.getSimXI(teamId, filteredLineup, md);
 }
 
 export function squadOf(_save: SaveGame, teamId: string): Player[] {
@@ -233,12 +301,20 @@ export function squadOf(_save: SaveGame, teamId: string): Player[] {
   return store.getSimSquad(teamId);
 }
 
-function applyMatchToStats(save: SaveGame, fixture: Fixture) {
-  if (!fixture.result) return;
+function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
+  if (!fixture.result) return save;
   const r = fixture.result;
   const store = usePlayersStore.getState();
   const homeXI = getStarters(save, fixture.homeId);
   const awayXI = getStarters(save, fixture.awayId);
+  
+  let updatedSave = save;
+  
+  // Process red cards and create suspensions
+  if (r.cards && r.cards.length > 0) {
+    updatedSave = processRedCards(updatedSave, r.cards, fixture.homeId, fixture.awayId);
+  }
+  
   for (const p of [...homeXI, ...awayXI]) {
     store.recordAppearance(p.id);
   }
@@ -246,16 +322,43 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture) {
     store.recordGoal(ev.scorerId);
     if (ev.assistId) store.recordAssist(ev.assistId);
   }
+  for (const card of r.cards) {
+    if (card.cardType === "yellow") {
+      store.recordYellowCard(card.playerId);
+      store.incrementAccumulatedYellowCards(card.playerId);
+      // Check if accumulated yellow cards reaches 5
+      const stats = store.stats[card.playerId];
+      if (stats && stats.accumulatedYellowCards >= 5) {
+        // Suspend player for next match
+        const p = store.getSimPlayer(card.playerId);
+        if (p) {
+          const teamLeague = teamById(p.teamId).league;
+          store.recordInjury(card.playerId, updatedSave.currentMatchday[teamLeague] + 1, "5 amarillas acumuladas");
+          // Reset accumulated yellow cards after suspension is applied
+          store.resetAccumulatedYellowCards(card.playerId);
+        }
+      }
+    } else if (card.cardType === "red") {
+      store.recordRedCard(card.playerId);
+      // If it's a second yellow, also count it as a yellow card
+      if (card.isSecondYellow) {
+        store.recordYellowCard(card.playerId);
+        store.incrementAccumulatedYellowCards(card.playerId);
+      }
+    }
+  }
   for (const inj of r.injuries) {
     const p = store.getSimPlayer(inj.playerId);
     if (!p) continue;
     const teamLeague = teamById(p.teamId).league;
     store.recordInjury(
       inj.playerId,
-      save.currentMatchday[teamLeague] + inj.weeks,
+      updatedSave.currentMatchday[teamLeague] + inj.weeks,
       inj.reason,
     );
   }
+  
+  return updatedSave;
 }
 
 function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false): Fixture {
@@ -265,14 +368,14 @@ function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false): 
   if (!home || !away) {
     console.warn(`simulateFixtureInline: Team not found for fixture ${fixture.id}`, { homeId: fixture.homeId, awayId: fixture.awayId, home, away });
     // Return fixture with default result to avoid breaking the simulation
-    return { ...fixture, result: { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 } };
+    return { ...fixture, result: { homeGoals: 0, awayGoals: 0, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 } };
   }
   const homeXI = getStarters(save, fixture.homeId);
   const awayXI = getStarters(save, fixture.awayId);
   // If either team has no players, return a default result
   if (homeXI.length === 0 || awayXI.length === 0) {
     console.warn(`simulateFixtureInline: Empty squad for fixture ${fixture.id}`, { homeId: fixture.homeId, awayId: fixture.awayId, homeXI: homeXI.length, awayXI: awayXI.length });
-    return { ...fixture, result: { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 } };
+    return { ...fixture, result: { homeGoals: 0, awayGoals: 0, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 } };
   }
   // Use fast simulation for bulk matchdays, detailed for user's matches
   const result = fast 
@@ -374,7 +477,7 @@ export function getMyUpcomingCupFixtures(save: SaveGame): Fixture[] {
  * Simulate all unplayed cup fixtures for a specific matchday
  */
 export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: number): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   const cupFixtures = next.cupFixtures[league];
   if (!cupFixtures) return next;
 
@@ -385,7 +488,7 @@ export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: 
     const idx = cupFixtures.findIndex(x => x.id === f.id);
     if (idx >= 0) {
       cupFixtures[idx] = simmed;
-      applyMatchToStats(next, simmed);
+      next = applyMatchToStats(next, simmed);
     }
   }
 
@@ -403,7 +506,7 @@ export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: 
  * - Background countries: O(1) mathematical simulation
  */
 export async function simulateRemainingCupMatches(save: SaveGame, currentRound: string): Promise<SaveGame> {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   const userLeague = next.myLeague;
   
   // Get all leagues that have cup fixtures
@@ -437,10 +540,10 @@ export async function simulateRemainingCupMatches(save: SaveGame, currentRound: 
         
         if (homeXI.length === 0 || awayXI.length === 0) {
           console.warn(`Empty squad for VIP cup fixture ${f.id}: ${f.homeId} (${homeXI.length}) vs ${f.awayId} (${awayXI.length})`);
-          result = { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 };
+          result = { homeGoals: 0, awayGoals: 0, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 };
         } else {
           result = simulateMatch(home, away, homeXI, awayXI);
-          applyMatchToStats(next, { ...f, result });
+          next = applyMatchToStats(next, { ...f, result });
         }
       } else {
         // O(1) MATH SIMULATION for background countries - EXACT same logic as league background matches
@@ -470,7 +573,7 @@ export async function simulateRemainingCupMatches(save: SaveGame, currentRound: 
  * Simulate all unplayed UCL fixtures for a specific matchday
  */
 export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   if (!next.uclFixtures) return next;
   
   const matchdayFixtures = next.uclFixtures.filter(f => f.matchday === matchday && !f.result);
@@ -480,7 +583,7 @@ export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame 
     const idx = next.uclFixtures.findIndex(x => x.id === f.id);
     if (idx >= 0) {
       next.uclFixtures[idx] = simmed;
-      applyMatchToStats(next, simmed);
+      next = applyMatchToStats(next, simmed);
     }
   }
   
@@ -493,7 +596,7 @@ export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame 
  * Play a specific fixture by ID: simulate just my game, leave the rest of the matchday open.
  */
 export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: SaveGame; fixture: Fixture | null } {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   
   // Try to find fixture in league fixtures
   let fixture = next.fixtures[next.myLeague].find(f => f.id === fixtureId);
@@ -503,7 +606,7 @@ export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: 
     if (idx >= 0) {
       next.fixtures[next.myLeague][idx] = simmed;
       next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], simmed);
-      applyMatchToStats(next, simmed);
+      next = applyMatchToStats(next, simmed);
     }
     return { save: next, fixture: simmed };
   }
@@ -516,7 +619,7 @@ export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: 
       const idx = next.cupFixtures[lg as LeagueId].findIndex((x) => x.id === fixtureId);
       if (idx >= 0) {
         next.cupFixtures[lg as LeagueId][idx] = simmed;
-        applyMatchToStats(next, simmed);
+        next = applyMatchToStats(next, simmed);
       }
       return { save: next, fixture: simmed };
     }
@@ -530,7 +633,7 @@ export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: 
       const idx = next.uclFixtures.findIndex((x) => x.id === fixtureId);
       if (idx >= 0) {
         next.uclFixtures[idx] = simmed;
-        applyMatchToStats(next, simmed);
+        next = applyMatchToStats(next, simmed);
       }
       return { save: next, fixture: simmed };
     }
@@ -543,14 +646,14 @@ export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: 
  * Play my next league match: simulate just my game, leave the rest of the matchday open.
  */
 export function playMyNextMatch(save: SaveGame): { save: SaveGame; fixture: Fixture | null } {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   const my = getMyNextFixture(next);
   if (!my) return { save: next, fixture: null };
   const simmed = simulateFixtureInline(next, my);
   const idx = next.fixtures[next.myLeague].findIndex((x) => x.id === my.id);
   next.fixtures[next.myLeague][idx] = simmed;
   next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], simmed);
-  applyMatchToStats(next, simmed);
+  next = applyMatchToStats(next, simmed);
   return { save: next, fixture: simmed };
 }
 
@@ -558,7 +661,7 @@ export function playMyNextMatch(save: SaveGame): { save: SaveGame; fixture: Fixt
  * Play my next cup match: simulate just my cup game.
  */
 export function playMyNextCupMatch(save: SaveGame): { save: SaveGame; fixture: Fixture | null } {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   const myCupFixtures = getMyUpcomingCupFixtures(next).filter(f => f.competition === "cup");
   if (myCupFixtures.length === 0) return { save: next, fixture: null };
   
@@ -566,13 +669,13 @@ export function playMyNextCupMatch(save: SaveGame): { save: SaveGame; fixture: F
   const simmed = simulateFixtureInline(next, my);
   const idx = next.cupFixtures[next.myLeague].findIndex((x) => x.id === my.id);
   next.cupFixtures[next.myLeague][idx] = simmed;
-  applyMatchToStats(next, simmed);
+  next = applyMatchToStats(next, simmed);
   return { save: next, fixture: simmed };
 }
 
 // Fast synchronous version for UI responsiveness - only simulates essential leagues
 export function finishMatchdayFast(save: SaveGame, leaguesToSim?: LeagueId[]): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   const targetLeagues = leaguesToSim || [save.myLeague];
 
   for (const lg of targetLeagues) {
@@ -585,10 +688,13 @@ export function finishMatchdayFast(save: SaveGame, leaguesToSim?: LeagueId[]): S
       const idx = next.fixtures[lg].findIndex((x) => x.id === f.id);
       if (idx >= 0) next.fixtures[lg][idx] = sim;
       next.standings[lg] = applyResult(next.standings[lg], sim);
-      applyMatchToStats(next, sim);
+      next = applyMatchToStats(next, sim);
     }
     next.currentMatchday[lg] = md + 1;
   }
+
+  // Decrease suspension counters after advancing matchday
+  next = decreaseSuspensions(next);
 
   // Advance cup for simulated leagues only
   for (const cupLg of targetLeagues) {
@@ -623,6 +729,7 @@ function generateFakeMatchResult(home: Team, away: Team): SimResult {
     homeGoals, 
     awayGoals, 
     events: [], // No events - we'll fake stats in batch at the end
+    cards: [],
     injuries: [], 
     xgHome: homeGoals * 0.85, 
     xgAway: awayGoals * 0.85 
@@ -824,7 +931,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
  * - Ultra-small batches with forced UI updates
  */
 export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   const BATCH_SIZE = 100; // Larger batches since we're using O(1) math for background leagues
   
   const userLeague = next.myLeague;
@@ -867,10 +974,10 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
         
         if (homeXI.length === 0 || awayXI.length === 0) {
           console.warn(`Empty squad for VIP fixture ${fixture.id}: ${fixture.homeId} (${homeXI.length}) vs ${fixture.awayId} (${awayXI.length})`);
-          result = { homeGoals: 0, awayGoals: 0, events: [], injuries: [], xgHome: 0, xgAway: 0 };
+          result = { homeGoals: 0, awayGoals: 0, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 };
         } else {
           result = simulateMatch(home, away, homeXI, awayXI);
-          applyMatchToStats(next, { ...fixture, result });
+          next = applyMatchToStats(next, { ...fixture, result });
         }
       } else {
         // O(1) MATH SIMULATION for background leagues (ULTRA FAST)
@@ -1064,17 +1171,18 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
 }
 
 function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
-  const list = save.cupFixtures[lg];
+  let next: SaveGame = save;
+  const list = next.cupFixtures[lg];
   if (!list) return; // No cup for this league
   
-  const leagueMd = save.currentMatchday[lg];
+  const leagueMd = next.currentMatchday[lg];
   
   // Get the dynamic cup structure for this league's country
   const country = LEAGUES[lg]?.country;
   if (!country) return;
   
   // Check if user is in the same country (not necessarily same league)
-  const userCountry = LEAGUES[save.myLeague]?.country;
+  const userCountry = LEAGUES[next.myLeague]?.country;
   const isUserCountry = country === userCountry;
   
   const structure = (save.cupFixtures as any)[`${lg}_structure`] || getCupStructureForCountry(country);
@@ -1150,7 +1258,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
         const sim = simulateFixtureInline(save, f);
         const idx = list.findIndex((x) => x.id === f.id);
         if (idx >= 0) list[idx] = sim;
-        applyMatchToStats(save, sim);
+        save = applyMatchToStats(save, sim);
       }
     }
     
@@ -1361,7 +1469,7 @@ export function getCurrentCupRound(save: SaveGame, league: LeagueId): string | n
  * This is called before opening the user's cup draw modal to ensure all AI leagues have their matchups
  */
 export function autoDrawForeignCups(save: SaveGame): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
   const userLeague = next.myLeague;
   const userCountry = LEAGUES[userLeague]?.country;
   
@@ -1431,7 +1539,7 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
             } else {
               list.push(simmed);
             }
-            applyMatchToStats(next, simmed);
+            next = applyMatchToStats(next, simmed);
           }
           
           // Get winners for next round from the simulated fixtures in list
@@ -1506,7 +1614,7 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
             if (idx >= 0) {
               list[idx] = simmed;
             }
-            applyMatchToStats(next, simmed);
+            next = applyMatchToStats(next, simmed);
           }
         }
       }

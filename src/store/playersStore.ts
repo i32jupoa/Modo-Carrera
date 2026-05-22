@@ -184,6 +184,12 @@ export type PlayerStats = {
 
   formHistory: number[];
 
+  yellowCards: number;
+
+  redCards: number;
+
+  accumulatedYellowCards: number;
+
 };
 
 
@@ -237,6 +243,12 @@ function defaultStats(): PlayerStats {
     morale: 70,
 
     formHistory: [],
+
+    yellowCards: 0,
+
+    redCards: 0,
+
+    accumulatedYellowCards: 0,
 
   };
 
@@ -552,6 +564,14 @@ type PlayersState = {
   recordGoal: (playerId: string) => void;
 
   recordAssist: (playerId: string) => void;
+
+  recordYellowCard: (playerId: string) => void;
+
+  recordRedCard: (playerId: string) => void;
+
+  incrementAccumulatedYellowCards: (playerId: string) => void;
+
+  resetAccumulatedYellowCards: (playerId: string) => void;
 
   recordInjury: (playerId: string, injuredUntil: number, reason: string) => void;
 
@@ -1177,6 +1197,12 @@ export const usePlayersStore = create<PlayersState>()(
 
             formHistory: p.formHistory ?? [],
 
+            yellowCards: 0,
+
+            redCards: 0,
+
+            accumulatedYellowCards: 0,
+
           };
 
         }
@@ -1346,6 +1372,62 @@ export const usePlayersStore = create<PlayersState>()(
         const s = next[playerId] ?? defaultStats();
 
         next[playerId] = { ...s, assists: s.assists + 1 };
+
+        set({ stats: next });
+
+      },
+
+
+
+      recordYellowCard: (playerId) => {
+
+        const next = { ...get().stats };
+
+        const s = next[playerId] ?? defaultStats();
+
+        next[playerId] = { ...s, yellowCards: s.yellowCards + 1 };
+
+        set({ stats: next });
+
+      },
+
+
+
+      recordRedCard: (playerId) => {
+
+        const next = { ...get().stats };
+
+        const s = next[playerId] ?? defaultStats();
+
+        next[playerId] = { ...s, redCards: s.redCards + 1 };
+
+        set({ stats: next });
+
+      },
+
+
+
+      incrementAccumulatedYellowCards: (playerId) => {
+
+        const next = { ...get().stats };
+
+        const s = next[playerId] ?? defaultStats();
+
+        next[playerId] = { ...s, accumulatedYellowCards: s.accumulatedYellowCards + 1 };
+
+        set({ stats: next });
+
+      },
+
+
+
+      resetAccumulatedYellowCards: (playerId) => {
+
+        const next = { ...get().stats };
+
+        const s = next[playerId] ?? defaultStats();
+
+        next[playerId] = { ...s, accumulatedYellowCards: 0 };
 
         set({ stats: next });
 

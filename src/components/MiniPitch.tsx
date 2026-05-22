@@ -1,12 +1,14 @@
 import { Player } from "@/data/players";
 import { FORMATION_COORDINATES, type FormationName, type PositionRole } from "@/lib/formations";
 import { teamById } from "@/data/teams";
+import { CardEvent } from "@/lib/simulation";
 
 interface MiniPitchProps {
   startingXI: Player[];
   formation: FormationName;
   teamId: string;
   className?: string;
+  cards?: CardEvent[];
 }
 
 // Position role mappings for CPU lineup generation
@@ -41,7 +43,7 @@ function getContrastColor(hexColor: string): string {
   return luminance > 0.5 ? '#000000' : '#ffffff';
 }
 
-export function MiniPitch({ startingXI, formation, teamId, className = "" }: MiniPitchProps) {
+export function MiniPitch({ startingXI, formation, teamId, className = "", cards = [] }: MiniPitchProps) {
   const formationPositions = FORMATION_COORDINATES[formation];
   const positionKeys = Object.keys(formationPositions);
   const team = teamById(teamId);
@@ -54,6 +56,15 @@ export function MiniPitch({ startingXI, formation, teamId, className = "" }: Min
     } else {
       playerPositions[posKey] = null;
     }
+  });
+
+  // Create a map of player IDs to their cards
+  const playerCards: Record<string, CardEvent[]> = {};
+  cards.forEach(card => {
+    if (!playerCards[card.playerId]) {
+      playerCards[card.playerId] = [];
+    }
+    playerCards[card.playerId].push(card);
   });
 
   const textColor = getContrastColor(team?.color || '#3b82f6');
@@ -79,6 +90,12 @@ export function MiniPitch({ startingXI, formation, teamId, className = "" }: Min
           
           if (!player) return null;
 
+          // Get cards for this player
+          const playerCardList = playerCards[player.id] || [];
+          const hasYellowCard = playerCardList.some(c => c.cardType === "yellow");
+          const hasRedCard = playerCardList.some(c => c.cardType === "red");
+          const cardEmoji = hasRedCard ? "🔴" : hasYellowCard ? "🟨" : null;
+
           return (
             <div
               key={posKey}
@@ -90,7 +107,7 @@ export function MiniPitch({ startingXI, formation, teamId, className = "" }: Min
               }}
             >
               <div 
-                className="font-bold rounded-full flex items-center justify-center shadow-lg border-2"
+                className="font-bold rounded-full flex items-center justify-center shadow-lg border-2 relative"
                 style={{
                   width: '28px',
                   height: '28px',
@@ -101,6 +118,11 @@ export function MiniPitch({ startingXI, formation, teamId, className = "" }: Min
                 }}
               >
                 {player.rating}
+                {cardEmoji && (
+                  <div className="absolute -top-1 -right-1 text-[0.6rem]">
+                    {cardEmoji}
+                  </div>
+                )}
               </div>
               <div className="mt-0.5 text-[0.5rem] text-foreground font-medium text-center leading-tight">
                 {player.name.split(' ').pop()}

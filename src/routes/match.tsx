@@ -5,7 +5,7 @@ import { Fixture } from "@/lib/season";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
-import { MatchEvent } from "@/lib/simulation";
+import { MatchEvent, CardEvent } from "@/lib/simulation";
 import { usePlayersStore } from "@/store/playersStore";
 import { MiniPitch, generateCPULineup } from "@/components/MiniPitch";
 import { CountryFlag } from "@/components/CountryFlag";
@@ -29,7 +29,9 @@ function MatchPage() {
   const [homeScore, setHomeScore] = useState(0);
   const [awayScore, setAwayScore] = useState(0);
   const [feed, setFeed] = useState<MatchEvent[]>([]);
+  const [cardFeed, setCardFeed] = useState<CardEvent[]>([]);
   const allEventsRef = useRef<MatchEvent[]>([]);
+  const allCardsRef = useRef<CardEvent[]>([]);
   const fixtureRef = useRef<Fixture | null>(null);
   const clockTimeoutRef = useRef<number | null>(null);
   const fixtures = usePlayersStore((s) => s.fixtures);
@@ -115,7 +117,7 @@ function MatchPage() {
       if (s) {
         const updated = s.cupFixtures[s.myLeague].map((f) =>
           f.id === fixtureId
-            ? { ...f, result: { homeGoals: homeScore, awayGoals: awayScore, events: [], injuries: [], xgHome: 0, xgAway: 0 } }
+            ? { ...f, result: { homeGoals: homeScore, awayGoals: awayScore, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 } }
             : f
         );
         const newSave = { ...s, cupFixtures: { ...s.cupFixtures, [s.myLeague]: updated } };
@@ -188,6 +190,7 @@ function MatchPage() {
       
     if (!fixture || !fixture.result) return;
     allEventsRef.current = fixture.result.events;
+    allCardsRef.current = fixture.result.cards || [];
     fixtureRef.current = fixture;
     
     // If we used a temporary lineup, restore the original base lineup before saving
@@ -232,12 +235,16 @@ function MatchPage() {
       m += 1;
       setMinute(m);
       const events = allEventsRef.current.filter((e) => e.minute === m);
+      const cards = allCardsRef.current.filter((c) => c.minute === m);
       if (events.length > 0) {
         setFeed((prev) => [...events, ...prev]);
         for (const ev of events) {
           if (ev.team === "home") setHomeScore((s) => s + 1);
           else setAwayScore((s) => s + 1);
         }
+      }
+      if (cards.length > 0) {
+        setCardFeed((prev) => [...cards, ...prev]);
       }
       if (m >= 90) { setPhase("done"); return; }
       clockTimeoutRef.current = window.setTimeout(tick, 50);
@@ -256,6 +263,7 @@ function MatchPage() {
     setHomeScore(fixtureRef.current.result.homeGoals);
     setAwayScore(fixtureRef.current.result.awayGoals);
     setFeed(allEventsRef.current.slice().reverse());
+    setCardFeed(allCardsRef.current.slice().reverse());
     setMinute(90);
     setPhase("done");
   }
@@ -356,7 +364,7 @@ function MatchPage() {
               <CountryFlag country={LEAGUES[home.league]?.country || ""} />
               <div className="font-bold text-sm md:text-base">{home.name}</div>
             </div>
-            <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" />
+            <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" cards={cardFeed.filter(c => c.team === 'home')} />
           </div>
           <div className="scoreline text-5xl md:text-7xl font-black">
             {phase === "preview" ? "–" : homeScore}
@@ -370,7 +378,7 @@ function MatchPage() {
               <CountryFlag country={LEAGUES[away.league]?.country || ""} />
               <div className="font-bold text-sm md:text-base">{away.name}</div>
             </div>
-            <MiniPitch startingXI={awayLineup} formation={awayFormation} teamId={fixture.awayId} className="mt-2" />
+            <MiniPitch startingXI={awayLineup} formation={awayFormation} teamId={fixture.awayId} className="mt-2" cards={cardFeed.filter(c => c.team === 'away')} />
           </div>
         </div>
 
@@ -425,27 +433,50 @@ function MatchPage() {
           <p className="text-sm text-muted-foreground">
             {home.name} recibe a {away.name}. Pulsa "Iniciar partido" para comenzar.
           </p>
-        ) : feed.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sin goles aún... el partido está disputado.</p>
+        ) : feed.length === 0 && cardFeed.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin eventos aún... el partido está disputado.</p>
         ) : (
           <div className="space-y-2">
-            {feed.map((e, i) => {
-              const scoringTeam = e.team === "home" ? home : away;
-              return (
-                <div key={i} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
-                  <span className="scoreline text-sm text-primary font-bold w-10">{e.minute}'</span>
-                  <span className="text-lg">⚽</span>
-                  <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
-                  <div className="text-sm min-w-0">
-                    <span className="font-bold">{e.scorerName}</span>
-                    {e.assistName && (
-                      <span className="text-muted-foreground"> · asist. {e.assistName}</span>
-                    )}
-                    <span className="text-muted-foreground"> ({scoringTeam.short})</span>
-                  </div>
-                </div>
-              );
-            })}
+            {[...cardFeed, ...feed]
+              .sort((a, b) => b.minute - a.minute)
+              .map((e, i) => {
+                if ('cardType' in e) {
+                  // Card event
+                  const card = e as CardEvent;
+                  const cardTeam = card.team === "home" ? home : away;
+                  const cardEmoji = card.cardType === "yellow" ? "🟨" : "🔴";
+                  const cardText = card.isSecondYellow ? "2ª amarilla → roja" : card.cardType === "yellow" ? "Tarjeta amarilla" : "Tarjeta roja";
+                  return (
+                    <div key={`card-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
+                      <span className="scoreline text-sm text-primary font-bold w-10">{card.minute}'</span>
+                      <span className="text-lg">{cardEmoji}</span>
+                      <TeamLogo teamName={cardTeam.name} leagueName={getLeagueName(cardTeam.league)} size={22} />
+                      <div className="text-sm min-w-0">
+                        <span className="font-bold">{card.playerName}</span>
+                        <span className="text-muted-foreground"> · {cardText}</span>
+                        <span className="text-muted-foreground"> ({cardTeam.short})</span>
+                      </div>
+                    </div>
+                  );
+                } else {
+                  // Goal event
+                  const scoringTeam = e.team === "home" ? home : away;
+                  return (
+                    <div key={`goal-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
+                      <span className="scoreline text-sm text-primary font-bold w-10">{e.minute}'</span>
+                      <span className="text-lg">⚽</span>
+                      <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
+                      <div className="text-sm min-w-0">
+                        <span className="font-bold">{e.scorerName}</span>
+                        {e.assistName && (
+                          <span className="text-muted-foreground"> · asist. {e.assistName}</span>
+                        )}
+                        <span className="text-muted-foreground"> ({scoringTeam.short})</span>
+                      </div>
+                    </div>
+                  );
+                }
+              })}
           </div>
         )}
         {phase === "done" && fixture.result && (

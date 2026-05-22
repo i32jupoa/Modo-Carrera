@@ -146,6 +146,15 @@ export type MatchEvent = {
   assistName?: string;
 };
 
+export type CardEvent = {
+  minute: number;
+  team: "home" | "away";
+  playerId: string;
+  playerName: string;
+  cardType: "yellow" | "red";
+  isSecondYellow: boolean; // true if red card is due to second yellow
+};
+
 export type InjuryEvent = {
   team: "home" | "away";
   playerId: string;
@@ -158,6 +167,7 @@ export type SimResult = {
   homeGoals: number;
   awayGoals: number;
   events: MatchEvent[];
+  cards: CardEvent[];
   injuries: InjuryEvent[];
   xgHome: number;
   xgAway: number;
@@ -277,8 +287,8 @@ export function simulateMatchFast(
     });
   }
   
-  // No injuries in fast mode
-  return { homeGoals, awayGoals, events, injuries: [], xgHome: lh, xgAway: la };
+  // No injuries or cards in fast mode
+  return { homeGoals, awayGoals, events, cards: [], injuries: [], xgHome: lh, xgAway: la };
 }
 
 // Detailed simulation with events and injuries
@@ -286,7 +296,114 @@ export function simulateMatchFast(
 export function simulateMatch(
   home: Team, away: Team, homeXI: Player[], awayXI: Player[]
 ): SimResult {
-  const { lh, la } = expectedGoals(home, away, homeXI, awayXI);
+  // Simulate cards first to determine if there are red cards that affect team strength
+  const cards: CardEvent[] = [];
+  const homeYellowCards = new Map<string, number>(); // playerId -> yellow card count
+  const awayYellowCards = new Map<string, number>();
+  let homeRedCards = 0;
+  let awayRedCards = 0;
+
+  // Home team cards
+  for (const player of homeXI) {
+    // Goalkeepers have 5% chance for yellow card, others have 10%
+    const yellowChance = player.position === "GK" ? 0.05 : 0.10;
+    if (rand() < yellowChance) {
+      const yellowCount = (homeYellowCards.get(player.id) || 0) + 1;
+      homeYellowCards.set(player.id, yellowCount);
+      
+      if (yellowCount === 2) {
+        // Second yellow = red card
+        homeRedCards++;
+        cards.push({
+          minute: Math.floor(rand() * 90) + 1,
+          team: "home",
+          playerId: player.id,
+          playerName: player.name,
+          cardType: "red",
+          isSecondYellow: true
+        });
+      } else {
+        cards.push({
+          minute: Math.floor(rand() * 90) + 1,
+          team: "home",
+          playerId: player.id,
+          playerName: player.name,
+          cardType: "yellow",
+          isSecondYellow: false
+        });
+      }
+    }
+    // 2% chance for direct red card (same for all players)
+    else if (rand() < 0.02) {
+      homeRedCards++;
+      cards.push({
+        minute: Math.floor(rand() * 90) + 1,
+        team: "home",
+        playerId: player.id,
+        playerName: player.name,
+        cardType: "red",
+        isSecondYellow: false
+      });
+    }
+  }
+
+  // Away team cards
+  for (const player of awayXI) {
+    // Goalkeepers have 5% chance for yellow card, others have 10%
+    const yellowChance = player.position === "GK" ? 0.05 : 0.10;
+    if (rand() < yellowChance) {
+      const yellowCount = (awayYellowCards.get(player.id) || 0) + 1;
+      awayYellowCards.set(player.id, yellowCount);
+      
+      if (yellowCount === 2) {
+        // Second yellow = red card
+        awayRedCards++;
+        cards.push({
+          minute: Math.floor(rand() * 90) + 1,
+          team: "away",
+          playerId: player.id,
+          playerName: player.name,
+          cardType: "red",
+          isSecondYellow: true
+        });
+      } else {
+        cards.push({
+          minute: Math.floor(rand() * 90) + 1,
+          team: "away",
+          playerId: player.id,
+          playerName: player.name,
+          cardType: "yellow",
+          isSecondYellow: false
+        });
+      }
+    }
+    // 2% chance for direct red card (same for all players)
+    else if (rand() < 0.02) {
+      awayRedCards++;
+      cards.push({
+        minute: Math.floor(rand() * 90) + 1,
+        team: "away",
+        playerId: player.id,
+        playerName: player.name,
+        cardType: "red",
+        isSecondYellow: false
+      });
+    }
+  }
+
+  cards.sort((a, b) => a.minute - b.minute);
+
+  // Apply red card penalty: if home has red cards, away gets 10% boost per red card
+  // If away has red cards, home gets 10% boost per red card
+  const homeRedPenalty = homeRedCards * 0.10;
+  const awayRedPenalty = awayRedCards * 0.10;
+
+  // Adjust team strength based on red cards
+  const adjustedHomeXI = homeXI.map(p => ({ ...p, rating: p.rating * (1 - awayRedPenalty) }));
+  const adjustedAwayXI = awayXI.map(p => ({ ...p, rating: p.rating * (1 - homeRedPenalty) }));
+
+  // Calculate expected goals with adjusted team strength
+  const { lh, la } = expectedGoals(home, away, adjustedHomeXI, adjustedAwayXI);
   const homeGoals = poisson(lh);
   const awayGoals = poisson(la);
 
@@ -319,5 +436,5 @@ export function simulateMatch(
   const awayInj = maybeInjury(awayXI, "away");
   if (awayInj) injuries.push(awayInj);
 
-  return { homeGoals, awayGoals, events, injuries, xgHome: lh, xgAway: la };
+  return { homeGoals, awayGoals, events, cards, injuries, xgHome: lh, xgAway: la };
 }
