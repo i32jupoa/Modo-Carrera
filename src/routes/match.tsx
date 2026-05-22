@@ -5,7 +5,7 @@ import { Fixture } from "@/lib/season";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
-import { MatchEvent, CardEvent } from "@/lib/simulation";
+import { MatchEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout } from "@/lib/simulation";
 import { usePlayersStore } from "@/store/playersStore";
 import { MiniPitch, generateCPULineup } from "@/components/MiniPitch";
 import { CountryFlag } from "@/components/CountryFlag";
@@ -18,7 +18,7 @@ function getLeagueName(leagueId: string): string {
 
 export const Route = createFileRoute("/match")({ component: MatchPage });
 
-type Phase = "preview" | "playing" | "done";
+type Phase = "preview" | "playing" | "done" | "extra_time" | "penalties";
 
 function MatchPage() {
   const navigate = useNavigate();
@@ -28,10 +28,15 @@ function MatchPage() {
   const [minute, setMinute] = useState(0);
   const [homeScore, setHomeScore] = useState(0);
   const [awayScore, setAwayScore] = useState(0);
+  const [extraTimeHomeScore, setExtraTimeHomeScore] = useState(0);
+  const [extraTimeAwayScore, setExtraTimeAwayScore] = useState(0);
+  const [penaltyHomeScore, setPenaltyHomeScore] = useState(0);
+  const [penaltyAwayScore, setPenaltyAwayScore] = useState(0);
   const [feed, setFeed] = useState<MatchEvent[]>([]);
   const [cardFeed, setCardFeed] = useState<CardEvent[]>([]);
   const allEventsRef = useRef<MatchEvent[]>([]);
   const allCardsRef = useRef<CardEvent[]>([]);
+  const extraTimeEventsRef = useRef<MatchEvent[]>([]);
   const fixtureRef = useRef<Fixture | null>(null);
   const clockTimeoutRef = useRef<number | null>(null);
   const fixtures = usePlayersStore((s) => s.fixtures);
@@ -41,11 +46,14 @@ function MatchPage() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [matchType, setMatchType] = useState<'LEAGUE' | 'CUP' | 'UCL'>('LEAGUE');
   const [cupRound, setCupRound] = useState<string | undefined>(undefined);
+  const [returningFromLineupEdit, setReturningFromLineupEdit] = useState(false);
 
   // Extract temporary lineup from router state (if passed from lineup page)
   const routerState = location.state as any;
   const matchLineup = routerState?.matchLineup as string[] | undefined;
   const matchFormation = routerState?.matchFormation as string | undefined;
+  const returningFromLineup = routerState?.returningFromLineupEdit === true;
+  const fixtureId = routerState?.fixtureId as string | undefined;
 
   // Extract match type from router state (if passed from season page)
   useEffect(() => {
@@ -113,13 +121,193 @@ function MatchPage() {
     }
   }
 
-  function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number, isCup: boolean = false) {
+  function handleGoToExtraTime() {
+    if (!save || !fixtureRef.current) return;
+    
+    const fixture = fixtureRef.current;
+    const home = teamById(fixture.homeId);
+    const away = teamById(fixture.awayId);
+    if (!home || !away) return;
+    
+    // Get lineups
+    const homeXI = getSimSquad(fixture.homeId);
+    const awayXI = getSimSquad(fixture.awayId);
+    
+    // Simulate extra time
+    const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+    
+    // Store extra time events for playback
+    extraTimeEventsRef.current = etResult.events;
+    
+    // Reset minute to 90 for extra time playback
+    setMinute(90);
+    setPhase("extra_time");
+    
+    // Start the clock for extra time (90-120)
+    runExtraTimeClock();
+  }
+  
+  function runExtraTimeClock() {
+    let m = 90;
+    const tick = () => {
+      m += 1;
+      setMinute(m);
+      
+      // Check for events at this minute
+      const eventsAtMinute = extraTimeEventsRef.current.filter(e => e.minute === m);
+      if (eventsAtMinute.length > 0) {
+        setFeed(prev => [...prev, ...eventsAtMinute]);
+        
+        // Update scores
+        eventsAtMinute.forEach(ev => {
+          if (ev.type === "goal") {
+            if (ev.team === "home") setExtraTimeHomeScore(s => s + 1);
+            else setExtraTimeAwayScore(s => s + 1);
+          }
+        });
+      }
+      
+      if (m < 120) {
+        clockTimeoutRef.current = window.setTimeout(tick, 100);
+      } else {
+        // Extra time finished - clear timeout
+        if (clockTimeoutRef.current !== null) {
+          window.clearTimeout(clockTimeoutRef.current);
+          clockTimeoutRef.current = null;
+        }
+        handleExtraTimeFinished();
+      }
+    };
+    
+    clockTimeoutRef.current = window.setTimeout(tick, 100);
+  }
+  
+  function handleExtraTimeFinished() {
+    const totalHomeScore = homeScore + extraTimeHomeScore;
+    const totalAwayScore = awayScore + extraTimeAwayScore;
+    
+    console.log(`Extra time finished: Home: ${homeScore} + ${extraTimeHomeScore} = ${totalHomeScore}, Away: ${awayScore} + ${extraTimeAwayScore} = ${totalAwayScore}`);
+    
+    if (totalHomeScore === totalAwayScore) {
+      // Go to penalties
+      console.log("Scores are tied, going to penalties");
+      handlePenaltyShootout();
+    } else {
+      // Match ended in extra time
+      console.log("Match ended in extra time with a winner");
+      handleMatchEndWithExtraTime();
+    }
+  }
+  
+  function handlePenaltyShootout() {
+    if (!save || !fixtureRef.current) return;
+    
+    const fixture = fixtureRef.current;
+    const homeXI = getSimSquad(fixture.homeId);
+    const awayXI = getSimSquad(fixture.awayId);
+    
+    // Simulate penalty shootout
+    const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+    setPenaltyHomeScore(penaltyResult.homeGoals);
+    setPenaltyAwayScore(penaltyResult.awayGoals);
+    
+    // Show penalty shootout events in feed with a special type
+    const penaltyEvents: MatchEvent[] = penaltyResult.shootout.map((shot, idx) => ({
+      minute: 120 + idx,
+      team: shot.team === 'home' ? 'home' : 'away',
+      type: 'penalty' as any, // Use special type for penalties
+      scorerId: shot.playerId,
+      scorerName: shot.playerId ? homeXI.find(p => p.id === shot.playerId)?.name || awayXI.find(p => p.id === shot.playerId)?.name : 'Unknown',
+    }));
+    setFeed(prev => [...prev, ...penaltyEvents]);
+    
+    // Save result with penalties
+    updateFixtureInStore(
+      fixture.id,
+      homeScore + extraTimeHomeScore,
+      awayScore + extraTimeAwayScore,
+      true,
+      { homeGoals: extraTimeHomeScore, awayGoals: extraTimeAwayScore },
+      { homeGoals: penaltyResult.homeGoals, awayGoals: penaltyResult.awayGoals }
+    );
+    
+    // Clear pending match after simulation
+    usePlayersStore.setState({ pendingUserMatch: null });
+    
+    // Set phase to done immediately, then simulate remaining matches in background
+    setPhase("done");
+    simulateRemainingCupMatches(fixture.matchday);
+  }
+  
+  function handleMatchEndWithExtraTime() {
+    if (!save || !fixtureRef.current) return;
+    
+    const fixture = fixtureRef.current;
+    
+    // Save result with extra time
+    updateFixtureInStore(
+      fixture.id,
+      homeScore + extraTimeHomeScore,
+      awayScore + extraTimeAwayScore,
+      true,
+      { homeGoals: extraTimeHomeScore, awayGoals: extraTimeAwayScore }
+    );
+    
+    // Clear pending match after simulation
+    usePlayersStore.setState({ pendingUserMatch: null });
+    
+    // Set phase to done immediately, then simulate remaining matches in background
+    setPhase("done");
+    simulateRemainingCupMatches(fixture.matchday);
+  }
+  
+  async function simulateRemainingCupMatches(matchday: number) {
+    try {
+      console.log("Post-extra-time: Simulating remaining CUP matches for matchday:", matchday);
+      const updatedSave = await simulateCupMatchdayLayered(save, matchday, (done, total) => {
+        console.log(`Cup matches: ${done}/${total}`);
+      });
+      saveSave(updatedSave);
+      setSave(updatedSave);
+      console.log("Cup matches simulation complete, setting phase to done");
+    } catch (err) {
+      console.error("Error simulating remaining cup matches:", err);
+    }
+  }
+
+  function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number, isCup: boolean = false, extraTimeData?: { homeGoals: number; awayGoals: number }, penaltyData?: { homeGoals: number; awayGoals: number }) {
     if (isCup) {
       const s = loadSave();
       if (s) {
+        const result: any = { 
+          homeGoals: homeScore, 
+          awayGoals: awayScore, 
+          events: [], 
+          cards: [], 
+          injuries: [], 
+          xgHome: 0, 
+          xgAway: 0 
+        };
+        
+        if (extraTimeData) {
+          result.extraTime = {
+            homeGoals: extraTimeData.homeGoals,
+            awayGoals: extraTimeData.awayGoals,
+            events: []
+          };
+        }
+        
+        if (penaltyData) {
+          result.penalties = {
+            homeGoals: penaltyData.homeGoals,
+            awayGoals: penaltyData.awayGoals,
+            shootout: []
+          };
+        }
+        
         const updated = s.cupFixtures[s.myLeague].map((f) =>
           f.id === fixtureId
-            ? { ...f, result: { homeGoals: homeScore, awayGoals: awayScore, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 } }
+            ? { ...f, result }
             : f
         );
         const newSave = { ...s, cupFixtures: { ...s.cupFixtures, [s.myLeague]: updated } };
@@ -162,19 +350,48 @@ function MatchPage() {
     setSave(saveToUse);
     
     // Get the fixture based on match type
-    if (isCup && pendingUserMatch) {
-      // Find cup fixture
+    if (isCup && pendingUserMatch && !returningFromLineup) {
+      // Find cup fixture (only if not returning from lineup edit)
       const cupFixture = s.cupFixtures[s.myLeague].find(
         f => f.homeId === pendingUserMatch.homeTeam && f.awayId === pendingUserMatch.awayTeam && !f.result
       );
       fixtureRef.current = cupFixture || null;
+    } else if (returningFromLineup && fixtureId) {
+      // Returning from lineup edit - load the specific fixture by ID
+      // First try league fixtures
+      let foundFixture = s.fixtures[s.myLeague].find(f => f.id === fixtureId);
+      if (!foundFixture) {
+        // Try cup fixtures
+        for (const lg of Object.keys(s.cupFixtures) as LeagueId[]) {
+          foundFixture = s.cupFixtures[lg].find(f => f.id === fixtureId);
+          if (foundFixture) break;
+        }
+      }
+      fixtureRef.current = foundFixture || null;
+      
+      // If fixture has a result, load it into the UI
+      if (foundFixture?.result) {
+        allEventsRef.current = foundFixture.result.events;
+        allCardsRef.current = foundFixture.result.cards || [];
+        setHomeScore(foundFixture.result.homeGoals);
+        setAwayScore(foundFixture.result.awayGoals);
+        setFeed(foundFixture.result.events.slice().reverse());
+        setCardFeed((foundFixture.result.cards || []).slice().reverse());
+        setMinute(90);
+        setPhase("done");
+        setIsCupMatch(foundFixture.competition === "cup");
+      }
     } else {
       // Use getMyNextFixtureAny to find next match from any competition
       fixtureRef.current = getMyNextFixtureAny(saveToUse);
     }
     
-    if (!fixtureRef.current) navigate({ to: "/season" });
-  }, [navigate, matchLineup, matchFormation, pendingUserMatch]);
+    if (!fixtureRef.current) {
+      console.error("No fixture found, navigating to season");
+      navigate({ to: "/season" });
+      return;
+    }
+  }, [navigate, matchLineup, matchFormation, pendingUserMatch, returningFromLineup]);
 
   async function startMatch() {
     if (!save) return;
@@ -195,37 +412,49 @@ function MatchPage() {
     allCardsRef.current = fixture.result.cards || [];
     fixtureRef.current = fixture;
     
-    // If we used a temporary lineup, restore the original base lineup before saving
-    // This ensures only stats/results are saved, not the temporary lineup changes
-    if (usedTemporaryLineup && originalLineup && originalFormation) {
-      const saveWithOriginalLineup = setLineup(newSave, newSave.myTeamId, originalLineup);
-      const saveWithOriginalFormation = setFormation(saveWithOriginalLineup, newSave.myTeamId, originalFormation);
-      setSave(saveWithOriginalFormation);
-      saveSave(saveWithOriginalFormation);
-    } else {
-      setSave(newSave);
-      saveSave(newSave);
-    }
+    // For cup matches that end in a draw, don't save the result yet
+    // Allow user to edit lineup and go to extra time
+    const isCupDraw = isCupMatch && fixture.result.homeGoals === fixture.result.awayGoals;
     
-    if (fixture.result) {
-      updateFixtureInStore(fixture.id, fixture.result.homeGoals, fixture.result.awayGoals, isCupMatch);
-    }
-    
-    // Clear pending match after simulation
-    if (isCupMatch) {
-      usePlayersStore.setState({ pendingUserMatch: null });
-      
-      // Simulate remaining cup matches for the matchday
-      try {
-        console.log("Post-match: Simulating remaining CUP matches for matchday:", fixture.matchday);
-        const updatedSave = await simulateCupMatchdayLayered(newSave, fixture.matchday, (done, total) => {
-          console.log(`Cup matches: ${done}/${total}`);
-        });
-        saveSave(updatedSave);
-        setSave(updatedSave);
-      } catch (err) {
-        console.error("Error simulating remaining cup matches:", err);
+    if (!isCupDraw) {
+      // If we used a temporary lineup, restore the original base lineup before saving
+      // This ensures only stats/results are saved, not the temporary lineup changes
+      if (usedTemporaryLineup && originalLineup && originalFormation) {
+        const saveWithOriginalLineup = setLineup(newSave, newSave.myTeamId, originalLineup);
+        const saveWithOriginalFormation = setFormation(saveWithOriginalLineup, newSave.myTeamId, originalFormation);
+        setSave(saveWithOriginalFormation);
+        saveSave(saveWithOriginalFormation);
+      } else {
+        setSave(newSave);
+        saveSave(newSave);
       }
+      
+      if (fixture.result) {
+        updateFixtureInStore(fixture.id, fixture.result.homeGoals, fixture.result.awayGoals, isCupMatch);
+      }
+      
+      // Clear pending match after simulation
+      if (isCupMatch) {
+        usePlayersStore.setState({ pendingUserMatch: null });
+        
+        // Simulate remaining cup matches for the matchday
+        try {
+          console.log("Post-match: Simulating remaining CUP matches for matchday:", fixture.matchday);
+          const updatedSave = await simulateCupMatchdayLayered(newSave, fixture.matchday, (done, total) => {
+            console.log(`Cup matches: ${done}/${total}`);
+          });
+          saveSave(updatedSave);
+          setSave(updatedSave);
+        } catch (err) {
+          console.error("Error simulating remaining cup matches:", err);
+        }
+      }
+    } else {
+      // Cup match ended in draw - don't save result yet, allow extra time
+      // Just update the state with the simulated result for display
+      setSave(newSave);
+      // Keep isCupMatch true so the UI shows the correct buttons
+      setIsCupMatch(true);
     }
     
     setPhase("playing");
@@ -269,6 +498,28 @@ function MatchPage() {
     setCardFeed(allCardsRef.current.slice().reverse());
     setMinute(90);
     setPhase("done");
+  }
+  
+  function skipExtraTimeToEnd() {
+    // Clear the running clock timeout immediately
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+    
+    // Add all extra time events to feed
+    setFeed(prev => [...prev, ...extraTimeEventsRef.current]);
+    
+    // Set final extra time scores based on actual events
+    const etHomeGoals = extraTimeEventsRef.current.filter(e => e.team === 'home' && e.type === 'goal').length;
+    const etAwayGoals = extraTimeEventsRef.current.filter(e => e.team === 'away' && e.type === 'goal').length;
+    setExtraTimeHomeScore(etHomeGoals);
+    setExtraTimeAwayScore(etAwayGoals);
+    
+    console.log(`Skip extra time: ET scores - Home: ${etHomeGoals}, Away: ${etAwayGoals}, Total Home: ${homeScore + etHomeGoals}, Total Away: ${awayScore + etAwayGoals}`);
+    
+    setMinute(120);
+    handleExtraTimeFinished();
   }
 
   // Cleanup timeout on unmount
@@ -370,9 +621,9 @@ function MatchPage() {
             <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" cards={cardFeed.filter(c => c.team === 'home')} />
           </div>
           <div className="scoreline text-5xl md:text-7xl font-black">
-            {phase === "preview" ? "–" : homeScore}
+            {phase === "preview" ? "–" : phase === "extra_time" ? homeScore + extraTimeHomeScore : homeScore}
             <span className="text-muted-foreground mx-2 md:mx-3">:</span>
-            {phase === "preview" ? "–" : awayScore}
+            {phase === "preview" ? "–" : phase === "extra_time" ? awayScore + extraTimeAwayScore : awayScore}
           </div>
           <div className="flex flex-col items-center gap-2 md:gap-3">
             <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={64} />
@@ -387,7 +638,7 @@ function MatchPage() {
 
         {phase !== "preview" && (
           <div className="mt-6 h-1 bg-secondary rounded overflow-hidden">
-            <div className="h-full bg-primary transition-all" style={{ width: `${(minute / 90) * 100}%` }} />
+            <div className="h-full bg-primary transition-all" style={{ width: `${(minute / (phase === "extra_time" ? 120 : 90)) * 100}%` }} />
           </div>
         )}
 
@@ -422,10 +673,37 @@ function MatchPage() {
               Saltar al final
             </button>
           )}
-          {phase === "done" && (
-            <button onClick={handleReturnToSeason} disabled={isSimulating} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition disabled:opacity-50">
-              {isSimulating ? 'Simulando...' : 'Volver a la temporada →'}
+          {phase === "extra_time" && (
+            <button onClick={skipExtraTimeToEnd} className="px-6 py-2.5 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition">
+              Saltar al final
             </button>
+          )}
+          {phase === "done" && (
+            <>
+              {(isCupMatch || fixture?.competition === "cup") && homeScore === awayScore && !fixtureRef.current?.result?.penalties ? (
+                // Cup match ended in draw - show edit lineup and extra time buttons
+                // Only show these if there are no penalties yet (match hasn't been resolved)
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => navigate({ to: "/lineup", state: { fromMatch: true, returningFromLineupEdit: true, matchType, cupRound, fixtureId: fixture.id } })}
+                    className="px-6 py-3 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition"
+                  >
+                    Editar alineación
+                  </button>
+                  <button 
+                    onClick={handleGoToExtraTime}
+                    className="px-6 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition"
+                  >
+                    Ir a la prorroga
+                  </button>
+                </div>
+              ) : (
+                // Normal match or cup match with winner - show return to season button
+                <button onClick={handleReturnToSeason} disabled={isSimulating} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition disabled:opacity-50">
+                  {isSimulating ? 'Simulando...' : 'Volver a la temporada →'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -464,14 +742,15 @@ function MatchPage() {
                 } else {
                   // Goal event
                   const scoringTeam = e.team === "home" ? home : away;
+                  const isPenalty = e.type === 'penalty';
                   return (
                     <div key={`goal-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
                       <span className="scoreline text-sm text-primary font-bold w-10">{e.minute}'</span>
-                      <span className="text-lg">⚽</span>
+                      <span className="text-lg">{isPenalty ? '🎯' : '⚽'}</span>
                       <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
                       <div className="text-sm min-w-0">
                         <span className="font-bold">{e.scorerName}</span>
-                        {e.assistName && (
+                        {e.assistName && !isPenalty && (
                           <span className="text-muted-foreground"> · asist. {e.assistName}</span>
                         )}
                         <span className="text-muted-foreground"> ({scoringTeam.short})</span>

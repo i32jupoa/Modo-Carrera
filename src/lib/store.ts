@@ -16,8 +16,89 @@ import {
   sortStandings,
   Standing,
 } from "@/lib/season";
-import { simulateMatch, simulateMatchFast, SimResult, MatchEvent, InjuryEvent, CardEvent } from "@/lib/simulation";
+import { simulateMatch, simulateMatchFast, SimResult, MatchEvent, InjuryEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout } from "@/lib/simulation";
 import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE, getCupStructureForCountry } from "@/lib/cups";
+
+// Helper to determine winner of a cup match (considering extra time and penalties)
+function getCupMatchWinner(result: any): "home" | "away" {
+  if (!result) return "home";
+  
+  // If penalties exist, they determine the winner
+  if (result.penalties) {
+    return result.penalties.homeGoals >= result.penalties.awayGoals ? "home" : "away";
+  }
+  
+  // If extra time exists, use total score (regular + extra time)
+  if (result.extraTime) {
+    const totalHome = result.homeGoals + result.extraTime.homeGoals;
+    const totalAway = result.awayGoals + result.extraTime.awayGoals;
+    return totalHome >= totalAway ? "home" : "away";
+  }
+  
+  // Regular time only
+  return result.homeGoals >= result.awayGoals ? "home" : "away";
+}
+
+/**
+ * Fix cup draws that were simulated before extra time/penalty logic was implemented
+ * This function adds extra time and penalty data to cup matches that ended in draws
+ */
+export function fixCupDraws(save: SaveGame): SaveGame {
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let fixed = false;
+  
+  for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
+    const cupFixtures = next.cupFixtures[lg];
+    if (!cupFixtures) continue;
+    
+    for (let i = 0; i < cupFixtures.length; i++) {
+      const f = cupFixtures[i];
+      if (!f.result) continue;
+      
+      // Check if this is a draw without extra time/penalty data
+      if (f.result.homeGoals === f.result.awayGoals && !f.result.extraTime && !f.result.penalties) {
+        console.log(`[fixCupDraws] Fixing draw in fixture ${f.id}: ${f.homeId} ${f.result.homeGoals}-${f.result.awayGoals} ${f.awayId}`);
+        
+        const home = teamById(f.homeId);
+        const away = teamById(f.awayId);
+        if (!home || !away) continue;
+        
+        const homeXI = getStarters(next, f.homeId);
+        const awayXI = getStarters(next, f.awayId);
+        
+        // Simulate extra time
+        const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+        f.result.extraTime = {
+          homeGoals: etResult.homeGoals,
+          awayGoals: etResult.awayGoals,
+          events: etResult.events
+        };
+        
+        // Check if still tied after extra time
+        const totalHome = f.result.homeGoals + etResult.homeGoals;
+        const totalAway = f.result.awayGoals + etResult.awayGoals;
+        
+        if (totalHome === totalAway) {
+          // Simulate penalty shootout
+          const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+          f.result.penalties = {
+            homeGoals: penaltyResult.homeGoals,
+            awayGoals: penaltyResult.awayGoals,
+            shootout: penaltyResult.shootout
+          };
+        }
+        
+        fixed = true;
+      }
+    }
+  }
+  
+  if (fixed) {
+    console.log("[fixCupDraws] Fixed cup draws in save");
+  }
+  
+  return next;
+}
 
 export type Suspension = {
   playerId: string;
@@ -526,7 +607,7 @@ export function getSurvivingCupTeams(save: SaveGame, league: LeagueId): string[]
   const completedRoundFixtures = list.filter(f => f.round === mostRecentCompletedRound);
   const winners = completedRoundFixtures.map(f => {
     if (!f.result) return f.homeId;
-    return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
+    return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
   });
   
   console.log(`getSurvivingCupTeams: Found ${winners.length} winners from ${mostRecentCompletedRound}`);
@@ -614,10 +695,64 @@ export async function simulateCupMatchdayLayered(save: SaveGame, matchday: numbe
         } else {
           result = simulateMatch(home, away, homeXI, awayXI);
           next = applyMatchToStats(next, { ...fixture, result });
+          
+          // For user's cup matches, allow draws to remain as draws (don't auto-simulate extra time)
+          // For AI vs AI matches, auto-simulate extra time and penalties
+          const isUserMatch = fixture.homeId === next.myTeamId || fixture.awayId === next.myTeamId;
+          
+          if (!isUserMatch && result.homeGoals === result.awayGoals) {
+            // Simulate extra time for AI vs AI matches
+            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+            result.extraTime = {
+              homeGoals: etResult.homeGoals,
+              awayGoals: etResult.awayGoals,
+              events: etResult.events
+            };
+            
+            // Check if still tied after extra time
+            const totalHome = result.homeGoals + etResult.homeGoals;
+            const totalAway = result.awayGoals + etResult.awayGoals;
+            
+            if (totalHome === totalAway) {
+              // Simulate penalty shootout
+              const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+              result.penalties = {
+                homeGoals: penaltyResult.homeGoals,
+                awayGoals: penaltyResult.awayGoals,
+                shootout: penaltyResult.shootout
+              };
+            }
+          }
         }
       } else {
         // O(1) MATH SIMULATION for background countries (ULTRA FAST)
         result = generateFakeMatchResult(home, away);
+        
+        // Handle cup draws: extra time and penalties for background countries
+        if (result.homeGoals === result.awayGoals) {
+          // Simulate extra time (simplified for background)
+          const etHomeGoals = Math.random() < 0.3 ? Math.floor(Math.random() * 2) : 0;
+          const etAwayGoals = Math.random() < 0.3 ? Math.floor(Math.random() * 2) : 0;
+          result.extraTime = {
+            homeGoals: etHomeGoals,
+            awayGoals: etAwayGoals,
+            events: []
+          };
+          
+          // Check if still tied after extra time
+          const totalHome = result.homeGoals + etHomeGoals;
+          const totalAway = result.awayGoals + etAwayGoals;
+          
+          if (totalHome === totalAway) {
+            // Simulate penalty shootout using the same function as VIP for consistency
+            const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+            result.penalties = {
+              homeGoals: penaltyResult.homeGoals,
+              awayGoals: penaltyResult.awayGoals,
+              shootout: penaltyResult.shootout
+            };
+          }
+        }
         // No stats recording for background countries to save time
       }
       
@@ -695,10 +830,63 @@ export async function simulateRemainingCupMatches(save: SaveGame, currentRound: 
         } else {
           result = simulateMatch(home, away, homeXI, awayXI);
           next = applyMatchToStats(next, { ...f, result });
+          
+          // Handle cup draws: extra time and penalties
+          if (result.homeGoals === result.awayGoals) {
+            // Simulate extra time
+            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+            result.extraTime = {
+              homeGoals: etResult.homeGoals,
+              awayGoals: etResult.awayGoals,
+              events: etResult.events
+            };
+            
+            // Check if still tied after extra time
+            const totalHome = result.homeGoals + etResult.homeGoals;
+            const totalAway = result.awayGoals + etResult.awayGoals;
+            
+            if (totalHome === totalAway) {
+              // Simulate penalty shootout
+              const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+              result.penalties = {
+                homeGoals: penaltyResult.homeGoals,
+                awayGoals: penaltyResult.awayGoals,
+                shootout: penaltyResult.shootout
+              };
+            }
+          }
         }
       } else {
         // O(1) MATH SIMULATION for background countries - EXACT same logic as league background matches
         result = generateFakeMatchResult(home, away);
+        
+        // Handle cup draws: extra time and penalties for background countries
+        if (result.homeGoals === result.awayGoals) {
+          // Simulate extra time (simplified for background)
+          const etHomeGoals = Math.random() < 0.3 ? Math.floor(Math.random() * 2) : 0;
+          const etAwayGoals = Math.random() < 0.3 ? Math.floor(Math.random() * 2) : 0;
+          result.extraTime = {
+            homeGoals: etHomeGoals,
+            awayGoals: etAwayGoals,
+            events: []
+          };
+          
+          // Check if still tied after extra time
+          const totalHome = result.homeGoals + etHomeGoals;
+          const totalAway = result.awayGoals + etAwayGoals;
+          
+          if (totalHome === totalAway) {
+            // Simulate penalty shootout using the same function as VIP for consistency
+            const homeXI = getStarters(next, f.homeId);
+            const awayXI = getStarters(next, f.awayId);
+            const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+            result.penalties = {
+              homeGoals: penaltyResult.homeGoals,
+              awayGoals: penaltyResult.awayGoals,
+              shootout: penaltyResult.shootout
+            };
+          }
+        }
         // No stats recording for background countries to save time (same as league)
       }
       
@@ -1247,7 +1435,7 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
           const winners = preliminaryFixtures.map(f => {
             const simmed = list.find(x => x.id === f.id);
             if (!simmed?.result) return f.homeId;
-            return simmed.result.homeGoals >= simmed.result.awayGoals ? simmed.homeId : simmed.awayId;
+            return getCupMatchWinner(simmed.result) === "home" ? simmed.homeId : simmed.awayId;
           });
           const nextStep = cupSchedule[1];
           if (nextStep) {
@@ -1297,7 +1485,7 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
         const winners = roundFixtures
           .map((f) => {
             if (!f.result) return f.homeId;
-            return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
+            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
           });
         // Auto-create final fixture without draw
         if (winners.length === 2) {
@@ -1310,7 +1498,7 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
         const winners = roundFixtures
           .map((f) => {
             if (!f.result) return f.homeId;
-            return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
+            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
           });
         save.cupDrawPending = { league: lg, round: nextStep.round, teams: winners };
         return; // Halt simulation for user's league
@@ -1380,7 +1568,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
         const winners = roundFixtures
           .map((f) => {
             if (!f.result) return f.homeId;
-            return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
+            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
           });
         // Auto-create final fixture without draw
         if (winners.length === 2) {
@@ -1393,7 +1581,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
         const winners = roundFixtures
           .map((f) => {
             if (!f.result) return f.homeId;
-            return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
+            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
           });
         save.cupDrawPending = { league: lg, round: nextStep.round, teams: winners };
         return; // Halt simulation for user's league
@@ -1417,7 +1605,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
         // final winner
         const final = list.find((f) => f.round === "Final");
         if (final?.result && !save.cupChampion[lg]) {
-          const champ = final.result.homeGoals >= final.result.awayGoals ? final.homeId : final.awayId;
+          const champ = getCupMatchWinner(final.result) === "home" ? final.homeId : final.awayId;
           save.cupChampion[lg] = champ;
         }
         continue;
@@ -1428,7 +1616,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
         const winners = roundFixtures
           .map((f) => {
             if (!f.result) return f.homeId;
-            return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
+            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
           });
         const nextStepWithDraw = { matchday: nextStep.matchday, round: nextStep.round, drawMatchday: nextStep.drawMatchday };
         const built = buildNextRound("cup", lg, step.round, winners, nextStepWithDraw, roundIdx + 1);
@@ -1462,7 +1650,7 @@ function advanceUCL(save: SaveGame) {
       if (!next) {
         const final = list.find((f) => f.round === "Final");
         if (final?.result && !save.uclChampion) {
-          save.uclChampion = final.result.homeGoals >= final.result.awayGoals ? final.homeId : final.awayId;
+          save.uclChampion = getCupMatchWinner(final.result) === "home" ? final.homeId : final.awayId;
         }
         continue;
       }
@@ -1470,7 +1658,7 @@ function advanceUCL(save: SaveGame) {
       if (!alreadyBuilt) {
         const winners = list
           .filter((f) => f.round === step.round)
-          .map((f) => f.result!.homeGoals >= f.result!.awayGoals ? f.homeId : f.awayId);
+          .map((f) => getCupMatchWinner(f.result!) === "home" ? f.homeId : f.awayId);
         const built = buildNextRound("ucl", null, step.round, winners, next, roundIdx + 1);
         list.push(...built);
       }
@@ -1695,7 +1883,7 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
           const winners = preliminaryFixtures.map(f => {
             const simmed = list.find(x => x.id === f.id);
             if (!simmed || !simmed.result) return f.homeId;
-            return simmed.result.homeGoals >= simmed.result.awayGoals ? simmed.homeId : simmed.awayId;
+            return getCupMatchWinner(simmed.result) === "home" ? simmed.homeId : simmed.awayId;
           });
           
           // Auto-create next round fixtures
@@ -1745,7 +1933,7 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
         const winners = roundFixtures
           .map((f) => {
             if (!f.result) return f.homeId;
-            return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
+            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
           });
         
         // Auto-create next round fixtures

@@ -95,6 +95,7 @@ function LineupPage() {
   const matchType = routerState?.matchType as 'LEAGUE' | 'CUP' | 'UCL' | undefined;
   const cupRound = routerState?.cupRound as string | undefined;
   const fixtureId = routerState?.fixtureId as string | undefined;
+  const returningFromLineupEdit = routerState?.returningFromLineupEdit === true;
 
   useEffect(() => {
     const s = loadSave();
@@ -685,6 +686,7 @@ function LineupPage() {
               // Pass temporary lineup to match engine via router state
               // This allows one-off changes for this specific match only
               // Also forward ALL match metadata (matchType, cupRound, fixtureId) for correct post-match simulation
+              // If returning from lineup edit in a cup draw, pass returningFromLineupEdit to restore the draw state
               navigate({
                 to: "/match",
                 state: {
@@ -693,6 +695,7 @@ function LineupPage() {
                   matchType: matchType || 'LEAGUE',  // Default to LEAGUE if undefined
                   cupRound,
                   fixtureId,
+                  returningFromLineupEdit: returningFromLineupEdit,
                 } as any,
               });
             }}

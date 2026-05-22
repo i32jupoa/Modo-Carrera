@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound, getRoundNameByTeamCount, getSurvivingCupTeams } from "@/lib/store";
+import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound, getRoundNameByTeamCount, getSurvivingCupTeams, simulateCupMatchday, simulateCupMatchdayLayered, fixCupDraws } from "@/lib/store";
 import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 import { usePlayersStore } from "@/store/playersStore";
@@ -15,6 +15,7 @@ import {
   isTransferWindowDay,
   parseDateOnly,
   toDateOnly,
+  addDaysToIso,
 } from "@/lib/transferWindows";
 import {
   involvesTeam,
@@ -48,6 +49,7 @@ function CalendarPage() {
 
   const [save, setSave] = useState(loadSave());
   const [showCupDrawModal, setShowCupDrawModal] = useState(false);
+  const [isAdvancing, setIsAdvancing] = useState(false);
 
   const gameDate = useMemo(
     () => parseDateOnly(currentDateIso),
@@ -66,7 +68,15 @@ function CalendarPage() {
       return;
     }
     ensureLeagueSchedule();
-    setSave(s);
+    
+    // Fix cup draws that were simulated before extra time/penalty logic
+    const fixedSave = fixCupDraws(s);
+    if (fixedSave !== s) {
+      saveSave(fixedSave);
+      setSave(fixedSave);
+    } else {
+      setSave(s);
+    }
   }, [navigate, ensureLeagueSchedule]);
 
   // Check for cup draw pending after save changes
@@ -137,6 +147,40 @@ function CalendarPage() {
       console.log(`[Calendar cup check] userCountry: ${userCountry}, myTeamId: ${myTeamId}, isInPreliminary: ${isInPreliminary}`);
       console.log(`[Calendar cup check] today: ${today}, isDrawDay: ${isDrawDay}, hasCurrentRoundFixtures: ${hasCurrentRoundFixtures}, cupDrawPending: ${!!save.cupDrawPending}`);
       console.log(`[Calendar cup check] isTwoDaysBeforePrelimDraw: ${isTwoDaysBeforePrelimDraw}, prelimDrawDay: ${prelimDrawDay}, todayOffset: ${todayOffset}`);
+      
+      // Check if user is eliminated from cup (team not in any unplayed cup fixture)
+      const userInCup = cupFixtures.some(f => 
+        (f.homeId === myTeamId || f.awayId === myTeamId) && !f.result
+      );
+      
+      // Check if today is a cup match day
+      const isCupMatchDay = cupSchedule.some(s => {
+        const matchDate = new Date(cupStart.getTime() + s.matchday * 86400000);
+        return toDateOnly(matchDate) === today;
+      });
+      
+      // Get the matchday for today if it's a cup match day
+      const currentCupMatchday = cupSchedule.find(s => {
+        const matchDate = new Date(cupStart.getTime() + s.matchday * 86400000);
+        return toDateOnly(matchDate) === today;
+      })?.matchday;
+      
+      console.log(`[Calendar cup check] userInCup: ${userInCup}, isCupMatchDay: ${isCupMatchDay}, currentCupMatchday: ${currentCupMatchday}`);
+      
+      // Auto-simulate cup matches on match days if user is eliminated
+      if (isCupMatchDay && !userInCup && currentCupMatchday !== undefined) {
+        const fixturesForMatchday = cupFixtures.filter(f => f.matchday === currentCupMatchday && !f.result);
+        console.log(`[Calendar] Auto-simulating cup matches for matchday ${currentCupMatchday}: ${fixturesForMatchday.length} fixtures`);
+        if (fixturesForMatchday.length > 0) {
+          const updated = loadSave();
+          if (!updated) return;
+          
+          const simmed = simulateCupMatchday(updated, cupKey, currentCupMatchday);
+          saveSave(simmed);
+          setSave(simmed);
+          console.log(`[Calendar] Auto-simulated ${fixturesForMatchday.length} cup fixtures for matchday ${currentCupMatchday}`);
+        }
+      }
       
       // Auto-simulate preliminary round 2 days before prelim draw if user not in prelim
       console.log(`[Calendar] Prelim auto-sim check: isTwoDaysBeforePrelimDraw=${isTwoDaysBeforePrelimDraw}, !isInPreliminary=${!isInPreliminary}, prelimRound?.round=${prelimRound?.round}`);
@@ -372,40 +416,62 @@ function CalendarPage() {
   const handleAdvanceDay = async () => {
     if (!save) return;
     
-    // Get the primary league for the user's country (the league that holds the cup)
-    const userCountry = LEAGUES[save.myLeague]?.country;
-    const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
-    const cupKey = (primaryLeague || save.myLeague) as LeagueId;
+    setIsAdvancing(true);
     
-    // Check if today is a cup match day and user has a cup fixture
-    const cupStart = new Date("2025-07-07T00:00:00Z");
-    const todayCupFixtures = myCupFixtures.filter(f => {
-      const matchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
-      return toDateOnly(matchDate) === currentDateIso;
-    });
-    
-    if (todayCupFixtures.length > 0) {
-      // User has a cup fixture today - let advanceTime handle it (will navigate to match)
-      advanceTime(1);
-      return;
-    }
-    
-    // Check if user is eliminated from cup and today is a cup match day for the league
-    const userCupFixtures = save.cupFixtures[cupKey]?.filter(f => !f.result) || [];
-    const userHasCupFixture = userCupFixtures.some(f => f.homeId === save.myTeamId || f.awayId === save.myTeamId);
-    
-    if (!userHasCupFixture && todayCupFixtures.length === 0) {
-      // User is eliminated from cup - auto-simulate the cup round
-      const currentRound = getCurrentCupRound(save, cupKey);
-      if (currentRound) {
-        const simulated = await simulateRemainingCupMatches(save, currentRound);
-        saveSave(simulated);
-        setSave(simulated);
+    try {
+      // Get the primary league for the user's country (the league that holds the cup)
+      const userCountry = LEAGUES[save.myLeague]?.country;
+      const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
+      const cupKey = (primaryLeague || save.myLeague) as LeagueId;
+      
+      // Check if today is a cup match day and user has a cup fixture
+      const cupStart = new Date("2025-07-07T00:00:00Z");
+      const todayCupFixtures = myCupFixtures.filter(f => {
+        const matchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
+        return toDateOnly(matchDate) === currentDateIso;
+      });
+      
+      if (todayCupFixtures.length > 0) {
+        // User has a cup fixture today - let advanceTime handle it (will navigate to match)
+        setIsAdvancing(false);
+        advanceTime(1);
+        return;
       }
+      
+      // Check if user is eliminated from cup and today is a cup match day for the league
+      const userCupFixtures = save.cupFixtures[cupKey]?.filter(f => !f.result) || [];
+      const userHasCupFixture = userCupFixtures.some(f => f.homeId === save.myTeamId || f.awayId === save.myTeamId);
+      
+      if (!userHasCupFixture && todayCupFixtures.length === 0) {
+        // User is eliminated from cup - auto-simulate the cup matchday
+        // Get the matchday for today from the cup schedule
+        const cupStart = new Date("2025-07-07T00:00:00Z");
+        const todayOffset = Math.floor((new Date(currentDateIso).getTime() - cupStart.getTime()) / 86400000);
+        
+        // Find which matchday corresponds to today
+        const cupStructure = (save.cupFixtures as any)[`${cupKey}_structure`] || getCupStructureForCountry(userCountry || "");
+        const cupSchedule = cupStructure.schedule;
+        const todayMatchday = cupSchedule.find(s => s.matchday === todayOffset)?.matchday;
+        
+        if (todayMatchday !== undefined) {
+          console.log(`[Calendar] Auto-simulating cup matchday ${todayMatchday} for eliminated user (using layered simulation)`);
+          const simulated = await simulateCupMatchdayLayered(save, todayMatchday, (done, total) => {
+            console.log(`Cup matches: ${done}/${total}`);
+          });
+          saveSave(simulated);
+          setSave(simulated);
+          // Now advance the day (this is the last step, like "back to season" but advancing day instead of navigating)
+          advanceTime(1);
+          setIsAdvancing(false);
+          return;
+        }
+      }
+      
+      // Advance time
+      advanceTime(1);
+    } finally {
+      setIsAdvancing(false);
     }
-    
-    // Advance time
-    advanceTime(1);
   };
 
   const handleCupDrawComplete = (matchups: [string, string][]) => {
@@ -451,11 +517,11 @@ function CalendarPage() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={!!pendingMatch}
+            disabled={!!pendingMatch || isAdvancing}
             onClick={handleAdvanceDay}
             className="px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:brightness-110 transition shadow-[0_0_12px_hsl(var(--primary)/0.35)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Avanzar día
+            {isAdvancing ? "Simulando..." : "Avanzar día"}
           </button>
         </div>
       </div>

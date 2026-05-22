@@ -171,6 +171,16 @@ export type SimResult = {
   injuries: InjuryEvent[];
   xgHome: number;
   xgAway: number;
+  extraTime?: {
+    homeGoals: number;
+    awayGoals: number;
+    events: MatchEvent[];
+  };
+  penalties?: {
+    homeGoals: number;
+    awayGoals: number;
+    shootout: Array<{ team: 'home' | 'away'; scored: boolean; playerId?: string }>;
+  };
 };
 
 function pickScorer(xi: Player[]): Player {
@@ -256,8 +266,9 @@ export function simulateMatchFast(
   const { lh, la } = expectedGoals(home, away, homeXI, awayXI);
   
   // Use normal distribution approximation for speed (faster than poisson)
-  const homeGoals = Math.max(0, Math.round(lh + (rand() - 0.5) * Math.sqrt(lh)));
-  const awayGoals = Math.max(0, Math.round(la + (rand() - 0.5) * Math.sqrt(la)));
+  // Significantly increased variance to make draws much more likely in cup matches
+  const homeGoals = Math.max(0, Math.round(lh + (rand() - 0.5) * Math.sqrt(lh) * 4));
+  const awayGoals = Math.max(0, Math.round(la + (rand() - 0.5) * Math.sqrt(la) * 4));
   
   // Minimal events - with weighted scorer selection and assists
   // Stats are recorded later by applyMatchToStats to avoid duplicates
@@ -404,8 +415,11 @@ export function simulateMatch(
 
   // Calculate expected goals with adjusted team strength
   const { lh, la } = expectedGoals(home, away, adjustedHomeXI, adjustedAwayXI);
-  const homeGoals = poisson(lh);
-  const awayGoals = poisson(la);
+  
+  // Add significant randomness to make draws much more likely in cup matches
+  // Use a wider range (0.5 to 1.5) to dramatically increase draw probability
+  const homeGoals = poisson(lh * (0.5 + rand()));
+  const awayGoals = poisson(la * (0.5 + rand()));
 
   // Stats are recorded later by applyMatchToStats to avoid duplicates
   const events: MatchEvent[] = [];
@@ -437,4 +451,103 @@ export function simulateMatch(
   if (awayInj) injuries.push(awayInj);
 
   return { homeGoals, awayGoals, events, cards, injuries, xgHome: lh, xgAway: la };
+}
+
+// Simulate extra time (90-120 minutes) - lower intensity than regular time
+export function simulateExtraTime(home: Team, away: Team, homeXI: Player[], awayXI: Player[]): { homeGoals: number; awayGoals: number; events: MatchEvent[] } {
+  const { lh, la } = expectedGoals(home, away, homeXI, awayXI);
+  // Extra time has lower xG (players are tired)
+  const etXGHome = lh * 0.4;
+  const etXGAway = la * 0.4;
+  
+  const homeGoals = poisson(etXGHome);
+  const awayGoals = poisson(etXGAway);
+  
+  const events: MatchEvent[] = [];
+  
+  // Generate events for extra time (minutes 91-120)
+  for (let i = 0; i < homeGoals; i++) {
+    const scorer = pickScorer(homeXI);
+    const assister = fastPickAssister(homeXI, scorer.id);
+    events.push({
+      minute: Math.floor(rand() * 30) + 91, team: "home", type: "goal",
+      scorerId: scorer.id, scorerName: scorer.name,
+      assistId: assister?.id, assistName: assister?.name,
+    });
+  }
+  for (let i = 0; i < awayGoals; i++) {
+    const scorer = pickScorer(awayXI);
+    const assister = fastPickAssister(awayXI, scorer.id);
+    events.push({
+      minute: Math.floor(rand() * 30) + 91, team: "away", type: "goal",
+      scorerId: scorer.id, scorerName: scorer.name,
+      assistId: assister?.id, assistName: assister?.name,
+    });
+  }
+  events.sort((a, b) => a.minute - b.minute);
+  
+  return { homeGoals, awayGoals, events };
+}
+
+// Simulate penalty shootout (ABAB format, 5 rounds, sudden death)
+export function simulatePenaltyShootout(homeXI: Player[], awayXI: Player[]): { homeGoals: number; awayGoals: number; shootout: Array<{ team: 'home' | 'away'; scored: boolean; playerId?: string }> } {
+  const shootout: Array<{ team: 'home' | 'away'; scored: boolean; playerId?: string }> = [];
+  
+  // Get penalty takers (field players + GK, sorted by rating)
+  const homeTakers = [...homeXI].sort((a, b) => b.rating - a.rating);
+  const awayTakers = [...awayXI].sort((a, b) => b.rating - a.rating);
+  
+  // Penalty success rate: 50% for each team (as requested)
+  const getPenaltySuccess = () => rand() < 0.5;
+  
+  let homeGoals = 0;
+  let awayGoals = 0;
+  let homeTakerIndex = 0;
+  let awayTakerIndex = 0;
+  
+  // First 5 rounds (ABAB format)
+  for (let round = 0; round < 5; round++) {
+    // Home team penalty
+    const homeTaker = homeTakers[homeTakerIndex % homeTakers.length];
+    const homeScored = getPenaltySuccess();
+    shootout.push({ team: 'home', scored: homeScored, playerId: homeTaker.id });
+    if (homeScored) homeGoals++;
+    homeTakerIndex++;
+    
+    // Check if away team can still catch up
+    const maxAwayPossible = awayGoals + (5 - round);
+    if (homeGoals > maxAwayPossible) break;
+    
+    // Away team penalty
+    const awayTaker = awayTakers[awayTakerIndex % awayTakers.length];
+    const awayScored = getPenaltySuccess();
+    shootout.push({ team: 'away', scored: awayScored, playerId: awayTaker.id });
+    if (awayScored) awayGoals++;
+    awayTakerIndex++;
+    
+    // Check if home team can still catch up
+    const maxHomePossible = homeGoals + (5 - round - 1);
+    if (awayGoals > maxHomePossible) break;
+  }
+  
+  // Sudden death if still tied after 5 rounds
+  while (homeGoals === awayGoals) {
+    // Home team penalty
+    const homeTaker = homeTakers[homeTakerIndex % homeTakers.length];
+    const homeScored = getPenaltySuccess();
+    shootout.push({ team: 'home', scored: homeScored, playerId: homeTaker.id });
+    if (homeScored) homeGoals++;
+    homeTakerIndex++;
+    
+    if (homeGoals !== awayGoals) break;
+    
+    // Away team penalty
+    const awayTaker = awayTakers[awayTakerIndex % awayTakers.length];
+    const awayScored = getPenaltySuccess();
+    shootout.push({ team: 'away', scored: awayScored, playerId: awayTaker.id });
+    if (awayScored) awayGoals++;
+    awayTakerIndex++;
+  }
+  
+  return { homeGoals, awayGoals, shootout };
 }

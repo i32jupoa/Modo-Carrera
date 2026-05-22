@@ -12,6 +12,54 @@ import { getCupStructureForCountry } from "@/lib/cups";
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
+
+// Helper to format cup result with extra time or penalties
+function formatCupResult(result: any): string {
+  if (!result) return "vs";
+  
+  const { homeGoals, awayGoals, extraTime, penalties } = result;
+  
+  if (penalties) {
+    // Format: Argentina 3 (4) - (2) 3 Francia
+    // The score shown is the result after 120 minutes (regular + extra time)
+    const totalHome = homeGoals + (extraTime?.homeGoals || 0);
+    const totalAway = awayGoals + (extraTime?.awayGoals || 0);
+    return `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
+  } else if (extraTime) {
+    // Only show (prórroga) if there's a winner after extra time (not tied)
+    const totalHome = homeGoals + extraTime.homeGoals;
+    const totalAway = awayGoals + extraTime.awayGoals;
+    if (totalHome !== totalAway) {
+      // Format: España 1 - 0 Países Bajos (prórroga)
+      return `${totalHome} - ${totalAway} (prórroga)`;
+    }
+    // If still tied after extra time, don't show (prórroga) since it went to penalties
+    return `${totalHome} - ${totalAway}`;
+  }
+  
+  return `${homeGoals} - ${awayGoals}`;
+}
+
+// Helper to determine winner of a cup match (considering extra time and penalties)
+function getCupMatchWinner(result: any): "home" | "away" | null {
+  if (!result) return null;
+  
+  // If penalties exist, they determine the winner
+  if (result.penalties) {
+    return result.penalties.homeGoals >= result.penalties.awayGoals ? "home" : "away";
+  }
+  
+  // If extra time exists, use total score (regular + extra time)
+  if (result.extraTime) {
+    const totalHome = result.homeGoals + result.extraTime.homeGoals;
+    const totalAway = result.awayGoals + result.extraTime.awayGoals;
+    return totalHome >= totalAway ? "home" : "away";
+  }
+  
+  // Regular time only
+  return result.homeGoals >= result.awayGoals ? "home" : "away";
+}
+
 import { Fixture } from "@/lib/season";
 
 export const Route = createFileRoute("/cup")({ component: CupPage });
@@ -177,7 +225,7 @@ export function KOFixtureRow({ f, myId }: { f: Fixture; myId: string }) {
   const home = teamById(f.homeId);
   const away = teamById(f.awayId);
   const isMine = f.homeId === myId || f.awayId === myId;
-  const winner = f.result ? (f.result.homeGoals >= f.result.awayGoals ? "home" : "away") : null;
+  const winner = getCupMatchWinner(f.result);
   return (
     <div className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3 ${isMine ? "bg-primary/5" : ""}`}>
       <div className="flex items-center gap-2 justify-end min-w-0">
@@ -187,7 +235,7 @@ export function KOFixtureRow({ f, myId }: { f: Fixture; myId: string }) {
         <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={26} />
       </div>
       <div className="scoreline font-bold text-base text-center min-w-[70px]">
-        {f.result ? `${f.result.homeGoals} - ${f.result.awayGoals}` : <span className="text-muted-foreground text-xs">vs</span>}
+        {formatCupResult(f.result)}
       </div>
       <div className="flex items-center gap-2 min-w-0">
         <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={26} />

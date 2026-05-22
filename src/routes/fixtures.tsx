@@ -20,6 +20,33 @@ function getLeagueName(leagueId: string): string {
 
 }
 
+// Helper to format cup result with extra time or penalties
+function formatCupResult(result: any): string {
+  if (!result) return "vs";
+  
+  const { homeGoals, awayGoals, extraTime, penalties } = result;
+  
+  if (penalties) {
+    // Format: Argentina 3 (4) - (2) 3 Francia
+    // The score shown is the result after 120 minutes (regular + extra time)
+    const totalHome = homeGoals + (extraTime?.homeGoals || 0);
+    const totalAway = awayGoals + (extraTime?.awayGoals || 0);
+    return `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
+  } else if (extraTime) {
+    // Only show (prórroga) if there's a winner after extra time (not tied)
+    const totalHome = homeGoals + extraTime.homeGoals;
+    const totalAway = awayGoals + extraTime.awayGoals;
+    if (totalHome !== totalAway) {
+      // Format: España 1 - 0 Países Bajos (prórroga)
+      return `${totalHome} - ${totalAway} (prórroga)`;
+    }
+    // If still tied after extra time, don't show (prórroga) since it went to penalties
+    return `${totalHome} - ${totalAway}`;
+  }
+  
+  return `${homeGoals} - ${awayGoals}`;
+}
+
 
 
 export const Route = createFileRoute("/fixtures")({ component: FixturesPage });
@@ -141,9 +168,7 @@ function FixturesPage() {
               </div>
 
               <div className="scoreline font-bold text-lg min-w-[70px] text-center">
-
-                {f.result ? `${f.result.homeGoals} - ${f.result.awayGoals}` : <span className="text-muted-foreground text-sm font-normal">vs</span>}
-
+                {f.competition === 'cup' ? formatCupResult(f.result) : (f.result ? `${f.result.homeGoals} - ${f.result.awayGoals}` : <span className="text-muted-foreground text-sm font-normal">vs</span>)}
               </div>
 
               <div className="flex items-center gap-3 min-w-0">
