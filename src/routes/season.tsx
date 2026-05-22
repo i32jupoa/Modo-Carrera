@@ -430,16 +430,20 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
 
   // Determine competition type and header text
   const roundNames: Record<string, string> = {
-    "R32": "Octavos de Final",
+    "R32": "Treintaidosavos",
     "R16": "Dieciseisavos",
+    "Octavos": "Octavos de Final",
     "QF": "Cuartos de Final",
     "SF": "Semifinales",
-    "Final": "Final"
+    "Final": "Final",
+    "Preliminar": "Preliminar"
   };
   
   let headerText = "";
   if (fixture.competition === "cup") {
     headerText = `🛡 Copa Nacional · ${roundNames[fixture.round || ""] || fixture.round || ""}`;
+  } else if (fixture.competition === "ucl") {
+    headerText = `🏆 Champions League · Jornada ${fixture.matchday}`;
   } else {
     headerText = `Liga · Jornada ${fixture.matchday}`;
   }
@@ -455,31 +459,50 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
   const isLineupComplete = activeStartersCount === 11;
 
   // Calculate match date based on competition type
-  // For league fixtures, use the actual fixture date from the calendar fixtures
+  const seasonStart = new Date("2025-08-16T12:00:00Z");
+  const cupStart = new Date("2025-07-07T00:00:00Z");
+  
   let matchDateIso: string;
+  let matchDate: Date;
+  
   if (fixture.competition === "league") {
+    // For league fixtures, use the actual fixture date from the calendar fixtures
     const scheduleFixture = fixtures.find(
       (f: any) => f.homeTeam === fixture.homeId && f.awayTeam === fixture.awayId && f.matchday === fixture.matchday
     );
     matchDateIso = scheduleFixture?.date || currentDate;
+    matchDate = new Date(matchDateIso + "T12:00:00Z");
+  } else if (fixture.competition === "cup") {
+    // For cup: matchday = day offset from July 7th
+    matchDate = new Date(cupStart.getTime() + fixture.matchday * 86400000);
+    matchDateIso = matchDate.getFullYear() + '-' + 
+      String(matchDate.getMonth() + 1).padStart(2, '0') + '-' + 
+      String(matchDate.getDate()).padStart(2, '0');
   } else {
-    // For cup/UCL, calculate the date
-    const seasonStart = new Date("2025-08-16T12:00:00Z");
-    let matchDate: Date;
-    if (fixture.competition === "cup") {
-      const leagueMatchdayDate = new Date(seasonStart.getTime() + (fixture.matchday - 1) * 7 * 86400000);
-      matchDate = new Date(leagueMatchdayDate.getTime() + 3 * 86400000);
-    } else {
-      matchDate = new Date(seasonStart.getTime() + (fixture.matchday - 1) * 7 * 86400000);
-    }
+    // For UCL: weekly schedule starting from season start
+    matchDate = new Date(seasonStart.getTime() + (fixture.matchday - 1) * 7 * 86400000);
     matchDateIso = matchDate.getFullYear() + '-' + 
       String(matchDate.getMonth() + 1).padStart(2, '0') + '-' + 
       String(matchDate.getDate()).padStart(2, '0');
   }
+  
   const isMatchDay = currentDate === matchDateIso;
-
-  // Debug: log the values to check
-  console.log('Match Date Check:', { currentDate, matchDateIso, isMatchDay, competition: fixture.competition, matchday: fixture.matchday });
+  
+  // Calculate days remaining
+  const currentDateObj = new Date(currentDate + "T00:00:00Z");
+  const matchDateObj = new Date(matchDateIso + "T00:00:00Z");
+  const daysDiff = Math.ceil((matchDateObj.getTime() - currentDateObj.getTime()) / (1000 * 60 * 60 * 24));
+  
+  let daysRemainingText = "";
+  if (daysDiff === 0) {
+    daysRemainingText = "Hoy";
+  } else if (daysDiff === 1) {
+    daysRemainingText = "Mañana";
+  } else if (daysDiff > 1) {
+    daysRemainingText = `En ${daysDiff} días`;
+  } else {
+    daysRemainingText = `Hace ${Math.abs(daysDiff)} días`;
+  }
 
 
 
@@ -493,9 +516,23 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
 
     <div className="panel-glow p-6">
 
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-4">
 
-        <span className="chip">{headerText}</span>
+        <div className="flex flex-col gap-1">
+
+          <span className="chip w-fit">{headerText}</span>
+
+          <span className="text-xs text-primary font-medium">
+
+            {new Date(matchDateIso + "T00:00:00Z").toLocaleDateString("es-ES", { 
+              weekday: "long", 
+              year: "numeric", 
+              month: "short", 
+              day: "numeric" 
+            })} · <span className="text-primary font-semibold">{daysRemainingText}</span>
+          </span>
+
+        </div>
 
         <span className="text-xs text-muted-foreground uppercase tracking-wider">{isHome ? "Local" : "Visitante"}</span>
 
@@ -511,27 +548,35 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
 
       </div>
 
-      <button
+      {/* Action buttons */}
 
-        onClick={() => onPlayMatch(fixture)}
+      <div className="space-y-2">
 
-        disabled={!isLineupComplete || !isMatchDay}
+        {/* Play button - only enabled on match day with complete lineup */}
 
-        className={`w-full py-3 rounded-lg font-black tracking-wide transition ${
+        <button
 
-          isLineupComplete && isMatchDay
+          onClick={() => onPlayMatch(fixture)}
 
-            ? "bg-primary text-primary-foreground glow-neon hover:brightness-110" 
+          disabled={!isLineupComplete || !isMatchDay}
 
-            : "bg-secondary text-muted-foreground pointer-events-none opacity-40"
+          className={`w-full py-3 rounded-lg font-black tracking-wide transition ${
 
-        }`}
+            isLineupComplete && isMatchDay
 
-      >
+              ? "bg-primary text-primary-foreground glow-neon hover:brightness-110" 
 
-        {!isLineupComplete ? "ALINEACIÓN INCOMPLETA" : !isMatchDay ? matchDateIso : "JUGAR"}
+              : "bg-secondary text-muted-foreground pointer-events-none opacity-50"
 
-      </button>
+          }`}
+
+        >
+
+          {!isLineupComplete ? "ALINEACIÓN INCOMPLETA" : !isMatchDay ? `${daysRemainingText} · ${matchDateIso}` : "JUGAR"}
+
+        </button>
+
+      </div>
 
     </div>
 

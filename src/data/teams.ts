@@ -332,9 +332,12 @@ function generateDynamicTeams(): Team[] {
 let _dynamicTeams: Team[] | null = null;
 function getDynamicTeams(): Team[] {
   if (!_dynamicTeams) {
-    _dynamicTeams = generateDynamicTeams();
-    // Invalidate teams map cache when dynamic teams are generated
-    _allTeamsMap = null;
+    try {
+      _dynamicTeams = generateDynamicTeams() || [];
+    } catch (err) {
+      console.error("Error generating dynamic teams:", err);
+      _dynamicTeams = [];
+    }
   }
   return _dynamicTeams;
 }

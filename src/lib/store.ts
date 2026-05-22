@@ -17,7 +17,7 @@ import {
   Standing,
 } from "@/lib/season";
 import { simulateMatch, simulateMatchFast, SimResult, MatchEvent, InjuryEvent } from "@/lib/simulation";
-import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE } from "@/lib/cups";
+import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE, getCupStructureForCountry } from "@/lib/cups";
 
 export type SaveGame = {
   version: 2;
@@ -175,25 +175,11 @@ export function newSave(myTeamId: string): SaveGame {
       // Use the first league in the country as the key for the cup
       const primaryLeague = leaguesInCountry[0];
       
-      // Get all teams from all leagues in this country
-      let allTeams: typeof TEAMS = [];
-      for (const lg of leaguesInCountry) {
-        const leagueTeams = teamsByLeague(lg);
-        allTeams = [...allTeams, ...leagueTeams];
-      }
-
-      // Sort by rating and take top 32 (or appropriate size)
-      const sortedTeams = allTeams.slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
-      const teamCount = sortedTeams.length;
-      let cupSize = 32; // default for national cups
-      if (teamCount < 4) cupSize = 2;      // 2-team final only (very small countries)
-      else if (teamCount < 8) cupSize = 4;  // SF + Final
-      else if (teamCount < 16) cupSize = 8; // QF + SF + Final
-      else if (teamCount < 32) cupSize = 16; // R16 + QF + SF + Final
-      else cupSize = 32; // R32 + R16 + QF + SF + Final
-
-      const cupTeams = sortedTeams.slice(0, cupSize);
-      const participants = cupTeams.map(t => t.id);
+      // Initialize cup using the new country-based function
+      const cupData = initCup(country);
+      
+      // Store the structure for later use
+      (cupFixtures as any)[`${primaryLeague}_structure`] = cupData.structure;
 
       // DO NOT create fixtures initially - fixtures are only created after the draw
       cupFixtures[primaryLeague] = [];
@@ -309,6 +295,7 @@ export function getMyNextFixture(save: SaveGame): Fixture | null {
 
 export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
   const seasonStart = new Date("2025-08-16T12:00:00Z");
+  const cupStart = new Date("2025-07-07T00:00:00Z");
   const allFixtures: Array<{ fixture: Fixture; dateMs: number }> = [];
   
   // Get league fixtures
@@ -321,12 +308,12 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
     });
   }
   
-  // Get cup fixtures
+  // Get cup fixtures (use July-based dates: matchday = day offset from July 7th)
   for (const lg of Object.keys(save.cupFixtures)) {
     save.cupFixtures[lg as LeagueId].forEach(f => {
       if (!f.result && (f.homeId === save.myTeamId || f.awayId === save.myTeamId)) {
-        const matchdayDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
-        const cupMatchDate = new Date(matchdayDate.getTime() + 3 * 86400000);
+        // Cup matchday = day offset from July 7th (0=Jul7, 1=Jul8, etc.)
+        const cupMatchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
         allFixtures.push({ fixture: f, dateMs: cupMatchDate.getTime() });
       }
     });
@@ -358,29 +345,19 @@ export function getMyUpcomingCupFixtures(save: SaveGame): Fixture[] {
     const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
     const cupKey = (primaryLeague || save.myLeague) as LeagueId;
     
-    // Define cup schedule with draw matchdays
-    const cupSchedule = [
-      { round: "R32", drawMatchday: 1 },
-      { round: "R16", drawMatchday: 5 },
-      { round: "QF", drawMatchday: 9 },
-      { round: "SF", drawMatchday: 14 },
-      { round: "Final", drawMatchday: 19 },
-    ];
+    // Get the dynamic cup structure for the user's country
+    const structure = (save.cupFixtures as any)[`${cupKey}_structure`] || getCupStructureForCountry(userCountry || "");
+    const cupSchedule = structure.schedule;
     
-    // Only show fixtures for rounds that have been drawn (current matchday >= draw matchday)
+    // Only show fixtures for rounds that have been drawn (fixtures exist)
     const cupFixtures = save.cupFixtures[cupKey]?.filter(
       (f) => !f.result && (f.homeId === save.myTeamId || f.awayId === save.myTeamId)
     ) || [];
     
-    const visibleCupFixtures = cupFixtures.filter(f => {
-      if (!f.round) return false;
-      const schedule = cupSchedule.find(s => s.round === f.round);
-      if (!schedule) return false;
-      return leagueMd >= schedule.drawMatchday;
-    });
-    
-    if (visibleCupFixtures.length > 0) {
-      out.push(...visibleCupFixtures);
+    // Show all cup fixtures that exist (have been drawn)
+    // Don't filter by drawMatchday since draws can happen earlier than scheduled
+    if (cupFixtures.length > 0) {
+      out.push(...cupFixtures);
     }
   } catch (err) {
     console.error("Error en getMyUpcomingCupFixtures:", err);
@@ -930,6 +907,15 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
   
   console.log(`advanceMatchdayLayered: Completed. Processed ${processed}/${totalMatches} matches`);
   
+  // Sync currentMatchday for the cup league to match user's league
+  const userCountry = LEAGUES[next.myLeague]?.country;
+  if (userCountry) {
+    const cupLeague = Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) as LeagueId;
+    if (cupLeague && cupLeague !== next.myLeague) {
+      next.currentMatchday[cupLeague] = next.currentMatchday[next.myLeague];
+    }
+  }
+  
   // Process cup draws without simulating matches
   console.time('processCupDraws');
   const cupLeagues = Object.keys(next.cupFixtures) as LeagueId[];
@@ -958,52 +944,82 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
   if (!list) return; // No cup for this league
   
   const leagueMd = save.currentMatchday[lg];
-  const isUserLeague = lg === save.myLeague;
   
-  // Define cup schedule with draw matchdays
-  const cupSchedule = [
-    { round: "R32", matchday: 2, drawMatchday: 1 },
-    { round: "R16", matchday: 6, drawMatchday: 5 },
-    { round: "QF", matchday: 10, drawMatchday: 9 },
-    { round: "SF", matchday: 15, drawMatchday: 14 },
-    { round: "Final", matchday: 20, drawMatchday: 19 },
-  ];
+  // Get the dynamic cup structure for this league's country
+  const country = LEAGUES[lg]?.country;
+  if (!country) return;
   
-  // Special case: if no fixtures exist yet, trigger first round draw
-  if (list.length === 0 && isUserLeague && !save.cupDrawPending) {
-    const firstRound = cupSchedule[0]; // R32
-    if (leagueMd >= firstRound.drawMatchday) {
-      // Get participants from the league's teams (all teams in the cup)
-      const teams = teamsByLeague(lg);
-      const country = LEAGUES[lg]?.country;
-      if (country) {
-        const countryLeagues = LEAGUES_BY_COUNTRY[country] || [];
-        const secondDivisions = countryLeagues.filter(l => l.id !== lg);
-        for (const secondLeague of secondDivisions) {
-          const secondDivTeams = teamsByLeague(secondLeague.id as LeagueId);
-          teams.push(...secondDivTeams);
+  // Check if user is in the same country (not necessarily same league)
+  const userCountry = LEAGUES[save.myLeague]?.country;
+  const isUserCountry = country === userCountry;
+  
+  const structure = (save.cupFixtures as any)[`${lg}_structure`] || getCupStructureForCountry(country);
+  const cupSchedule = structure.schedule;
+  
+  // Special case: if no fixtures exist yet, handle first round
+  if (list.length === 0 && isUserCountry && !save.cupDrawPending) {
+    const firstRound = cupSchedule[0];
+    if (firstRound) {
+      const cupData = initCup(country);
+      
+      if (firstRound.round === "Preliminar") {
+        const preliminaryTeams = cupData.preliminaryParticipants || [];
+        const userIsInPreliminary = preliminaryTeams.includes(save.myTeamId);
+        
+        if (!userIsInPreliminary) {
+          // Auto-simulate preliminary round (user not involved)
+          const preliminaryFixtures: Fixture[] = [];
+          for (let i = 0; i < preliminaryTeams.length; i += 2) {
+            if (i + 1 < preliminaryTeams.length) {
+              preliminaryFixtures.push({
+                id: `cup-${lg}-prelim-${i}`,
+                competition: "cup",
+                league: lg,
+                matchday: firstRound.matchday, // day offset from July 7th
+                round: firstRound.round,
+                homeId: preliminaryTeams[i],
+                awayId: preliminaryTeams[i + 1],
+              });
+            }
+          }
+          for (const f of preliminaryFixtures) {
+            const simmed = simulateFixtureInline(save, f);
+            list.push(simmed);
+            applyMatchToStats(save, simmed);
+          }
+          // Set pending draw for next round (winners + main bracket)
+          const winners = preliminaryFixtures.map(f => {
+            const simmed = list.find(x => x.id === f.id);
+            if (!simmed?.result) return f.homeId;
+            return simmed.result.homeGoals >= simmed.result.awayGoals ? simmed.homeId : simmed.awayId;
+          });
+          const nextStep = cupSchedule[1];
+          if (nextStep) {
+            const mainBracketTeams = cupData.participants.filter(id => !preliminaryTeams.includes(id));
+            save.cupDrawPending = { league: lg, round: nextStep.round, teams: [...winners, ...mainBracketTeams] };
+          }
+        } else {
+          // User IS in preliminary - set draw pending for preliminary round
+          save.cupDrawPending = { league: lg, round: firstRound.round, teams: preliminaryTeams };
         }
+        return;
+      } else {
+        // No preliminary round - set draw pending for first round
+        save.cupDrawPending = { league: lg, round: firstRound.round, teams: cupData.participants };
+        return;
       }
-      
-      // Sort by rating and take top 32 (or appropriate size)
-      const sortedTeams = teams.slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
-      const cupSize = sortedTeams.length >= 32 ? 32 : sortedTeams.length >= 16 ? 16 : sortedTeams.length >= 8 ? 8 : sortedTeams.length >= 4 ? 4 : 2;
-      const cupTeams = sortedTeams.slice(0, cupSize).map(t => t.id);
-      
-      save.cupDrawPending = { league: lg, round: firstRound.round, teams: cupTeams };
-      return;
     }
   }
   
   // Get unique rounds that exist in this cup and sort them in order
-  const roundOrder = ["R32", "R16", "QF", "SF", "Final"];
+  const roundOrder = cupSchedule.map(s => s.round);
   const existingRounds = [...new Set(list.map(f => f.round).filter((r): r is string => !!r))];
   const sortedRounds = existingRounds.sort((a, b) => 
     roundOrder.indexOf(a) - roundOrder.indexOf(b)
   );
   
   // Build dynamic schedule based on existing rounds
-  const dynamicSchedule = sortedRounds.map((round, idx) => {
+  const dynamicSchedule = sortedRounds.map((round) => {
     const schedule = cupSchedule.find(s => s.round === round);
     if (!schedule) return null;
     return { matchday: schedule.matchday, round, size: 0, drawMatchday: schedule.drawMatchday };
@@ -1018,7 +1034,7 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
     const playedAll = roundFixtures.every((f) => f.result);
     const nextStep = cupSchedule[roundIdx + 1];
     
-    if (playedAll && nextStep && isUserLeague) {
+    if (playedAll && nextStep && isUserCountry) {
       // If current round is complete and we've reached the draw matchday for next round
       // Skip draw for Final - auto-assign the final matchup
       if (nextStep.round === "Final" && leagueMd >= nextStep.drawMatchday) {
@@ -1052,39 +1068,25 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
   if (!list) return; // No cup for this league
   
   const leagueMd = save.currentMatchday[lg];
-  const isUserLeague = lg === save.myLeague;
   
-  // Define cup schedule with draw matchdays
-  const cupSchedule = [
-    { round: "R32", matchday: 2, drawMatchday: 1 },
-    { round: "R16", matchday: 6, drawMatchday: 5 },
-    { round: "QF", matchday: 10, drawMatchday: 9 },
-    { round: "SF", matchday: 15, drawMatchday: 14 },
-    { round: "Final", matchday: 20, drawMatchday: 19 },
-  ];
+  // Get the dynamic cup structure for this league's country
+  const country = LEAGUES[lg]?.country;
+  if (!country) return;
+  
+  // Check if user is in the same country (not necessarily same league)
+  const userCountry = LEAGUES[save.myLeague]?.country;
+  const isUserCountry = country === userCountry;
+  
+  const structure = (save.cupFixtures as any)[`${lg}_structure`] || getCupStructureForCountry(country);
+  const cupSchedule = structure.schedule;
   
   // Special case: if no fixtures exist yet, trigger first round draw
-  if (list.length === 0 && isUserLeague && !save.cupDrawPending) {
-    const firstRound = cupSchedule[0]; // R32
-    if (leagueMd >= firstRound.drawMatchday) {
-      // Get participants from the league's teams (all teams in the cup)
-      // We need to get the participants - they should be stored somewhere
-      // For now, we'll use all teams from the league (and second division if applicable)
-      const teams = teamsByLeague(lg);
-      const country = LEAGUES[lg]?.country;
-      if (country) {
-        const countryLeagues = LEAGUES_BY_COUNTRY[country] || [];
-        const secondDivisions = countryLeagues.filter(l => l.id !== lg);
-        for (const secondLeague of secondDivisions) {
-          const secondDivTeams = teamsByLeague(secondLeague.id as LeagueId);
-          teams.push(...secondDivTeams);
-        }
-      }
-      
-      // Sort by rating and take top 32 (or appropriate size)
-      const sortedTeams = teams.slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
-      const cupSize = sortedTeams.length >= 32 ? 32 : sortedTeams.length >= 16 ? 16 : sortedTeams.length >= 8 ? 8 : sortedTeams.length >= 4 ? 4 : 2;
-      const cupTeams = sortedTeams.slice(0, cupSize).map(t => t.id);
+  if (list.length === 0 && isUserCountry && !save.cupDrawPending) {
+    const firstRound = cupSchedule[0];
+    if (firstRound && leagueMd >= firstRound.drawMatchday) {
+      // Get participants from initCup
+      const cupData = initCup(country);
+      const cupTeams = cupData.participants;
       
       save.cupDrawPending = { league: lg, round: firstRound.round, teams: cupTeams };
       return;
@@ -1092,7 +1094,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
   }
   
   // Get unique rounds that exist in this cup and sort them in order
-  const roundOrder = ["R32", "R16", "QF", "SF", "Final"];
+  const roundOrder = cupSchedule.map(s => s.round);
   const existingRounds = [...new Set(list.map(f => f.round).filter((r): r is string => !!r))];
   const sortedRounds = existingRounds.sort((a, b) => 
     roundOrder.indexOf(a) - roundOrder.indexOf(b)
@@ -1114,7 +1116,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
     const playedAll = roundFixtures.every((f) => f.result);
     const nextStep = cupSchedule[roundIdx + 1];
     
-    if (playedAll && nextStep && isUserLeague) {
+    if (playedAll && nextStep && isUserCountry) {
       // If current round is complete and we've reached the draw matchday for next round
       // Skip draw for Final - auto-assign the final matchup
       if (nextStep.round === "Final" && leagueMd >= nextStep.drawMatchday) {
@@ -1164,7 +1166,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
         continue;
       }
       const alreadyBuilt = list.some((f) => f.round === nextStep.round);
-      if (!alreadyBuilt && !isUserLeague) {
+      if (!alreadyBuilt && !isUserCountry) {
         // For non-user leagues, auto-build next round
         const winners = roundFixtures
           .map((f) => {
@@ -1366,8 +1368,11 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
   // Get all VIP leagues (Big 5 + Belgium + Netherlands + Portugal + Turkey)
   const vipLeagues = [...BIG5_LEAGUES, ...IMPORTANT_LEAGUES] as LeagueId[];
   
-  // Filter out the user's league (we handle that interactively)
-  const foreignVipLeagues = vipLeagues.filter(lg => lg !== userLeague);
+  // Filter out leagues from the user's country (we handle that interactively)
+  const foreignVipLeagues = vipLeagues.filter(lg => {
+    const country = LEAGUES[lg]?.country;
+    return country && country !== userCountry;
+  });
   
   for (const lg of foreignVipLeagues) {
     const country = LEAGUES[lg]?.country;
@@ -1385,66 +1390,85 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
     
     const leagueMd = next.currentMatchday[primaryLeague];
     
-    // Define cup schedule with draw matchdays
-    const cupSchedule = [
-      { round: "R32", matchday: 2, drawMatchday: 1 },
-      { round: "R16", matchday: 6, drawMatchday: 5 },
-      { round: "QF", matchday: 10, drawMatchday: 9 },
-      { round: "SF", matchday: 15, drawMatchday: 14 },
-      { round: "Final", matchday: 20, drawMatchday: 19 },
-    ];
+    // Get the dynamic cup structure for this country
+    const structure = (next.cupFixtures as any)[`${primaryLeague}_structure`] || getCupStructureForCountry(country);
+    const cupSchedule = structure.schedule;
     
     // Special case: if no fixtures exist yet, trigger first round draw
     if (list.length === 0) {
-      const firstRound = cupSchedule[0]; // R32
-      if (leagueMd >= firstRound.drawMatchday) {
-        // Get participants from all leagues in this country
-        const countryLeagues = LEAGUES_BY_COUNTRY[country] || [];
-        let allTeams: typeof TEAMS = [];
-        for (const league of countryLeagues) {
-          const leagueTeams = teamsByLeague(league.id as LeagueId);
-          allTeams = [...allTeams, ...leagueTeams];
-        }
+      const firstRound = cupSchedule[0];
+      if (firstRound && leagueMd >= firstRound.drawMatchday) {
+        // Get participants from initCup
+        const cupData = initCup(country);
         
-        // Sort by rating and take top 32 (or appropriate size)
-        const sortedTeams = allTeams.slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
-        const teamCount = sortedTeams.length;
-        let cupSize = 32;
-        if (teamCount < 4) cupSize = 2;
-        else if (teamCount < 8) cupSize = 4;
-        else if (teamCount < 16) cupSize = 8;
-        else if (teamCount < 32) cupSize = 16;
-        else cupSize = 32;
-        
-        const cupTeams = sortedTeams.slice(0, cupSize).map(t => t.id);
-        
-        // Auto-generate matchups by pairing teams randomly
-        const shuffled = cupTeams.slice().sort(() => Math.random() - 0.5);
-        const matchups: [string, string][] = [];
-        for (let i = 0; i < shuffled.length; i += 2) {
-          if (i + 1 < shuffled.length) {
-            matchups.push([shuffled[i], shuffled[i + 1]]);
+        // Auto-simulate preliminary round if it exists
+        if (firstRound.round === "Preliminar") {
+          // Use only preliminary participants for the preliminary round
+          const preliminaryTeams = cupData.preliminaryParticipants || [];
+          
+          // Create preliminary fixtures and simulate them
+          const preliminaryFixtures: Fixture[] = [];
+          for (let i = 0; i < preliminaryTeams.length; i += 2) {
+            if (i + 1 < preliminaryTeams.length) {
+              preliminaryFixtures.push({
+                id: `cup-${primaryLeague}-prelim-${i}`,
+                competition: "cup",
+                league: primaryLeague,
+                matchday: firstRound.matchday,
+                round: firstRound.round,
+                homeId: preliminaryTeams[i],
+                awayId: preliminaryTeams[i + 1],
+              });
+            }
           }
-        }
-        
-        // Apply the draw automatically
-        if (matchups.length > 0) {
-          const drawn = applyCupDraw(next, primaryLeague, firstRound.round, matchups);
-          Object.assign(next, drawn);
-          console.log(`Auto-drew cup fixtures for ${country} (${firstRound.round}): ${matchups.length} matchups`);
+          
+          // Simulate all preliminary fixtures
+          for (const f of preliminaryFixtures) {
+            const simmed = simulateFixtureInline(next, f);
+            const idx = list.findIndex(x => x.id === f.id);
+            if (idx >= 0) {
+              list[idx] = simmed;
+            } else {
+              list.push(simmed);
+            }
+            applyMatchToStats(next, simmed);
+          }
+          
+          // Get winners for next round from the simulated fixtures in list
+          const winners = preliminaryFixtures.map(f => {
+            const simmed = list.find(x => x.id === f.id);
+            if (!simmed || !simmed.result) return f.homeId;
+            return simmed.result.homeGoals >= simmed.result.awayGoals ? simmed.homeId : simmed.awayId;
+          });
+          
+          // Auto-create next round fixtures
+          const nextStep = cupSchedule[1];
+          if (nextStep) {
+            // Combine winners with main bracket participants
+            const mainBracketTeams = cupData.participants.filter(id => !preliminaryTeams.includes(id));
+            const drawTeams = [...winners, ...mainBracketTeams];
+            const nextStepWithDraw = { matchday: nextStep.matchday, round: nextStep.round, drawMatchday: nextStep.drawMatchday };
+            const built = buildNextRound("cup", primaryLeague, firstRound.round, drawTeams, nextStepWithDraw, 1);
+            list.push(...built);
+          }
+        } else {
+          // No preliminary round, create first round fixtures directly
+          const cupTeams = cupData.participants;
+          const nextStepWithDraw = { matchday: firstRound.matchday, round: firstRound.round, drawMatchday: firstRound.drawMatchday };
+          const built = buildNextRound("cup", primaryLeague, "", cupTeams, nextStepWithDraw, 0);
+          list.push(...built);
         }
       }
     }
     
-    // Get unique rounds that exist in this cup and sort them in order
-    const roundOrder = ["R32", "R16", "QF", "SF", "Final"];
+    // Auto-simulate remaining rounds for foreign countries
+    const roundOrder = cupSchedule.map(s => s.round);
     const existingRounds = [...new Set(list.map(f => f.round).filter((r): r is string => !!r))];
     const sortedRounds = existingRounds.sort((a, b) => 
       roundOrder.indexOf(a) - roundOrder.indexOf(b)
     );
     
-    // Build dynamic schedule based on existing rounds
-    const dynamicSchedule = sortedRounds.map((round, idx) => {
+    const dynamicSchedule = sortedRounds.map((round) => {
       const schedule = cupSchedule.find(s => s.round === round);
       if (!schedule) return null;
       return { matchday: schedule.matchday, round, size: 0, drawMatchday: schedule.drawMatchday };
@@ -1455,38 +1479,34 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
       const roundFixtures = list.filter((f) => f.round === step.round);
       if (roundFixtures.length === 0) continue;
       
-      // Check if we've reached the draw matchday for the NEXT round (if current round is complete)
+      // Check if current round is complete
       const playedAll = roundFixtures.every((f) => f.result);
       const nextStep = cupSchedule[roundIdx + 1];
       
       if (playedAll && nextStep && leagueMd >= nextStep.drawMatchday) {
-        // Get winners from current round
+        // Auto-simulate next round for foreign countries
         const winners = roundFixtures
           .map((f) => {
             if (!f.result) return f.homeId;
             return f.result.homeGoals >= f.result.awayGoals ? f.homeId : f.awayId;
           });
         
-        if (nextStep.round === "Final" && winners.length === 2) {
-          // Auto-create final fixture without draw
-          const nextStepWithDraw = { matchday: nextStep.matchday, round: nextStep.round, drawMatchday: nextStep.drawMatchday };
-          const built = buildNextRound("cup", primaryLeague, step.round, winners, nextStepWithDraw, roundIdx + 1);
-          list.push(...built);
-          console.log(`Auto-created final fixture for ${country}`);
-        } else if (nextStep.round !== "Final" && winners.length >= 2) {
-          // Auto-generate matchups for next round
-          const shuffled = winners.slice().sort(() => Math.random() - 0.5);
-          const matchups: [string, string][] = [];
-          for (let i = 0; i < shuffled.length; i += 2) {
-            if (i + 1 < shuffled.length) {
-              matchups.push([shuffled[i], shuffled[i + 1]]);
+        // Auto-create next round fixtures
+        const nextStepWithDraw = { matchday: nextStep.matchday, round: nextStep.round, drawMatchday: nextStep.drawMatchday };
+        const built = buildNextRound("cup", primaryLeague, step.round, winners, nextStepWithDraw, roundIdx + 1);
+        list.push(...built);
+      }
+      
+      // Simulate unplayed fixtures in current round
+      if (!playedAll && leagueMd > step.matchday) {
+        for (const f of roundFixtures) {
+          if (!f.result) {
+            const simmed = simulateFixtureInline(next, f);
+            const idx = list.findIndex(x => x.id === f.id);
+            if (idx >= 0) {
+              list[idx] = simmed;
             }
-          }
-          
-          if (matchups.length > 0) {
-            const drawn = applyCupDraw(next, primaryLeague, nextStep.round, matchups);
-            Object.assign(next, drawn);
-            console.log(`Auto-drew cup fixtures for ${country} (${nextStep.round}): ${matchups.length} matchups`);
+            applyMatchToStats(next, simmed);
           }
         }
       }
@@ -1509,26 +1529,27 @@ export function applyCupDraw(save: SaveGame, league: LeagueId, round: string, ma
     return next;
   }
   
-  // Get the matchday for this round
-  const roundOrder = ["R32", "R16", "QF", "SF", "Final"];
-  const roundIndex = roundOrder.indexOf(round);
-  const baseMatchday = round === "Final" ? 20 : round === "SF" ? 15 : round === "QF" ? 10 : round === "R16" ? 6 : 2;
-  
-  // Find an available date with no fixture conflicts within 2 days
-  const seasonStart = new Date("2025-08-16T12:00:00Z");
-  let availableMatchday = baseMatchday;
-  let found = false;
-  
-  // Search forward for available dates (up to 5 matchdays ahead)
-  for (let md = baseMatchday; md <= baseMatchday + 5 && !found; md++) {
-    const fixtureDate = new Date(seasonStart.getTime() + (md - 1) * 7 * 86400000);
-    if (!hasFixtureConflict(next, fixtureDate)) {
-      availableMatchday = md;
-      found = true;
-    }
+  // Get the dynamic cup structure for this league's country
+  const country = LEAGUES[league]?.country;
+  if (!country) {
+    console.error(`Country not found for league: ${league}`);
+    return next;
   }
   
-  console.log(`Creating ${matchups.length} fixtures for matchday ${availableMatchday}`);
+  const structure = (next.cupFixtures as any)[`${league}_structure`] || getCupStructureForCountry(country);
+  const cupSchedule = structure.schedule;
+  
+  // Find the matchday for this round from the dynamic schedule
+  const roundSchedule = cupSchedule.find(s => s.round === round);
+  if (!roundSchedule) {
+    console.error(`Round ${round} not found in cup schedule`);
+    return next;
+  }
+  
+  // matchday in schedule = day offset from July 7th (draw=0, match=1, draw=2, match=3...)
+  const matchDayOffset = roundSchedule.matchday;
+  
+  console.log(`Creating ${matchups.length} fixtures for day offset ${matchDayOffset} from July 7th (round: ${round})`);
   
   // Create fixtures from matchups
   for (let i = 0; i < matchups.length; i++) {
@@ -1537,7 +1558,7 @@ export function applyCupDraw(save: SaveGame, league: LeagueId, round: string, ma
       id: `cup-${league}-${round}-${i}`,
       competition: "cup" as const,
       league,
-      matchday: availableMatchday,
+      matchday: matchDayOffset, // day offset from July 7th
       round,
       homeId: home,
       awayId: away,

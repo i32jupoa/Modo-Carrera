@@ -162,8 +162,9 @@ export function CupDrawModal({ isOpen, onClose, round, teams, league, onComplete
   }, [isOpen, teams]);
 
   const roundNames: Record<string, string> = {
-    R32: "Dieciseisavos",
-    R16: "Octavos de Final",
+    R32: "Treintaidosavos",
+    R16: "Dieciseisavos",
+    Octavos: "Octavos de Final",
     QF: "Cuartos de Final",
     SF: "Semifinales",
     Final: "Final",

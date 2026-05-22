@@ -323,8 +323,9 @@ function MatchPage() {
   
   // Round names mapping for cup matches
   const roundNames: Record<string, string> = {
-    "R32": "Octavos de Final",
+    "R32": "Treintaidosavos",
     "R16": "Dieciseisavos",
+    "Octavos": "Octavos de Final",
     "QF": "Cuartos de Final",
     "SF": "Semifinales",
     "Final": "Final"

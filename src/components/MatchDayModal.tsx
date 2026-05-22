@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Zap } from "lucide-react";
 import { loadSave, type SaveGame } from "@/lib/store";
+import { toDateOnly } from "@/lib/transferWindows";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -64,7 +65,7 @@ export function MatchDayModal() {
     
     // Check cup fixtures if no league match today
     if (save) {
-      const seasonStart = new Date("2025-08-16T12:00:00Z");
+      const cupStart = new Date("2025-07-07T00:00:00Z");
       
       // Check cup fixtures
       for (const lg of Object.keys(save.cupFixtures)) {
@@ -75,10 +76,9 @@ export function MatchDayModal() {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
           
-          // Calculate cup match date: 3 days after league matchday
-          const leagueMatchdayDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
-          const cupMatchDate = new Date(leagueMatchdayDate.getTime() + 3 * 86400000);
-          const cupMatchDateIso = cupMatchDate.toISOString().split('T')[0];
+          // Calculate cup match date: matchday = day offset from July 7th
+          const cupMatchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
+          const cupMatchDateIso = toDateOnly(cupMatchDate);
           
           if (cupMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
@@ -102,13 +102,14 @@ export function MatchDayModal() {
       
       // Check UCL fixtures
       if (save.uclFixtures) {
+        const uclSeasonStart = new Date("2025-08-16T12:00:00Z");
         for (const f of save.uclFixtures) {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
           
           // UCL matches are on the same day as league matchday
-          const uclMatchDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
-          const uclMatchDateIso = uclMatchDate.toISOString().split('T')[0];
+          const uclMatchDate = new Date(uclSeasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
+          const uclMatchDateIso = toDateOnly(uclMatchDate);
           
           if (uclMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({

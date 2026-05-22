@@ -1,11 +1,12 @@
-import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getAllTeams } from "@/data/teams";
+import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getAllTeams, type Team } from "@/data/teams";
 import { Fixture } from "@/lib/season";
 
 /* ============================================================
- *  NATIONAL CUP  (per league, dynamic size: supports 2-32 teams)
+ *  NATIONAL CUP  (per country, dynamic size based on total teams)
  *  Modeled after Spanish Copa del Rey with realistic scheduling
  *  First draw is 2 days after first league match (Aug 18)
  * ============================================================ */
+
 export const CUP_SCHEDULE: { matchday: number; round: string; size: number; drawMatchday: number }[] = [
   { matchday: 2, round: "R32", size: 32, drawMatchday: 1 },   // First draw: Aug 18 (2 days after Aug 16), Match: Aug 21
   { matchday: 6, round: "R16", size: 16, drawMatchday: 5 },  // Draw: Sep 19, Match: Sep 24
@@ -14,7 +15,200 @@ export const CUP_SCHEDULE: { matchday: number; round: string; size: number; draw
   { matchday: 20, round: "Final", size: 2, drawMatchday: 19 }, // Draw: Dec 26, Match: Dec 31
 ];
 
-// Generate dynamic cup schedule based on actual bracket size
+/**
+ * Power of 2 Bracket Algorithm
+ * Calculates preliminary round and bye distribution to ensure main bracket is a perfect power of 2
+ * 
+ * RULES:
+ * 1. Worst teams (lower divisions) play preliminary round
+ * 2. Best teams (higher divisions) receive bye (skip prelim)
+ * 3. All subsequent draws are 100% random (no pots, no seeding)
+ * 
+ * @param teams - Array of teams to calculate bracket for
+ * @returns Object with preliminary teams, bye teams, target bracket size, and round name
+ */
+export function calculateCupBracket(teams: Team[]): {
+  preliminaryTeams: Team[];
+  byeTeams: Team[];
+  targetBracketSize: number;
+  preliminaryCount: number;
+  byeCount: number;
+  firstRoundName: string;
+} {
+  const N = teams.length;
+  
+  // Find the highest power of 2 that is <= N (Target Bracket Size T)
+  // T = 2^floor(log2(N))
+  const T = Math.pow(2, Math.floor(Math.log2(N)));
+  
+  // If N = T, no preliminary round needed
+  if (N === T) {
+    return {
+      preliminaryTeams: [],
+      byeTeams: teams,
+      targetBracketSize: T,
+      preliminaryCount: 0,
+      byeCount: N,
+      firstRoundName: getRoundNameForSize(T)
+    };
+  }
+  
+  // Calculate teams to eliminate to reach T
+  const E = N - T;
+  
+  // Calculate teams in preliminary round (always even)
+  const P = E * 2;
+  
+  // Calculate teams with bye
+  const B = N - P;
+  
+  // Sort teams by division/reputation (best teams first - higher tier = lower tier number)
+  const sortedTeams = [...teams].sort((a, b) => {
+    // Sort by league tier (lower tier number = better division)
+    const aLeague = LEAGUES[a.league as LeagueId];
+    const bLeague = LEAGUES[b.league as LeagueId];
+    const aTier = aLeague?.tier ?? 999;
+    const bTier = bLeague?.tier ?? 999;
+    
+    if (aTier !== bTier) {
+      return aTier - bTier; // Lower tier number = better (comes first)
+    }
+    
+    // If same tier, sort by overall rating (higher = better)
+    const aOvr = (a.att + a.mid + a.def);
+    const bOvr = (b.att + b.mid + b.def);
+    return bOvr - aOvr;
+  });
+  
+  // Top B teams (best teams) receive bye (skip prelim)
+  const byeTeams = sortedTeams.slice(0, B);
+  
+  // Bottom P teams (worst teams) go to preliminary round
+  const preliminaryTeams = sortedTeams.slice(B);
+  
+  return {
+    preliminaryTeams,
+    byeTeams,
+    targetBracketSize: T,
+    preliminaryCount: P,
+    byeCount: B,
+    firstRoundName: getRoundNameForSize(T)
+  };
+}
+
+/**
+ * Get round name based on bracket size
+ * 64 = "32avos de Final" (R32)
+ * 32 = "16avos de Final" (R16)
+ * 16 = "Octavos de Final"
+ * 8 = "Cuartos de Final" (QF)
+ * 4 = "Semifinales" (SF)
+ * 2 = "Final"
+ */
+function getRoundNameForSize(size: number): string {
+  switch (size) {
+    case 64: return "R32"; // 32avos de Final
+    case 32: return "R16"; // 16avos de Final
+    case 16: return "Octavos"; // Octavos de Final
+    case 8: return "QF"; // Cuartos de Final
+    case 4: return "SF"; // Semifinales
+    case 2: return "Final";
+    default: return "Unknown";
+  }
+}
+
+// Calculate total teams in a country (sum of all teams from all leagues)
+export function getTotalTeamsInCountry(country: string): number {
+  const countryLeagues = Object.values(LEAGUES).filter(lg => lg.country === country);
+  let total = 0;
+  for (const league of countryLeagues) {
+    total += teamsByLeague(league.id as LeagueId).length;
+  }
+  return total;
+}
+
+// Generate dynamic cup structure based on total teams in country
+export function getCupStructureForCountry(country: string): { 
+  schedule: { matchday: number; round: string; size: number; drawMatchday: number }[];
+  preliminaryTeams: number;
+  mainBracketSize: number;
+} {
+  const totalTeams = getTotalTeamsInCountry(country);
+  
+  // Determine the main bracket size based on total teams
+  // R32 = 64 teams, R16 = 32 teams, Octavos = 16 teams, QF = 8 teams, SF = 4 teams, Final = 2 teams
+  let mainBracketSize: number;
+  
+  if (totalTeams >= 64) {
+    mainBracketSize = 64; // Start at R32 (64 teams)
+  } else if (totalTeams >= 32) {
+    mainBracketSize = 32; // Start at R16 (32 teams)
+  } else if (totalTeams >= 16) {
+    mainBracketSize = 16; // Start at Octavos (16 teams)
+  } else if (totalTeams >= 8) {
+    mainBracketSize = 8; // Start at QF (8 teams)
+  } else if (totalTeams >= 4) {
+    mainBracketSize = 4; // Start at SF (4 teams)
+  } else {
+    mainBracketSize = 2; // Start at Final (2 teams)
+  }
+  
+  // Calculate how many teams need to be eliminated in preliminary round
+  // Teams in prelim = (totalTeams - mainBracketSize) * 2
+  // Winners from prelim = (totalTeams - mainBracketSize)
+  // Direct teams = totalTeams - preliminaryTeams
+  // Total bracket = winners + direct teams = mainBracketSize
+  const teamsToEliminate = totalTeams - mainBracketSize;
+  let preliminaryTeams = 0;
+  
+  if (teamsToEliminate > 0) {
+    // To eliminate X teams, we need 2X teams in preliminary round (half will advance)
+    preliminaryTeams = teamsToEliminate * 2;
+  }
+  
+  // Build schedule - cup starts July 7th, alternating draw/match days
+  // drawMatchday = days offset from July 7th (0=Jul7 draw, 1=Jul8 match, 2=Jul9 draw, 3=Jul10 match...)
+  const schedule: { matchday: number; round: string; size: number; drawMatchday: number }[] = [];
+  let currentDrawDay = 0; // 0 = July 7th
+  
+  // Add preliminary round if needed
+  if (preliminaryTeams > 0) {
+    schedule.push({
+      matchday: currentDrawDay + 1, // match day after draw
+      round: "Preliminar",
+      size: preliminaryTeams,
+      drawMatchday: currentDrawDay
+    });
+    currentDrawDay += 2; // next draw is 2 days later
+  }
+  
+  // Add main bracket rounds (no R64, added Octavos between R16 and QF)
+  // R32 = 64 teams, R16 = 32 teams, Octavos = 16 teams, QF = 8 teams, SF = 4 teams, Final = 2 teams
+  const rounds = [
+    { size: 64, name: "R32" },
+    { size: 32, name: "R16" },
+    { size: 16, name: "Octavos" },
+    { size: 8, name: "QF" },
+    { size: 4, name: "SF" },
+    { size: 2, name: "Final" }
+  ];
+  
+  for (const round of rounds) {
+    if (mainBracketSize >= round.size) {
+      schedule.push({
+        matchday: currentDrawDay + 1,
+        round: round.name,
+        size: round.size,
+        drawMatchday: currentDrawDay
+      });
+      currentDrawDay += 2;
+    }
+  }
+  
+  return { schedule, preliminaryTeams, mainBracketSize };
+}
+
+// Generate dynamic cup schedule based on actual bracket size (legacy function)
 export function getCupScheduleForSize(teamCount: number): { matchday: number; round: string; size: number; drawMatchday: number }[] {
   let rounds: { matchday: number; round: string; size: number; drawMatchday: number }[] = [];
   if (teamCount >= 32) rounds.push({ matchday: 2, round: "R32", size: 32, drawMatchday: 1 });
@@ -25,40 +219,30 @@ export function getCupScheduleForSize(teamCount: number): { matchday: number; ro
   return rounds;
 }
 
-export function initCup(league: LeagueId, includeSecondDivision = false): { fixtures: Fixture[]; participants: string[] } {
-  let teams = teamsByLeague(league).slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
+export function initCup(country: string): { fixtures: Fixture[]; participants: string[]; preliminaryParticipants: string[]; structure: ReturnType<typeof getCupStructureForCountry> } {
+  // Get all teams for this country
+  const allTeams = getAllTeams().filter(t => {
+    const league = LEAGUES[t.league as LeagueId];
+    return league?.country === country;
+  });
   
-  // Include second division teams if requested (for national cups like Copa del Rey)
-  if (includeSecondDivision) {
-    const country = LEAGUES[league]?.country;
-    if (country) {
-      const countryLeagues = LEAGUES_BY_COUNTRY[country] || [];
-      const secondDivisions = countryLeagues.filter(l => l.id !== league);
-      
-      for (const secondLeague of secondDivisions) {
-        const secondDivTeams = teamsByLeague(secondLeague.id as LeagueId);
-        teams = [...teams, ...secondDivTeams];
-      }
-      
-      // Sort all teams by overall rating
-      teams = teams.slice().sort((a, b) => (b.att + b.mid + b.def) - (a.att + a.mid + a.def));
-    }
-  }
+  // Use the power of 2 bracket algorithm
+  // This automatically selects worst teams for prelim and best teams for bye
+  const bracket = calculateCupBracket(allTeams);
   
-  // Dynamically determine cup size: use nearest power of 2 (min 2 teams for a cup)
-  const teamCount = teams.length;
-  let cupSize = 32; // default for national cups
-  if (teamCount < 4) cupSize = 2;      // 2-team final only (very small leagues)
-  else if (teamCount < 8) cupSize = 4;  // SF + Final
-  else if (teamCount < 16) cupSize = 8; // QF + SF + Final
-  else if (teamCount < 32) cupSize = 16; // R16 + QF + SF + Final
-  else cupSize = 32; // R32 + R16 + QF + SF + Full
+  // Get cup structure for this country
+  const structure = getCupStructureForCountry(country);
   
-  const cupTeams = teams.slice(0, cupSize);
-  const ids = cupTeams.map((t) => t.id);
+  // Extract team IDs from bracket calculation
+  const preliminaryParticipants = bracket.preliminaryTeams.map(t => t.id);
+  const mainBracketParticipants = bracket.byeTeams.map(t => t.id);
   
-  // DO NOT create fixtures initially - fixtures are only created after the draw
-  return { fixtures: [], participants: ids };
+  return {
+    fixtures: [],
+    participants: mainBracketParticipants,
+    preliminaryParticipants,
+    structure
+  };
 }
 
 /* ============================================================
@@ -256,16 +440,23 @@ export function buildNextKORound(
   winners: string[],
   scheduleStep: { matchday: number; round: string },
 ): Fixture[] {
+  // Fisher-Yates shuffle for 100% random draw (no pots, no seeding)
+  const shuffled = [...winners];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  
   const fixtures: Fixture[] = [];
-  for (let i = 0; i < winners.length; i += 2) {
+  for (let i = 0; i < shuffled.length; i += 2) {
     const id = comp === "cup"
       ? `cup-${league}-${scheduleStep.round}-${i}`
       : `ucl-${scheduleStep.round}-${i}`;
     fixtures.push({
       id, competition: comp,
-      league: comp === "cup" ? (league as LeagueId) : teamById(winners[i]).league,
+      league: comp === "cup" ? (league as LeagueId) : teamById(shuffled[i]).league,
       matchday: scheduleStep.matchday, round: scheduleStep.round,
-      homeId: winners[i], awayId: winners[i + 1],
+      homeId: shuffled[i], awayId: shuffled[i + 1],
     });
   }
   return fixtures;

@@ -2,16 +2,13 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound } from "@/lib/store";
 import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
+import { getCupStructureForCountry, initCup } from "@/lib/cups";
 import { usePlayersStore } from "@/store/playersStore";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { TeamLogo } from "@/components/TeamLogo";
+import { CupDrawModal } from "@/components/CupDrawModal";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
-
-// Helper to get league name from league ID
-function getLeagueName(leagueId: string): string {
-  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
-}
 import {
   isSummerTransferWindow,
   isWinterTransferWindow,
@@ -29,6 +26,11 @@ import {
   userFixtures,
 } from "@/lib/leagueSchedule";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 
 export const Route = createFileRoute("/calendar")({ component: CalendarPage });
 
@@ -71,41 +73,139 @@ function CalendarPage() {
   useEffect(() => {
     if (!save) return;
     
-    const userCountry = LEAGUES[save.myLeague]?.country;
-    const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
-    const cupKey = (primaryLeague || save.myLeague) as LeagueId;
-    const leagueMd = save.currentMatchday[save.myLeague];
-    
-    // Define cup schedule with draw matchdays
-    const cupSchedule = [
-      { round: "R32", drawMatchday: 1 },
-      { round: "R16", drawMatchday: 5 },
-      { round: "QF", drawMatchday: 9 },
-      { round: "SF", drawMatchday: 14 },
-      { round: "Final", drawMatchday: 19 },
-    ];
-    
-    // Check if today is a cup draw day for the user's country
-    const isDrawDay = cupSchedule.some(s => s.drawMatchday === leagueMd);
-    const cupFixtures = save.cupFixtures[cupKey] || [];
-    const hasFirstRoundFixtures = cupFixtures.some(f => f.round === "R32");
-    
-    // Show notification if it's a draw day and no fixtures exist yet (or cupDrawPending is set)
-    if ((isDrawDay && !hasFirstRoundFixtures) || save.cupDrawPending) {
-      // Auto-draw foreign cups BEFORE opening the user's cup draw modal
+    try {
+      const userCountry = LEAGUES[save.myLeague]?.country;
+      const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
+      const cupKey = (primaryLeague || save.myLeague) as LeagueId;
+      
+      // Get the dynamic cup structure for the user's country
+      const cupStructure = (save.cupFixtures as any)[`${cupKey}_structure`] || getCupStructureForCountry(userCountry || "");
+      const cupSchedule = cupStructure.schedule;
+      
+      // Get user's team to filter relevant rounds
+      const myTeamId = save.myTeamId;
+      let isInPreliminary = false;
       try {
-        const withForeignDraws = autoDrawForeignCups(save);
-        saveSave(withForeignDraws);
-        
-        // Show the modal for the user's draw
-        setShowCupDrawModal(true);
+        const cupData = initCup(userCountry || "");
+        isInPreliminary = cupData.preliminaryParticipants?.includes(myTeamId) || false;
       } catch (err) {
-        console.error("Error en auto-draw de copas:", err);
-        // If auto-draw fails, still show the modal for the user
+        console.error("Error checking preliminary participants:", err);
+      }
+      
+      // Filter schedule to only include rounds relevant to user's team
+      const relevantSchedule = cupSchedule.filter(step => {
+        if (step.round === "Preliminar") return isInPreliminary;
+        return true; // All other rounds are relevant
+      });
+      
+      // Convert drawMatchdays to actual dates (cup starts July 7, 2025)
+      // drawMatchday = days offset from July 7th (0=Jul7, 1=Jul8, etc.)
+      const cupStart = new Date("2025-07-07T00:00:00Z");
+      const today = currentDateIso; // already an ISO string like "2025-07-07"
+      
+      // Check if today is a cup draw day
+      const isDrawDay = relevantSchedule.some(s => {
+        const drawDate = new Date(cupStart.getTime() + s.drawMatchday * 86400000);
+        const drawDateOnly = toDateOnly(drawDate);
+        return drawDateOnly === today;
+      });
+      
+      const cupFixtures = save.cupFixtures[cupKey] || [];
+      // Check if any cup fixture exists at all (preliminary or main bracket)
+      const hasCupFixtures = cupFixtures.length > 0;
+      // For draw day check: only block if the CURRENT draw day's round already has fixtures
+      const currentDrawRound = relevantSchedule.find(s => {
+        const drawDate = new Date(new Date("2025-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000);
+        return toDateOnly(drawDate) === today;
+      });
+      const hasCurrentRoundFixtures = currentDrawRound
+        ? cupFixtures.some(f => f.round === currentDrawRound.round)
+        : false;
+      
+      console.log(`[Calendar cup check] userCountry: ${userCountry}, myTeamId: ${myTeamId}, isInPreliminary: ${isInPreliminary}`);
+      console.log(`[Calendar cup check] today: ${today}, isDrawDay: ${isDrawDay}, hasCurrentRoundFixtures: ${hasCurrentRoundFixtures}, cupDrawPending: ${!!save.cupDrawPending}`);
+      
+      // Show notification if it's a draw day and this round hasn't been drawn yet
+      if (isDrawDay && !hasCurrentRoundFixtures && !save.cupDrawPending) {
+        const cupData = initCup(userCountry || "");
+        const preliminaryTeams = cupData.preliminaryParticipants || [];
+        const userIsInPreliminary = preliminaryTeams.includes(myTeamId);
+        const firstScheduleRound = cupSchedule[0];
+        
+        // Get the round for this specific draw day
+        const currentRound = relevantSchedule.find(s => {
+          const drawDate = new Date(new Date("2025-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000);
+          return toDateOnly(drawDate) === today;
+        });
+        
+        if (currentRound) {
+          const updated = loadSave();
+          if (!updated) return;
+          
+          if (firstScheduleRound?.round === "Preliminar" && !userIsInPreliminary) {
+            // Auto-simulate preliminary round silently, then set draw for next round
+            const prelimFixtures: any[] = [];
+            for (let i = 0; i + 1 < preliminaryTeams.length; i += 2) {
+              prelimFixtures.push({
+                id: `cup-${cupKey}-prelim-${i}`,
+                competition: "cup",
+                league: cupKey,
+                matchday: firstScheduleRound.matchday,
+                round: "Preliminar",
+                homeId: preliminaryTeams[i],
+                awayId: preliminaryTeams[i + 1],
+              });
+            }
+            // Add preliminary fixtures to save
+            if (!updated.cupFixtures[cupKey]) updated.cupFixtures[cupKey] = [];
+            for (const f of prelimFixtures) {
+              // Simple simulation: random winner
+              const homeGoals = Math.floor(Math.random() * 4);
+              const awayGoals = Math.floor(Math.random() * 4);
+              updated.cupFixtures[cupKey].push({
+                ...f,
+                result: { homeGoals, awayGoals, events: [], injuries: [], xgHome: homeGoals, xgAway: awayGoals }
+              });
+            }
+            // Collect winners for next round
+            const winners = prelimFixtures.map(f => {
+              const simmed = updated.cupFixtures[cupKey]!.find(x => x.id === f.id);
+              if (!simmed?.result) return f.homeId;
+              return simmed.result.homeGoals >= simmed.result.awayGoals ? simmed.homeId : simmed.awayId;
+            });
+            const mainBracketTeams = cupData.participants.filter(id => !preliminaryTeams.includes(id));
+            updated.cupDrawPending = {
+              league: cupKey,
+              round: currentRound.round,
+              teams: [...winners, ...mainBracketTeams]
+            };
+          } else {
+            // User is in preliminary, or no preliminary: show draw for current round
+            const drawTeams = currentRound.round === "Preliminar"
+              ? preliminaryTeams
+              : cupData.participants;
+            updated.cupDrawPending = { league: cupKey, round: currentRound.round, teams: drawTeams };
+          }
+          
+          saveSave(updated);
+          setSave(updated);
+        }
+      }
+      
+      // Show modal if cupDrawPending is set
+      if (save.cupDrawPending) {
+        try {
+          const withForeignDraws = autoDrawForeignCups(save);
+          saveSave(withForeignDraws);
+        } catch (err) {
+          console.error("Error en auto-draw de copas:", err);
+        }
         setShowCupDrawModal(true);
       }
+    } catch (err) {
+      console.error("Error in cup draw check:", err);
     }
-  }, [save?.cupDrawPending, save?.currentMatchday]); // Only re-run when cupDrawPending or matchday changes
+  }, [save?.cupDrawPending, currentDateIso]); // Re-run when cupDrawPending or current date changes
 
   useLayoutEffect(() => {
     setBrowseMonth(null);
@@ -149,16 +249,12 @@ function CalendarPage() {
 
   const cupFixturesByDate = useMemo(() => {
     const map = new Map<string, typeof myCupFixtures>();
-    // Calculate dates for cup fixtures based on matchday
-    // Season starts Aug 16, 2025 (Saturday), each league matchday is 1 week later
-    // Cup matches are played 3 days after the league matchday (Wednesday)
-    const seasonStart = new Date("2025-08-16T12:00:00Z");
+    // Cup starts July 7, 2025. matchday field = day offset from July 7th (0=Jul7, 1=Jul8...)
+    const cupStart = new Date("2025-07-07T00:00:00Z");
     
     for (const f of myCupFixtures) {
-      // Cup match is 3 days after the league matchday
-      const leagueMatchdayDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
-      const cupMatchDate = new Date(leagueMatchdayDate.getTime() + 3 * 86400000);
-      const dateIso = cupMatchDate.toISOString().split('T')[0];
+      const matchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
+      const dateIso = toDateOnly(matchDate);
       const list = map.get(dateIso) ?? [];
       list.push(f);
       map.set(dateIso, list);
@@ -185,29 +281,47 @@ function CalendarPage() {
     return combined;
   }, [fixturesByDate, cupFixturesByDate]);
 
-  // Calculate cup draw days based on current matchday
+  // Calculate cup draw days based on July 7th schedule
   const cupDrawDays = useMemo(() => {
     if (!save) return new Set<string>();
     const drawDays = new Set<string>();
     
-    // CUP_SCHEDULE draw matchdays: 1, 5, 9, 14, 19
-    // Calculate the actual dates for these draw days
-    // Season starts Aug 16, 2025 (Saturday), each league matchday is 1 week later
-    // Draw days are 2 days after the league matchday (Monday instead of Saturday)
-    const seasonStart = new Date("2025-08-16T12:00:00Z");
-    const drawMatchdays = [1, 5, 9, 14, 19];
+    // Cup starts July 7, 2025 - alternating: draw, match, draw, match...
+    // drawMatchday = days offset from July 7th (0=Jul7, 2=Jul9, 4=Jul11...)
+    const cupStart = new Date("2025-07-07T12:00:00Z");
     
-    for (const drawMd of drawMatchdays) {
-      // League matchday is on Saturday
-      const leagueMatchdayDate = new Date(seasonStart.getTime() + (drawMd - 1) * 7 * 86400000);
-      // Draw is 2 days after the league matchday (Monday)
-      const drawDate = new Date(leagueMatchdayDate.getTime() + 2 * 86400000);
-      const drawDateIso = drawDate.toISOString().split('T')[0];
-      drawDays.add(drawDateIso);
+    const userCountry = LEAGUES[save.myLeague]?.country;
+    if (!userCountry) return drawDays;
+    
+    const primaryLeague = Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) || save.myLeague;
+    const cupKey = primaryLeague as LeagueId;
+    
+    try {
+      const cupStructure = (save.cupFixtures as any)[`${cupKey}_structure`] || getCupStructureForCountry(userCountry);
+      const cupSchedule = cupStructure.schedule || [];
+      
+      const myTeamId = save.myTeamId;
+      let isInPreliminary = false;
+      try {
+        const cupData = initCup(userCountry);
+        isInPreliminary = cupData.preliminaryParticipants?.includes(myTeamId) || false;
+      } catch {}
+      
+      const relevantSchedule = cupSchedule.filter((step: any) => {
+        if (step.round === "Preliminar") return isInPreliminary;
+        return true;
+      });
+      
+      for (const s of relevantSchedule) {
+        const drawDate = new Date(cupStart.getTime() + s.drawMatchday * 86400000);
+        drawDays.add(toDateOnly(drawDate));
+      }
+    } catch (err) {
+      console.error("Error calculating cup draw days:", err);
     }
     
     return drawDays;
-  }, [save]);
+  }, [save?.myLeague, save?.myTeamId, save?.cupFixtures]);
 
   function prevMonth() {
     if (viewMonth === 0) {
@@ -238,12 +352,10 @@ function CalendarPage() {
     const cupKey = (primaryLeague || save.myLeague) as LeagueId;
     
     // Check if today is a cup match day and user has a cup fixture
+    const cupStart = new Date("2025-07-07T00:00:00Z");
     const todayCupFixtures = myCupFixtures.filter(f => {
-      const seasonStart = new Date("2025-08-16T12:00:00Z");
-      const leagueMatchdayDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
-      const cupMatchDate = new Date(leagueMatchdayDate.getTime() + 3 * 86400000);
-      const dateIso = cupMatchDate.toISOString().split('T')[0];
-      return dateIso === currentDateIso;
+      const matchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
+      return toDateOnly(matchDate) === currentDateIso;
     });
     
     if (todayCupFixtures.length > 0) {
@@ -468,6 +580,32 @@ function CalendarPage() {
           </span>
         </div>
       </div>
+      
+      {save.cupDrawPending && (
+        <CupDrawModal
+          isOpen={showCupDrawModal}
+          onClose={() => {
+            setShowCupDrawModal(false);
+            const updated = loadSave();
+            if (updated) {
+              updated.cupDrawPending = null;
+              saveSave(updated);
+              setSave(updated);
+            }
+          }}
+          round={save.cupDrawPending.round}
+          teams={save.cupDrawPending.teams}
+          league={save.cupDrawPending.league}
+          onComplete={(matchups) => {
+            const updated = loadSave();
+            if (updated && save.cupDrawPending) {
+              const withDraw = applyCupDraw(updated, save.cupDrawPending.league, save.cupDrawPending.round, matchups);
+              saveSave(withDraw);
+              setSave(withDraw);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

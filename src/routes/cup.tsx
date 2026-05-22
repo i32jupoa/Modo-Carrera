@@ -6,18 +6,24 @@ import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";
+import { getCupStructureForCountry } from "@/lib/cups";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
-import { CUP_SCHEDULE } from "@/lib/cups";
 import { Fixture } from "@/lib/season";
 
 export const Route = createFileRoute("/cup")({ component: CupPage });
 
 const ROUND_LABEL: Record<string, string> = {
-  R32: "Dieciseisavos", R16: "Octavos", QF: "Cuartos", SF: "Semifinales", Final: "Final",
+  Preliminar: "Fase Preliminar",
+  R32: "Treintaidosavos",
+  R16: "Dieciseisavos",
+  Octavos: "Octavos de Final",
+  QF: "Cuartos",
+  SF: "Semifinales",
+  Final: "Final",
 };
 
 function CountryDropdown({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[] }) {
@@ -85,11 +91,24 @@ function CupPage() {
   if (!save) return null;
   
   // Get unique countries from all leagues
-  const uniqueCountries = Object.keys(LEAGUES_BY_COUNTRY).sort();
+  const allCountries = Object.keys(LEAGUES_BY_COUNTRY);
+  
+  // Define priority countries (Big 5 leagues)
+  const priorityCountries = ["Alemania", "España", "Inglaterra", "Italia", "Francia"];
+  
+  // Sort countries: priority first, then alphabetical
+  const uniqueCountries = [
+    ...priorityCountries.filter(c => allCountries.includes(c)),
+    ...allCountries.filter(c => !priorityCountries.includes(c)).sort()
+  ];
   
   // Get the primary league for the selected country
   const countryLeagues = LEAGUES_BY_COUNTRY[country] || [];
   const primaryLeague = countryLeagues[0]?.id as LeagueId;
+  
+  // Get the dynamic cup structure for the selected country (use saved structure if available)
+  const cupStructure = (save.cupFixtures as any)[`${primaryLeague}_structure`] || getCupStructureForCountry(country);
+  const cupSchedule = cupStructure.schedule;
   
   // Get fixtures for the selected country's cup
   const fixtures = primaryLeague ? save.cupFixtures[primaryLeague] : [];
@@ -122,15 +141,15 @@ function CupPage() {
       )}
 
       <div className="space-y-6">
-        {CUP_SCHEDULE.map((step) => {
+        {cupSchedule.map((step) => {
           const rf = fixtures.filter((f) => f.round === step.round);
           if (rf.length === 0) return (
-            <RoundBlock key={step.round} label={ROUND_LABEL[step.round]} matchday={step.matchday}>
+            <RoundBlock key={step.round} label={ROUND_LABEL[step.round] || step.round} matchday={step.matchday}>
               <p className="text-xs text-muted-foreground px-4 py-3">Pendiente de sortear</p>
             </RoundBlock>
           );
           return (
-            <RoundBlock key={step.round} label={ROUND_LABEL[step.round]} matchday={step.matchday}>
+            <RoundBlock key={step.round} label={ROUND_LABEL[step.round] || step.round} matchday={step.matchday}>
               <div className="divide-y divide-border/40">
                 {rf.map((f) => <KOFixtureRow key={f.id} f={f} myId={myId} />)}
               </div>
