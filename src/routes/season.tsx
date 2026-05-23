@@ -4,13 +4,21 @@ import { useState, useEffect } from "react";
 
 import { ALL_LEAGUES, loadSave, SaveGame, advanceMatchdayLayered, getSortedStandings, getMatchdayFixtures, getMyNextFixtureAny, getMyRecentResults, getTeamRecentResults, simulateCupMatchday, simulateUCLMatchday, saveSave } from "@/lib/store";
 
-import { LEAGUES, teamById, teamsByLeague, type LeagueId, type Team } from "@/data/teams";
+import { LEAGUES, teamById, teamsByLeague, type LeagueId, type Team, LEAGUES_BY_COUNTRY } from "@/data/teams";
 
 import { type Fixture } from "@/lib/season";
 
 import { usePlayersStore, ensureStatsForLeague, useCurrentDate } from "@/store/playersStore";
 
 import { TeamLogo } from "@/components/TeamLogo";
+import { LeagueLogo } from "@/components/LeagueLogo";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { ChevronDown } from "lucide-react";
 
 
 
@@ -372,23 +380,27 @@ function SeasonPage() {
 
               <h3 className="font-bold">Clasificación</h3>
 
-              <select
-
-                value={viewLeague}
-
-                onChange={(e) => setViewLeague(e.target.value as LeagueId)}
-
-                className="bg-secondary border border-border rounded px-2 py-1 text-xs"
-
-              >
-
-                {ALL_LEAGUES.map((lg) => (
-
-                  <option key={lg} value={lg}>{LEAGUES[lg].flag} {LEAGUES[lg].name}</option>
-
-                ))}
-
-              </select>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="bg-secondary border border-border rounded px-2 py-1 text-xs flex items-center gap-2 hover:border-primary/60 transition">
+                    <LeagueLogo league={LEAGUES[viewLeague].name} size="sm" fallback={<span className="text-xs">{LEAGUES[viewLeague].flag}</span>} />
+                    {LEAGUES[viewLeague].name}
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  {ALL_LEAGUES.map((lg) => (
+                    <DropdownMenuItem
+                      key={lg}
+                      onClick={() => setViewLeague(lg)}
+                      className="flex items-center gap-2"
+                    >
+                      <LeagueLogo league={LEAGUES[lg].name} size="sm" fallback={<span className="text-xs">{LEAGUES[lg].flag}</span>} />
+                      {LEAGUES[lg].name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
 
             </div>
 

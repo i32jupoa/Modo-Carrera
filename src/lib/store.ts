@@ -16,7 +16,7 @@ import {
   sortStandings,
   Standing,
 } from "@/lib/season";
-import { simulateMatch, simulateMatchFast, SimResult, MatchEvent, InjuryEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout } from "@/lib/simulation";
+import { simulateMatch, simulateMatchFast, simulateCupMatch, SimResult, MatchEvent, InjuryEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout } from "@/lib/simulation";
 import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE, getCupStructureForCountry } from "@/lib/cups";
 
 // Helper to determine winner of a cup match (considering extra time and penalties)
@@ -399,10 +399,22 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
   for (const p of [...homeXI, ...awayXI]) {
     store.recordAppearance(p.id);
   }
+  
+  // Process regular time events
   for (const ev of r.events) {
     store.recordGoal(ev.scorerId);
     if (ev.assistId) store.recordAssist(ev.assistId);
   }
+  
+  // Process extra time events (goals and assists count for stats)
+  if (r.extraTime && r.extraTime.events) {
+    for (const ev of r.extraTime.events) {
+      store.recordGoal(ev.scorerId);
+      if (ev.assistId) store.recordAssist(ev.assistId);
+    }
+  }
+  
+  // Process cards (including those from extra time)
   for (const card of r.cards) {
     if (card.cardType === "yellow") {
       store.recordYellowCard(card.playerId);
@@ -442,7 +454,7 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
   return updatedSave;
 }
 
-function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false): Fixture {
+function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false, isCup = false): Fixture {
   if (fixture.result) return fixture;
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
@@ -458,10 +470,14 @@ function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false): 
     console.warn(`simulateFixtureInline: Empty squad for fixture ${fixture.id}`, { homeId: fixture.homeId, awayId: fixture.awayId, homeXI: homeXI.length, awayXI: awayXI.length });
     return { ...fixture, result: { homeGoals: 0, awayGoals: 0, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 } };
   }
+  // Use cup simulation for cup matches (with extra time and penalties)
   // Use fast simulation for bulk matchdays, detailed for user's matches
-  const result = fast 
-    ? simulateMatchFast(home, away, homeXI, awayXI)
-    : simulateMatch(home, away, homeXI, awayXI);
+  const result = isCup 
+    ? simulateCupMatch(home, away, homeXI, awayXI)
+    : fast 
+      ? simulateMatchFast(home, away, homeXI, awayXI)
+      : simulateMatch(home, away, homeXI, awayXI);
+  
   return { ...fixture, result };
 }
 
@@ -626,7 +642,7 @@ export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: 
   const roundFixtures = cupFixtures.filter(f => f.matchday === matchday && !f.result);
 
   for (const f of roundFixtures) {
-    const simmed = simulateFixtureInline(next, f);
+    const simmed = simulateFixtureInline(next, f, false, true);
     const idx = cupFixtures.findIndex(x => x.id === f.id);
     if (idx >= 0) {
       cupFixtures[idx] = simmed;
@@ -693,36 +709,9 @@ export async function simulateCupMatchdayLayered(save: SaveGame, matchday: numbe
           console.warn(`Empty squad for VIP cup fixture ${fixture.id}: ${fixture.homeId} (${homeXI.length}) vs ${fixture.awayId} (${awayXI.length})`);
           result = { homeGoals: 0, awayGoals: 0, events: [], cards: [], injuries: [], xgHome: 0, xgAway: 0 };
         } else {
-          result = simulateMatch(home, away, homeXI, awayXI);
+          // Use cup simulation with extra time and penalties
+          result = simulateCupMatch(home, away, homeXI, awayXI);
           next = applyMatchToStats(next, { ...fixture, result });
-          
-          // For user's cup matches, allow draws to remain as draws (don't auto-simulate extra time)
-          // For AI vs AI matches, auto-simulate extra time and penalties
-          const isUserMatch = fixture.homeId === next.myTeamId || fixture.awayId === next.myTeamId;
-          
-          if (!isUserMatch && result.homeGoals === result.awayGoals) {
-            // Simulate extra time for AI vs AI matches
-            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
-            result.extraTime = {
-              homeGoals: etResult.homeGoals,
-              awayGoals: etResult.awayGoals,
-              events: etResult.events
-            };
-            
-            // Check if still tied after extra time
-            const totalHome = result.homeGoals + etResult.homeGoals;
-            const totalAway = result.awayGoals + etResult.awayGoals;
-            
-            if (totalHome === totalAway) {
-              // Simulate penalty shootout
-              const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
-              result.penalties = {
-                homeGoals: penaltyResult.homeGoals,
-                awayGoals: penaltyResult.awayGoals,
-                shootout: penaltyResult.shootout
-              };
-            }
-          }
         }
       } else {
         // O(1) MATH SIMULATION for background countries (ULTRA FAST)
@@ -935,9 +924,12 @@ export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame 
 export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: SaveGame; fixture: Fixture | null } {
   let next: SaveGame = JSON.parse(JSON.stringify(save));
   
+  console.log("playSpecificFixture called with fixtureId:", fixtureId);
+  
   // Try to find fixture in league fixtures
   let fixture = next.fixtures[next.myLeague].find(f => f.id === fixtureId);
   if (fixture && !fixture.result) {
+    console.log("Found fixture in league fixtures:", fixture.id);
     const simmed = simulateFixtureInline(next, fixture);
     const idx = next.fixtures[next.myLeague].findIndex((x) => x.id === fixtureId);
     if (idx >= 0) {
@@ -952,7 +944,10 @@ export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: 
   for (const lg of Object.keys(next.cupFixtures)) {
     fixture = next.cupFixtures[lg as LeagueId].find(f => f.id === fixtureId);
     if (fixture && !fixture.result) {
-      const simmed = simulateFixtureInline(next, fixture);
+      console.log("Found fixture in cup fixtures:", fixture.id, "league:", lg);
+      // Check if this is a user match - if so, use regular simulation (no auto extra time/penalties)
+      const isUserMatch = fixture.homeId === next.myTeamId || fixture.awayId === next.myTeamId;
+      const simmed = simulateFixtureInline(next, fixture, false, isUserMatch ? false : true);
       const idx = next.cupFixtures[lg as LeagueId].findIndex((x) => x.id === fixtureId);
       if (idx >= 0) {
         next.cupFixtures[lg as LeagueId][idx] = simmed;
@@ -966,6 +961,7 @@ export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: 
   if (next.uclFixtures) {
     fixture = next.uclFixtures.find(f => f.id === fixtureId);
     if (fixture && !fixture.result) {
+      console.log("Found fixture in UCL fixtures:", fixture.id);
       const simmed = simulateFixtureInline(next, fixture);
       const idx = next.uclFixtures.findIndex((x) => x.id === fixtureId);
       if (idx >= 0) {
@@ -976,6 +972,7 @@ export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: 
     }
   }
   
+  console.log("Fixture not found in any competition:", fixtureId);
   return { save: next, fixture: null };
 }
 
@@ -1003,7 +1000,7 @@ export function playMyNextCupMatch(save: SaveGame): { save: SaveGame; fixture: F
   if (myCupFixtures.length === 0) return { save: next, fixture: null };
   
   const my = myCupFixtures[0];
-  const simmed = simulateFixtureInline(next, my);
+  const simmed = simulateFixtureInline(next, my, false, true);
   const idx = next.cupFixtures[next.myLeague].findIndex((x) => x.id === my.id);
   next.cupFixtures[next.myLeague][idx] = simmed;
   next = applyMatchToStats(next, simmed);
@@ -1051,12 +1048,12 @@ function generateFakeMatchResult(home: Team, away: Team): SimResult {
   const awayOvr = (away.att + away.mid + away.def) / 3;
   const diff = homeOvr - awayOvr;
   
-  // Simple RNG
-  const rng = () => Math.floor(Math.random() * 4) - 1;
+  // Increased RNG variation to reduce draws
+  const rng = () => Math.floor(Math.random() * 5) - 2;
   
-  // Base goals
-  let homeGoals = Math.max(0, Math.round(1.2 + diff * 0.03 + rng() * 0.5));
-  let awayGoals = Math.max(0, Math.round(1.0 - diff * 0.03 + rng() * 0.5));
+  // Base goals with more variation
+  let homeGoals = Math.max(0, Math.round(1.2 + diff * 0.05 + rng() * 0.8));
+  let awayGoals = Math.max(0, Math.round(1.0 - diff * 0.05 + rng() * 0.8));
   
   homeGoals = Math.min(homeGoals, 6);
   awayGoals = Math.min(awayGoals, 5);
@@ -1427,7 +1424,7 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
             }
           }
           for (const f of preliminaryFixtures) {
-            const simmed = simulateFixtureInline(save, f);
+            const simmed = simulateFixtureInline(save, f, false, true);
             list.push(simmed);
             applyMatchToStats(save, simmed);
           }
@@ -1592,7 +1589,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
       // sim unplayed
       for (const f of roundFixtures) {
         if (f.result) continue;
-        const sim = simulateFixtureInline(save, f);
+        const sim = simulateFixtureInline(save, f, false, true);
         const idx = list.findIndex((x) => x.id === f.id);
         if (idx >= 0) list[idx] = sim;
         save = applyMatchToStats(save, sim);
@@ -1869,7 +1866,7 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
           
           // Simulate all preliminary fixtures
           for (const f of preliminaryFixtures) {
-            const simmed = simulateFixtureInline(next, f);
+            const simmed = simulateFixtureInline(next, f, false, true);
             const idx = list.findIndex(x => x.id === f.id);
             if (idx >= 0) {
               list[idx] = simmed;
@@ -1946,7 +1943,7 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
       if (!playedAll && leagueMd > step.matchday) {
         for (const f of roundFixtures) {
           if (!f.result) {
-            const simmed = simulateFixtureInline(next, f);
+            const simmed = simulateFixtureInline(next, f, false, true);
             const idx = list.findIndex(x => x.id === f.id);
             if (idx >= 0) {
               list[idx] = simmed;

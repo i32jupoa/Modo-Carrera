@@ -267,8 +267,13 @@ export function simulateMatchFast(
   
   // Use normal distribution approximation for speed (faster than poisson)
   // Significantly increased variance to make draws much more likely in cup matches
-  const homeGoals = Math.max(0, Math.round(lh + (rand() - 0.5) * Math.sqrt(lh) * 4));
-  const awayGoals = Math.max(0, Math.round(la + (rand() - 0.5) * Math.sqrt(la) * 4));
+  let homeGoals = Math.max(0, Math.round(lh + (rand() - 0.5) * Math.sqrt(lh) * 4));
+  let awayGoals = Math.max(0, Math.round(la + (rand() - 0.5) * Math.sqrt(la) * 4));
+  
+  // Force draw for cup matches (temporary for testing)
+  const drawScore = Math.max(homeGoals, awayGoals);
+  homeGoals = drawScore;
+  awayGoals = drawScore;
   
   // Minimal events - with weighted scorer selection and assists
   // Stats are recorded later by applyMatchToStats to avoid duplicates
@@ -418,9 +423,9 @@ export function simulateMatch(
   
   // Add significant randomness to make draws much more likely in cup matches
   // Use a wider range (0.5 to 1.5) to dramatically increase draw probability
-  const homeGoals = poisson(lh * (0.5 + rand()));
-  const awayGoals = poisson(la * (0.5 + rand()));
-
+  let homeGoals = poisson(lh * (0.5 + rand()));
+  let awayGoals = poisson(la * (0.5 + rand()));
+  
   // Stats are recorded later by applyMatchToStats to avoid duplicates
   const events: MatchEvent[] = [];
   
@@ -550,4 +555,64 @@ export function simulatePenaltyShootout(homeXI: Player[], awayXI: Player[]): { h
   }
   
   return { homeGoals, awayGoals, shootout };
+}
+
+// Simulate a full cup match with extra time and penalties
+export function simulateCupMatch(
+  home: Team, away: Team, homeXI: Player[], awayXI: Player[]
+): SimResult {
+  // Simulate regular time (90 minutes)
+  const regularResult = simulateMatch(home, away, homeXI, awayXI);
+  
+  // Check if it's a draw - if so, go to extra time
+  if (regularResult.homeGoals === regularResult.awayGoals) {
+    const extraTimeResult = simulateExtraTime(home, away, homeXI, awayXI);
+    const totalHome = regularResult.homeGoals + extraTimeResult.homeGoals;
+    const totalAway = regularResult.awayGoals + extraTimeResult.awayGoals;
+    
+    // If still tied after extra time, go to penalties
+    if (totalHome === totalAway) {
+      const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+      
+      // Combine all results
+      return {
+        homeGoals: regularResult.homeGoals,
+        awayGoals: regularResult.awayGoals,
+        events: [...regularResult.events, ...extraTimeResult.events],
+        cards: regularResult.cards,
+        injuries: regularResult.injuries,
+        xgHome: regularResult.xgHome,
+        xgAway: regularResult.xgAway,
+        extraTime: {
+          homeGoals: extraTimeResult.homeGoals,
+          awayGoals: extraTimeResult.awayGoals,
+          events: extraTimeResult.events
+        },
+        penalties: {
+          homeGoals: penaltyResult.homeGoals,
+          awayGoals: penaltyResult.awayGoals,
+          shootout: penaltyResult.shootout
+        }
+      };
+    } else {
+      // Match ended in extra time with a winner
+      return {
+        homeGoals: regularResult.homeGoals,
+        awayGoals: regularResult.awayGoals,
+        events: [...regularResult.events, ...extraTimeResult.events],
+        cards: regularResult.cards,
+        injuries: regularResult.injuries,
+        xgHome: regularResult.xgHome,
+        xgAway: regularResult.xgAway,
+        extraTime: {
+          homeGoals: extraTimeResult.homeGoals,
+          awayGoals: extraTimeResult.awayGoals,
+          events: extraTimeResult.events
+        }
+      };
+    }
+  } else {
+    // Match ended in regular time with a winner
+    return regularResult;
+  }
 }

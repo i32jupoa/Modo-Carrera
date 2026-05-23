@@ -7,6 +7,17 @@ import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -56,10 +67,8 @@ function Index() {
   }
 
   function resetGame() {
-    if (confirm("¿Borrar la partida guardada y empezar de cero?")) {
-      clearSave();
-      setHasSave(false);
-    }
+    clearSave();
+    setHasSave(false);
   }
 
   return (
@@ -89,12 +98,27 @@ function Index() {
             >
               Continuar partida →
             </Link>
-            <button
-              onClick={resetGame}
-              className="px-4 py-3 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-destructive/60 transition text-sm"
-            >
-              Nueva partida
-            </button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <button className="px-4 py-3 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-destructive/60 transition text-sm">
+                  Nueva partida
+                </button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Borrar la partida guardada y empezar de cero?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Esta acción eliminará permanentemente tu partida guardada y todos los progresos. No se puede deshacer.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={resetGame} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                    Borrar y empezar
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         )}
       </section>

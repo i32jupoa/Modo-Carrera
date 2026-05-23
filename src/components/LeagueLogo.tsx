@@ -15,20 +15,22 @@ interface LeagueLogoProps {
   league: string;
   className?: string;
   size?: "sm" | "md" | "lg";
+  fallback?: React.ReactNode;
 }
 
-export function LeagueLogo({ league, className = "", size = "sm" }: LeagueLogoProps) {
+export function LeagueLogo({ league, className = "", size = "sm", fallback }: LeagueLogoProps) {
   const [error, setError] = useState(false);
   
   const sizeClasses = size === "sm" ? "w-6 h-6" : size === "md" ? "w-8 h-8" : "w-10 h-10";
+  const logoUrl = getLeagueLogoUrl(league);
   
   if (error) {
-    return null; // Hide image if logo is missing
+    return fallback || null; // Show fallback or hide if logo is missing
   }
   
   return (
     <img
-      src={getLeagueLogoUrl(league)}
+      src={logoUrl}
       alt={league}
       className={`${sizeClasses} object-contain ${className}`}
       onError={() => setError(true)}

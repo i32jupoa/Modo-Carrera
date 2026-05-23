@@ -39,6 +39,10 @@ function MatchPage() {
   const extraTimeEventsRef = useRef<MatchEvent[]>([]);
   const fixtureRef = useRef<Fixture | null>(null);
   const clockTimeoutRef = useRef<number | null>(null);
+  const extraTimeHomeScoreRef = useRef(0);
+  const extraTimeAwayScoreRef = useRef(0);
+  const homeXIRef = useRef<any[]>([]);
+  const awayXIRef = useRef<any[]>([]);
   const fixtures = usePlayersStore((s) => s.fixtures);
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
   const pendingUserMatch = usePlayersStore((s) => s.pendingUserMatch);
@@ -47,6 +51,8 @@ function MatchPage() {
   const [matchType, setMatchType] = useState<'LEAGUE' | 'CUP' | 'UCL'>('LEAGUE');
   const [cupRound, setCupRound] = useState<string | undefined>(undefined);
   const [returningFromLineupEdit, setReturningFromLineupEdit] = useState(false);
+  const [penaltyShootoutIndex, setPenaltyShootoutIndex] = useState(0);
+  const [penaltyShootoutData, setPenaltyShootoutData] = useState<any[]>([]);
 
   // Extract temporary lineup from router state (if passed from lineup page)
   const routerState = location.state as any;
@@ -125,6 +131,13 @@ function MatchPage() {
     if (!save || !fixtureRef.current) return;
     
     const fixture = fixtureRef.current;
+    
+    // Check if fixture already has extra time result - don't allow going to extra time again
+    if (fixture.result?.extraTime) {
+      console.log("Fixture already has extra time result, cannot go to extra time again");
+      return;
+    }
+    
     const home = teamById(fixture.homeId);
     const away = teamById(fixture.awayId);
     if (!home || !away) return;
@@ -158,11 +171,19 @@ function MatchPage() {
       if (eventsAtMinute.length > 0) {
         setFeed(prev => [...prev, ...eventsAtMinute]);
         
-        // Update scores
+        // Update scores using refs for immediate access
         eventsAtMinute.forEach(ev => {
           if (ev.type === "goal") {
-            if (ev.team === "home") setExtraTimeHomeScore(s => s + 1);
-            else setExtraTimeAwayScore(s => s + 1);
+            console.log(`Goal at minute ${m}: ${ev.team} team scores`);
+            if (ev.team === "home") {
+              extraTimeHomeScoreRef.current += 1;
+              setExtraTimeHomeScore(extraTimeHomeScoreRef.current);
+              console.log(`Extra time home score: ${extraTimeHomeScoreRef.current - 1} -> ${extraTimeHomeScoreRef.current}`);
+            } else {
+              extraTimeAwayScoreRef.current += 1;
+              setExtraTimeAwayScore(extraTimeAwayScoreRef.current);
+              console.log(`Extra time away score: ${extraTimeAwayScoreRef.current - 1} -> ${extraTimeAwayScoreRef.current}`);
+            }
           }
         });
       }
@@ -175,6 +196,8 @@ function MatchPage() {
           window.clearTimeout(clockTimeoutRef.current);
           clockTimeoutRef.current = null;
         }
+        console.log(`Clock reached 120, calling handleExtraTimeFinished`);
+        console.log(`Current state: homeScore=${homeScore}, awayScore=${awayScore}, extraTimeHomeScore=${extraTimeHomeScore}, extraTimeAwayScore=${extraTimeAwayScore}`);
         handleExtraTimeFinished();
       }
     };
@@ -183,10 +206,12 @@ function MatchPage() {
   }
   
   function handleExtraTimeFinished() {
-    const totalHomeScore = homeScore + extraTimeHomeScore;
-    const totalAwayScore = awayScore + extraTimeAwayScore;
+    const totalHomeScore = homeScore + extraTimeHomeScoreRef.current;
+    const totalAwayScore = awayScore + extraTimeAwayScoreRef.current;
     
-    console.log(`Extra time finished: Home: ${homeScore} + ${extraTimeHomeScore} = ${totalHomeScore}, Away: ${awayScore} + ${extraTimeAwayScore} = ${totalAwayScore}`);
+    console.log(`Extra time finished: Home: ${homeScore} + ${extraTimeHomeScoreRef.current} = ${totalHomeScore}, Away: ${awayScore} + ${extraTimeAwayScoreRef.current} = ${totalAwayScore}`);
+    console.log(`Comparison: ${totalHomeScore} === ${totalAwayScore} = ${totalHomeScore === totalAwayScore}`);
+    console.log(`Type check: typeof totalHomeScore = ${typeof totalHomeScore}, typeof totalAwayScore = ${typeof totalAwayScore}`);
     
     if (totalHomeScore === totalAwayScore) {
       // Go to penalties
@@ -206,37 +231,147 @@ function MatchPage() {
     const homeXI = getSimSquad(fixture.homeId);
     const awayXI = getSimSquad(fixture.awayId);
     
-    // Simulate penalty shootout
-    const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
-    setPenaltyHomeScore(penaltyResult.homeGoals);
-    setPenaltyAwayScore(penaltyResult.awayGoals);
+    // Store XIs in refs for use in skipPenaltyShootoutToEnd
+    homeXIRef.current = homeXI;
+    awayXIRef.current = awayXI;
     
-    // Show penalty shootout events in feed with a special type
-    const penaltyEvents: MatchEvent[] = penaltyResult.shootout.map((shot, idx) => ({
-      minute: 120 + idx,
-      team: shot.team === 'home' ? 'home' : 'away',
-      type: 'penalty' as any, // Use special type for penalties
-      scorerId: shot.playerId,
-      scorerName: shot.playerId ? homeXI.find(p => p.id === shot.playerId)?.name || awayXI.find(p => p.id === shot.playerId)?.name : 'Unknown',
-    }));
-    setFeed(prev => [...prev, ...penaltyEvents]);
+    // Simulate penalty shootout data
+    const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+    setPenaltyShootoutData(penaltyResult.shootout);
+    setPenaltyShootoutIndex(0);
+    
+    // Start visual penalty shootout
+    setPhase("penalties");
+    runPenaltyShootoutClock(penaltyResult.shootout, homeXI, awayXI);
+  }
+  
+  function runPenaltyShootoutClock(shootout: any[], homeXI: any[], awayXI: any[]) {
+    let idx = 0;
+    const tick = () => {
+      if (idx >= shootout.length) {
+        // Shootout complete - calculate final scores and finish
+        const finalHomeScore = shootout.filter(s => s.team === 'home' && s.scored).length;
+        const finalAwayScore = shootout.filter(s => s.team === 'away' && s.scored).length;
+        handlePenaltyShootoutFinished(finalHomeScore, finalAwayScore);
+        return;
+      }
+      
+      const shot = shootout[idx];
+      
+      // Get player name from the appropriate XI
+      const playerXI = shot.team === 'home' ? homeXI : awayXI;
+      const player = playerXI.find(p => p.id === shot.playerId);
+      const playerName = player ? player.name : 'Unknown';
+      
+      // Add penalty event to feed with scored/missed information
+      const penaltyEvent: MatchEvent = {
+        minute: 120 + idx,
+        team: shot.team === 'home' ? 'home' : 'away',
+        type: 'penalty' as any,
+        scorerId: shot.playerId,
+        scorerName: playerName,
+        assistName: shot.scored ? '✅ Anotado' : '❌ Fallado',
+      };
+      setFeed(prev => [...prev, penaltyEvent]);
+      
+      // Update penalty scores
+      if (shot.team === 'home') {
+        if (shot.scored) setPenaltyHomeScore(s => s + 1);
+      } else {
+        if (shot.scored) setPenaltyAwayScore(s => s + 1);
+      }
+      
+      setPenaltyShootoutIndex(idx + 1);
+      
+      // Check if shootout should end early (traditional format)
+      const homeGoals = penaltyShootoutData.slice(0, idx + 1).filter(s => s.team === 'home' && s.scored).length;
+      const awayGoals = penaltyShootoutData.slice(0, idx + 1).filter(s => s.team === 'away' && s.scored).length;
+      const roundsPlayed = Math.ceil((idx + 1) / 2);
+      
+      // Check if winner is determined after 5 rounds or in sudden death
+      if (roundsPlayed >= 5) {
+        const remainingShots = shootout.length - (idx + 1);
+        const maxPossibleHome = homeGoals + Math.ceil(remainingShots / 2);
+        const maxPossibleAway = awayGoals + Math.floor(remainingShots / 2);
+        
+        if (homeGoals > maxPossibleAway || awayGoals > maxPossibleHome) {
+          // Winner determined, calculate final scores and stop shootout
+          const finalHomeScore = shootout.filter(s => s.team === 'home' && s.scored).length;
+          const finalAwayScore = shootout.filter(s => s.team === 'away' && s.scored).length;
+          setTimeout(() => handlePenaltyShootoutFinished(finalHomeScore, finalAwayScore), 500);
+          return;
+        }
+      }
+      
+      idx++;
+      clockTimeoutRef.current = window.setTimeout(tick, 2000);
+    };
+    
+    clockTimeoutRef.current = window.setTimeout(tick, 2000);
+  }
+  
+  function handlePenaltyShootoutFinished(homePenaltyScore?: number, awayPenaltyScore?: number) {
+    if (!save || !fixtureRef.current) return;
+    
+    const fixture = fixtureRef.current;
+    
+    // Use provided scores or current state
+    const finalHomePenaltyScore = homePenaltyScore !== undefined ? homePenaltyScore : penaltyHomeScore;
+    const finalAwayPenaltyScore = awayPenaltyScore !== undefined ? awayPenaltyScore : penaltyAwayScore;
+    
+    console.log(`handlePenaltyShootoutFinished: finalHomePenaltyScore=${finalHomePenaltyScore}, finalAwayPenaltyScore=${finalAwayPenaltyScore}`);
     
     // Save result with penalties
     updateFixtureInStore(
       fixture.id,
-      homeScore + extraTimeHomeScore,
-      awayScore + extraTimeAwayScore,
+      homeScore + extraTimeHomeScoreRef.current,
+      awayScore + extraTimeAwayScoreRef.current,
       true,
-      { homeGoals: extraTimeHomeScore, awayGoals: extraTimeAwayScore },
-      { homeGoals: penaltyResult.homeGoals, awayGoals: penaltyResult.awayGoals }
+      { homeGoals: extraTimeHomeScoreRef.current, awayGoals: extraTimeAwayScoreRef.current },
+      { homeGoals: finalHomePenaltyScore, awayGoals: finalAwayPenaltyScore }
     );
     
-    // Clear pending match after simulation
-    usePlayersStore.setState({ pendingUserMatch: null });
-    
-    // Set phase to done immediately, then simulate remaining matches in background
-    setPhase("done");
-    simulateRemainingCupMatches(fixture.matchday);
+    // Reload the fixture from save to get updated result
+    const s = loadSave();
+    if (s) {
+      for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
+        const found = fixtures.find(f => f.id === fixture.id);
+        if (found) {
+          fixtureRef.current = found;
+          console.log("Reloaded fixture with result after penalties:", found.result);
+          break;
+        }
+      }
+      
+      // Update the save state with the reloaded save
+      setSave(s);
+      
+      // Clear pending match after simulation
+      usePlayersStore.setState({ pendingUserMatch: null });
+      
+      // Clear clock timeout
+      if (clockTimeoutRef.current !== null) {
+        window.clearTimeout(clockTimeoutRef.current);
+        clockTimeoutRef.current = null;
+      }
+      
+      // Set phase to done immediately, then simulate remaining matches in background
+      setPhase("done");
+      simulateRemainingCupMatches(fixture.matchday, s);
+    } else {
+      // Clear pending match after simulation
+      usePlayersStore.setState({ pendingUserMatch: null });
+      
+      // Clear clock timeout
+      if (clockTimeoutRef.current !== null) {
+        window.clearTimeout(clockTimeoutRef.current);
+        clockTimeoutRef.current = null;
+      }
+      
+      // Set phase to done immediately, then simulate remaining matches in background
+      setPhase("done");
+      simulateRemainingCupMatches(fixture.matchday, save);
+    }
   }
   
   function handleMatchEndWithExtraTime() {
@@ -244,27 +379,60 @@ function MatchPage() {
     
     const fixture = fixtureRef.current;
     
+    console.log(`handleMatchEndWithExtraTime called: homeScore=${homeScore}, extraTimeHomeScoreRef=${extraTimeHomeScoreRef.current}, awayScore=${awayScore}, extraTimeAwayScoreRef=${extraTimeAwayScoreRef.current}`);
+    
     // Save result with extra time
     updateFixtureInStore(
       fixture.id,
-      homeScore + extraTimeHomeScore,
-      awayScore + extraTimeAwayScore,
+      homeScore + extraTimeHomeScoreRef.current,
+      awayScore + extraTimeAwayScoreRef.current,
       true,
-      { homeGoals: extraTimeHomeScore, awayGoals: extraTimeAwayScore }
+      { homeGoals: extraTimeHomeScoreRef.current, awayGoals: extraTimeAwayScoreRef.current }
     );
     
-    // Clear pending match after simulation
-    usePlayersStore.setState({ pendingUserMatch: null });
-    
-    // Set phase to done immediately, then simulate remaining matches in background
-    setPhase("done");
-    simulateRemainingCupMatches(fixture.matchday);
+    // Reload the fixture from save to get updated result
+    const s = loadSave();
+    if (s) {
+      for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
+        const found = fixtures.find(f => f.id === fixture.id);
+        if (found) {
+          fixtureRef.current = found;
+          console.log("Reloaded fixture with result:", found.result);
+          break;
+        }
+      }
+      
+      // Update the save state with the reloaded save
+      setSave(s);
+      
+      // Clear pending match after simulation
+      usePlayersStore.setState({ pendingUserMatch: null });
+      
+      // Set phase to done immediately, then simulate remaining matches in background
+      console.log("Setting phase to done in handleMatchEndWithExtraTime");
+      setPhase("done");
+      simulateRemainingCupMatches(fixture.matchday, s);
+    } else {
+      // Clear pending match after simulation
+      usePlayersStore.setState({ pendingUserMatch: null });
+      
+      // Set phase to done immediately, then simulate remaining matches in background
+      console.log("Setting phase to done in handleMatchEndWithExtraTime");
+      setPhase("done");
+      simulateRemainingCupMatches(fixture.matchday, save);
+    }
   }
   
-  async function simulateRemainingCupMatches(matchday: number) {
+  async function simulateRemainingCupMatches(matchday: number, saveToUse: SaveGame | null = null) {
     try {
+      const currentSave = saveToUse || save;
       console.log("Post-extra-time: Simulating remaining CUP matches for matchday:", matchday);
-      const updatedSave = await simulateCupMatchdayLayered(save, matchday, (done, total) => {
+      console.log("simulateRemainingCupMatches: saveToUse provided?", !!saveToUse);
+      if (saveToUse) {
+        const userFixture = Object.values(saveToUse.cupFixtures).flat().find(f => f.homeId === saveToUse.myTeamId || f.awayId === saveToUse.myTeamId);
+        console.log("simulateRemainingCupMatches: user fixture in saveToUse:", userFixture ? JSON.stringify(userFixture.result, null, 2) : "not found");
+      }
+      const updatedSave = await simulateCupMatchdayLayered(currentSave, matchday, (done, total) => {
         console.log(`Cup matches: ${done}/${total}`);
       });
       saveSave(updatedSave);
@@ -276,14 +444,18 @@ function MatchPage() {
   }
 
   function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number, isCup: boolean = false, extraTimeData?: { homeGoals: number; awayGoals: number }, penaltyData?: { homeGoals: number; awayGoals: number }) {
+    console.log(`updateFixtureInStore called: fixtureId=${fixtureId}, homeScore=${homeScore}, awayScore=${awayScore}, isCup=${isCup}, extraTimeData=${JSON.stringify(extraTimeData)}, penaltyData=${JSON.stringify(penaltyData)}`);
+    
     if (isCup) {
       const s = loadSave();
       if (s) {
+        // For cup matches, homeGoals and awayGoals should be regular time only
+        // extraTime.homeGoals and extraTime.awayGoals are the additional goals in extra time
         const result: any = { 
-          homeGoals: homeScore, 
-          awayGoals: awayScore, 
-          events: [], 
-          cards: [], 
+          homeGoals: homeScore - (extraTimeData?.homeGoals || 0), 
+          awayGoals: awayScore - (extraTimeData?.awayGoals || 0), 
+          events: allEventsRef.current, 
+          cards: allCardsRef.current, 
           injuries: [], 
           xgHome: 0, 
           xgAway: 0 
@@ -293,25 +465,46 @@ function MatchPage() {
           result.extraTime = {
             homeGoals: extraTimeData.homeGoals,
             awayGoals: extraTimeData.awayGoals,
-            events: []
+            events: extraTimeEventsRef.current
           };
+          console.log("Adding extraTime to result:", result.extraTime);
         }
         
         if (penaltyData) {
           result.penalties = {
             homeGoals: penaltyData.homeGoals,
             awayGoals: penaltyData.awayGoals,
-            shootout: []
+            shootout: penaltyShootoutData
           };
+          console.log("Adding penalties to result:", result.penalties);
         }
         
-        const updated = s.cupFixtures[s.myLeague].map((f) =>
+        console.log("Final result to save:", result);
+        
+        // Find the fixture to determine which league it belongs to
+        let fixtureLeague = s.myLeague;
+        for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
+          const found = fixtures.find(f => f.id === fixtureId);
+          if (found) {
+            fixtureLeague = league;
+            break;
+          }
+        }
+        
+        const leagueFixtures = s.cupFixtures[fixtureLeague];
+        if (!leagueFixtures) {
+          console.error(`No cup fixtures found for league: ${fixtureLeague}`);
+          return;
+        }
+        
+        const updated = leagueFixtures.map((f) =>
           f.id === fixtureId
             ? { ...f, result }
             : f
         );
-        const newSave = { ...s, cupFixtures: { ...s.cupFixtures, [s.myLeague]: updated } };
+        const newSave = { ...s, cupFixtures: { ...s.cupFixtures, [fixtureLeague]: updated } };
         saveSave(newSave);
+        console.log("Result saved successfully");
       }
     } else {
       const updated = fixtures.map((f) =>
@@ -371,6 +564,10 @@ function MatchPage() {
       
       // If fixture has a result, load it into the UI
       if (foundFixture?.result) {
+        console.log("Loading fixture with result:", foundFixture.result);
+        console.log("Has extraTime:", !!foundFixture.result.extraTime);
+        console.log("Has penalties:", !!foundFixture.result.penalties);
+        
         allEventsRef.current = foundFixture.result.events;
         allCardsRef.current = foundFixture.result.cards || [];
         setHomeScore(foundFixture.result.homeGoals);
@@ -378,12 +575,37 @@ function MatchPage() {
         setFeed(foundFixture.result.events.slice().reverse());
         setCardFeed((foundFixture.result.cards || []).slice().reverse());
         setMinute(90);
+        
+        // Load extra time data if present
+        if (foundFixture.result.extraTime) {
+          console.log("Loading extra time data:", foundFixture.result.extraTime);
+          setExtraTimeHomeScore(foundFixture.result.extraTime.homeGoals);
+          setExtraTimeAwayScore(foundFixture.result.extraTime.awayGoals);
+          extraTimeHomeScoreRef.current = foundFixture.result.extraTime.homeGoals;
+          extraTimeAwayScoreRef.current = foundFixture.result.extraTime.awayGoals;
+          extraTimeEventsRef.current = foundFixture.result.extraTime.events || [];
+          setMinute(120);
+        }
+        
+        // Load penalty data if present
+        if (foundFixture.result.penalties) {
+          console.log("Loading penalty data:", foundFixture.result.penalties);
+          setPenaltyHomeScore(foundFixture.result.penalties.homeGoals);
+          setPenaltyAwayScore(foundFixture.result.penalties.awayGoals);
+          setPenaltyShootoutData(foundFixture.result.penalties.shootout || []);
+        }
+        
         setPhase("done");
         setIsCupMatch(foundFixture.competition === "cup");
+        console.log("Phase set to done, isCupMatch:", foundFixture.competition === "cup");
       }
     } else {
       // Use getMyNextFixtureAny to find next match from any competition
       fixtureRef.current = getMyNextFixtureAny(saveToUse);
+      // Set isCupMatch based on fixture competition
+      if (fixtureRef.current) {
+        setIsCupMatch(fixtureRef.current.competition === "cup");
+      }
     }
     
     if (!fixtureRef.current) {
@@ -498,6 +720,53 @@ function MatchPage() {
     setCardFeed(allCardsRef.current.slice().reverse());
     setMinute(90);
     setPhase("done");
+  }
+  
+  function skipPenaltyShootoutToEnd() {
+    // Clear the running clock timeout immediately
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+    
+    // Calculate final penalty scores
+    let finalHomeScore = penaltyHomeScore;
+    let finalAwayScore = penaltyAwayScore;
+    
+    // Add all remaining penalty events to feed
+    const remainingShots = penaltyShootoutData.slice(penaltyShootoutIndex);
+    remainingShots.forEach((shot, idx) => {
+      // Get player name from the appropriate XI ref
+      const playerXI = shot.team === 'home' ? homeXIRef.current : awayXIRef.current;
+      const player = playerXI.find(p => p.id === shot.playerId);
+      const playerName = player ? player.name : 'Unknown';
+      
+      const penaltyEvent: MatchEvent = {
+        minute: 120 + penaltyShootoutIndex + idx,
+        team: shot.team === 'home' ? 'home' : 'away',
+        type: 'penalty' as any,
+        scorerId: shot.playerId,
+        scorerName: playerName,
+        assistName: shot.scored ? '✅ Anotado' : '❌ Fallado',
+      };
+      setFeed(prev => [...prev, penaltyEvent]);
+      
+      // Update penalty scores
+      if (shot.team === 'home') {
+        if (shot.scored) {
+          setPenaltyHomeScore(s => s + 1);
+          finalHomeScore++;
+        }
+      } else {
+        if (shot.scored) {
+          setPenaltyAwayScore(s => s + 1);
+          finalAwayScore++;
+        }
+      }
+    });
+    
+    // Finish shootout with calculated scores
+    handlePenaltyShootoutFinished(finalHomeScore, finalAwayScore);
   }
   
   function skipExtraTimeToEnd() {
@@ -621,9 +890,21 @@ function MatchPage() {
             <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" cards={cardFeed.filter(c => c.team === 'home')} />
           </div>
           <div className="scoreline text-5xl md:text-7xl font-black">
-            {phase === "preview" ? "–" : phase === "extra_time" ? homeScore + extraTimeHomeScore : homeScore}
+            {phase === "preview" ? "–" : 
+             phase === "extra_time" ? homeScore + extraTimeHomeScore : 
+             phase === "penalties" ? `${homeScore + extraTimeHomeScore}(${penaltyHomeScore})` :
+             phase === "done" && fixtureRef.current?.result?.penalties ? `${(fixtureRef.current.result.homeGoals + (fixtureRef.current.result.extraTime?.homeGoals || 0))}(${fixtureRef.current.result.penalties.homeGoals})` :
+             phase === "done" && fixtureRef.current?.result?.extraTime ? fixtureRef.current.result.homeGoals + fixtureRef.current.result.extraTime.homeGoals :
+             phase === "done" ? fixtureRef.current?.result?.homeGoals || homeScore :
+             homeScore}
             <span className="text-muted-foreground mx-2 md:mx-3">:</span>
-            {phase === "preview" ? "–" : phase === "extra_time" ? awayScore + extraTimeAwayScore : awayScore}
+            {phase === "preview" ? "–" : 
+             phase === "extra_time" ? awayScore + extraTimeAwayScore : 
+             phase === "penalties" ? `${penaltyAwayScore})${awayScore + extraTimeAwayScore}` :
+             phase === "done" && fixtureRef.current?.result?.penalties ? `${fixtureRef.current.result.penalties.awayGoals})${(fixtureRef.current.result.awayGoals + (fixtureRef.current.result.extraTime?.awayGoals || 0))}` :
+             phase === "done" && fixtureRef.current?.result?.extraTime ? fixtureRef.current.result.awayGoals + fixtureRef.current.result.extraTime.awayGoals :
+             phase === "done" ? fixtureRef.current?.result?.awayGoals || awayScore :
+             awayScore}
           </div>
           <div className="flex flex-col items-center gap-2 md:gap-3">
             <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={64} />
@@ -678,11 +959,20 @@ function MatchPage() {
               Saltar al final
             </button>
           )}
+          {phase === "penalties" && (
+            <button onClick={skipPenaltyShootoutToEnd} className="px-6 py-2.5 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition">
+              Saltar al final
+            </button>
+          )}
           {phase === "done" && (
             <>
-              {(isCupMatch || fixture?.competition === "cup") && homeScore === awayScore && !fixtureRef.current?.result?.penalties ? (
-                // Cup match ended in draw - show edit lineup and extra time buttons
-                // Only show these if there are no penalties yet (match hasn't been resolved)
+              {console.log("Phase done - checking buttons: isCupMatch=", isCupMatch, "fixture.competition=", fixture?.competition, "hasExtraTime=", !!fixtureRef.current?.result?.extraTime, "hasPenalties=", !!fixtureRef.current?.result?.penalties)}
+              {console.log("Phase done - fixture result:", JSON.stringify(fixtureRef.current?.result, null, 2))}
+              {(isCupMatch || fixture?.competition === "cup") && 
+               fixtureRef.current?.result?.homeGoals === fixtureRef.current?.result?.awayGoals &&
+               !fixtureRef.current?.result?.extraTime && 
+               !fixtureRef.current?.result?.penalties ? (
+                // Cup match ended in draw without extra time/penalties - show edit lineup and extra time buttons
                 <div className="flex gap-2">
                   <button 
                     onClick={() => navigate({ to: "/lineup", state: { fromMatch: true, returningFromLineupEdit: true, matchType, cupRound, fixtureId: fixture.id } })}
@@ -698,7 +988,7 @@ function MatchPage() {
                   </button>
                 </div>
               ) : (
-                // Normal match or cup match with winner - show return to season button
+                // Normal match or cup match with winner/resolved - show return to season button
                 <button onClick={handleReturnToSeason} disabled={isSimulating} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition disabled:opacity-50">
                   {isSimulating ? 'Simulando...' : 'Volver a la temporada →'}
                 </button>
@@ -750,7 +1040,10 @@ function MatchPage() {
                       <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
                       <div className="text-sm min-w-0">
                         <span className="font-bold">{e.scorerName}</span>
-                        {e.assistName && !isPenalty && (
+                        {isPenalty && e.assistName && (
+                          <span className="text-muted-foreground"> · {e.assistName}</span>
+                        )}
+                        {!isPenalty && e.assistName && (
                           <span className="text-muted-foreground"> · asist. {e.assistName}</span>
                         )}
                         <span className="text-muted-foreground"> ({scoringTeam.short})</span>

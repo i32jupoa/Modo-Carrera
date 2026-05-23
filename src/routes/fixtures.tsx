@@ -9,6 +9,14 @@ import { LEAGUES, teamById, type LeagueId } from "@/data/teams";
 import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
 
 import { TeamLogo } from "@/components/TeamLogo";
+import { LeagueLogo } from "@/components/LeagueLogo";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { ChevronDown } from "lucide-react";
 
 
 
@@ -107,17 +115,27 @@ function FixturesPage() {
 
         <Link to="/season" className="text-sm text-muted-foreground hover:text-foreground">← Temporada</Link>
 
-        <select value={league} onChange={(e) => setLeague(e.target.value as LeagueId)}
-
-          className="bg-secondary border border-border rounded px-3 py-1.5 text-sm">
-
-          {ALL_LEAGUES.map((lg) => (
-
-            <option key={lg} value={lg}>{LEAGUES[lg].flag} {LEAGUES[lg].name}</option>
-
-          ))}
-
-        </select>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="bg-secondary border border-border rounded px-3 py-1.5 text-sm flex items-center gap-2 hover:border-primary/60 transition">
+              <LeagueLogo league={LEAGUES[league].name} size="sm" fallback={<span className="text-xs">{LEAGUES[league].flag}</span>} />
+              {LEAGUES[league].name}
+              <ChevronDown className="w-3 h-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            {ALL_LEAGUES.map((lg) => (
+              <DropdownMenuItem
+                key={lg}
+                onClick={() => setLeague(lg)}
+                className="flex items-center gap-2"
+              >
+                <LeagueLogo league={LEAGUES[lg].name} size="sm" fallback={<span className="text-xs">{LEAGUES[lg].flag}</span>} />
+                {LEAGUES[lg].name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
       </div>
 

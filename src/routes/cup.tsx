@@ -15,6 +15,7 @@ function getLeagueName(leagueId: string): string {
 
 // Helper to format cup result with extra time or penalties
 function formatCupResult(result: any): string {
+  console.log("formatCupResult called with:", JSON.stringify(result, null, 2));
   if (!result) return "vs";
   
   const { homeGoals, awayGoals, extraTime, penalties } = result;
@@ -24,20 +25,28 @@ function formatCupResult(result: any): string {
     // The score shown is the result after 120 minutes (regular + extra time)
     const totalHome = homeGoals + (extraTime?.homeGoals || 0);
     const totalAway = awayGoals + (extraTime?.awayGoals || 0);
-    return `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
+    const formatted = `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
+    console.log("Formatted with penalties:", formatted);
+    return formatted;
   } else if (extraTime) {
     // Only show (prórroga) if there's a winner after extra time (not tied)
     const totalHome = homeGoals + extraTime.homeGoals;
     const totalAway = awayGoals + extraTime.awayGoals;
     if (totalHome !== totalAway) {
       // Format: España 1 - 0 Países Bajos (prórroga)
-      return `${totalHome} - ${totalAway} (prórroga)`;
+      const formatted = `${totalHome} - ${totalAway} (prórroga)`;
+      console.log("Formatted with extra time (winner):", formatted);
+      return formatted;
     }
     // If still tied after extra time, don't show (prórroga) since it went to penalties
-    return `${totalHome} - ${totalAway}`;
+    const formatted = `${totalHome} - ${totalAway}`;
+    console.log("Formatted with extra time (tied):", formatted);
+    return formatted;
   }
   
-  return `${homeGoals} - ${awayGoals}`;
+  const formatted = `${homeGoals} - ${awayGoals}`;
+  console.log("Formatted regular time:", formatted);
+  return formatted;
 }
 
 // Helper to determine winner of a cup match (considering extra time and penalties)
@@ -226,6 +235,12 @@ export function KOFixtureRow({ f, myId }: { f: Fixture; myId: string }) {
   const away = teamById(f.awayId);
   const isMine = f.homeId === myId || f.awayId === myId;
   const winner = getCupMatchWinner(f.result);
+  
+  // Log for debugging user's fixtures
+  if (isMine) {
+    console.log(`KOFixtureRow for user fixture ${f.id}:`, JSON.stringify(f.result, null, 2));
+  }
+  
   return (
     <div className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3 ${isMine ? "bg-primary/5" : ""}`}>
       <div className="flex items-center gap-2 justify-end min-w-0">
