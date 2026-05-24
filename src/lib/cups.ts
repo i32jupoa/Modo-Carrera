@@ -131,17 +131,12 @@ export function getTotalTeamsInCountry(country: string): number {
   return total;
 }
 
-// Module-level caches — computed once per country, never change within a session
-const _cupStructureCache = new Map<string, { schedule: { matchday: number; round: string; size: number; drawMatchday: number }[]; preliminaryTeams: number; mainBracketSize: number }>();
-const _initCupCache = new Map<string, { fixtures: any[]; participants: string[]; preliminaryParticipants: string[]; structure: any }>();
-
 // Generate dynamic cup structure based on total teams in country
 export function getCupStructureForCountry(country: string): { 
   schedule: { matchday: number; round: string; size: number; drawMatchday: number }[];
   preliminaryTeams: number;
   mainBracketSize: number;
 } {
-  if (_cupStructureCache.has(country)) return _cupStructureCache.get(country)!;
   const totalTeams = getTotalTeamsInCountry(country);
   
   // Determine the main bracket size based on total teams
@@ -225,9 +220,7 @@ export function getCupStructureForCountry(country: string): {
     }
   }
 
-  const result = { schedule, preliminaryTeams, mainBracketSize };
-  _cupStructureCache.set(country, result);
-  return result;
+  return { schedule, preliminaryTeams, mainBracketSize };
 }
 
 // Generate dynamic cup schedule based on actual bracket size (legacy function)
@@ -242,7 +235,6 @@ export function getCupScheduleForSize(teamCount: number): { matchday: number; ro
 }
 
 export function initCup(country: string): { fixtures: Fixture[]; participants: string[]; preliminaryParticipants: string[]; structure: ReturnType<typeof getCupStructureForCountry> } {
-  if (_initCupCache.has(country)) return _initCupCache.get(country) as any;
   // Get all teams for this country
   const allTeams = getAllTeams().filter(t => {
     const league = LEAGUES[t.league as LeagueId];
@@ -260,14 +252,12 @@ export function initCup(country: string): { fixtures: Fixture[]; participants: s
   const preliminaryParticipants = bracket.preliminaryTeams.map(t => t.id);
   const mainBracketParticipants = bracket.byeTeams.map(t => t.id);
   
-  const result = {
+  return {
     fixtures: [],
     participants: mainBracketParticipants,
     preliminaryParticipants,
     structure
   };
-  _initCupCache.set(country, result);
-  return result;
 }
 
 /* ============================================================

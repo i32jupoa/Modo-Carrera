@@ -166,7 +166,7 @@ function getCupMatchWinner(result: any): "home" | "away" {
 
 export function fixCupDraws(save: SaveGame): SaveGame {
 
-  let next: SaveGame = structuredClone(save);
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
 
   let fixed = false;
 
@@ -1602,7 +1602,7 @@ export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: 
 
 export async function simulateCupMatchdayLayered(save: SaveGame, matchday: number, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
 
-  let next: SaveGame = structuredClone(save);
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
 
   const BATCH_SIZE = 100;
 
@@ -2809,7 +2809,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
 
-  let next: SaveGame = structuredClone(save);
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
 
   const BATCH_SIZE = 100; // Larger batches since we're using O(1) math for background leagues
 
@@ -2846,6 +2846,8 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
   
 
   // console.log(`advanceMatchdayLayered: Total fixtures to simulate: ${allFixtures.length}`);
+
+  // console.log(`advanceMatchdayLayered: Leagues with fixtures:`, [...new Set(allFixtures.map(f => f.league))]);
 
   
 
@@ -2957,15 +2959,19 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
     
 
-    // Yield control every batch to keep UI responsive
+    // Yield control every few batches to prevent UI blocking
 
-    await new Promise(resolve => setTimeout(resolve, 0));
+    if (i % (BATCH_SIZE * 2) === 0) {
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+    }
 
   }
 
   
 
-  // console.log(`advanceMatchdayLayered: Completed. Processed ${processed}/${totalMatches} matches`);
+  console.log(`advanceMatchdayLayered: Completed. Processed ${processed}/${totalMatches} matches`);
 
   
 
@@ -2999,6 +3005,8 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
   // Process cup draws without simulating matches
 
+  console.time('processCupDraws');
+
   const cupLeagues = Object.keys(next.cupFixtures) as LeagueId[];
 
   for (const cupLg of cupLeagues) {
@@ -3006,6 +3014,8 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
     processCupDrawsOnly(next, cupLg);
 
   }
+
+  console.timeEnd('processCupDraws');
 
   
 
@@ -3721,20 +3731,16 @@ export function getCurrentCupRound(save: SaveGame, league: LeagueId): string | n
 
 export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveGame {
 
-  // Cup starts July 7, 2025. cupDayOffset = days since July 7th.
-  const CUP_START = new Date("2025-07-07T00:00:00Z");
-  const todayDate = currentDate ? new Date(currentDate + "T00:00:00Z") : new Date();
-  const cupDayOffset = Math.floor((todayDate.getTime() - CUP_START.getTime()) / 86400000);
-
-  // Skip entirely if we already processed this offset — avoids expensive clone + double-call
-  if ((save as any)._lastAutoDrawOffset === cupDayOffset) return save;
-
-  let next: SaveGame = structuredClone(save);
-  (next as any)._lastAutoDrawOffset = cupDayOffset;
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
 
   const userLeague = next.myLeague;
 
   const userCountry = LEAGUES[userLeague]?.country;
+
+  // Cup starts July 7, 2025. cupDayOffset = days since July 7th.
+  const CUP_START = new Date("2025-07-07T00:00:00Z");
+  const todayDate = currentDate ? new Date(currentDate + "T00:00:00Z") : new Date();
+  const cupDayOffset = Math.floor((todayDate.getTime() - CUP_START.getTime()) / 86400000);
 
   // Get all VIP leagues (Big 5 + Belgium + Netherlands + Portugal + Turkey)
 

@@ -56,6 +56,7 @@ import {
   loadSave,
   saveSave,
   generateRealisticStatsForO1Leagues,
+  autoDrawForeignCups,
   simulateCupMatchdayLayered,
   fixCupDraws,
   type SaveGame,
@@ -827,11 +828,10 @@ export const usePlayersStore = create<PlayersState>()(
           if (rawSave) {
             const nextDate = addDaysToIso(state.currentDate, 1);
 
-            // Note: autoDrawForeignCups is handled in calendar.tsx asynchronously before advanceTime.
-            // Only run fixCupDraws here (cheap — only fixes draws without extra time data).
+            // 1. Procesar copas extranjeras siempre
             let currentSave = rawSave;
             try {
-              currentSave = fixCupDraws(rawSave);
+              currentSave = autoDrawForeignCups(fixCupDraws(rawSave), nextDate);
             } catch { /* keep rawSave */ }
 
             // 2. Detectar si hoy es día de sorteo del usuario
