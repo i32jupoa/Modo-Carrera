@@ -1,13 +1,14 @@
 import { createFileRoute, useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { getMyNextFixture, loadSave, playMyNextMatch, playMyNextCupMatch, SaveGame, saveSave, setLineup, setFormation, getMyNextFixtureAny, playSpecificFixture, simulateCupMatchday, simulateUCLMatchday, advanceMatchdayLayered, simulateCupMatchdayLayered } from "@/lib/store";
+import { toast } from "sonner";
+import { getMyNextFixture, loadSave, playMyNextMatch, playMyNextCupMatch, SaveGame, saveSave, setLineup, setFormation, getMyNextFixtureAny, playSpecificFixture, simulateCupMatchday, simulateUCLMatchday, advanceMatchdayLayered, simulateCupMatchdayLayered, getStartersWithFormation } from "@/lib/store";
 import { Fixture } from "@/lib/season";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import { MatchEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout } from "@/lib/simulation";
 import { usePlayersStore } from "@/store/playersStore";
-import { MiniPitch, generateCPULineup } from "@/components/MiniPitch";
+import { MiniPitch } from "@/components/MiniPitch";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";
 
@@ -60,6 +61,30 @@ function MatchPage() {
   const matchFormation = routerState?.matchFormation as string | undefined;
   const returningFromLineup = routerState?.returningFromLineupEdit === true;
   const fixtureId = routerState?.fixtureId as string | undefined;
+
+  // Show injury/red card notifications when match ends
+  useEffect(() => {
+    if (phase !== "done" || !fixtureRef.current?.result || !save) return;
+    const result = fixtureRef.current.result;
+    const myTeamId = save.myTeamId;
+    const fixture = fixtureRef.current;
+    const isHome = fixture.homeId === myTeamId;
+    const myTeam = isHome ? "home" : "away";
+
+    for (const inj of result.injuries || []) {
+      if (inj.team === myTeam) {
+        toast.error(`🚑 ${inj.playerName} se ha lesionado (${inj.reason}) — ${inj.weeks} partido${inj.weeks > 1 ? 's' : ''} de baja`);
+      }
+    }
+
+    for (const card of result.cards || []) {
+      if (card.cardType === "red" && card.team === myTeam) {
+        const susp = save.suspensions[myTeamId]?.find(s => s.playerId === card.playerId);
+        const matchdays = susp?.matchdaysRemaining ?? 1;
+        toast.error(`🔴 ${card.playerName} expulsado — suspensión de ${matchdays} partido${matchdays > 1 ? 's' : ''}`);
+      }
+    }
+  }, [phase]);
 
   // Extract match type from router state (if passed from season page)
   useEffect(() => {
@@ -819,15 +844,13 @@ function MatchPage() {
   if (isMe(fixture.homeId)) {
     // User's team - use temporary lineup if available, otherwise use global
     const homeLineupIds = matchLineup || save.lineups[fixture.homeId] || [];
-    // Use map to preserve the exact order of players as they were positioned
-    const homeSquadPlayers = homeLineupIds.map(id => homeSquad.find(p => p.id === id)).filter(Boolean);
-    homeLineup = homeSquadPlayers;
+    homeLineup = homeLineupIds.map(id => homeSquad.find(p => p.id === id)).filter(Boolean);
     homeFormation = matchFormation || save.formations[fixture.homeId] || "Táctica 4-4-2";
   } else {
-    // CPU team - generate lineup
-    const { lineup: cpuLineup, formation: cpuFormation } = generateCPULineup(homeSquad);
-    homeLineup = cpuLineup;
-    homeFormation = cpuFormation;
+    // CPU team - use getStartersWithFormation to get both XI and the formation used
+    const { players: homePlayers, formation: homeFmt } = getStartersWithFormation(save, fixture.homeId);
+    homeLineup = homePlayers;
+    homeFormation = homeFmt;
   }
   
   // Determine away team lineup and formation
@@ -837,15 +860,13 @@ function MatchPage() {
   if (isMe(fixture.awayId)) {
     // User's team - use temporary lineup if available, otherwise use global
     const awayLineupIds = matchLineup || save.lineups[fixture.awayId] || [];
-    // Use map to preserve the exact order of players as they were positioned
-    const awaySquadPlayers = awayLineupIds.map(id => awaySquad.find(p => p.id === id)).filter(Boolean);
-    awayLineup = awaySquadPlayers;
+    awayLineup = awayLineupIds.map(id => awaySquad.find(p => p.id === id)).filter(Boolean);
     awayFormation = matchFormation || save.formations[fixture.awayId] || "Táctica 4-4-2";
   } else {
-    // CPU team - generate lineup
-    const { lineup: cpuLineup, formation: cpuFormation } = generateCPULineup(awaySquad);
-    awayLineup = cpuLineup;
-    awayFormation = cpuFormation;
+    // CPU team - use getStartersWithFormation to get both XI and the formation used
+    const { players: awayPlayers, formation: awayFmt } = getStartersWithFormation(save, fixture.awayId);
+    awayLineup = awayPlayers;
+    awayFormation = awayFmt;
   }
   
   // Check if user's lineup is complete (11 players)

@@ -1321,17 +1321,7 @@ export const usePlayersStore = create<PlayersState>()(
 
           .filter((p): p is Player => !!p && !unavailable.has(p.id));
 
-        if (xi.length >= 11) return xi.slice(0, 11);
-
-        const squad = get().getSimSquad(teamId);
-
-        const auto = defaultLineup(squad, unavailable)
-
-          .map((id) => get().getSimPlayer(id))
-
-          .filter((p): p is Player => !!p);
-
-        return auto.slice(0, 11);
+        return xi.slice(0, 11);
 
       },
 

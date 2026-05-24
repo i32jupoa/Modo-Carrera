@@ -553,11 +553,19 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
 
       <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-center text-center mb-6">
 
-        <TeamSide team={home} side="left" recentResults={homeRecent} />
-
-        <div className="text-3xl font-black text-muted-foreground">VS</div>
-
-        <TeamSide team={away} side="right" recentResults={awayRecent} />
+        {isHome ? (
+          <>
+            <TeamSide team={home} side="left" recentResults={homeRecent} />
+            <div className="text-3xl font-black text-muted-foreground">VS</div>
+            <TeamSide team={away} side="right" recentResults={awayRecent} />
+          </>
+        ) : (
+          <>
+            <TeamSide team={away} side="left" recentResults={awayRecent} />
+            <div className="text-3xl font-black text-muted-foreground">VS</div>
+            <TeamSide team={home} side="right" recentResults={homeRecent} />
+          </>
+        )}
 
       </div>
 

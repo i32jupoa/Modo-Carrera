@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate, useSearch, useLocation } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSave, SaveGame, saveSave, setLineup, setFormation } from "@/lib/store";
 import { teamById } from "@/data/teams";
 import { Position } from "@/data/players";
@@ -83,8 +83,8 @@ function LineupPage() {
   const [startingXI, setStartingXI] = useState<string[]>([]);
   const [bench, setBench] = useState<string[]>([]);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
-  const [injuryProcessed, setInjuryProcessed] = useState(false);
-  const [suspensionProcessed, setSuspensionProcessed] = useState(false);
+  const processedForMdRef = useRef<number>(-1);
+  const suspensionProcessedForMdRef = useRef<number>(-1);
 
   // Check if user navigated from "Temporada" screen
   const fromSeason = (search as any)?.from === "season";
@@ -123,52 +123,59 @@ function LineupPage() {
   );
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
 
-  // Reset injury/suspension processing when save changes (new matchday)
-  useEffect(() => {
-    if (save) {
-      setInjuryProcessed(false);
-      setSuspensionProcessed(false);
-    }
-  }, [save]);
-
   // Automated injury detection and handling
   useEffect(() => {
-    if (!save || injuryProcessed || startingXI.length === 0) return;
+    if (!save || startingXI.length === 0) return;
+    if (processedForMdRef.current === leagueMd) return;
 
     const injuredPlayers = squad.filter(p => 
       startingXI.includes(p.id) && p.injuredUntil > leagueMd
     );
 
     if (injuredPlayers.length > 0) {
+      let newStartingXI = [...startingXI];
+      let newBench = [...bench];
+
       // Process each injured player
       injuredPlayers.forEach(injuredPlayer => {
-        toast.error(`¡Atención! ${injuredPlayer.name} se ha lesionado y ha sido movido a los suplentes.`);
-        
         // Find a healthy replacement from bench
         const healthyBench = squad.filter(p => 
-          bench.includes(p.id) && p.injuredUntil <= leagueMd && p.position === injuredPlayer.position
+          newBench.includes(p.id) && p.injuredUntil <= leagueMd && p.position === injuredPlayer.position
         );
         
         if (healthyBench.length > 0) {
           const replacement = healthyBench[0];
-          
-          // Swap injured player with healthy bench player
-          setStartingXI(prev => prev.map(id => id === injuredPlayer.id ? replacement.id : id));
-          setBench(prev => prev.map(id => id === replacement.id ? injuredPlayer.id : id));
+          newStartingXI = newStartingXI.map(id => id === injuredPlayer.id ? replacement.id : id);
+          newBench = newBench.map(id => id === replacement.id ? injuredPlayer.id : id);
         } else {
-          // No replacement available, just move to bench
-          setStartingXI(prev => prev.filter(id => id !== injuredPlayer.id));
-          setBench(prev => [...prev, injuredPlayer.id]);
+          newStartingXI = newStartingXI.filter(id => id !== injuredPlayer.id);
+          newBench = [...newBench, injuredPlayer.id];
         }
       });
-      
-      setInjuryProcessed(true);
+
+      setStartingXI(newStartingXI);
+      setBench(newBench);
+      processedForMdRef.current = leagueMd;
+
+      // Auto-save lineup exactly as if the user clicked Guardar
+      if (save && newStartingXI.filter(id => id && id.trim() !== "").length === 11) {
+        const suspensions = save.suspensions[save.myTeamId] ?? [];
+        const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+        const filteredXI = newStartingXI.filter(id => !suspendedPlayerIds.has(id));
+        const next = setLineup(save, save.myTeamId, filteredXI);
+        const nextWithFormation = setFormation(next, save.myTeamId, selectedFormation);
+        saveSave(nextWithFormation);
+        setSave(nextWithFormation);
+      }
+    } else {
+      processedForMdRef.current = leagueMd;
     }
-  }, [save, squad, startingXI, bench, leagueMd, injuryProcessed]);
+  }, [save, squad, startingXI, bench, leagueMd, selectedFormation]);
 
   // Automated suspension detection and handling
   useEffect(() => {
-    if (!save || suspensionProcessed || startingXI.length === 0) return;
+    if (!save || startingXI.length === 0) return;
+    if (suspensionProcessedForMdRef.current === leagueMd) return;
 
     const suspensions = save.suspensions[save.myTeamId] ?? [];
     const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
@@ -178,15 +185,14 @@ function LineupPage() {
     );
 
     if (suspendedPlayers.length > 0) {
+      let newStartingXI = [...startingXI];
+      let newBench = [...bench];
+
       // Process each suspended player
       suspendedPlayers.forEach(suspendedPlayer => {
-        const suspension = suspensions.find(s => s.playerId === suspendedPlayer.id);
-        const matchdays = suspension?.matchdaysRemaining || 0;
-        toast.error(`¡Atención! ${suspendedPlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y ha sido movido a los suplentes.`);
-        
         // Find a healthy replacement from bench (not injured or suspended)
         const healthyBench = squad.filter(p => 
-          bench.includes(p.id) && 
+          newBench.includes(p.id) && 
           p.injuredUntil <= leagueMd && 
           !suspendedPlayerIds.has(p.id) &&
           p.position === suspendedPlayer.position
@@ -194,20 +200,30 @@ function LineupPage() {
         
         if (healthyBench.length > 0) {
           const replacement = healthyBench[0];
-          
-          // Swap suspended player with healthy bench player
-          setStartingXI(prev => prev.map(id => id === suspendedPlayer.id ? replacement.id : id));
-          setBench(prev => prev.map(id => id === replacement.id ? suspendedPlayer.id : id));
+          newStartingXI = newStartingXI.map(id => id === suspendedPlayer.id ? replacement.id : id);
+          newBench = newBench.map(id => id === replacement.id ? suspendedPlayer.id : id);
         } else {
-          // No replacement available, just move to bench
-          setStartingXI(prev => prev.filter(id => id !== suspendedPlayer.id));
-          setBench(prev => [...prev, suspendedPlayer.id]);
+          newStartingXI = newStartingXI.filter(id => id !== suspendedPlayer.id);
+          newBench = [...newBench, suspendedPlayer.id];
         }
       });
-      
-      setSuspensionProcessed(true);
+
+      setStartingXI(newStartingXI);
+      setBench(newBench);
+      suspensionProcessedForMdRef.current = leagueMd;
+
+      // Auto-save lineup exactly as if the user clicked Guardar
+      if (save && newStartingXI.filter(id => id && id.trim() !== "").length === 11) {
+        const filteredXI = newStartingXI.filter(id => !suspendedPlayerIds.has(id));
+        const next = setLineup(save, save.myTeamId, filteredXI);
+        const nextWithFormation = setFormation(next, save.myTeamId, selectedFormation);
+        saveSave(nextWithFormation);
+        setSave(nextWithFormation);
+      }
+    } else {
+      suspensionProcessedForMdRef.current = leagueMd;
     }
-  }, [save, squad, startingXI, bench, leagueMd, suspensionProcessed]);
+  }, [save, squad, startingXI, bench, leagueMd, selectedFormation]);
 
   const startingPlayers = useMemo(() => {
     return startingXI.map(id => squad.find(p => p.id === id));
@@ -789,8 +805,19 @@ function LineupPage() {
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold truncate text-sm flex items-center gap-1">
                       {player.name}
-                      {isInjured && <span className="text-xs text-destructive">🚑</span>}
-                      {isSuspended && <span className="text-xs text-destructive">🔴</span>}
+                      {isInjured && (
+                        <span className="text-xs text-destructive">
+                          🚑 {player.injuredUntil - leagueMd}p
+                        </span>
+                      )}
+                      {isSuspended && (() => {
+                        const susp = save?.suspensions[save.myTeamId]?.find(s => s.playerId === player.id);
+                        return (
+                          <span className="text-xs text-destructive">
+                            🔴 {susp?.matchdaysRemaining ?? 0}p
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {player.position} · {player.age}a · {player.goals}G {player.assists}A

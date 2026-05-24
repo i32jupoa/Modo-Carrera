@@ -1,6 +1,6 @@
 import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, Team } from "@/data/teams";
 
-import { Player } from "@/data/players";
+import { Player, defaultLineup } from "@/data/players";
 
 import {
 
@@ -37,6 +37,82 @@ import {
 import { simulateMatch, simulateMatchFast, simulateCupMatch, SimResult, MatchEvent, InjuryEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout } from "@/lib/simulation";
 
 import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE, getCupStructureForCountry } from "@/lib/cups";
+
+import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
+
+// Generate a CPU XI using a random (or specified) formation, always returning exactly 11 players
+// Returns ids in slot order so MiniPitch can position them correctly by role
+function generateCPUXI(squad: Player[], unavailable: Set<string>, forcedFormation?: FormationName): { ids: string[]; formation: FormationName } {
+  // Filter available players sorted by rating desc
+  const byPos: Record<string, Player[]> = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const p of squad) {
+    if (!unavailable.has(p.id) && byPos[p.position]) {
+      byPos[p.position].push(p);
+    }
+  }
+  for (const pos of Object.keys(byPos)) {
+    byPos[pos].sort((a, b) => b.rating - a.rating);
+  }
+
+  // Pick a random formation unless one is specified
+  const formation = forcedFormation ?? ALL_FORMATIONS[Math.floor(Math.random() * ALL_FORMATIONS.length)];
+  const coords = FORMATION_COORDINATES[formation];
+  const slots = Object.values(coords); // always exactly 11 slots
+
+  // Count how many of each role the formation needs
+  const needed: Record<string, number> = { GK: 0, DEF: 0, MID: 0, ATT: 0 };
+  for (const slot of slots) needed[slot.role]++;
+
+  // Build pools: GK→GK, DEF→DEF, MID→MID, ATT→FWD then MID fallback then DEF fallback
+  const pools: Record<string, Player[]> = {
+    GK:  byPos.GK.slice(0, needed.GK),
+    DEF: byPos.DEF.slice(0, needed.DEF),
+    MID: byPos.MID.slice(0, needed.MID),
+    ATT: [],
+  };
+
+  // Fill ATT pool: prefer FWD, then MID leftovers, then DEF leftovers, then any
+  const midUsed = pools.MID.map(p => p.id);
+  const defUsed = pools.DEF.map(p => p.id);
+  const attCandidates = [
+    ...byPos.FWD,
+    ...byPos.MID.filter(p => !midUsed.includes(p.id)),
+    ...byPos.DEF.filter(p => !defUsed.includes(p.id)),
+    ...byPos.GK.slice(1), // extra GKs as last resort
+  ];
+  const usedInPools = new Set([...pools.GK, ...pools.DEF, ...pools.MID].map(p => p.id));
+  pools.ATT = attCandidates.filter(p => !usedInPools.has(p.id)).slice(0, needed.ATT);
+
+  // If any pool is short, fill from remaining available players (any position)
+  const allUsed = new Set<string>();
+  for (const pool of Object.values(pools)) pool.forEach(p => allUsed.add(p.id));
+  const remaining = squad
+    .filter(p => !unavailable.has(p.id) && !allUsed.has(p.id))
+    .sort((a, b) => b.rating - a.rating);
+
+  for (const role of ["GK", "DEF", "MID", "ATT"] as const) {
+    while (pools[role].length < needed[role] && remaining.length > 0) {
+      const p = remaining.shift()!;
+      pools[role].push(p);
+      allUsed.add(p.id);
+    }
+  }
+
+  // Build ids array in slot order (matching formation slot order for MiniPitch index mapping)
+  const roleCursors: Record<string, number> = { GK: 0, DEF: 0, MID: 0, ATT: 0 };
+  const ids: string[] = [];
+  for (const slot of slots) {
+    const pool = pools[slot.role];
+    const cursor = roleCursors[slot.role];
+    if (cursor < pool.length) {
+      ids.push(pool[cursor].id);
+      roleCursors[slot.role]++;
+    }
+    // If pool exhausted (shouldn't happen with fallback above), skip — MiniPitch handles null
+  }
+
+  return { ids, formation };
+}
 
 
 
@@ -718,7 +794,65 @@ function decreaseSuspensions(save: SaveGame): SaveGame {
 
 
 
-function getStarters(save: SaveGame, teamId: string): Player[] {
+export function getStartersWithFormation(save: SaveGame, teamId: string): { players: Player[]; formation: FormationName } {
+
+  const store = usePlayersStore.getState();
+
+  store.init();
+
+  const team = teamById(teamId);
+
+  if (!team) return { players: [], formation: "Táctica 4-4-2" };
+
+  const lg = team.league;
+
+  const md = save.currentMatchday[lg] ?? 1;
+
+  const lineup = save.lineups[teamId] ?? [];
+
+  const suspensions = save.suspensions[teamId] ?? [];
+
+  const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+
+  const squad = store.getSimSquad(teamId);
+
+  const injuredIds = new Set(squad.filter(p => p.injuredUntil > md).map(p => p.id));
+
+  const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
+
+  if (lineup.length === 0) {
+
+    const existingFormation = save.formations[teamId] as FormationName | undefined;
+
+    const { ids: autoIds, formation } = existingFormation
+
+      ? generateCPUXI(squad, unavailable, existingFormation)
+
+      : generateCPUXI(squad, unavailable);
+
+    if (!save.formations[teamId]) save.formations[teamId] = formation;
+
+    const players = autoIds
+
+      .map(id => store.getSimPlayer(id))
+
+      .filter((p): p is Player => !!p)
+
+      .slice(0, 11);
+
+    return { players, formation: save.formations[teamId] as FormationName || formation };
+
+  }
+
+  const filteredLineup = lineup.filter(playerId => !unavailable.has(playerId));
+
+  const players = store.getSimXI(teamId, filteredLineup, md);
+
+  return { players, formation: (save.formations[teamId] as FormationName) || "Táctica 4-4-2" };
+
+}
+
+export function getStarters(save: SaveGame, teamId: string): Player[] {
 
   const store = usePlayersStore.getState();
 
@@ -752,13 +886,30 @@ function getStarters(save: SaveGame, teamId: string): Player[] {
 
   const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
 
-  
+  // Build unavailable set (injured + suspended)
+  const squad = store.getSimSquad(teamId);
+  const injuredIds = new Set(squad.filter(p => p.injuredUntil > md).map(p => p.id));
+  const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
 
-  // Filter out suspended players from the lineup
+  // CPU teams (no saved lineup): auto-generate XI from squad with a random formation
+  if (lineup.length === 0) {
+    // Use existing persisted formation if available, otherwise pick a random one
+    const existingFormation = save.formations[teamId] as FormationName | undefined;
+    const { ids: autoIds, formation } = existingFormation
+      ? generateCPUXI(squad, unavailable, existingFormation)
+      : generateCPUXI(squad, unavailable);
+    // Persist the chosen formation so re-renders show the same XI
+    if (!save.formations[teamId]) {
+      save.formations[teamId] = formation;
+    }
+    return autoIds
+      .map(id => store.getSimPlayer(id))
+      .filter((p): p is Player => !!p)
+      .slice(0, 11);
+  }
 
-  const filteredLineup = lineup.filter(playerId => !suspendedPlayerIds.has(playerId));
-
-  
+  // Teams with a saved lineup: respect it strictly, only exclude unavailable players
+  const filteredLineup = lineup.filter(playerId => !unavailable.has(playerId));
 
   return store.getSimXI(teamId, filteredLineup, md);
 
@@ -914,7 +1065,107 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
   }
 
-  
+  // Auto-update user's lineup if their players got injured or red-carded during the match
+  const isUserMatch = fixture.homeId === save.myTeamId || fixture.awayId === save.myTeamId;
+  if (isUserMatch) {
+    const userTeamId = save.myTeamId;
+    const userLineup = save.lineups[userTeamId] || [];
+    const squad = store.getSimSquad(userTeamId);
+    const leagueMd = save.currentMatchday[save.myLeague];
+    
+    console.log("Auto-update lineup check:", { userTeamId, userLineupLength: userLineup.length, squadSize: squad.length, leagueMd });
+    
+    // Get red carded players for user's team
+    const redCardedPlayerIds = new Set(
+      (r.cards || [])
+        .filter(c => c.cardType === "red" && squad.find(p => p.id === c.playerId))
+        .map(c => c.playerId)
+    );
+    
+    // Get injured players for user's team
+    const injuredPlayerIds = new Set(
+      (r.injuries || [])
+        .filter(inj => squad.find(p => p.id === inj.playerId))
+        .map(inj => inj.playerId)
+    );
+    
+    console.log("Players to remove:", { redCarded: Array.from(redCardedPlayerIds), injured: Array.from(injuredPlayerIds) });
+    
+    // Players that need to be removed from starting XI
+    const playersToRemove = new Set([...redCardedPlayerIds, ...injuredPlayerIds]);
+    
+    if (playersToRemove.size > 0) {
+      let newLineup = [...userLineup];
+      const benchPlayers = squad.filter(p => !userLineup.includes(p.id));
+      
+      console.log("Bench players:", benchPlayers.length);
+      
+      // For each player to remove, find a replacement from bench
+      for (const playerIdToRemove of playersToRemove) {
+        const playerToRemove = squad.find(p => p.id === playerIdToRemove);
+        if (!playerToRemove) continue;
+        
+        const idx = newLineup.indexOf(playerIdToRemove);
+        if (idx === -1) continue; // Player not in starting XI
+        
+        // Find a healthy replacement from bench (not injured, not suspended, same position)
+        const suspensions = updatedSave.suspensions[userTeamId] || [];
+        const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+        
+        const replacement = benchPlayers.find(p => 
+          p.injuredUntil <= leagueMd &&
+          !suspendedPlayerIds.has(p.id) &&
+          !playersToRemove.has(p.id) &&
+          p.position === playerToRemove.position
+        );
+        
+        if (replacement) {
+          // Replace the player
+          newLineup[idx] = replacement.id;
+          console.log(`Replaced ${playerToRemove.name} with ${replacement.name}`);
+        } else {
+          // No replacement available, move to end of lineup (will be filtered out later)
+          newLineup = newLineup.filter(id => id !== playerIdToRemove);
+          console.log(`Removed ${playerToRemove.name} - no replacement available`);
+        }
+      }
+      
+      // Ensure we have exactly 11 players in the lineup
+      if (newLineup.length < 11) {
+        // Add any available bench players to fill the lineup
+        const availableBench = benchPlayers.filter(p => 
+          p.injuredUntil <= leagueMd &&
+          !suspendedPlayerIds.has(p.id) &&
+          !playersToRemove.has(p.id) &&
+          !newLineup.includes(p.id)
+        );
+        
+        console.log("Available bench for filling:", availableBench.length);
+        
+        while (newLineup.length < 11 && availableBench.length > 0) {
+          newLineup.push(availableBench.shift()!.id);
+        }
+        
+        // If still not enough players, add ANY available player as last resort
+        if (newLineup.length < 11) {
+          const anyAvailable = squad.filter(p => !newLineup.includes(p.id));
+          console.log("Adding any available players as last resort:", anyAvailable.length);
+          while (newLineup.length < 11 && anyAvailable.length > 0) {
+            newLineup.push(anyAvailable.shift()!.id);
+          }
+        }
+      }
+      
+      console.log("Final lineup length:", newLineup.length);
+      
+      // Only update if we have exactly 11 players
+      if (newLineup.length === 11) {
+        updatedSave = setLineup(updatedSave, userTeamId, newLineup);
+      } else {
+        console.error("Failed to maintain 11 players in lineup, keeping original");
+      }
+    }
+  }
 
   return updatedSave;
 
@@ -1551,6 +1802,9 @@ export async function simulateCupMatchdayLayered(save: SaveGame, matchday: numbe
   
 
   console.log(`simulateCupMatchdayLayered: Completed ${processed}/${totalMatches} fixtures`);
+
+  // Decrease suspension counters after cup matchday
+  next = decreaseSuspensions(next);
 
   
 
@@ -2728,6 +2982,16 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
   
 
+  // Reset CPU team formations so each matchday they pick a new random formation
+  for (const teamId in next.formations) {
+    if (teamId !== next.myTeamId) {
+      delete next.formations[teamId];
+    }
+  }
+
+  // Decrease suspension counters after advancing matchday
+  next = decreaseSuspensions(next);
+
   // Process cup draws without simulating matches
 
   console.time('processCupDraws');
@@ -2808,113 +3072,7 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
 
   
 
-  // Special case: if no fixtures exist yet, handle first round
-
-  if (list.length === 0 && isUserCountry && !save.cupDrawPending) {
-
-    const firstRound = cupSchedule[0];
-
-    if (firstRound) {
-
-      const cupData = initCup(country);
-
-      
-
-      if (firstRound.round === "Preliminar") {
-
-        const preliminaryTeams = cupData.preliminaryParticipants || [];
-
-        const userIsInPreliminary = preliminaryTeams.includes(save.myTeamId);
-
-        
-
-        if (!userIsInPreliminary) {
-
-          // Auto-simulate preliminary round (user not involved)
-
-          const preliminaryFixtures: Fixture[] = [];
-
-          for (let i = 0; i < preliminaryTeams.length; i += 2) {
-
-            if (i + 1 < preliminaryTeams.length) {
-
-              preliminaryFixtures.push({
-
-                id: `cup-${lg}-prelim-${i}`,
-
-                competition: "cup",
-
-                league: lg,
-
-                matchday: firstRound.matchday, // day offset from July 7th
-
-                round: firstRound.round,
-
-                homeId: preliminaryTeams[i],
-
-                awayId: preliminaryTeams[i + 1],
-
-              });
-
-            }
-
-          }
-
-          for (const f of preliminaryFixtures) {
-
-            const simmed = simulateFixtureInline(save, f, false, true);
-
-            list.push(simmed);
-
-            applyMatchToStats(save, simmed);
-
-          }
-
-          // Set pending draw for next round (winners + main bracket)
-
-          const winners = preliminaryFixtures.map(f => {
-
-            const simmed = list.find(x => x.id === f.id);
-
-            if (!simmed?.result) return f.homeId;
-
-            return getCupMatchWinner(simmed.result) === "home" ? simmed.homeId : simmed.awayId;
-
-          });
-
-          const nextStep = cupSchedule[1];
-
-          if (nextStep) {
-
-            const mainBracketTeams = cupData.participants.filter(id => !preliminaryTeams.includes(id));
-
-            save.cupDrawPending = { league: lg, round: nextStep.round, teams: [...winners, ...mainBracketTeams] };
-
-          }
-
-        } else {
-
-          // User IS in preliminary - set draw pending for preliminary round
-
-          save.cupDrawPending = { league: lg, round: firstRound.round, teams: preliminaryTeams };
-
-        }
-
-        return;
-
-      } else {
-
-        // No preliminary round - set draw pending for first round
-
-        save.cupDrawPending = { league: lg, round: firstRound.round, teams: cupData.participants };
-
-        return;
-
-      }
-
-    }
-
-  }
+  // Special case: if no fixtures exist yet, do nothing - calendar.tsx handles draw notifications based on game date
 
   
 
@@ -2994,24 +3152,6 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
 
         }
 
-      } else if (leagueMd >= nextStep.drawMatchday && !save.cupDrawPending) {
-
-        // Set cup draw pending - this will halt simulation and show modal
-
-        const winners = roundFixtures
-
-          .map((f) => {
-
-            if (!f.result) return f.homeId;
-
-            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
-
-          });
-
-        save.cupDrawPending = { league: lg, round: nextStep.round, teams: winners };
-
-        return; // Halt simulation for user's league
-
       }
 
     }
@@ -3058,29 +3198,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
 
   
 
-  // Special case: if no fixtures exist yet, trigger first round draw
-
-  if (list.length === 0 && isUserCountry && !save.cupDrawPending) {
-
-    const firstRound = cupSchedule[0];
-
-    if (firstRound && leagueMd >= firstRound.drawMatchday) {
-
-      // Get participants from initCup
-
-      const cupData = initCup(country);
-
-      const cupTeams = cupData.participants;
-
-      
-
-      save.cupDrawPending = { league: lg, round: firstRound.round, teams: cupTeams };
-
-      return;
-
-    }
-
-  }
+  // Special case: if no fixtures exist yet, do nothing - calendar.tsx handles draw notifications based on game date
 
   
 
@@ -3159,24 +3277,6 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
           list.push(...built);
 
         }
-
-      } else if (leagueMd >= nextStep.drawMatchday && !save.cupDrawPending) {
-
-        // Set cup draw pending - this will halt simulation and show modal
-
-        const winners = roundFixtures
-
-          .map((f) => {
-
-            if (!f.result) return f.homeId;
-
-            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
-
-          });
-
-        save.cupDrawPending = { league: lg, round: nextStep.round, teams: winners };
-
-        return; // Halt simulation for user's league
 
       }
 
@@ -3618,7 +3718,7 @@ export function getCurrentCupRound(save: SaveGame, league: LeagueId): string | n
 
  */
 
-export function autoDrawForeignCups(save: SaveGame): SaveGame {
+export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveGame {
 
   let next: SaveGame = JSON.parse(JSON.stringify(save));
 
@@ -3626,7 +3726,10 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
 
   const userCountry = LEAGUES[userLeague]?.country;
 
-  
+  // Cup starts July 7, 2025. cupDayOffset = days since July 7th.
+  const CUP_START = new Date("2025-07-07T00:00:00Z");
+  const todayDate = currentDate ? new Date(currentDate + "T00:00:00Z") : new Date();
+  const cupDayOffset = Math.floor((todayDate.getTime() - CUP_START.getTime()) / 86400000);
 
   // Get all VIP leagues (Big 5 + Belgium + Netherlands + Portugal + Turkey)
 
@@ -3668,23 +3771,45 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
 
     
 
-    const list = next.cupFixtures[primaryLeague];
+    let list = next.cupFixtures[primaryLeague];
 
     if (!list) continue;
 
     
 
-    const leagueMd = next.currentMatchday[primaryLeague];
+    // Always recalculate fresh cup data to avoid stale saves
+    const freshCupData = initCup(country);
+    const freshSchedule = getCupStructureForCountry(country).schedule;
 
-    
 
-    // Get the dynamic cup structure for this country
+    // Detect and reset stale cup data with wrong number of fixtures (from old buggy saves)
+    if (list.length > 0) {
+      const expectedPrelimMatches = Math.floor(freshCupData.preliminaryParticipants.length / 2);
+      const prelimFixtures = list.filter(f => f.round === "Preliminar");
+      // If Preliminar exists but has significantly fewer matches than expected, reset
+      if (prelimFixtures.length > 0 && expectedPrelimMatches > 1 && prelimFixtures.length < expectedPrelimMatches * 0.8) {
+        next.cupFixtures[primaryLeague] = [];
+        delete (next.cupFixtures as any)[`${primaryLeague}_structure`];
+        list = next.cupFixtures[primaryLeague];
+      } else {
+        // Also check first main round
+        const firstMainStep = freshSchedule.find(s => s.round !== "Preliminar");
+        if (firstMainStep) {
+          const mainFixtures = list.filter(f => f.round === firstMainStep.round);
+          const expectedMainMatches = Math.floor(
+            (freshCupData.participants.length + Math.floor(freshCupData.preliminaryParticipants.length / 2)) / 2
+          );
+          if (mainFixtures.length > 0 && expectedMainMatches > 1 && mainFixtures.length < expectedMainMatches * 0.8) {
+            next.cupFixtures[primaryLeague] = [];
+            delete (next.cupFixtures as any)[`${primaryLeague}_structure`];
+            list = next.cupFixtures[primaryLeague];
+          }
+        }
+      }
+    }
 
-    const structure = (next.cupFixtures as any)[`${primaryLeague}_structure`] || getCupStructureForCountry(country);
-
-    const cupSchedule = structure.schedule;
-
-    
+    // Use fresh schedule (not the potentially stale saved structure)
+    const cupSchedule = freshSchedule;
 
     // Special case: if no fixtures exist yet, trigger first round draw
 
@@ -3692,11 +3817,10 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
 
       const firstRound = cupSchedule[0];
 
-      if (firstRound && leagueMd >= firstRound.drawMatchday) {
+      if (firstRound && cupDayOffset >= firstRound.drawMatchday) {
 
-        // Get participants from initCup
-
-        const cupData = initCup(country);
+        // Reuse already-computed fresh cup data
+        const cupData = freshCupData;
 
         
 
@@ -3743,25 +3867,25 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
           
 
           // Simulate all preliminary fixtures
+          const simulatedPrelimFixtures: Fixture[] = [];
 
           for (const f of preliminaryFixtures) {
 
             const simmed = simulateFixtureInline(next, f, false, true);
-
-            const idx = list.findIndex(x => x.id === f.id);
-
-            if (idx >= 0) {
-
-              list[idx] = simmed;
-
-            } else {
-
-              list.push(simmed);
-
-            }
-
+            simulatedPrelimFixtures.push(simmed);
             next = applyMatchToStats(next, simmed);
 
+          }
+
+          // Re-sync list after applyMatchToStats reassigned next
+          list = next.cupFixtures[primaryLeague]!;
+          for (const simmed of simulatedPrelimFixtures) {
+            const idx = list.findIndex(x => x.id === simmed.id);
+            if (idx >= 0) {
+              list[idx] = simmed;
+            } else {
+              list.push(simmed);
+            }
           }
 
           
@@ -3822,6 +3946,9 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
 
     // Auto-simulate remaining rounds for foreign countries
 
+    // Re-sync list in case the Special case above created new fixtures (applyMatchToStats reassigns next)
+    list = next.cupFixtures[primaryLeague]!;
+
     const roundOrder = cupSchedule.map(s => s.round);
 
     const existingRounds = [...new Set(list.map(f => f.round).filter((r): r is string => !!r))];
@@ -3848,6 +3975,9 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
 
     for (let roundIdx = 0; roundIdx < dynamicSchedule.length; roundIdx++) {
 
+      // Re-sync list in case applyMatchToStats reassigned next in a previous iteration
+      list = next.cupFixtures[primaryLeague]!;
+
       const step = dynamicSchedule[roundIdx];
 
       const roundFixtures = list.filter((f) => f.round === step.round);
@@ -3860,32 +3990,36 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
 
       const playedAll = roundFixtures.every((f) => f.result);
 
-      const nextStep = cupSchedule[roundIdx + 1];
+      // Find index of this round in the full cupSchedule (not dynamicSchedule)
+      const fullRoundIdx = cupSchedule.findIndex(s => s.round === step.round);
+      const nextStepFull = fullRoundIdx >= 0 ? cupSchedule[fullRoundIdx + 1] : undefined;
 
-      
+      // Check next round doesn't already have fixtures
+      const nextRoundAlreadyExists = nextStepFull
+        ? list.some(f => f.round === nextStepFull.round)
+        : false;
 
-      if (playedAll && nextStep && leagueMd >= nextStep.drawMatchday) {
+      if (playedAll && nextStepFull && !nextRoundAlreadyExists && cupDayOffset >= nextStepFull.drawMatchday) {
 
-        // Auto-simulate next round for foreign countries
+        // Collect winners from this round
+        const roundWinners = roundFixtures.map((f) => {
+          if (!f.result) return f.homeId;
+          return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
+        });
 
-        const winners = roundFixtures
+        let drawTeams = roundWinners;
 
-          .map((f) => {
-
-            if (!f.result) return f.homeId;
-
-            return getCupMatchWinner(f.result) === "home" ? f.homeId : f.awayId;
-
-          });
-
-        
+        // If current round is Preliminar, combine winners with bye teams for the main bracket
+        if (step.round === "Preliminar") {
+          const cupData = initCup(country);
+          const prelimTeamIds = cupData.preliminaryParticipants || [];
+          const mainBracketTeams = cupData.participants.filter(id => !prelimTeamIds.includes(id));
+          drawTeams = [...roundWinners, ...mainBracketTeams];
+        }
 
         // Auto-create next round fixtures
-
-        const nextStepWithDraw = { matchday: nextStep.matchday, round: nextStep.round, drawMatchday: nextStep.drawMatchday };
-
-        const built = buildNextRound("cup", primaryLeague, step.round, winners, nextStepWithDraw, roundIdx + 1);
-
+        const nextStepWithDraw = { matchday: nextStepFull.matchday, round: nextStepFull.round, drawMatchday: nextStepFull.drawMatchday };
+        const built = buildNextRound("cup", primaryLeague, step.round, drawTeams, nextStepWithDraw, fullRoundIdx + 1);
         list.push(...built);
 
       }
@@ -3894,13 +4028,16 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
 
       // Simulate unplayed fixtures in current round
 
-      if (!playedAll && leagueMd > step.matchday) {
+      if (!playedAll && cupDayOffset >= step.matchday) {
 
         for (const f of roundFixtures) {
 
           if (!f.result) {
 
             const simmed = simulateFixtureInline(next, f, false, true);
+            next = applyMatchToStats(next, simmed);
+            // Re-sync list after applyMatchToStats reassigns next
+            list = next.cupFixtures[primaryLeague]!;
 
             const idx = list.findIndex(x => x.id === f.id);
 
@@ -3908,9 +4045,9 @@ export function autoDrawForeignCups(save: SaveGame): SaveGame {
 
               list[idx] = simmed;
 
+            } else {
+              list.push(simmed);
             }
-
-            next = applyMatchToStats(next, simmed);
 
           }
 

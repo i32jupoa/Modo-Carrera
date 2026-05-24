@@ -218,7 +218,7 @@ function CountryDropdown({ value, onChange, options }: { value: string; onChange
 
         <div className="flex items-center gap-2">
 
-          <LeagueLogo league={primaryLeague} size="sm" fallback={<CountryFlag country={value} />} />
+          <CountryFlag country={value} />
 
           <span>{value}</span>
 
@@ -234,10 +234,6 @@ function CountryDropdown({ value, onChange, options }: { value: string; onChange
 
           {options.map((c) => {
 
-            const cLeagues = LEAGUES_BY_COUNTRY[c] || [];
-
-            const cPrimaryLeague = cLeagues[0]?.name || "";
-
             return (
 
               <button
@@ -250,7 +246,7 @@ function CountryDropdown({ value, onChange, options }: { value: string; onChange
 
               >
 
-                <LeagueLogo league={cPrimaryLeague} size="sm" fallback={<CountryFlag country={c} />} />
+                <CountryFlag country={c} />
 
                 <span>{c}</span>
 

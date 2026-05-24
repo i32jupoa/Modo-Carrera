@@ -241,17 +241,20 @@ function CalendarPage() {
           const survivingTeams = getSurvivingCupTeams(updated, cupKey);
           console.log(`[Calendar] getSurvivingCupTeams returned ${survivingTeams.length} teams`);
           
+          // The first non-preliminary round in the schedule (R32, R16, Octavos, etc.)
+          const firstMainRound = relevantSchedule.find(s => s.round !== "Preliminar");
+
           let drawTeams: string[];
           if (currentRound.round === "Preliminar") {
             drawTeams = preliminaryTeams;
-          } else if (currentRound.round === "R16" && firstScheduleRound?.round === "Preliminar") {
-            // R16 is the first round after prelim: combine prelim winners with main bracket
+          } else if (firstScheduleRound?.round === "Preliminar" && currentRound.round === firstMainRound?.round) {
+            // First main round after prelim: combine prelim winners with bye teams
             const prelimWinners = getSurvivingCupTeams(updated, cupKey);
             const mainBracketTeams = cupData.participants.filter(id => !preliminaryTeams.includes(id));
             drawTeams = [...prelimWinners, ...mainBracketTeams];
-            console.log(`[Calendar] R16 after prelim: combining ${prelimWinners.length} prelim winners with ${mainBracketTeams.length} main bracket teams`);
+            console.log(`[Calendar] ${currentRound.round} after prelim: combining ${prelimWinners.length} prelim winners with ${mainBracketTeams.length} main bracket teams`);
           } else {
-            // For all other rounds (Octavos, QF, SF, Final), use surviving teams from previous round
+            // For all subsequent rounds (QF, SF, Final), use surviving teams from previous round
             drawTeams = survivingTeams.length > 0 ? survivingTeams : cupData.participants;
           }
           console.log(`[Calendar] Using ${drawTeams.length} teams for draw of round ${currentRound.round}`);
@@ -265,7 +268,7 @@ function CalendarPage() {
       // Show modal if cupDrawPending is set
       if (save.cupDrawPending) {
         try {
-          const withForeignDraws = autoDrawForeignCups(save);
+          const withForeignDraws = autoDrawForeignCups(save, currentDateIso);
           saveSave(withForeignDraws);
         } catch (err) {
           console.error("Error en auto-draw de copas:", err);
@@ -417,12 +420,22 @@ function CalendarPage() {
     if (!save) return;
     
     setIsAdvancing(true);
+
+    // Always process foreign cup draws/results first, before any early returns
+    let currentSave = save;
+    try {
+      currentSave = autoDrawForeignCups(save, currentDateIso);
+      saveSave(currentSave);
+      setSave(currentSave);
+    } catch (err) {
+      console.error("Error auto-processing foreign cups:", err);
+    }
     
     try {
       // Get the primary league for the user's country (the league that holds the cup)
-      const userCountry = LEAGUES[save.myLeague]?.country;
-      const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
-      const cupKey = (primaryLeague || save.myLeague) as LeagueId;
+      const userCountry = LEAGUES[currentSave.myLeague]?.country;
+      const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : currentSave.myLeague;
+      const cupKey = (primaryLeague || currentSave.myLeague) as LeagueId;
       
       // Check if today is a cup match day and user has a cup fixture
       const cupStart = new Date("2025-07-07T00:00:00Z");
@@ -439,8 +452,8 @@ function CalendarPage() {
       }
       
       // Check if user is eliminated from cup and today is a cup match day for the league
-      const userCupFixtures = save.cupFixtures[cupKey]?.filter(f => !f.result) || [];
-      const userHasCupFixture = userCupFixtures.some(f => f.homeId === save.myTeamId || f.awayId === save.myTeamId);
+      const userCupFixtures = currentSave.cupFixtures[cupKey]?.filter(f => !f.result) || [];
+      const userHasCupFixture = userCupFixtures.some(f => f.homeId === currentSave.myTeamId || f.awayId === currentSave.myTeamId);
       
       if (!userHasCupFixture && todayCupFixtures.length === 0) {
         // User is eliminated from cup - auto-simulate the cup matchday
@@ -449,13 +462,13 @@ function CalendarPage() {
         const todayOffset = Math.floor((new Date(currentDateIso).getTime() - cupStart.getTime()) / 86400000);
         
         // Find which matchday corresponds to today
-        const cupStructure = (save.cupFixtures as any)[`${cupKey}_structure`] || getCupStructureForCountry(userCountry || "");
+        const cupStructure = (currentSave.cupFixtures as any)[`${cupKey}_structure`] || getCupStructureForCountry(userCountry || "");
         const cupSchedule = cupStructure.schedule;
         const todayMatchday = cupSchedule.find(s => s.matchday === todayOffset)?.matchday;
         
         if (todayMatchday !== undefined) {
           console.log(`[Calendar] Auto-simulating cup matchday ${todayMatchday} for eliminated user (using layered simulation)`);
-          const simulated = await simulateCupMatchdayLayered(save, todayMatchday, (done, total) => {
+          const simulated = await simulateCupMatchdayLayered(currentSave, todayMatchday, (done, total) => {
             console.log(`Cup matches: ${done}/${total}`);
           });
           saveSave(simulated);
