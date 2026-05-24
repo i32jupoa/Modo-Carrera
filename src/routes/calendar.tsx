@@ -41,6 +41,7 @@ function CalendarPage() {
   const navigate = useNavigate();
   const currentDateIso = usePlayersStore((s) => s.currentDate);
   const advanceTime = usePlayersStore((s) => s.advanceTime);
+  const clearPendingCupDraw = usePlayersStore((s) => s.clearPendingCupDraw);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const fixtures = usePlayersStore((s) => s.fixtures);
   const ensureLeagueSchedule = usePlayersStore((s) => s.ensureLeagueSchedule);
@@ -509,6 +510,7 @@ function CalendarPage() {
     }
     
     setShowCupDrawModal(false);
+    clearPendingCupDraw();
     
     // Clear the notification flag so it can show again for future rounds
     sessionStorage.removeItem('cupDrawNotified');
@@ -691,6 +693,7 @@ function CalendarPage() {
           isOpen={showCupDrawModal}
           onClose={() => {
             setShowCupDrawModal(false);
+            clearPendingCupDraw();
             const updated = loadSave();
             if (updated) {
               updated.cupDrawPending = null;

@@ -52,7 +52,17 @@ import {
   unplayedOnDate,
 } from "@/lib/matchEngine";
 
-import { loadSave, generateRealisticStatsForO1Leagues, type SaveGame } from "@/lib/store";
+import {
+  loadSave,
+  saveSave,
+  generateRealisticStatsForO1Leagues,
+  autoDrawForeignCups,
+  simulateCupMatchdayLayered,
+  fixCupDraws,
+  type SaveGame,
+} from "@/lib/store";
+import { getCupStructureForCountry, initCup } from "@/lib/cups";
+import { LEAGUES } from "@/data/teams";
 
 // Big 5 European leagues for VIP deep simulation
 const BIG5_LEAGUES: LeagueId[] = ["laliga", "premier", "seriea", "bundesliga", "ligue1"];
@@ -495,6 +505,9 @@ type PlayersState = {
 
   dismissedMatchIds: string[];
 
+  /** Sorteo de copa pendiente (bloquea el avance igual que pendingUserMatch) */
+  pendingCupDraw: boolean;
+
 
 
   init: () => void;
@@ -504,6 +517,8 @@ type PlayersState = {
   simulateMatch: (matchId: string) => void;
 
   clearPendingMatch: () => void;
+
+  clearPendingCupDraw: () => void;
 
   dismissMatch: (matchId: string) => void;
 
@@ -603,6 +618,8 @@ export const usePlayersStore = create<PlayersState>()(
 
       lastUserMatchResult: null,
 
+      pendingCupDraw: false,
+
       stats: {},
 
       dismissedMatchIds: [],
@@ -676,6 +693,10 @@ export const usePlayersStore = create<PlayersState>()(
       clearPendingMatch: () =>
 
         set({ pendingUserMatch: null, lastUserMatchResult: null }),
+
+
+
+      clearPendingCupDraw: () => set({ pendingCupDraw: false }),
 
 
 
@@ -786,6 +807,120 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         if (get().pendingUserMatch) return 0;
+
+        if (get().pendingCupDraw) return 0;
+
+        // --- Copa: procesar al avanzar día, sin depender del calendario ---
+        {
+          const rawSave = loadSave();
+          if (rawSave) {
+            const nextDate = addDaysToIso(state.currentDate, 1);
+
+            // 1. Procesar copas extranjeras siempre
+            let currentSave = rawSave;
+            try {
+              currentSave = autoDrawForeignCups(fixCupDraws(rawSave), nextDate);
+            } catch { /* keep rawSave */ }
+
+            // 2. Detectar si hoy es día de sorteo del usuario
+            try {
+              const userCountry = LEAGUES[currentSave.myLeague]?.country;
+              const primaryLeague = userCountry
+                ? (Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) as LeagueId)
+                : currentSave.myLeague;
+              const cupKey = (primaryLeague || currentSave.myLeague) as LeagueId;
+              const CUP_START = new Date("2025-07-07T00:00:00Z");
+              const todayOffset = Math.floor(
+                (new Date(nextDate).getTime() - CUP_START.getTime()) / 86400000
+              );
+              const cupStructure =
+                (currentSave.cupFixtures as any)[`${cupKey}_structure`] ||
+                getCupStructureForCountry(userCountry || "");
+              const cupSchedule = cupStructure.schedule;
+
+              const isInPreliminary = (() => {
+                try { return initCup(userCountry || "").preliminaryParticipants?.includes(currentSave.myTeamId) || false; }
+                catch { return false; }
+              })();
+              const relevantSchedule = cupSchedule.filter((s: any) =>
+                s.round === "Preliminar" ? isInPreliminary : true
+              );
+              const cupFixtures = currentSave.cupFixtures[cupKey] || [];
+              const isDrawDay = relevantSchedule.some((s: any) => {
+                const drawDate = new Date(CUP_START.getTime() + s.drawMatchday * 86400000);
+                const drawDateIso = drawDate.toISOString().slice(0, 10);
+                if (drawDateIso !== nextDate) return false;
+                return !cupFixtures.some((f: any) => f.round === s.round);
+              });
+
+              if (isDrawDay) {
+                // Guardar copas extranjeras procesadas y bloquear para sorteo
+                saveSave(currentSave);
+                set({ currentDate: nextDate, pendingCupDraw: true });
+                return 1;
+              }
+
+              // 3. Simular prelim del usuario 2 días antes del sorteo, si no está en prelim
+              const prelimRound = cupSchedule.find((s: any) => s.round === "Preliminar");
+              if (prelimRound && !isInPreliminary) {
+                const triggerOffset = prelimRound.drawMatchday - 2;
+                if (todayOffset === triggerOffset) {
+                  const prelimFixturesExist = (currentSave.cupFixtures[cupKey] || []).some(
+                    (f: any) => f.round === "Preliminar"
+                  );
+                  if (!prelimFixturesExist) {
+                    try {
+                      const cupData = initCup(userCountry || "");
+                      const prelimTeams = cupData.preliminaryParticipants || [];
+                      if (!currentSave.cupFixtures[cupKey]) currentSave.cupFixtures[cupKey] = [];
+                      for (let i = 0; i + 1 < prelimTeams.length; i += 2) {
+                        const hg = Math.floor(Math.random() * 4);
+                        const ag = Math.floor(Math.random() * 4);
+                        (currentSave.cupFixtures[cupKey] as any[]).push({
+                          id: `cup-${cupKey}-prelim-${i}`,
+                          competition: "cup",
+                          league: cupKey,
+                          matchday: prelimRound.matchday,
+                          round: "Preliminar",
+                          homeId: prelimTeams[i],
+                          awayId: prelimTeams[i + 1],
+                          result: { homeGoals: hg, awayGoals: ag, events: [], injuries: [], xgHome: hg, xgAway: ag },
+                        });
+                      }
+                    } catch { /* ignore */ }
+                  }
+                }
+              }
+
+              // 4. Simular matchday de copa si usuario eliminado y es día de partido
+              const todayMatchday = cupSchedule.find((s: any) => s.matchday === todayOffset)?.matchday;
+              if (todayMatchday !== undefined) {
+                const unplayedCupFixtures = (currentSave.cupFixtures[cupKey] || []).filter((f: any) => !f.result);
+                const userHasCupFixture = unplayedCupFixtures.some(
+                  (f: any) => f.homeId === currentSave.myTeamId || f.awayId === currentSave.myTeamId
+                );
+                if (!userHasCupFixture && unplayedCupFixtures.length > 0) {
+                  // Simular sincrónicamente con resultados simples
+                  for (const f of unplayedCupFixtures.filter((f: any) => f.matchday === todayMatchday)) {
+                    const hg = Math.floor(Math.random() * 4);
+                    const ag = Math.floor(Math.random() * 4);
+                    const idx = (currentSave.cupFixtures[cupKey] as any[]).findIndex((x: any) => x.id === f.id);
+                    if (idx >= 0) {
+                      (currentSave.cupFixtures[cupKey] as any[])[idx] = {
+                        ...f,
+                        result: { homeGoals: hg, awayGoals: ag, events: [], injuries: [], xgHome: hg, xgAway: ag },
+                      };
+                    }
+                  }
+                }
+              }
+
+              saveSave(currentSave);
+            } catch (e) {
+              saveSave(currentSave);
+            }
+          }
+        }
 
 
 
