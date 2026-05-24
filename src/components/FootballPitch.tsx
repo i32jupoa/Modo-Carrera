@@ -50,6 +50,7 @@ interface PlayerNodeProps {
     rating: number;
     position: string;
     injured?: boolean;
+    suspended?: boolean;
   };
   coordinates: PositionCoordinate;
   isSelected: boolean;
@@ -72,6 +73,7 @@ function getShortName(name: string): string {
 
 export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerNodeProps) {
   const shortName = getShortName(player.name);
+  const isUnavailable = player.injured || player.suspended;
   
   return (
     <button
@@ -79,7 +81,7 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
       className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-full flex flex-col items-center justify-center transition-all duration-200 ${
         isSelected
           ? "bg-primary text-primary-foreground scale-110 shadow-lg shadow-primary/50 ring-2 ring-white"
-          : player.injured
+          : isUnavailable
           ? "bg-destructive/20 text-destructive border-2 border-destructive/50 opacity-60"
           : "bg-card text-foreground border-2 border-primary/50 hover:border-primary hover:scale-105"
       }`}
@@ -87,12 +89,14 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
         top: `${coordinates.top}%`,
         left: `${coordinates.left}%`,
       }}
-      title={`${player.name} (${player.rating}) - ${player.position}`}
+      title={`${player.name} (${player.rating}) - ${player.position}${player.injured ? ' - Lesionado' : ''}${player.suspended ? ' - Suspendido' : ''}`}
+      disabled={isUnavailable}
     >
       <span className="text-[0.7rem] font-bold leading-tight">{player.rating}</span>
       <span className="text-[0.55rem] leading-tight truncate max-w-full px-1">{shortName}</span>
       <span className="text-[0.45rem] leading-tight text-muted-foreground">{player.position}</span>
       {player.injured && <span className="absolute -top-1 -right-1 text-xs">🚑</span>}
+      {player.suspended && <span className="absolute -top-1 -right-1 text-xs">🔴</span>}
     </button>
   );
 }

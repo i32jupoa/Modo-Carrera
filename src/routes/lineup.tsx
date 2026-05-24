@@ -84,6 +84,7 @@ function LineupPage() {
   const [bench, setBench] = useState<string[]>([]);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [injuryProcessed, setInjuryProcessed] = useState(false);
+  const [suspensionProcessed, setSuspensionProcessed] = useState(false);
 
   // Check if user navigated from "Temporada" screen
   const fromSeason = (search as any)?.from === "season";
@@ -122,6 +123,14 @@ function LineupPage() {
   );
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
 
+  // Reset injury/suspension processing when save changes (new matchday)
+  useEffect(() => {
+    if (save) {
+      setInjuryProcessed(false);
+      setSuspensionProcessed(false);
+    }
+  }, [save]);
+
   // Automated injury detection and handling
   useEffect(() => {
     if (!save || injuryProcessed || startingXI.length === 0) return;
@@ -156,6 +165,49 @@ function LineupPage() {
       setInjuryProcessed(true);
     }
   }, [save, squad, startingXI, bench, leagueMd, injuryProcessed]);
+
+  // Automated suspension detection and handling
+  useEffect(() => {
+    if (!save || suspensionProcessed || startingXI.length === 0) return;
+
+    const suspensions = save.suspensions[save.myTeamId] ?? [];
+    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    
+    const suspendedPlayers = squad.filter(p => 
+      startingXI.includes(p.id) && suspendedPlayerIds.has(p.id)
+    );
+
+    if (suspendedPlayers.length > 0) {
+      // Process each suspended player
+      suspendedPlayers.forEach(suspendedPlayer => {
+        const suspension = suspensions.find(s => s.playerId === suspendedPlayer.id);
+        const matchdays = suspension?.matchdaysRemaining || 0;
+        toast.error(`¡Atención! ${suspendedPlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y ha sido movido a los suplentes.`);
+        
+        // Find a healthy replacement from bench (not injured or suspended)
+        const healthyBench = squad.filter(p => 
+          bench.includes(p.id) && 
+          p.injuredUntil <= leagueMd && 
+          !suspendedPlayerIds.has(p.id) &&
+          p.position === suspendedPlayer.position
+        );
+        
+        if (healthyBench.length > 0) {
+          const replacement = healthyBench[0];
+          
+          // Swap suspended player with healthy bench player
+          setStartingXI(prev => prev.map(id => id === suspendedPlayer.id ? replacement.id : id));
+          setBench(prev => prev.map(id => id === replacement.id ? suspendedPlayer.id : id));
+        } else {
+          // No replacement available, just move to bench
+          setStartingXI(prev => prev.filter(id => id !== suspendedPlayer.id));
+          setBench(prev => [...prev, suspendedPlayer.id]);
+        }
+      });
+      
+      setSuspensionProcessed(true);
+    }
+  }, [save, squad, startingXI, bench, leagueMd, suspensionProcessed]);
 
   const startingPlayers = useMemo(() => {
     return startingXI.map(id => squad.find(p => p.id === id));
@@ -297,6 +349,16 @@ function LineupPage() {
       return;
     }
 
+    // Check if player is suspended
+    const suspensions = save?.suspensions[save.myTeamId] ?? [];
+    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    if (suspendedPlayerIds.has(player.id)) {
+      const suspension = suspensions.find(s => s.playerId === player.id);
+      const matchdays = suspension?.matchdaysRemaining || 0;
+      toast.error(`${player.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y no puede jugar.`);
+      return;
+    }
+
     if (selectedPlayer === null) {
       setSelectedPlayer(playerId);
     } else if (selectedPlayer === playerId) {
@@ -322,6 +384,24 @@ function LineupPage() {
     const benchPlayer = squad.find(p => p.id === benchPlayerId);
 
     if (!pitchPlayer || !benchPlayer) return;
+
+    // Check if bench player is injured
+    if (benchPlayer.injuredUntil > leagueMd) {
+      toast.error(`${benchPlayer.name} está lesionado y no puede jugar.`);
+      setSelectedPlayer(null);
+      return;
+    }
+
+    // Check if bench player is suspended
+    const suspensions = save?.suspensions[save.myTeamId] ?? [];
+    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    if (suspendedPlayerIds.has(benchPlayer.id)) {
+      const suspension = suspensions.find(s => s.playerId === benchPlayer.id);
+      const matchdays = suspension?.matchdaysRemaining || 0;
+      toast.error(`${benchPlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y no puede jugar.`);
+      setSelectedPlayer(null);
+      return;
+    }
 
     // Get the position key where the pitch player is currently
     const posKey = getPlayerPositionKey(pitchPlayerId);
@@ -354,6 +434,24 @@ function LineupPage() {
   function handlePitchToEmptySwap(playerId: string, emptyPosKey: string) {
     const player = squad.find(p => p.id === playerId);
     if (!player) return;
+
+    // Check if player is injured
+    if (player.injuredUntil > leagueMd) {
+      toast.error(`${player.name} está lesionado y no puede jugar.`);
+      setSelectedPlayer(null);
+      return;
+    }
+
+    // Check if player is suspended
+    const suspensions = save?.suspensions[save.myTeamId] ?? [];
+    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    if (suspendedPlayerIds.has(player.id)) {
+      const suspension = suspensions.find(s => s.playerId === player.id);
+      const matchdays = suspension?.matchdaysRemaining || 0;
+      toast.error(`${player.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y no puede jugar.`);
+      setSelectedPlayer(null);
+      return;
+    }
 
     // Get the role required for the empty position
     const requiredRole = getPositionRoleForKey(emptyPosKey);
@@ -395,6 +493,22 @@ function LineupPage() {
   function handleBenchToPitchSwap(benchPlayerId: string, pitchTarget: string) {
     const benchPlayer = squad.find(p => p.id === benchPlayerId);
     if (!benchPlayer) return;
+
+    // Check if player is injured
+    if (benchPlayer.injuredUntil > leagueMd) {
+      toast.error(`${benchPlayer.name} está lesionado y no puede jugar.`);
+      return;
+    }
+
+    // Check if player is suspended
+    const suspensions = save?.suspensions[save.myTeamId] ?? [];
+    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    if (suspendedPlayerIds.has(benchPlayer.id)) {
+      const suspension = suspensions.find(s => s.playerId === benchPlayer.id);
+      const matchdays = suspension?.matchdaysRemaining || 0;
+      toast.error(`${benchPlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y no puede jugar.`);
+      return;
+    }
 
     // Check if pitchTarget is a position key (empty position) or a player ID
     const isPositionKey = formationPositions.includes(pitchTarget);
@@ -455,7 +569,13 @@ function LineupPage() {
       toast.error("Plantilla incompleta. Faltan jugadores titulares.");
       return;
     }
-    const next = setLineup(save, save.myTeamId, startingXI);
+    
+    // Filter out suspended players from the lineup before saving
+    const suspensions = save.suspensions[save.myTeamId] ?? [];
+    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    const filteredStartingXI = startingXI.filter(playerId => !suspendedPlayerIds.has(playerId));
+    
+    const next = setLineup(save, save.myTeamId, filteredStartingXI);
     const nextWithFormation = setFormation(next, save.myTeamId, selectedFormation);
     saveSave(nextWithFormation);
     setSave(nextWithFormation);
@@ -584,6 +704,9 @@ function LineupPage() {
               if (!coords) return null;
 
               if (player) {
+                const suspensions = save?.suspensions[save.myTeamId] ?? [];
+                const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+                const isSuspended = suspendedPlayerIds.has(player.id);
                 return (
                   <PlayerNode
                     key={player.id}
@@ -593,6 +716,7 @@ function LineupPage() {
                       rating: player.rating,
                       position: player.position,
                       injured: player.injuredUntil > leagueMd,
+                      suspended: isSuspended,
                     }}
                     coordinates={coords}
                     isSelected={selectedPlayer === player.id}
@@ -642,13 +766,17 @@ function LineupPage() {
             {benchPlayers.map((player) => {
               if (!player) return null;
               const isInjured = player.injuredUntil > leagueMd;
+              const suspensions = save?.suspensions[save.myTeamId] ?? [];
+              const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+              const isSuspended = suspendedPlayerIds.has(player.id);
+              const isUnavailable = isInjured || isSuspended;
               return (
                 <button
                   key={player.id}
                   onClick={() => handleBenchPlayerClick(player.id)}
-                  disabled={isInjured}
+                  disabled={isUnavailable}
                   className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 text-left transition ${
-                    isInjured
+                    isUnavailable
                       ? "opacity-40 cursor-not-allowed border-border bg-destructive/10"
                       : selectedPlayer === player.id
                       ? "border-primary bg-primary/10 glow-cyan"
@@ -662,6 +790,7 @@ function LineupPage() {
                     <div className="font-semibold truncate text-sm flex items-center gap-1">
                       {player.name}
                       {isInjured && <span className="text-xs text-destructive">🚑</span>}
+                      {isSuspended && <span className="text-xs text-destructive">🔴</span>}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {player.position} · {player.age}a · {player.goals}G {player.assists}A
@@ -683,6 +812,12 @@ function LineupPage() {
                 toast.error("Plantilla incompleta. Faltan jugadores titulares.");
                 return;
               }
+              
+              // Filter out suspended players from the lineup before passing to match
+              const suspensions = save?.suspensions[save.myTeamId] ?? [];
+              const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+              const filteredStartingXI = startingXI.filter(playerId => !suspendedPlayerIds.has(playerId));
+              
               // Pass temporary lineup to match engine via router state
               // This allows one-off changes for this specific match only
               // Also forward ALL match metadata (matchType, cupRound, fixtureId) for correct post-match simulation
@@ -690,7 +825,7 @@ function LineupPage() {
               navigate({
                 to: "/match",
                 state: {
-                  matchLineup: startingXI,
+                  matchLineup: filteredStartingXI,
                   matchFormation: selectedFormation,
                   matchType: matchType || 'LEAGUE',  // Default to LEAGUE if undefined
                   cupRound,

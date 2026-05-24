@@ -199,6 +199,7 @@ function TeamsPage() {
                   <th className="text-center py-2 px-1">Contrib.</th>
                   <th className="text-center py-2 px-1">Amarillas</th>
                   <th className="text-center py-2 px-1">Rojas</th>
+                  <th className="text-center py-2 px-1">Estado</th>
                 </tr>
               </thead>
               <tbody>
@@ -208,6 +209,28 @@ function TeamsPage() {
                   .map((p) => {
                     const stats = getPlayerStats(String(p.ID));
                     const goalContributions = stats.goals + stats.assists;
+                    
+                    // Check if this is the user's team (only user's team has suspensions)
+                    const isUserTeam = selectedTeam?.id === save.myTeamId;
+                    
+                    // Get suspension status (only for user's team)
+                    let suspensionStatus = "";
+                    if (isUserTeam) {
+                      const suspensions = save.suspensions[save.myTeamId] ?? [];
+                      const suspension = suspensions.find(s => s.playerId === String(p.ID));
+                      if (suspension && suspension.matchdaysRemaining > 0) {
+                        suspensionStatus = `🔴 ${suspension.matchdaysRemaining}j`;
+                      }
+                    }
+                    
+                    // Check injury status
+                    let injuryStatus = "";
+                    if (stats.injuredUntil > 0) {
+                      injuryStatus = `🚑 ${stats.injuredUntil}j`;
+                    }
+                    
+                    const status = suspensionStatus || injuryStatus || "-";
+                    
                     return (
                       <tr key={p.ID} className="border-b border-border/30 hover:bg-secondary/20">
                         <td className="py-2 px-1">
@@ -228,6 +251,7 @@ function TeamsPage() {
                         <td className="py-2 px-1 text-center font-bold">{goalContributions}</td>
                         <td className="py-2 px-1 text-center text-yellow-500">🟨 {stats.yellowCards}</td>
                         <td className="py-2 px-1 text-center text-red-500">🟥 {stats.redCards}</td>
+                        <td className="py-2 px-1 text-center font-semibold">{status}</td>
                       </tr>
                     );
                   })}
@@ -235,7 +259,7 @@ function TeamsPage() {
             </table>
           </div>
           <p className="text-[0.65rem] text-muted-foreground mt-3">
-            PJ = Partidos Jugados · Contrib. = Goles + Asistencias · Amarillas y rojas simuladas
+            PJ = Partidos Jugados · Contrib. = Goles + Asistencias · Amarillas y rojas simuladas · Estado: 🔴 = Suspendido, 🚑 = Lesionado, j = jornadas restantes
           </p>
         </div>
       )}
