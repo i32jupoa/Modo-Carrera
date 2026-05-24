@@ -1,6 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
-  Home, Trophy, Users, ClipboardList, Activity, Target,
+  Home, Trophy, Users, ClipboardList, Activity,
   Repeat, Calendar, CalendarDays, Globe, Shield, ChevronRight, Award, Swords,
 } from "lucide-react";
 import {
@@ -32,8 +32,7 @@ const COMPETICIONES: Item[] = [
 ];
 
 const ESTADISTICAS: Item[] = [
-  { title: "Goleadores", url: "/scorers", icon: Target },
-  { title: "Asistentes", url: "/assists", icon: Target },
+  { title: "Rankings", url: "/scorers", icon: Award },
 ];
 
 const MUNDO: Item[] = [

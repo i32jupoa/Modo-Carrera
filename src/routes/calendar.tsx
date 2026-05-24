@@ -8,7 +8,7 @@ import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { TeamLogo } from "@/components/TeamLogo";
 import { CupDrawModal } from "@/components/CupDrawModal";
-import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
+import { teamById, LEAGUES, getPrimaryLeagueForCountry, type LeagueId } from "@/data/teams";
 import {
   isSummerTransferWindow,
   isWinterTransferWindow,
@@ -86,7 +86,7 @@ function CalendarPage() {
     
     try {
       const userCountry = LEAGUES[save.myLeague]?.country;
-      const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
+      const primaryLeague = userCountry ? getPrimaryLeagueForCountry(userCountry) : save.myLeague;
       const cupKey = (primaryLeague || save.myLeague) as LeagueId;
       
       // Get the dynamic cup structure for the user's country
@@ -310,7 +310,7 @@ function CalendarPage() {
     try {
       // Get the primary league for the user's country (the league that holds the cup)
       const userCountry = LEAGUES[save.myLeague]?.country;
-      const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
+      const primaryLeague = userCountry ? getPrimaryLeagueForCountry(userCountry) : save.myLeague;
       const cupKey = (primaryLeague || save.myLeague) as LeagueId;
       return save.cupFixtures[cupKey]?.filter(
         f => f.homeId === myTeamId || f.awayId === myTeamId
@@ -367,7 +367,7 @@ function CalendarPage() {
     const userCountry = LEAGUES[save.myLeague]?.country;
     if (!userCountry) return drawDays;
     
-    const primaryLeague = Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) || save.myLeague;
+    const primaryLeague = getPrimaryLeagueForCountry(userCountry) || save.myLeague;
     const cupKey = primaryLeague as LeagueId;
     
     try {
@@ -435,7 +435,7 @@ function CalendarPage() {
     try {
       // Get the primary league for the user's country (the league that holds the cup)
       const userCountry = LEAGUES[currentSave.myLeague]?.country;
-      const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : currentSave.myLeague;
+      const primaryLeague = userCountry ? getPrimaryLeagueForCountry(userCountry) : currentSave.myLeague;
       const cupKey = (primaryLeague || currentSave.myLeague) as LeagueId;
       
       // Check if today is a cup match day and user has a cup fixture
@@ -493,7 +493,7 @@ function CalendarPage() {
     
     // Get the primary league for the user's country (the league that holds the cup)
     const userCountry = LEAGUES[save.myLeague]?.country;
-    const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
+    const primaryLeague = userCountry ? getPrimaryLeagueForCountry(userCountry) : save.myLeague;
     const cupKey = (primaryLeague || save.myLeague) as LeagueId;
     
     console.log(`handleCupDrawComplete called with ${matchups.length} matchups for league ${cupKey}`);

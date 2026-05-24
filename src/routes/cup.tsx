@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 
 import { loadSave, SaveGame } from "@/lib/store";
 
-import { LEAGUES, LeagueId, teamById, LEAGUES_BY_COUNTRY } from "@/data/teams";
+import { LEAGUES, LeagueId, teamById, LEAGUES_BY_COUNTRY, getPrimaryLeagueForCountry } from "@/data/teams";
 
 import { TeamBadge } from "@/components/TeamBadge";
 
@@ -332,7 +332,7 @@ function CupPage() {
 
   const countryLeagues = LEAGUES_BY_COUNTRY[country] || [];
 
-  const primaryLeague = countryLeagues[0]?.id as LeagueId;
+  const primaryLeague = (getPrimaryLeagueForCountry(country) ?? countryLeagues[0]?.id) as LeagueId;
 
   
 

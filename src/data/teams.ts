@@ -134,6 +134,11 @@ export const LEAGUES_BY_COUNTRY: Record<string, LeagueEntry[]> = Object.values(L
 );
 
 
+/** Returns the canonical primary league id for a country (the one that "owns" the cup). */
+export function getPrimaryLeagueForCountry(country: string): LeagueId | undefined {
+  return LEAGUES_BY_COUNTRY[country]?.[0]?.id as LeagueId | undefined;
+}
+
 // 1. Cargamos la base estática original de 96 equipos para mantener la compatibilidad de rutas de Lovable
 export const TEAMS: Team[] = [
   // ===== LALIGA EA SPORTS (20 equipos) =====

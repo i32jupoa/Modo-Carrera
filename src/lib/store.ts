@@ -1,4 +1,4 @@
-import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, Team } from "@/data/teams";
+import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getPrimaryLeagueForCountry, Team } from "@/data/teams";
 
 import { Player, defaultLineup } from "@/data/players";
 
@@ -166,11 +166,22 @@ function getCupMatchWinner(result: any): "home" | "away" {
 
 export function fixCupDraws(save: SaveGame): SaveGame {
 
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = structuredClone(save);
 
   let fixed = false;
 
-  
+  // Detect stale cup fixtures generated with old offsets (pre-league-anchored schedule).
+  // New schedule: Preliminar matchday=63, R32 matchday=98. Old schedule had matchday<=20.
+  // If any fixture has matchday < 63, the league's cup data is outdated → reset.
+  for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
+    const list = next.cupFixtures[lg];
+    if (!list || list.length === 0) continue;
+    const stale = list.some((f: any) => (f.matchday as number) < 63);
+    if (stale) {
+      next.cupFixtures[lg] = [];
+      delete (next.cupFixtures as any)[`${lg}_structure`];
+    }
+  }
 
   for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
 
@@ -959,7 +970,7 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
   for (const p of [...homeXI, ...awayXI]) {
 
-    store.recordAppearance(p.id);
+    store.recordAppearance(p.id, fixture.competition);
 
   }
 
@@ -969,9 +980,9 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
   for (const ev of r.events) {
 
-    store.recordGoal(ev.scorerId);
+    store.recordGoal(ev.scorerId, fixture.competition);
 
-    if (ev.assistId) store.recordAssist(ev.assistId);
+    if (ev.assistId) store.recordAssist(ev.assistId, fixture.competition);
 
   }
 
@@ -983,9 +994,9 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
     for (const ev of r.extraTime.events) {
 
-      store.recordGoal(ev.scorerId);
+      store.recordGoal(ev.scorerId, fixture.competition);
 
-      if (ev.assistId) store.recordAssist(ev.assistId);
+      if (ev.assistId) store.recordAssist(ev.assistId, fixture.competition);
 
     }
 
@@ -1349,7 +1360,7 @@ export function getMyUpcomingCupFixtures(save: SaveGame): Fixture[] {
 
     const userCountry = LEAGUES[save.myLeague]?.country;
 
-    const primaryLeague = userCountry ? Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) : save.myLeague;
+    const primaryLeague = userCountry ? getPrimaryLeagueForCountry(userCountry) : save.myLeague;
 
     const cupKey = (primaryLeague || save.myLeague) as LeagueId;
 
@@ -1591,7 +1602,7 @@ export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: 
 
 export async function simulateCupMatchdayLayered(save: SaveGame, matchday: number, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
 
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = structuredClone(save);
 
   const BATCH_SIZE = 100;
 
@@ -2798,7 +2809,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (processed: number, total: number) => void): Promise<SaveGame> {
 
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = structuredClone(save);
 
   const BATCH_SIZE = 100; // Larger batches since we're using O(1) math for background leagues
 
@@ -2834,9 +2845,7 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
   
 
-  console.log(`advanceMatchdayLayered: Total fixtures to simulate: ${allFixtures.length}`);
-
-  console.log(`advanceMatchdayLayered: Leagues with fixtures:`, [...new Set(allFixtures.map(f => f.league))]);
+  // console.log(`advanceMatchdayLayered: Total fixtures to simulate: ${allFixtures.length}`);
 
   
 
@@ -2948,19 +2957,15 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
     
 
-    // Yield control every few batches to prevent UI blocking
+    // Yield control every batch to keep UI responsive
 
-    if (i % (BATCH_SIZE * 2) === 0) {
-
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-    }
+    await new Promise(resolve => setTimeout(resolve, 0));
 
   }
 
   
 
-  console.log(`advanceMatchdayLayered: Completed. Processed ${processed}/${totalMatches} matches`);
+  // console.log(`advanceMatchdayLayered: Completed. Processed ${processed}/${totalMatches} matches`);
 
   
 
@@ -2970,7 +2975,7 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
   if (userCountry) {
 
-    const cupLeague = Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) as LeagueId;
+    const cupLeague = getPrimaryLeagueForCountry(userCountry) as LeagueId;
 
     if (cupLeague && cupLeague !== next.myLeague) {
 
@@ -2994,8 +2999,6 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
   // Process cup draws without simulating matches
 
-  console.time('processCupDraws');
-
   const cupLeagues = Object.keys(next.cupFixtures) as LeagueId[];
 
   for (const cupLg of cupLeagues) {
@@ -3003,8 +3006,6 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
     processCupDrawsOnly(next, cupLg);
 
   }
-
-  console.timeEnd('processCupDraws');
 
   
 
@@ -3720,16 +3721,20 @@ export function getCurrentCupRound(save: SaveGame, league: LeagueId): string | n
 
 export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveGame {
 
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
-
-  const userLeague = next.myLeague;
-
-  const userCountry = LEAGUES[userLeague]?.country;
-
   // Cup starts July 7, 2025. cupDayOffset = days since July 7th.
   const CUP_START = new Date("2025-07-07T00:00:00Z");
   const todayDate = currentDate ? new Date(currentDate + "T00:00:00Z") : new Date();
   const cupDayOffset = Math.floor((todayDate.getTime() - CUP_START.getTime()) / 86400000);
+
+  // Skip entirely if we already processed this offset — avoids expensive clone + double-call
+  if ((save as any)._lastAutoDrawOffset === cupDayOffset) return save;
+
+  let next: SaveGame = structuredClone(save);
+  (next as any)._lastAutoDrawOffset = cupDayOffset;
+
+  const userLeague = next.myLeague;
+
+  const userCountry = LEAGUES[userLeague]?.country;
 
   // Get all VIP leagues (Big 5 + Belgium + Netherlands + Portugal + Turkey)
 
@@ -3765,7 +3770,7 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
 
     // Find the primary league for this country (the league that holds the cup)
 
-    const primaryLeague = Object.keys(LEAGUES).find(leagueId => LEAGUES[leagueId]?.country === country) as LeagueId;
+    const primaryLeague = getPrimaryLeagueForCountry(country) as LeagueId;
 
     if (!primaryLeague) continue;
 

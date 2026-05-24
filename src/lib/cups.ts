@@ -7,12 +7,16 @@ import { Fixture } from "@/lib/season";
  *  First draw is 2 days after first league match (Aug 18)
  * ============================================================ */
 
+// Legacy static schedule — kept for backward compatibility only.
+// New scheduling uses getCupStructureForCountry() which anchors to league matchdays.
+// Offsets from CUP_START (2025-07-07). Draw = Monday between two league matchdays, Match = Wednesday (+2).
 export const CUP_SCHEDULE: { matchday: number; round: string; size: number; drawMatchday: number }[] = [
-  { matchday: 2, round: "R32", size: 32, drawMatchday: 1 },   // First draw: Aug 18 (2 days after Aug 16), Match: Aug 21
-  { matchday: 6, round: "R16", size: 16, drawMatchday: 5 },  // Draw: Sep 19, Match: Sep 24
-  { matchday: 10, round: "QF", size: 8, drawMatchday: 9 },   // Draw: Oct 17, Match: Oct 22
-  { matchday: 15, round: "SF", size: 4, drawMatchday: 14 },  // Draw: Nov 21, Match: Nov 26
-  { matchday: 20, round: "Final", size: 2, drawMatchday: 19 }, // Draw: Dec 26, Match: Dec 31
+  { drawMatchday: 96,  matchday: 98,  round: "R32",    size: 64 }, // Draw Mon between J9-J10,  Match Wed
+  { drawMatchday: 145, matchday: 147, round: "R16",    size: 32 }, // Draw Mon between J16-J17, Match Wed
+  { drawMatchday: 173, matchday: 175, round: "Octavos",size: 16 }, // Draw Mon between J20-J21, Match Wed
+  { drawMatchday: 208, matchday: 210, round: "QF",     size: 8  }, // Draw Mon between J25-J26, Match Wed
+  { drawMatchday: 236, matchday: 238, round: "SF",     size: 4  }, // Draw Mon between J29-J30, Match Wed
+  { drawMatchday: 264, matchday: 266, round: "Final",  size: 2  }, // Draw Mon between J33-J34, Match Wed
 ];
 
 /**
@@ -127,12 +131,17 @@ export function getTotalTeamsInCountry(country: string): number {
   return total;
 }
 
+// Module-level caches — computed once per country, never change within a session
+const _cupStructureCache = new Map<string, { schedule: { matchday: number; round: string; size: number; drawMatchday: number }[]; preliminaryTeams: number; mainBracketSize: number }>();
+const _initCupCache = new Map<string, { fixtures: any[]; participants: string[]; preliminaryParticipants: string[]; structure: any }>();
+
 // Generate dynamic cup structure based on total teams in country
 export function getCupStructureForCountry(country: string): { 
   schedule: { matchday: number; round: string; size: number; drawMatchday: number }[];
   preliminaryTeams: number;
   mainBracketSize: number;
 } {
+  if (_cupStructureCache.has(country)) return _cupStructureCache.get(country)!;
   const totalTeams = getTotalTeamsInCountry(country);
   
   // Determine the main bracket size based on total teams
@@ -166,46 +175,59 @@ export function getCupStructureForCountry(country: string): {
     preliminaryTeams = teamsToEliminate * 2;
   }
   
-  // Build schedule - cup starts July 7th, alternating draw/match days
-  // drawMatchday = days offset from July 7th (0=Jul7 draw, 1=Jul8 match, 2=Jul9 draw, 3=Jul10 match...)
+  // Schedule anchored to league matchdays.
+  // LEAGUE_MD1_FRIDAY = 2025-08-15, CUP_START = 2025-07-07 → offset = (md-1)*7 + 39 days to reach jornada-md friday.
+  // Draw day = Monday between jornada N and N+1 → offset = 39 + (N-1)*7 + 1 = 40 + (N-1)*7
+  // Match day = Wednesday after draw → drawOffset + 2
+  //
+  // Round        Draw between    drawOffset   matchOffset
+  // Preliminar   J4–J5           61           63
+  // R32          J9–J10          96           98
+  // R16          J16–J17         145          147
+  // Octavos      J20–J21         173          175
+  // QF           J25–J26         208          210
+  // SF           J29–J30         236          238
+  // Final        J33–J34         264          266
+
+  const ROUND_CALENDAR: { name: string; size: number; drawOffset: number; matchOffset: number }[] = [
+    { name: "Preliminar", size: 0,  drawOffset: 61,  matchOffset: 63  },
+    { name: "R32",        size: 64, drawOffset: 96,  matchOffset: 98  },
+    { name: "R16",        size: 32, drawOffset: 145, matchOffset: 147 },
+    { name: "Octavos",    size: 16, drawOffset: 173, matchOffset: 175 },
+    { name: "QF",         size: 8,  drawOffset: 208, matchOffset: 210 },
+    { name: "SF",         size: 4,  drawOffset: 236, matchOffset: 238 },
+    { name: "Final",      size: 2,  drawOffset: 264, matchOffset: 266 },
+  ];
+
   const schedule: { matchday: number; round: string; size: number; drawMatchday: number }[] = [];
-  let currentDrawDay = 0; // 0 = July 7th
-  
+
   // Add preliminary round if needed
   if (preliminaryTeams > 0) {
+    const entry = ROUND_CALENDAR.find(r => r.name === "Preliminar")!;
     schedule.push({
-      matchday: currentDrawDay + 1, // match day after draw
       round: "Preliminar",
       size: preliminaryTeams,
-      drawMatchday: currentDrawDay
+      drawMatchday: entry.drawOffset,
+      matchday: entry.matchOffset,
     });
-    currentDrawDay += 2; // next draw is 2 days later
   }
-  
-  // Add main bracket rounds (no R64, added Octavos between R16 and QF)
-  // R32 = 64 teams, R16 = 32 teams, Octavos = 16 teams, QF = 8 teams, SF = 4 teams, Final = 2 teams
-  const rounds = [
-    { size: 64, name: "R32" },
-    { size: 32, name: "R16" },
-    { size: 16, name: "Octavos" },
-    { size: 8, name: "QF" },
-    { size: 4, name: "SF" },
-    { size: 2, name: "Final" }
-  ];
-  
-  for (const round of rounds) {
-    if (mainBracketSize >= round.size) {
+
+  // Add main bracket rounds in order
+  for (const entry of ROUND_CALENDAR) {
+    if (entry.size === 0) continue; // Preliminar handled above
+    if (mainBracketSize >= entry.size) {
       schedule.push({
-        matchday: currentDrawDay + 1,
-        round: round.name,
-        size: round.size,
-        drawMatchday: currentDrawDay
+        round: entry.name,
+        size: entry.size,
+        drawMatchday: entry.drawOffset,
+        matchday: entry.matchOffset,
       });
-      currentDrawDay += 2;
     }
   }
-  
-  return { schedule, preliminaryTeams, mainBracketSize };
+
+  const result = { schedule, preliminaryTeams, mainBracketSize };
+  _cupStructureCache.set(country, result);
+  return result;
 }
 
 // Generate dynamic cup schedule based on actual bracket size (legacy function)
@@ -220,6 +242,7 @@ export function getCupScheduleForSize(teamCount: number): { matchday: number; ro
 }
 
 export function initCup(country: string): { fixtures: Fixture[]; participants: string[]; preliminaryParticipants: string[]; structure: ReturnType<typeof getCupStructureForCountry> } {
+  if (_initCupCache.has(country)) return _initCupCache.get(country) as any;
   // Get all teams for this country
   const allTeams = getAllTeams().filter(t => {
     const league = LEAGUES[t.league as LeagueId];
@@ -237,12 +260,14 @@ export function initCup(country: string): { fixtures: Fixture[]; participants: s
   const preliminaryParticipants = bracket.preliminaryTeams.map(t => t.id);
   const mainBracketParticipants = bracket.byeTeams.map(t => t.id);
   
-  return {
+  const result = {
     fixtures: [],
     participants: mainBracketParticipants,
     preliminaryParticipants,
     structure
   };
+  _initCupCache.set(country, result);
+  return result;
 }
 
 /* ============================================================

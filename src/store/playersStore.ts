@@ -56,13 +56,12 @@ import {
   loadSave,
   saveSave,
   generateRealisticStatsForO1Leagues,
-  autoDrawForeignCups,
   simulateCupMatchdayLayered,
   fixCupDraws,
   type SaveGame,
 } from "@/lib/store";
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
-import { LEAGUES } from "@/data/teams";
+import { LEAGUES, getPrimaryLeagueForCountry } from "@/data/teams";
 
 // Big 5 European leagues for VIP deep simulation
 const BIG5_LEAGUES: LeagueId[] = ["laliga", "premier", "seriea", "bundesliga", "ligue1"];
@@ -186,6 +185,12 @@ export type PlayerStats = {
 
   appearances: number;
 
+  cupGoals: number;
+
+  cupAssists: number;
+
+  cupAppearances: number;
+
   injuredUntil: number;
 
   injuryReason?: string;
@@ -247,6 +252,12 @@ function defaultStats(): PlayerStats {
     assists: 0,
 
     appearances: 0,
+
+    cupGoals: 0,
+
+    cupAssists: 0,
+
+    cupAppearances: 0,
 
     injuredUntil: 0,
 
@@ -574,11 +585,11 @@ type PlayersState = {
 
 
 
-  recordAppearance: (playerId: string) => void;
+  recordAppearance: (playerId: string, competition?: string) => void;
 
-  recordGoal: (playerId: string) => void;
+  recordGoal: (playerId: string, competition?: string) => void;
 
-  recordAssist: (playerId: string) => void;
+  recordAssist: (playerId: string, competition?: string) => void;
 
   recordYellowCard: (playerId: string) => void;
 
@@ -816,17 +827,18 @@ export const usePlayersStore = create<PlayersState>()(
           if (rawSave) {
             const nextDate = addDaysToIso(state.currentDate, 1);
 
-            // 1. Procesar copas extranjeras siempre
+            // Note: autoDrawForeignCups is handled in calendar.tsx asynchronously before advanceTime.
+            // Only run fixCupDraws here (cheap — only fixes draws without extra time data).
             let currentSave = rawSave;
             try {
-              currentSave = autoDrawForeignCups(fixCupDraws(rawSave), nextDate);
+              currentSave = fixCupDraws(rawSave);
             } catch { /* keep rawSave */ }
 
             // 2. Detectar si hoy es día de sorteo del usuario
             try {
               const userCountry = LEAGUES[currentSave.myLeague]?.country;
               const primaryLeague = userCountry
-                ? (Object.keys(LEAGUES).find(lg => LEAGUES[lg]?.country === userCountry) as LeagueId)
+                ? getPrimaryLeagueForCountry(userCountry)
                 : currentSave.myLeague;
               const cupKey = (primaryLeague || currentSave.myLeague) as LeagueId;
               const CUP_START = new Date("2025-07-07T00:00:00Z");
@@ -1462,13 +1474,15 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-      recordAppearance: (playerId) => {
+      recordAppearance: (playerId, competition) => {
 
         const next = { ...get().stats };
 
         const s = next[playerId] ?? defaultStats();
 
-        next[playerId] = { ...s, appearances: s.appearances + 1 };
+        const isCup = competition === "cup";
+
+        next[playerId] = { ...s, appearances: s.appearances + 1, cupAppearances: (s.cupAppearances ?? 0) + (isCup ? 1 : 0) };
 
         set({ stats: next });
 
@@ -1476,13 +1490,15 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-      recordGoal: (playerId) => {
+      recordGoal: (playerId, competition) => {
 
         const next = { ...get().stats };
 
         const s = next[playerId] ?? defaultStats();
 
-        next[playerId] = { ...s, goals: s.goals + 1 };
+        const isCup = competition === "cup";
+
+        next[playerId] = { ...s, goals: s.goals + 1, cupGoals: (s.cupGoals ?? 0) + (isCup ? 1 : 0) };
 
         set({ stats: next });
 
@@ -1490,13 +1506,15 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-      recordAssist: (playerId) => {
+      recordAssist: (playerId, competition) => {
 
         const next = { ...get().stats };
 
         const s = next[playerId] ?? defaultStats();
 
-        next[playerId] = { ...s, assists: s.assists + 1 };
+        const isCup = competition === "cup";
+
+        next[playerId] = { ...s, assists: s.assists + 1, cupAssists: (s.cupAssists ?? 0) + (isCup ? 1 : 0) };
 
         set({ stats: next });
 
@@ -1637,6 +1655,8 @@ export function useCurrentDate(): string {
 export function selectTopScorers(
   leagueFilter?: LeagueId,
   limit = 30,
+  competition: "all" | "league" | "cup" = "all",
+  cupCountry?: string,
 ): Player[] {
   const store = usePlayersStore.getState();
   store.init();
@@ -1652,11 +1672,20 @@ export function selectTopScorers(
   const out: Player[] = [];
 
   for (const [id, st] of Object.entries(store.stats)) {
-    if (st.goals <= 0) continue;
+    const goals = competition === "cup"
+      ? (st.cupGoals ?? 0)
+      : competition === "league"
+        ? st.goals - (st.cupGoals ?? 0)
+        : st.goals;
+    if (goals <= 0) continue;
     const p = store.getSimPlayer(id);
     if (!p) continue;
     if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
-    out.push(p);
+    if (competition === "cup" && cupCountry) {
+      const teamCountry = LEAGUES[teamById(p.teamId).league as LeagueId]?.country;
+      if (teamCountry !== cupCountry) continue;
+    }
+    out.push({ ...p, goals, assists: competition === "cup" ? (st.cupAssists ?? 0) : competition === "league" ? st.assists - (st.cupAssists ?? 0) : st.assists, appearances: competition === "cup" ? (st.cupAppearances ?? 0) : competition === "league" ? st.appearances - (st.cupAppearances ?? 0) : st.appearances });
   }
 
   return out
@@ -1669,6 +1698,8 @@ export function selectTopScorers(
 export function selectTopAssisters(
   leagueFilter?: LeagueId,
   limit = 30,
+  competition: "all" | "league" | "cup" = "all",
+  cupCountry?: string,
 ): Player[] {
   const store = usePlayersStore.getState();
   store.init();
@@ -1684,16 +1715,59 @@ export function selectTopAssisters(
   const out: Player[] = [];
 
   for (const [id, st] of Object.entries(store.stats)) {
-    if (st.assists <= 0) continue;
+    const assists = competition === "cup"
+      ? (st.cupAssists ?? 0)
+      : competition === "league"
+        ? st.assists - (st.cupAssists ?? 0)
+        : st.assists;
+    if (assists <= 0) continue;
     const p = store.getSimPlayer(id);
     if (!p) continue;
     if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
-    out.push(p);
+    if (competition === "cup" && cupCountry) {
+      const teamCountry = LEAGUES[teamById(p.teamId).league as LeagueId]?.country;
+      if (teamCountry !== cupCountry) continue;
+    }
+    out.push({ ...p, goals: competition === "cup" ? (st.cupGoals ?? 0) : competition === "league" ? st.goals - (st.cupGoals ?? 0) : st.goals, assists, appearances: competition === "cup" ? (st.cupAppearances ?? 0) : competition === "league" ? st.appearances - (st.cupAppearances ?? 0) : st.appearances });
   }
 
   return out
     .sort((a, b) => b.assists - a.assists || b.goals - a.goals)
     .slice(0, limit);
+}
+
+export function selectTopYellowCards(
+  leagueFilter?: LeagueId,
+  limit = 30,
+): (Player & { yellowCards: number; redCards: number })[] {
+  const store = usePlayersStore.getState();
+  store.init();
+  const out: (Player & { yellowCards: number; redCards: number })[] = [];
+  for (const [id, st] of Object.entries(store.stats)) {
+    if ((st.yellowCards ?? 0) <= 0) continue;
+    const p = store.getSimPlayer(id);
+    if (!p) continue;
+    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+    out.push({ ...p, yellowCards: st.yellowCards ?? 0, redCards: st.redCards ?? 0 });
+  }
+  return out.sort((a, b) => b.yellowCards - a.yellowCards || b.redCards - a.redCards).slice(0, limit);
+}
+
+export function selectTopRedCards(
+  leagueFilter?: LeagueId,
+  limit = 30,
+): (Player & { yellowCards: number; redCards: number })[] {
+  const store = usePlayersStore.getState();
+  store.init();
+  const out: (Player & { yellowCards: number; redCards: number })[] = [];
+  for (const [id, st] of Object.entries(store.stats)) {
+    if ((st.redCards ?? 0) <= 0) continue;
+    const p = store.getSimPlayer(id);
+    if (!p) continue;
+    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+    out.push({ ...p, yellowCards: st.yellowCards ?? 0, redCards: st.redCards ?? 0 });
+  }
+  return out.sort((a, b) => b.redCards - a.redCards || b.yellowCards - a.yellowCards).slice(0, limit);
 }
 
 
