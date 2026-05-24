@@ -3,10 +3,18 @@ import { useEffect, useMemo, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
 import { teamById, LEAGUES, type LeagueId, getAllTeams } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
+import { LeagueLogo } from "@/components/LeagueLogo";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { selectInjuredPlayers } from "@/store/playersStore";
 import type { Player } from "@/data/players";
 import { Activity, Shield, Check, Filter, X } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -218,22 +226,33 @@ function InjuriesPage() {
               <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
                 Liga
               </label>
-              <select
+              <Select
                 value={filters.league}
-                onChange={(e) =>
+                onValueChange={(value) =>
                   setFilters((prev) => ({
                     ...prev,
-                    league: e.target.value as LeagueId | "all",
+                    league: value as LeagueId | "all",
                   }))
                 }
-                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
               >
-                {leagueOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Todas las ligas" />
+                </SelectTrigger>
+                <SelectContent>
+                  {leagueOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.value === "all" ? (
+                        <span>{opt.label}</span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <LeagueLogo league={LEAGUES[opt.value as LeagueId]?.name || ""} size="sm" />
+                          <span>{LEAGUES[opt.value as LeagueId]?.name || opt.label}</span>
+                        </div>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Team Filter */}

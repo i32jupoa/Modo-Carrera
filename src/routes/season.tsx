@@ -12,6 +12,7 @@ import { usePlayersStore, ensureStatsForLeague, useCurrentDate } from "@/store/p
 
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
+import { CountryFlag } from "@/components/CountryFlag";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -843,10 +844,9 @@ function OtherLeaguesPanel({ save }: { save: SaveGame }) {
 
             <div key={lg}>
 
-              <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">
-
-                {LEAGUES[lg].flag} {LEAGUES[lg].name} · J{highestMd}
-
+              <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-2">
+                <CountryFlag country={LEAGUES[lg].country} />
+                {LEAGUES[lg].name} · J{highestMd}
               </div>
 
               {fixturesWithResults.length === 0 ? (

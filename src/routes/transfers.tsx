@@ -2,15 +2,18 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
 import { TEAMS, teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
-
-// Helper to get league name from league ID
-function getLeagueName(leagueId: string): string {
-  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
-}
 import type { Position } from "@/data/players";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
+import { LeagueLogo } from "@/components/LeagueLogo";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   usePlayersStore,
   formatEuro,
@@ -23,6 +26,11 @@ import { toast } from "sonner";
 import { Search, Wallet, UserPlus, Filter, X } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
+
+// Helper to get league name from league ID
+function getLeagueName(leagueId: string): string {
+  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
 
 // Filter option types
 type PriceBracket = "all" | "0-5" | "5-15" | "15-40" | "40-80" | "80+";
@@ -552,22 +560,33 @@ function TransfersPage() {
               <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
                 Liga
               </label>
-              <select
+              <Select
                 value={filters.league}
-                onChange={(e) =>
+                onValueChange={(value) =>
                   setFilters((prev) => ({
                     ...prev,
-                    league: e.target.value as LeagueId | "all",
+                    league: value as LeagueId | "all",
                   }))
                 }
-                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
               >
-                {leagueOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Liga: Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  {leagueOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.value === "all" ? (
+                        <span>{opt.label}</span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <LeagueLogo league={LEAGUES[opt.value as LeagueId]?.name || ""} size="sm" />
+                          <span>{LEAGUES[opt.value as LeagueId]?.name || opt.label}</span>
+                        </div>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Team Filter - Disabled when no league selected */}

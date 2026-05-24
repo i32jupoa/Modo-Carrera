@@ -4,6 +4,14 @@ import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
 import { LEAGUES, LeagueId, teamById } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
+import { LeagueLogo } from "@/components/LeagueLogo";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -47,13 +55,22 @@ function ScorersPage() {
     <div className="p-4 md:p-6 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <h1 className="text-2xl font-black">⚽ Máximos goleadores</h1>
-        <select value={league} onChange={(e) => setLeague(e.target.value as LeagueId | "all")}
-          className="bg-secondary border border-border rounded px-3 py-1.5 text-sm">
-          <option value="all">🌍 Todas las ligas</option>
-          {ALL_LEAGUES.map((lg) => (
-            <option key={lg} value={lg}>{LEAGUES[lg].flag} {LEAGUES[lg].name}</option>
-          ))}
-        </select>
+        <Select value={league} onValueChange={(value) => setLeague(value as LeagueId | "all")}>
+          <SelectTrigger className="w-[200px]">
+            <SelectValue placeholder="Todas las ligas" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">🌍 Todas las ligas</SelectItem>
+            {ALL_LEAGUES.map((lg) => (
+              <SelectItem key={lg} value={lg}>
+                <div className="flex items-center gap-2">
+                  <LeagueLogo league={LEAGUES[lg].name} size="sm" />
+                  <span>{LEAGUES[lg].name}</span>
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {scorers.length === 0 ? (

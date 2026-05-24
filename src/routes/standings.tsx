@@ -4,6 +4,14 @@ import { ALL_LEAGUES, loadSave, SaveGame, getSortedStandings } from "@/lib/store
 import { LEAGUES, teamById, teamsByLeague, type LeagueId } from "@/data/teams";
 import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
 import { TeamLogo } from "@/components/TeamLogo";
+import { LeagueLogo } from "@/components/LeagueLogo";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -56,15 +64,21 @@ function StandingsPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <select
-            value={viewLeague}
-            onChange={(e) => setViewLeague(e.target.value as LeagueId)}
-            className="bg-secondary border border-border rounded px-3 py-1.5 text-sm"
-          >
-            {ALL_LEAGUES.map((lg) => (
-              <option key={lg} value={lg}>{LEAGUES[lg].name}</option>
-            ))}
-          </select>
+          <Select value={viewLeague} onValueChange={(value) => setViewLeague(value as LeagueId)}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="Selecciona liga" />
+            </SelectTrigger>
+            <SelectContent>
+              {ALL_LEAGUES.map((lg) => (
+                <SelectItem key={lg} value={lg}>
+                  <div className="flex items-center gap-2">
+                    <LeagueLogo league={LEAGUES[lg].name} size="sm" />
+                    <span>{LEAGUES[lg].name}</span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Link
             to="/fixtures"
             className="text-xs font-semibold text-primary hover:underline"
