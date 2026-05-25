@@ -211,16 +211,16 @@ export function MatchDayModal() {
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,hsl(var(--primary)/0.12),transparent_70%)] pointer-events-none" />
             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 relative">
               <div className="flex flex-col items-center gap-2 text-center">
-                <TeamLogo teamName={myTeam.name} leagueName={getLeagueName(myTeam.league)} size={56} />
-                <span className="font-black text-sm leading-tight">{myTeam.name}</span>
+                <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={56} />
+                <span className="font-black text-sm leading-tight">{home.name}</span>
                 <span className="text-[0.65rem] text-muted-foreground uppercase tracking-wider">
-                  OVR {overall(myTeam)}
+                  OVR {overall(home)}
                 </span>
               </div>
               <div className="flex flex-col items-center min-w-[5.5rem]">
                 {played ? (
                   <div className="scoreline text-4xl font-black text-primary tabular-nums">
-                    {myGoals} - {rivalGoals}
+                    {live.homeScore} - {live.awayScore}
                   </div>
                 ) : (
                   <span className="text-2xl font-black text-muted-foreground">VS</span>
@@ -232,10 +232,10 @@ export function MatchDayModal() {
                 )}
               </div>
               <div className="flex flex-col items-center gap-2 text-center">
-                <TeamLogo teamName={rival.name} leagueName={getLeagueName(rival.league)} size={56} />
-                <span className="font-black text-sm leading-tight">{rival.name}</span>
+                <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={56} />
+                <span className="font-black text-sm leading-tight">{away.name}</span>
                 <span className="text-[0.65rem] text-muted-foreground uppercase tracking-wider">
-                  OVR {overall(rival)}
+                  OVR {overall(away)}
                 </span>
               </div>
             </div>

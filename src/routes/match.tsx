@@ -830,8 +830,12 @@ function MatchPage() {
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
   const myId = save.myTeamId;
+  const isHome = fixture.homeId === myId;
   const isMe = (id: string) => id === myId;
   const injuries = fixture.result?.injuries ?? [];
+
+  // Debug: log fixture info
+  console.log("Match fixture:", { homeId: fixture.homeId, awayId: fixture.awayId, myId, isHome, homeName: home?.name, awayName: away?.name });
 
   // Get lineups for both teams
   const homeSquad = getSimSquad(fixture.homeId);
