@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { LEAGUES_BY_COUNTRY, LEAGUES, LeagueId, getAllTeams, teamsByLeague, overall } from "@/data/teams";
 import { loadSave, newSave, saveSave, clearSave } from "@/lib/store";
 import { usePlayersStore } from "@/store/playersStore";
@@ -35,10 +35,18 @@ function Index() {
   const [openCountry, setOpenCountry] = useState<string | null>(null);
   const [hoverTeam, setHoverTeam] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const teamsSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setHasSave(!!loadSave());
   }, []);
+
+  // Scroll to teams section when a league is selected
+  useEffect(() => {
+    if (selectedLeague && teamsSectionRef.current) {
+      teamsSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [selectedLeague]);
 
   const teams = useMemo(
     () => selectedLeague ? teamsByLeague(selectedLeague).slice().sort((a, b) => overall(b) - overall(a)) : [],
@@ -164,7 +172,7 @@ function Index() {
           ))}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div ref={teamsSectionRef} className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {teams.map((t) => {
             const ov = overall(t);
             const isHover = hoverTeam === t.id;

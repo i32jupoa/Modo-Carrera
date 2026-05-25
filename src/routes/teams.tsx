@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
 import { teamsByLeague, teamById, overall, type LeagueId, type Team, getAllTeams, LEAGUES_BY_COUNTRY, LEAGUES } from "@/data/teams";
 import { usePlayersStore, ensureStatsForLeague, type PlayerStats } from "@/store/playersStore";
@@ -48,6 +48,7 @@ function TeamsPage() {
   const [selectedLeague, setSelectedLeague] = useState<LeagueId>("laliga");
   const [openCountry, setOpenCountry] = useState<string | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const teamsSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const s = loadSave();
@@ -60,6 +61,13 @@ function TeamsPage() {
   useEffect(() => {
     if (selectedLeague) {
       ensureStatsForLeague(selectedLeague);
+    }
+  }, [selectedLeague]);
+
+  // Scroll to teams section when a league is selected
+  useEffect(() => {
+    if (selectedLeague && teamsSectionRef.current) {
+      teamsSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [selectedLeague]);
 
@@ -126,7 +134,7 @@ function TeamsPage() {
 
       {/* Teams Grid */}
       {selectedLeague && (
-        <div className="mb-6">
+        <div ref={teamsSectionRef} className="mb-6">
           <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-3">
             {teamById(teams[0]?.id || "")?.league ? teamsByLeague(selectedLeague)[0]?.name : "Equipos"}
           </h2>
