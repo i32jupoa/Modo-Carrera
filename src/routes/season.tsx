@@ -553,19 +553,9 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
 
       <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-center text-center mb-6">
 
-        {isHome ? (
-          <>
-            <TeamSide team={home} side="left" recentResults={homeRecent} />
-            <div className="text-3xl font-black text-muted-foreground">VS</div>
-            <TeamSide team={away} side="right" recentResults={awayRecent} />
-          </>
-        ) : (
-          <>
-            <TeamSide team={away} side="left" recentResults={awayRecent} />
-            <div className="text-3xl font-black text-muted-foreground">VS</div>
-            <TeamSide team={home} side="right" recentResults={homeRecent} />
-          </>
-        )}
+        <TeamSide team={home} side="left" recentResults={homeRecent} label="LOCAL" />
+        <div className="text-3xl font-black text-muted-foreground">VS</div>
+        <TeamSide team={away} side="right" recentResults={awayRecent} label="VISITANTE" />
 
       </div>
 
@@ -607,7 +597,7 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
 
 
 
-function TeamSide({ team, side, recentResults }: { team: ReturnType<typeof teamById>; side: "left" | "right"; recentResults: Fixture[] }) {
+function TeamSide({ team, side, recentResults, label }: { team: ReturnType<typeof teamById>; side: "left" | "right"; recentResults: Fixture[]; label?: string }) {
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
   const squad = getSimSquad(team.id);
   const bestPlayer = squad.length > 0 ? squad.reduce((best, current) => current.rating > best.rating ? current : best) : null;
@@ -615,6 +605,12 @@ function TeamSide({ team, side, recentResults }: { team: ReturnType<typeof teamB
   return (
 
     <div className="flex flex-col items-center gap-2">
+
+      {label && (
+        <span className="text-[0.6rem] font-bold text-muted-foreground uppercase tracking-widest bg-secondary/50 px-2 py-0.5 rounded">
+          {label}
+        </span>
+      )}
 
       <div className={`flex items-center gap-3 ${side === "right" ? "flex-row-reverse" : ""}`}>
 

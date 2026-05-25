@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound, getRoundNameByTeamCount, getSurvivingCupTeams, simulateCupMatchday, simulateCupMatchdayLayered, fixCupDraws } from "@/lib/store";
+import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound, getRoundNameByTeamCount, getSurvivingCupTeams, simulateCupMatchday, simulateCupMatchdayLayered, simulateBackgroundLeaguesOnly, scheduleBackgroundCupsOnly, processScheduledBackgroundSims, fixCupDraws } from "@/lib/store";
 import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 import { usePlayersStore } from "@/store/playersStore";
@@ -419,7 +419,7 @@ function CalendarPage() {
 
   const handleAdvanceDay = async () => {
     if (!save) return;
-    
+
     setIsAdvancing(true);
 
     // Always process foreign cup draws/results first, before any early returns
@@ -430,6 +430,35 @@ function CalendarPage() {
       setSave(currentSave);
     } catch (err) {
       console.error("Error auto-processing foreign cups:", err);
+    }
+
+    // Programar ligas background alrededor del próximo partido del usuario
+    try {
+      const nextScheduledMatch = fixtures.find(f => !f.isPlayed);
+      const nextMatchDate = nextScheduledMatch?.date;
+      currentSave = await simulateBackgroundLeaguesOnly(currentSave, currentDateIso, nextMatchDate);
+      saveSave(currentSave);
+      setSave(currentSave);
+    } catch (err) {
+      console.error("Error scheduling background leagues:", err);
+    }
+
+    // Programar copas background también
+    try {
+      currentSave = await scheduleBackgroundCupsOnly(currentSave, currentSave.currentMatchday[currentSave.myLeague], currentDateIso);
+      saveSave(currentSave);
+      setSave(currentSave);
+    } catch (err) {
+      console.error("Error scheduling background cups:", err);
+    }
+
+    // Procesar simulaciones programadas para hoy
+    try {
+      currentSave = processScheduledBackgroundSims(currentSave, currentDateIso);
+      saveSave(currentSave);
+      setSave(currentSave);
+    } catch (err) {
+      console.error("Error processing scheduled background sims:", err);
     }
     
     try {
