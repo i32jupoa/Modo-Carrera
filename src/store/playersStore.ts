@@ -131,6 +131,8 @@ import {
 } from "@/lib/store";
 
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
+import { UCL_CALENDAR, UCL_START, UCL_SEASON1_IDS, uclDayOffset, emptyTableEntry, assignUCLPots } from "@/data/ucl";
+import { runSwissDraw, assignmentsToFixtures, drawUCLPlayoffs, playoffPairsToFixtures, buildUCLBracket } from "@/lib/uclDraw";
 
 import { LEAGUES, getPrimaryLeagueForCountry } from "@/data/teams";
 
@@ -1046,6 +1048,9 @@ type PlayersState = {
 
   pendingCupDraw: boolean;
 
+  /** Sorteo UCL pendiente */
+  pendingUclDraw: "league" | "playoff" | "knockout" | null;
+
 
 
 
@@ -1070,7 +1075,7 @@ type PlayersState = {
 
   clearPendingCupDraw: () => void;
 
-
+  clearPendingUclDraw: () => void;
 
   dismissMatch: (matchId: string) => void;
 
@@ -1272,6 +1277,10 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+      pendingUclDraw: null,
+
+
+
       stats: {},
 
 
@@ -1425,6 +1434,10 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       clearPendingCupDraw: () => set({ pendingCupDraw: false }),
+
+
+
+      clearPendingUclDraw: () => set({ pendingUclDraw: null }),
 
 
 
@@ -1650,7 +1663,7 @@ export const usePlayersStore = create<PlayersState>()(
 
         if (get().pendingCupDraw) return 0;
 
-
+        if (get().pendingUclDraw) return 0;
 
         // --- Copa: procesar al avanzar día, sin depender del calendario ---
 
@@ -1899,6 +1912,85 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+        // --- UCL: detectar dias de sorteo y partidos ---
+        {
+          const rawSave = loadSave();
+          if (rawSave) {
+            const nextDate = addDaysToIso(state.currentDate, 1);
+            const offset = uclDayOffset(nextDate);
+
+            if (!rawSave.ucl && offset >= UCL_CALENDAR.leagueDraw) {
+              rawSave.ucl = {
+                phase: "league" as const,
+                seasonNumber: 1,
+                participants: UCL_SEASON1_IDS,
+                table: UCL_SEASON1_IDS.map(emptyTableEntry),
+                drawState: { leagueDone: false, playoffDone: false, knockoutDone: false },
+                bracket: [],
+              };
+              saveSave(rawSave);
+            }
+
+            if (rawSave.ucl) {
+              const ucl = rawSave.ucl;
+
+              // League draw day
+              if (offset === UCL_CALENDAR.leagueDraw && !ucl.drawState.leagueDone) {
+                saveSave(rawSave);
+                set({ currentDate: nextDate, pendingUclDraw: "league" });
+                return 1;
+              }
+
+              // Playoff draw day
+              if (offset === UCL_CALENDAR.playoffDraw && ucl.drawState.leagueDone && !ucl.drawState.playoffDone) {
+                saveSave(rawSave);
+                set({ currentDate: nextDate, pendingUclDraw: "playoff" });
+                return 1;
+              }
+
+              // Knockout draw day
+              if (offset === UCL_CALENDAR.knockoutDraw && ucl.drawState.playoffDone && !ucl.drawState.knockoutDone) {
+                saveSave(rawSave);
+                set({ currentDate: nextDate, pendingUclDraw: "knockout" });
+                return 1;
+              }
+
+              // Simulate AI UCL fixtures for any UCL match day
+              const allUclRounds = [
+                ...UCL_CALENDAR.leagueDay.map((_, i) => `Jornada ${i + 1}`),
+                "Playoff-Leg1", "Playoff-Leg2",
+                "R16-Leg1", "R16-Leg2", "QF-Leg1", "QF-Leg2", "SF-Leg1", "SF-Leg2", "Final"
+              ];
+              const dayUclRound =
+                UCL_CALENDAR.leagueDay.indexOf(offset) >= 0 ? `Jornada ${UCL_CALENDAR.leagueDay.indexOf(offset) + 1}` :
+                offset === UCL_CALENDAR.playoffLeg1 ? "Playoff-Leg1" :
+                offset === UCL_CALENDAR.playoffLeg2 ? "Playoff-Leg2" :
+                offset === UCL_CALENDAR.r16Leg1 ? "R16-Leg1" :
+                offset === UCL_CALENDAR.r16Leg2 ? "R16-Leg2" :
+                offset === UCL_CALENDAR.qfLeg1 ? "QF-Leg1" :
+                offset === UCL_CALENDAR.qfLeg2 ? "QF-Leg2" :
+                offset === UCL_CALENDAR.sfLeg1 ? "SF-Leg1" :
+                offset === UCL_CALENDAR.sfLeg2 ? "SF-Leg2" :
+                offset === UCL_CALENDAR.final ? "Final" : null;
+
+              if (dayUclRound) {
+                const dayFixtures = rawSave.uclFixtures.filter((f: any) => f.round === dayUclRound && !f.result);
+                const userHas = dayFixtures.some((f: any) => f.homeId === rawSave.myTeamId || f.awayId === rawSave.myTeamId);
+                if (!userHas) {
+                  for (const f of dayFixtures) {
+                    const hg = Math.floor(Math.random() * 4);
+                    const ag = Math.floor(Math.random() * 4);
+                    const idx = rawSave.uclFixtures.findIndex((x: any) => x.id === f.id);
+                    if (idx >= 0) rawSave.uclFixtures[idx] = { ...f, result: { homeGoals: hg, awayGoals: ag, events: [], cards: [], injuries: [], xgHome: hg, xgAway: ag } };
+                  }
+                  saveSave(rawSave);
+                }
+              }
+            }
+          }
+        }
 
         let date = state.currentDate;
 

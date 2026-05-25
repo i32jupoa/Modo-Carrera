@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { ALL_LEAGUES, loadSave, SaveGame, advanceMatchdayLayered, getSortedStandings, getMatchdayFixtures, getMyNextFixtureAny, getMyRecentResults, getTeamRecentResults, simulateCupMatchday, simulateUCLMatchday, saveSave } from "@/lib/store";
 
 import { LEAGUES, teamById, teamsByLeague, type LeagueId, type Team, LEAGUES_BY_COUNTRY } from "@/data/teams";
+import { UCL_START } from "@/data/ucl";
 
 import { type Fixture } from "@/lib/season";
 
@@ -456,7 +457,7 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
   if (fixture.competition === "cup") {
     headerText = `🛡 Copa Nacional · ${roundNames[fixture.round || ""] || fixture.round || ""}`;
   } else if (fixture.competition === "ucl") {
-    headerText = `🏆 Champions League · Jornada ${fixture.matchday}`;
+    headerText = `🏆 Champions League · ${fixture.round || 'Fase de Liga'}`;
   } else {
     headerText = `Liga · Jornada ${fixture.matchday}`;
   }
@@ -492,8 +493,9 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
       String(matchDate.getMonth() + 1).padStart(2, '0') + '-' + 
       String(matchDate.getDate()).padStart(2, '0');
   } else {
-    // For UCL: weekly schedule starting from season start
-    matchDate = new Date(seasonStart.getTime() + (fixture.matchday - 1) * 7 * 86400000);
+    // For UCL: matchday = absolute day offset from UCL_START
+    const uclStart = new Date(UCL_START + "T00:00:00Z");
+    matchDate = new Date(uclStart.getTime() + fixture.matchday * 86400000);
     matchDateIso = matchDate.getFullYear() + '-' + 
       String(matchDate.getMonth() + 1).padStart(2, '0') + '-' + 
       String(matchDate.getDate()).padStart(2, '0');

@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as UclRouteImport } from './routes/ucl'
 import { Route as TransfersRouteImport } from './routes/transfers'
 import { Route as TeamsRouteImport } from './routes/teams'
 import { Route as StandingsRouteImport } from './routes/standings'
@@ -24,6 +25,11 @@ import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as AssistsRouteImport } from './routes/assists'
 import { Route as IndexRouteImport } from './routes/index'
 
+const UclRoute = UclRouteImport.update({
+  id: '/ucl',
+  path: '/ucl',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TransfersRoute = TransfersRouteImport.update({
   id: '/transfers',
   path: '/transfers',
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/standings': typeof StandingsRoute
   '/teams': typeof TeamsRoute
   '/transfers': typeof TransfersRoute
+  '/ucl': typeof UclRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/standings': typeof StandingsRoute
   '/teams': typeof TeamsRoute
   '/transfers': typeof TransfersRoute
+  '/ucl': typeof UclRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/standings': typeof StandingsRoute
   '/teams': typeof TeamsRoute
   '/transfers': typeof TransfersRoute
+  '/ucl': typeof UclRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/standings'
     | '/teams'
     | '/transfers'
+    | '/ucl'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/standings'
     | '/teams'
     | '/transfers'
+    | '/ucl'
   id:
     | '__root__'
     | '/'
@@ -193,6 +204,7 @@ export interface FileRouteTypes {
     | '/standings'
     | '/teams'
     | '/transfers'
+    | '/ucl'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -210,10 +222,18 @@ export interface RootRouteChildren {
   StandingsRoute: typeof StandingsRoute
   TeamsRoute: typeof TeamsRoute
   TransfersRoute: typeof TransfersRoute
+  UclRoute: typeof UclRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/ucl': {
+      id: '/ucl'
+      path: '/ucl'
+      fullPath: '/ucl'
+      preLoaderRoute: typeof UclRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/transfers': {
       id: '/transfers'
       path: '/transfers'
@@ -330,6 +350,7 @@ const rootRouteChildren: RootRouteChildren = {
   StandingsRoute: StandingsRoute,
   TeamsRoute: TeamsRoute,
   TransfersRoute: TransfersRoute,
+  UclRoute: UclRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

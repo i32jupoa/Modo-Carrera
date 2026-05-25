@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Zap } from "lucide-react";
 import { loadSave, type SaveGame } from "@/lib/store";
+import { UCL_START } from "@/data/ucl";
 import { toDateOnly } from "@/lib/transferWindows";
 
 // Helper to get league name from league ID
@@ -102,13 +103,13 @@ export function MatchDayModal() {
       
       // Check UCL fixtures
       if (save.uclFixtures) {
-        const uclSeasonStart = new Date("2025-08-16T12:00:00Z");
+        const uclStart = new Date(UCL_START + "T00:00:00Z");
         for (const f of save.uclFixtures) {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
           
-          // UCL matches are on the same day as league matchday
-          const uclMatchDate = new Date(uclSeasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
+          // UCL matchday = absolute day offset from UCL_START
+          const uclMatchDate = new Date(uclStart.getTime() + f.matchday * 86400000);
           const uclMatchDateIso = toDateOnly(uclMatchDate);
           
           if (uclMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {

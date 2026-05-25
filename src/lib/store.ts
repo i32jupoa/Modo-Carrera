@@ -77,6 +77,8 @@ import { simulateMatch, simulateMatchFast, simulateCupMatch, SimResult, MatchEve
 
 
 import { buildNextRound, CUP_SCHEDULE, getCupScheduleForSize, initCup, initUCL, UCL_SCHEDULE, getCupStructureForCountry } from "@/lib/cups";
+import { UCL_CALENDAR, UCL_START, UCL_SEASON1_IDS, emptyTableEntry, sortUCLTable, applyUCLResult as applyUCLTableResult, type UCLState } from "@/data/ucl";
+import { runSwissDraw, assignmentsToFixtures, drawUCLPlayoffs, playoffPairsToFixtures, buildUCLBracket } from "@/lib/uclDraw";
 
 
 
@@ -692,15 +694,12 @@ export type SaveGame = {
 
 
 
-  // UCL
-
-
-
+  // UCL (legacy flat fixtures — kept for backward compat)
   uclFixtures: Fixture[];
-
-
-
   uclChampion: string | null;
+
+  // UCL Swiss format (new)
+  ucl: import("@/data/ucl").UCLState | null;
 
 
 
@@ -1320,7 +1319,7 @@ export function newSave(myTeamId: string): SaveGame {
 
 
 
-  const { fixtures: ucl } = initUCL();
+  const ucl: import("@/lib/season").Fixture[] = []; // UCL fixtures generated on draw day, not at init
 
 
 
@@ -1381,6 +1380,8 @@ export function newSave(myTeamId: string): SaveGame {
 
 
     uclChampion: null,
+
+    ucl: null,
 
 
 
@@ -2659,6 +2660,10 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
 
 
 
+    const uclStart = new Date(UCL_START + "T00:00:00Z");
+
+
+
     save.uclFixtures.forEach(f => {
 
 
@@ -2667,7 +2672,8 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
 
 
 
-        const matchdayDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
+        // UCL matchday = absolute day offset from UCL_START
+        const matchdayDate = new Date(uclStart.getTime() + f.matchday * 86400000);
 
 
 
@@ -8586,3 +8592,89 @@ export function applyCupDraw(save: SaveGame, league: LeagueId, round: string, ma
 
 
 
+// ============================================================
+//  UCL DRAW FUNCTIONS
+// ============================================================
+
+export function applyUCLLeagueDraw(save: SaveGame, preCalculatedDraw?: { assignments: Map<string, Opponent[]>, matrix: boolean[][], teamIndex: Map<string, number> }): SaveGame {
+  let next: SaveGame = { ...save, ucl: save.ucl ? { ...save.ucl, drawState: { ...save.ucl.drawState } } : null };
+  if (!next.ucl) return next;
+  const participants = next.ucl.participants;
+  const { assignments } = preCalculatedDraw || runSwissDraw(participants);
+  const fixtures = assignmentsToFixtures(assignments, participants, UCL_CALENDAR.leagueDay[0]);
+  next.uclFixtures = [...(next.uclFixtures ?? []).filter(f => !f.round?.startsWith("Jornada")), ...fixtures];
+  next.ucl.drawState.leagueDone = true;
+  next.ucl.phase = "league";
+
+  // Auto-simulate all non-user fixtures across all 8 matchdays and update UCL table
+  // User's fixtures remain unplayed so they can be played manually via NextMatchCard/MatchDayModal
+  const myId = next.myTeamId;
+  const allMatchdays = [...new Set(next.uclFixtures.filter(f => f.round?.startsWith("Jornada")).map(f => f.matchday))].sort((a, b) => a - b);
+  for (const md of allMatchdays) {
+    const mdFixtures = next.uclFixtures.filter(f => f.matchday === md && !f.result && f.homeId !== myId && f.awayId !== myId);
+    for (const f of mdFixtures) {
+      const simmed = simulateFixtureInline(next, f, true);
+      const idx = next.uclFixtures.findIndex(x => x.id === f.id);
+      if (idx >= 0) {
+        next.uclFixtures[idx] = simmed;
+        next = applyMatchToStats(next, simmed);
+        if (simmed.result && next.ucl) {
+          next.ucl = { ...next.ucl, table: applyUCLTableResult(next.ucl.table, simmed.homeId, simmed.awayId, simmed.result.homeGoals, simmed.result.awayGoals) };
+        }
+      }
+    }
+  }
+
+  return next;
+}
+
+export function applyUCLLeagueResult(save: SaveGame, fixtureId: string): SaveGame {
+  const next: SaveGame = { ...save, ucl: save.ucl ? { ...save.ucl, table: [...save.ucl.table] } : null };
+  if (!next.ucl) return next;
+  const f = next.uclFixtures.find(x => x.id === fixtureId);
+  if (!f?.result) return next;
+  next.ucl.table = applyUCLTableResult(next.ucl.table, f.homeId, f.awayId, f.result.homeGoals, f.result.awayGoals);
+  return next;
+}
+
+export function applyUCLPlayoffDraw(save: SaveGame): SaveGame {
+  const next: SaveGame = { ...save, ucl: save.ucl ? { ...save.ucl, drawState: { ...save.ucl.drawState } } : null };
+  if (!next.ucl) return next;
+  const sorted = sortUCLTable(next.ucl.table).map(e => e.teamId);
+  const pairs = drawUCLPlayoffs(sorted);
+  const fixtures = playoffPairsToFixtures(pairs, UCL_CALENDAR.playoffLeg1, UCL_CALENDAR.playoffLeg2);
+  next.uclFixtures = [...(next.uclFixtures ?? []).filter(f => !f.round?.startsWith("Playoff")), ...fixtures];
+  next.ucl.drawState.playoffDone = true;
+  next.ucl.phase = "playoff";
+  return next;
+}
+
+export function applyUCLKnockoutDraw(save: SaveGame): SaveGame {
+  const next: SaveGame = { ...save, ucl: save.ucl ? { ...save.ucl, drawState: { ...save.ucl.drawState } } : null };
+  if (!next.ucl) return next;
+  const sorted = sortUCLTable(next.ucl.table).map(e => e.teamId);
+  const top8 = sorted.slice(0, 8);
+  const leg1s = next.uclFixtures.filter(f => f.round === "Playoff-Leg1");
+  const playoffWinners: string[] = [];
+  for (const leg1 of leg1s) {
+    const leg2 = next.uclFixtures.find(f => f.round === "Playoff-Leg2" && f.homeId === leg1.awayId && f.awayId === leg1.homeId);
+    if (!leg2?.result || !leg1.result) continue;
+    const aggSeed = leg2.result.homeGoals + leg1.result.awayGoals;
+    const aggUnseed = leg2.result.awayGoals + leg1.result.homeGoals;
+    playoffWinners.push(aggSeed >= aggUnseed ? leg2.homeId : leg2.awayId);
+  }
+  const { fixtures, bracket } = buildUCLBracket(top8, playoffWinners, {
+    r16Leg1: UCL_CALENDAR.r16Leg1, r16Leg2: UCL_CALENDAR.r16Leg2,
+    qfLeg1: UCL_CALENDAR.qfLeg1,  qfLeg2: UCL_CALENDAR.qfLeg2,
+    sfLeg1: UCL_CALENDAR.sfLeg1,  sfLeg2: UCL_CALENDAR.sfLeg2,
+    final: UCL_CALENDAR.final,
+  });
+  next.uclFixtures = [
+    ...(next.uclFixtures ?? []).filter(f => !f.round?.startsWith("R16") && !f.round?.startsWith("QF") && !f.round?.startsWith("SF") && f.round !== "Final"),
+    ...fixtures,
+  ];
+  next.ucl.bracket = bracket;
+  next.ucl.drawState.knockoutDone = true;
+  next.ucl.phase = "r16";
+  return next;
+}
