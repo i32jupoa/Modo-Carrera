@@ -126,6 +126,9 @@ import {
 
   fixCupDraws,
 
+  simulateUCLKnockoutMatchday,
+  simulateUCLLeagueMatchday,
+
   type SaveGame,
 
 } from "@/lib/store";
@@ -1979,11 +1982,17 @@ export const usePlayersStore = create<PlayersState>()(
                 const dayFixtures = rawSave.uclFixtures.filter((f: any) => f.round === dayUclRound && !f.result);
                 const userHas = dayFixtures.some((f: any) => f.homeId === rawSave.myTeamId || f.awayId === rawSave.myTeamId);
                 if (!userHas) {
-                  for (const f of dayFixtures) {
-                    const hg = Math.floor(Math.random() * 4);
-                    const ag = Math.floor(Math.random() * 4);
-                    const idx = rawSave.uclFixtures.findIndex((x: any) => x.id === f.id);
-                    if (idx >= 0) rawSave.uclFixtures[idx] = { ...f, result: { homeGoals: hg, awayGoals: ag, events: [], cards: [], injuries: [], xgHome: hg, xgAway: ag } };
+                  const isKnockout = dayUclRound.includes('-Leg') || dayUclRound === 'Final';
+                  if (isKnockout) {
+                    // Use proper two-leg simulation with ET+penalties on leg2
+                    const simmed = simulateUCLKnockoutMatchday(rawSave as any, dayFixtures[0]?.matchday ?? 0);
+                    rawSave.uclFixtures = simmed.uclFixtures;
+                    rawSave.ucl = simmed.ucl;
+                  } else {
+                    // Use proper simulation for league phase
+                    const simmed = simulateUCLLeagueMatchday(rawSave as any, dayFixtures[0]?.matchday ?? 0);
+                    rawSave.uclFixtures = simmed.uclFixtures;
+                    rawSave.ucl = simmed.ucl;
                   }
                   saveSave(rawSave);
                 }

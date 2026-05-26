@@ -4016,6 +4016,8 @@ export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame 
 
   let next: SaveGame = JSON.parse(JSON.stringify(save));
 
+  console.log(`[simulateUCLMatchday] START - matchday: ${matchday}, total fixtures: ${next.uclFixtures?.length ?? 0}`);
+
 
 
   if (!next.uclFixtures) return next;
@@ -4027,6 +4029,10 @@ export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame 
 
 
   const matchdayFixtures = next.uclFixtures.filter(f => f.matchday === matchday && !f.result);
+  console.log(`[simulateUCLMatchday] fixtures to simulate: ${matchdayFixtures.length}`);
+  if (matchdayFixtures.length === 0) {
+    console.log(`[simulateUCLMatchday] No fixtures to simulate - all fixtures on matchday:`, next.uclFixtures.filter(f => f.matchday === matchday).map(f => ({ id: f.id, hasResult: !!f.result })));
+  }
 
 
 
@@ -4039,6 +4045,8 @@ export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame 
 
 
     const simmed = simulateFixtureInline(next, f);
+
+    console.log(`[simulateUCLMatchday] simulated ${f.id}: ${simmed.result?.homeGoals}-${simmed.result?.awayGoals}`);
 
 
 
@@ -4055,6 +4063,11 @@ export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame 
 
 
       next = applyMatchToStats(next, simmed);
+
+      // Update UCL table
+      if (simmed.result && next.ucl) {
+        next.ucl.table = applyUCLTableResult(next.ucl.table, simmed.homeId, simmed.awayId, simmed.result.homeGoals, simmed.result.awayGoals);
+      }
 
 
 
@@ -4283,6 +4296,11 @@ export function playSpecificFixture(save: SaveGame, fixtureId: string): { save: 
 
 
         next = applyMatchToStats(next, simmed);
+
+        // Update UCL table
+        if (simmed.result && next.ucl) {
+          next.ucl.table = applyUCLTableResult(next.ucl.table, simmed.homeId, simmed.awayId, simmed.result.homeGoals, simmed.result.awayGoals);
+        }
 
 
 
@@ -8606,25 +8624,6 @@ export function applyUCLLeagueDraw(save: SaveGame, preCalculatedDraw?: { assignm
   next.ucl.drawState.leagueDone = true;
   next.ucl.phase = "league";
 
-  // Auto-simulate all non-user fixtures across all 8 matchdays and update UCL table
-  // User's fixtures remain unplayed so they can be played manually via NextMatchCard/MatchDayModal
-  const myId = next.myTeamId;
-  const allMatchdays = [...new Set(next.uclFixtures.filter(f => f.round?.startsWith("Jornada")).map(f => f.matchday))].sort((a, b) => a - b);
-  for (const md of allMatchdays) {
-    const mdFixtures = next.uclFixtures.filter(f => f.matchday === md && !f.result && f.homeId !== myId && f.awayId !== myId);
-    for (const f of mdFixtures) {
-      const simmed = simulateFixtureInline(next, f, true);
-      const idx = next.uclFixtures.findIndex(x => x.id === f.id);
-      if (idx >= 0) {
-        next.uclFixtures[idx] = simmed;
-        next = applyMatchToStats(next, simmed);
-        if (simmed.result && next.ucl) {
-          next.ucl = { ...next.ucl, table: applyUCLTableResult(next.ucl.table, simmed.homeId, simmed.awayId, simmed.result.homeGoals, simmed.result.awayGoals) };
-        }
-      }
-    }
-  }
-
   return next;
 }
 
@@ -8676,5 +8675,95 @@ export function applyUCLKnockoutDraw(save: SaveGame): SaveGame {
   next.ucl.bracket = bracket;
   next.ucl.drawState.knockoutDone = true;
   next.ucl.phase = "r16";
+  return next;
+}
+
+// Simulate a UCL league matchday with proper simulation and table updates
+export function simulateUCLLeagueMatchday(save: SaveGame, matchday: number): SaveGame {
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  if (!next.uclFixtures || !next.ucl) return next;
+
+  const toSimulate = next.uclFixtures.filter(f => f.matchday === matchday && !f.result && !f.round?.includes("-Leg") && f.round !== "Final");
+
+  for (const f of toSimulate) {
+    const simmed = simulateFixtureInline(next, f, false, false);
+    const idx = next.uclFixtures.findIndex(x => x.id === f.id);
+    if (idx >= 0) {
+      next.uclFixtures[idx] = simmed;
+      next = applyMatchToStats(next, simmed);
+      // Update UCL table
+      if (simmed.result) {
+        next.ucl = applyUCLTableResult(next.ucl, simmed);
+      }
+    }
+  }
+
+  return next;
+}
+
+// Simulate a UCL knockout matchday with proper two-leg logic
+export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): SaveGame {
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  if (!next.uclFixtures) return next;
+
+  const toSimulate = next.uclFixtures.filter(f => f.matchday === matchday && !f.result);
+  console.log(`[simulateUCLKnockoutMatchday] matchday: ${matchday}, fixtures to simulate: ${toSimulate.length}`);
+
+  for (const f of toSimulate) {
+    const isLeg2 = f.round?.endsWith("-Leg2");
+    const isFinal = f.round === "Final";
+
+    let simmed: Fixture;
+
+    if (isFinal) {
+      // Single leg — ET+penalties if draw
+      simmed = simulateFixtureInline(next, f, false, true);
+    } else if (isLeg2) {
+      // Simulate the 90 minutes normally
+      simmed = simulateFixtureInline(next, f, false, false);
+
+      if (simmed.result) {
+        // Find the corresponding leg1 fixture
+        const leg1 = next.uclFixtures.find(l =>
+          l.round === f.round!.replace("Leg2", "Leg1") &&
+          ((l.homeId === f.awayId && l.awayId === f.homeId) ||
+           (l.homeId === f.homeId && l.awayId === f.awayId))
+        );
+        if (leg1?.result) {
+          // Aggregate: leg2 homeId scored across both legs
+          const leg2HomeAgg = simmed.result.homeGoals + leg1.result.awayGoals;
+          const leg2AwayAgg = simmed.result.awayGoals + leg1.result.homeGoals;
+
+          if (leg2HomeAgg === leg2AwayAgg) {
+            // Aggregate tied → extra time
+            const home = teamById(simmed.homeId);
+            const away = teamById(simmed.awayId);
+            const homeXI = getStarters(next, simmed.homeId);
+            const awayXI = getStarters(next, simmed.awayId);
+            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+            simmed.result.extraTime = { homeGoals: etResult.homeGoals, awayGoals: etResult.awayGoals, events: etResult.events };
+            const etHomeAgg = leg2HomeAgg + etResult.homeGoals;
+            const etAwayAgg = leg2AwayAgg + etResult.awayGoals;
+            if (etHomeAgg === etAwayAgg) {
+              // Still tied → penalties
+              const penResult = simulatePenaltyShootout(homeXI, awayXI);
+              simmed.result.penalties = { homeGoals: penResult.homeGoals, awayGoals: penResult.awayGoals, shootout: penResult.shootout };
+            }
+          }
+        }
+      }
+    } else {
+      // Leg1 — plain simulation, no ET
+      simmed = simulateFixtureInline(next, f, false, false);
+    }
+
+    console.log(`[simulateUCLKnockoutMatchday] simulated ${f.id} (${f.round}): ${simmed.result?.homeGoals}-${simmed.result?.awayGoals}`);
+    const idx = next.uclFixtures.findIndex(x => x.id === f.id);
+    if (idx >= 0) {
+      next.uclFixtures[idx] = simmed;
+      next = applyMatchToStats(next, simmed);
+    }
+  }
+
   return next;
 }

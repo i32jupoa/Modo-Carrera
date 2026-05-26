@@ -126,21 +126,10 @@ export function assignmentsToFixtures(
   participants: string[],
   startDayOffset: number, // UCL_CALENDAR.leagueDay[0] — day offset from UCL_START for matchday 1
 ): Fixture[] {
-  // Assign rounds using each team's shuffled opponent index.
-  // Each team has exactly 8 opponents → shuffle their list → opponent at index i plays in round i.
-  // For each pair (A, B where A is home), use A's index of B as the round.
-  // Conflicts (B already has a different round for A) are resolved by swapping indices within A's list.
+  // Edge-coloring algorithm for bipartite regular graph using rotation method
+  // Since the graph is 8-regular, we need exactly 8 colors (rounds)
 
-  // Step 1: Give each team a random permutation of rounds for their 8 opponents
-  const teamOpponentOrder = new Map<string, string[]>();
-  for (const [team, opps] of assignments) {
-    teamOpponentOrder.set(team, shuffle(opps.map(o => o.teamId)));
-  }
-
-  // Step 2: For each pair, the round = index of opponent in home team's list.
-  // Ensure consistency: if A plays B in round r, then B must also play A in round r.
-  // We do one pass: for each home pair (A→B), look up A's round for B.
-  // Then check B's list: if B has A at a different slot s, swap B[s] with B[r].
+  // Step 1: Extract all unique pairs (home/away)
   const pairs: { homeId: string; awayId: string }[] = [];
   const seen = new Set<string>();
   for (const [team, opps] of assignments) {
@@ -155,25 +144,67 @@ export function assignmentsToFixtures(
     }
   }
 
-  // Reconcile: for each pair (home, away), force away's slot for home to match home's slot for away
+  // Step 2: Build adjacency list - for each team, its 8 opponents
+  const teamOpponents = new Map<string, string[]>();
+  for (const team of participants) {
+    teamOpponents.set(team, []);
+  }
   for (const { homeId, awayId } of pairs) {
-    const homeList = teamOpponentOrder.get(homeId)!;
-    const awayList = teamOpponentOrder.get(awayId)!;
-    const round = homeList.indexOf(awayId); // round assigned by home
-    const awaySlot = awayList.indexOf(homeId);
-    if (awaySlot !== round) {
-      // swap awayList[round] with awayList[awaySlot]
-      const tmp = awayList[round];
-      awayList[round] = awayList[awaySlot];
-      awayList[awaySlot] = tmp;
+    teamOpponents.get(homeId)!.push(awayId);
+    teamOpponents.get(awayId)!.push(homeId);
+  }
+
+  // Step 3: Assign rounds using greedy algorithm with proper conflict resolution
+  // For each round, try to assign as many pairs as possible
+  const pairToRound = new Map<string, number>();
+  const teamRoundUsage = new Map<string, Set<number>>();
+  
+  for (const team of participants) {
+    teamRoundUsage.set(team, new Set());
+  }
+
+  // Sort pairs for deterministic processing
+  const sortedPairs = [...pairs].sort((a, b) => {
+    if (a.homeId !== b.homeId) return a.homeId.localeCompare(b.homeId);
+    return a.awayId.localeCompare(b.awayId);
+  });
+
+  // Assign rounds greedily, but shuffle the round order for each pair to spread them out
+  for (const { homeId, awayId } of sortedPairs) {
+    const pairKey = `${homeId}__${awayId}`;
+    const homeRounds = teamRoundUsage.get(homeId)!;
+    const awayRounds = teamRoundUsage.get(awayId)!;
+    
+    // Find available rounds for this pair
+    const availableRounds: number[] = [];
+    for (let round = 0; round < 8; round++) {
+      if (!homeRounds.has(round) && !awayRounds.has(round)) {
+        availableRounds.push(round);
+      }
+    }
+    
+    if (availableRounds.length === 0) {
+      // This shouldn't happen in a properly constructed 8-regular bipartite graph
+      console.error(`[assignmentsToFixtures] No available round for pair ${pairKey}`);
+      // Force assignment to first available round (will cause conflict)
+      const forcedRound = 0;
+      pairToRound.set(pairKey, forcedRound);
+      homeRounds.add(forcedRound);
+      awayRounds.add(forcedRound);
+    } else {
+      // Assign to the first available round (deterministic)
+      const assignedRound = availableRounds[0];
+      pairToRound.set(pairKey, assignedRound);
+      homeRounds.add(assignedRound);
+      awayRounds.add(assignedRound);
     }
   }
 
-  // Step 3: Emit fixtures — round = home team's index of away team
+  // Step 4: Emit fixtures using UCL_CALENDAR.leagueDay[round] for correct day offset
   const fixtures: Fixture[] = [];
   for (const { homeId, awayId } of pairs) {
-    const round = teamOpponentOrder.get(homeId)!.indexOf(awayId);
-    const dayOffset = startDayOffset + round;
+    const round = pairToRound.get(`${homeId}__${awayId}`) ?? 0;
+    const dayOffset = UCL_CALENDAR.leagueDay[round];
     fixtures.push({
       id: `ucl-sw-md${round + 1}-${homeId}-${awayId}`,
       competition: "ucl",
@@ -184,6 +215,10 @@ export function assignmentsToFixtures(
       awayId,
     });
   }
+
+  // Log fixtures for a specific team (e.g., rma) to debug distribution
+  const rmaFixtures = fixtures.filter(f => f.homeId === "rma" || f.awayId === "rma");
+  console.log(`[assignmentsToFixtures] rma fixtures:`, rmaFixtures.map(f => ({ id: f.id, round: f.round, matchday: f.matchday, homeId: f.homeId, awayId: f.awayId })));
 
   return fixtures;
 }

@@ -43,84 +43,163 @@ function CUT({ label, color }: { label: string; color: string }) {
   );
 }
 
-function TableView({ table, userTeamId }: { table: UCLTableEntry[]; userTeamId: string }) {
+function TeamLogoById({ id, size = 26 }: { id: string; size?: number }) {
+  try {
+    const t = teamById(id);
+    return <TeamLogo teamName={t.name} leagueName={getLeagueName(t.league)} size={size} />;
+  } catch {
+    return <TeamBadge teamId={id} size={size} />;
+  }
+}
+
+function TableView({ table, userTeamId, fixtures }: { table: UCLTableEntry[]; userTeamId: string; fixtures: Fixture[] }) {
   const sorted = sortUCLTable(table);
 
+  // Build form (last 5 results) per team — ONLY league-phase fixtures
+  function getForm(teamId: string): ("W" | "D" | "L")[] {
+    const played = fixtures
+      .filter(f => f.result && f.round?.startsWith("Jornada") && (f.homeId === teamId || f.awayId === teamId))
+      .sort((a, b) => a.matchday - b.matchday);
+    return played.slice(-5).map(f => {
+      const myGoals = f.homeId === teamId ? f.result!.homeGoals : f.result!.awayGoals;
+      const theirGoals = f.homeId === teamId ? f.result!.awayGoals : f.result!.homeGoals;
+      return myGoals > theirGoals ? "W" : myGoals < theirGoals ? "L" : "D";
+    });
+  }
+
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/60 text-muted-foreground uppercase text-xs">
-          <tr>
-            <th className="px-3 py-2 text-left w-8">#</th>
-            <th className="px-3 py-2 text-left">Equipo</th>
-            <th className="px-2 py-2 text-center">PJ</th>
-            <th className="px-2 py-2 text-center">G</th>
-            <th className="px-2 py-2 text-center">E</th>
-            <th className="px-2 py-2 text-center">P</th>
-            <th className="px-2 py-2 text-center">GD</th>
-            <th className="px-2 py-2 text-center">GF</th>
-            <th className="px-2 py-2 text-center font-bold text-foreground">Pts</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {sorted.map((e, i) => {
-            const pos = i + 1;
-            const isUser = e.teamId === userTeamId;
-            let rowBg = isUser ? "bg-primary/10 " : "hover:bg-muted/40 ";
+    <section className="overflow-hidden rounded-xl border border-border/80 bg-gradient-to-b from-card/90 to-background shadow-lg">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-muted/20">
+        <h2 className="text-sm font-black uppercase tracking-wider text-foreground">Clasificación</h2>
+        <span className="text-[0.65rem] text-muted-foreground uppercase tracking-widest">Fase de Liga</span>
+      </header>
 
-            // Insert cut lines
-            const cutAfter = pos === 8 || pos === 24;
-            const rowClass = rowBg + "transition-colors";
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="bg-muted/30 text-muted-foreground uppercase tracking-wider">
+              <th className="w-10 py-2.5 px-1 font-bold text-center pl-4">#</th>
+              <th className="min-w-[10rem] flex-1 py-2.5 px-1 font-bold text-left">Equipo</th>
+              <th className="w-9 py-2.5 px-1 font-bold text-center">PJ</th>
+              <th className="w-9 py-2.5 px-1 font-bold text-center text-emerald-400">V</th>
+              <th className="w-9 py-2.5 px-1 font-bold text-center">E</th>
+              <th className="w-9 py-2.5 px-1 font-bold text-center text-destructive">D</th>
+              <th className="w-9 py-2.5 px-1 font-bold text-center">GF</th>
+              <th className="w-9 py-2.5 px-1 font-bold text-center">GC</th>
+              <th className="w-10 py-2.5 px-1 font-bold text-center">DG</th>
+              <th className="w-11 py-2.5 px-1 font-bold text-center text-primary">PTS</th>
+              <th className="w-24 py-2.5 px-1 font-bold text-center">Forma</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((e, i) => {
+              const pos = i + 1;
+              const isUser = e.teamId === userTeamId;
+              const r16 = pos <= 8;
+              const playoff = pos > 8 && pos <= 24;
+              const elim = pos > 24;
+              const form = getForm(e.teamId);
 
-            return (
-              <>
-                <tr key={e.teamId} className={rowClass}>
-                  <td className="px-3 py-1.5 text-center">
-                    <span className={
-                      pos <= 8 ? "text-green-500 font-bold" :
-                      pos <= 24 ? "text-yellow-500 font-semibold" :
-                      "text-red-400"
-                    }>{pos}</span>
+              const rows: React.ReactNode[] = [];
+
+              if (pos === 9) {
+                rows.push(
+                  <tr key="cut-playoff">
+                    <td colSpan={11} className="py-0 px-0">
+                      <div className="flex items-center gap-2 px-3 py-0.5 bg-yellow-950/30">
+                        <div className="flex-1 h-px bg-yellow-600/40" />
+                        <span className="text-[0.6rem] text-yellow-500 font-semibold uppercase tracking-wider whitespace-nowrap">Play-offs</span>
+                        <div className="flex-1 h-px bg-yellow-600/40" />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              }
+              if (pos === 25) {
+                rows.push(
+                  <tr key="cut-elim">
+                    <td colSpan={11} className="py-0 px-0">
+                      <div className="flex items-center gap-2 px-3 py-0.5 bg-red-950/30">
+                        <div className="flex-1 h-px bg-red-600/40" />
+                        <span className="text-[0.6rem] text-red-400 font-semibold uppercase tracking-wider whitespace-nowrap">Eliminados</span>
+                        <div className="flex-1 h-px bg-red-600/40" />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              }
+
+              rows.push(
+                <tr
+                  key={e.teamId}
+                  className={[
+                    "border-t border-border/40 transition-colors",
+                    isUser
+                      ? "bg-primary/15 hover:bg-primary/20"
+                      : i % 2 === 0
+                        ? "bg-background/40 hover:bg-muted/20"
+                        : "bg-muted/5 hover:bg-muted/15",
+                  ].join(" ")}
+                >
+                  <td className="py-2.5 pl-4 pr-1 font-bold tabular-nums">
+                    <span className={[
+                      "inline-flex h-6 w-6 items-center justify-center rounded text-[0.65rem]",
+                      r16 ? "bg-emerald-500/20 text-emerald-400" : "",
+                      playoff ? "bg-yellow-500/20 text-yellow-400" : "",
+                      elim ? "bg-destructive/20 text-destructive" : "",
+                    ].join(" ")}>
+                      {pos}
+                    </span>
                   </td>
-                  <td className="px-3 py-1.5 flex items-center gap-2">
-                    <TeamBadge teamId={e.teamId} size={20} />
-                    <span className={isUser ? "font-bold" : ""}>{teamName(e.teamId)}</span>
+                  <td className="py-2 pr-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TeamLogoById id={e.teamId} size={26} />
+                      <span className={`font-semibold truncate ${isUser ? "text-primary" : ""}`}>{teamName(e.teamId)}</span>
+                    </div>
                   </td>
-                  <td className="px-2 py-1.5 text-center text-muted-foreground">{e.played}</td>
-                  <td className="px-2 py-1.5 text-center">{e.won}</td>
-                  <td className="px-2 py-1.5 text-center">{e.drawn}</td>
-                  <td className="px-2 py-1.5 text-center">{e.lost}</td>
-                  <td className="px-2 py-1.5 text-center">{e.gd > 0 ? `+${e.gd}` : e.gd}</td>
-                  <td className="px-2 py-1.5 text-center">{e.gf}</td>
-                  <td className="px-2 py-1.5 text-center font-bold">{e.points}</td>
+                  <td className="py-2 text-center tabular-nums text-muted-foreground">{e.played}</td>
+                  <td className="py-2 text-center tabular-nums text-emerald-400 font-semibold">{e.won}</td>
+                  <td className="py-2 text-center tabular-nums text-muted-foreground">{e.drawn}</td>
+                  <td className="py-2 text-center tabular-nums text-destructive font-semibold">{e.lost}</td>
+                  <td className="py-2 text-center tabular-nums">{e.gf}</td>
+                  <td className="py-2 text-center tabular-nums">{e.ga}</td>
+                  <td className={`py-2 text-center tabular-nums font-semibold ${e.gd > 0 ? "text-emerald-400" : e.gd < 0 ? "text-destructive" : ""}`}>
+                    {e.gd > 0 ? `+${e.gd}` : e.gd}
+                  </td>
+                  <td className="py-2 pr-2 text-center tabular-nums font-black text-primary text-sm">{e.points}</td>
+                  <td className="py-2 pr-3">
+                    <div className="flex items-center justify-center gap-0.5">
+                      {form.map((r, fi) => (
+                        <span
+                          key={fi}
+                          className={[
+                            "inline-flex h-4 w-4 items-center justify-center rounded-full text-[0.55rem] font-bold",
+                            r === "W" ? "bg-emerald-500/80 text-white" : "",
+                            r === "D" ? "bg-muted-foreground/50 text-white" : "",
+                            r === "L" ? "bg-destructive/80 text-white" : "",
+                          ].join(" ")}
+                        >
+                          {r === "W" ? "V" : r === "D" ? "E" : "D"}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
                 </tr>
-                {pos === 8 && (
-                  <tr key="cut8">
-                    <td colSpan={9} className="px-3 py-0.5 text-xs text-center bg-green-950/30 text-green-400">
-                      ▼ Octavos directos
-                    </td>
-                  </tr>
-                )}
-                {pos === 24 && (
-                  <tr key="cut24">
-                    <td colSpan={9} className="px-3 py-0.5 text-xs text-center bg-red-950/30 text-red-400">
-                      ▼ Eliminados
-                    </td>
-                  </tr>
-                )}
-              </>
-            );
-          })}
-        </tbody>
-      </table>
+              );
 
-      {/* Legend */}
-      <div className="flex gap-4 px-3 py-2 text-xs text-muted-foreground border-t border-border">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-green-600 inline-block" /> Pasan a Octavos</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-yellow-600 inline-block" /> Play-offs</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-700 inline-block" /> Eliminados</span>
+              return rows;
+            })}
+          </tbody>
+        </table>
       </div>
-    </div>
+
+      <footer className="flex flex-wrap gap-4 px-4 py-2.5 border-t border-border/40 text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500/80" />Octavos directos</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-yellow-500/80" />Play-offs</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-destructive/80" />Eliminados</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-primary" />Tu equipo</span>
+      </footer>
+    </section>
   );
 }
 
@@ -209,6 +288,7 @@ function BracketTie({
 }
 
 function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixtures: Fixture[] }) {
+  const playoff = bracket.filter(s => s.round === "playoff");
   const r16 = bracket.filter(s => s.round === "r16");
   const qf  = bracket.filter(s => s.round === "qf");
   const sf  = bracket.filter(s => s.round === "sf");
@@ -218,28 +298,470 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
     return <p className="text-muted-foreground text-sm p-4">El cuadro se generará tras el sorteo de octavos.</p>;
   }
 
+  // Split into silver route (top half) and blue route (bottom half)
+  const playoffSilver = playoff.slice(0, 4);
+  const playoffBlue = playoff.slice(4);
+  const r16Silver = r16.slice(0, 4);
+  const r16Blue = r16.slice(4);
+  const qfSilver = qf.slice(0, 2);
+  const qfBlue = qf.slice(2);
+  const sfSilver = sf.slice(0, 1);
+  const sfBlue = sf.slice(1);
+
+  // Safe helpers
+  const safeTeamName = (id: string): string => {
+    try { return teamName(id); } catch { return id; }
+  };
+
+  const getTeamLogoPath = (teamId: string): string => {
+    try {
+      const team = teamById(teamId);
+      const leagueName = getLeagueName(team.league).toLowerCase().replace(/\s+/g, '_');
+      const teamName = team.name.toLowerCase().replace(/\s+/g, '_').replace(/[^\w-]/g, '');
+      return `/logos/${leagueName}/${teamName}.png`;
+    } catch {
+      return '';
+    }
+  };
+
+  const getMatchResult = (slot: UCLBracketSlot): { homeGoals: number; awayGoals: number; winner: string } | null => {
+    const leg1 = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round?.includes("Leg1"));
+    const leg2 = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round?.includes("Leg2"));
+    const final = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round === "Final");
+    
+    if (final && final.result) {
+      return { homeGoals: final.result.homeGoals, awayGoals: final.result.awayGoals, winner: final.result.homeGoals > final.result.awayGoals ? final.homeId : final.awayId };
+    }
+    
+    if (leg1?.result && leg2?.result) {
+      const homeAgg = leg1.result.homeGoals + leg2.result.homeGoals;
+      const awayAgg = leg1.result.awayGoals + leg2.result.awayGoals;
+      return { homeGoals: homeAgg, awayGoals: awayAgg, winner: homeAgg > awayAgg ? leg1.homeId : leg1.awayId };
+    }
+    return null;
+  };
+
+  const getRoundDate = (slot: UCLBracketSlot): string => {
+    const leg1 = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round?.includes("Leg1"));
+    const final = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round === "Final");
+    const matchday = leg1?.matchday || final?.matchday || 0;
+    return uclFixtureDate(matchday);
+  };
+
   return (
-    <div className="overflow-x-auto">
-      <div className="flex gap-6 min-w-max p-4">
-        {/* R16 */}
-        <div className="flex flex-col gap-3">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Octavos</h3>
-          {r16.map(s => <BracketTie key={s.id} slot={s} fixtures={fixtures} />)}
+    <div className="w-full bg-gradient-to-b from-[#040714] to-[#0b0f19] min-h-screen p-6">
+      <div className="max-w-7xl mx-auto">
+        
+        {/* Silver Route (Top Half) */}
+        <div className="flex items-start gap-4 mb-8">
+          <div className="w-12 flex items-center justify-center">
+            <span className="text-gray-400 text-xs font-bold uppercase" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Ruta Plateada</span>
+          </div>
+          
+          {/* Play-off Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Play-off</div>
+            <div className="flex flex-col justify-around gap-3">
+              {playoffSilver.map((slot, idx) => (
+                <div key={slot.id} className="relative">
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
+                  {/* Connector line to R16 */}
+                  {idx < 2 && <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-gray-400" />}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* R16 Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Octavos de Final</div>
+            <div className="flex flex-col justify-around gap-3">
+              {r16Silver.map((slot, idx) => (
+                <div key={slot.id} className="relative">
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
+                  {/* Connector line to QF */}
+                  {idx === 0 && <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-gray-400" />}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* QF Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Cuartos de Final</div>
+            <div className="flex flex-col justify-around gap-3">
+              {qfSilver.map((slot) => (
+                <div key={slot.id} className="relative">
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
+                  {/* Connector line to SF */}
+                  <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-gray-400" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* SF Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Semifinales</div>
+            <div className="flex flex-col justify-around gap-3">
+              {sfSilver.map((slot) => (
+                <div key={slot.id} className="relative">
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
+                  {/* Connector line to Final */}
+                  <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-gray-400" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Final Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Final</div>
+            <div className="flex flex-col justify-center gap-3">
+              {fin.map((slot) => (
+                <div key={slot.id} className="relative">
+                  <div className="text-4xl mb-2">🏆</div>
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} isFinal={true} />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-        {/* QF */}
-        <div className="flex flex-col gap-6 justify-around">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Cuartos</h3>
-          {qf.map(s => <BracketTie key={s.id} slot={s} fixtures={fixtures} />)}
+
+        {/* Blue Route (Bottom Half) */}
+        <div className="flex items-start gap-4">
+          <div className="w-12 flex items-center justify-center">
+            <span className="text-cyan-400 text-xs font-bold uppercase" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Ruta Azul</span>
+          </div>
+          
+          {/* Play-off Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Play-off</div>
+            <div className="flex flex-col justify-around gap-3">
+              {playoffBlue.map((slot, idx) => (
+                <div key={slot.id} className="relative">
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
+                  {/* Connector line to R16 */}
+                  {idx < 2 && <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-cyan-400" />}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* R16 Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Octavos de Final</div>
+            <div className="flex flex-col justify-around gap-3">
+              {r16Blue.map((slot, idx) => (
+                <div key={slot.id} className="relative">
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
+                  {/* Connector line to QF */}
+                  {idx === 0 && <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-cyan-400" />}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* QF Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Cuartos de Final</div>
+            <div className="flex flex-col justify-around gap-3">
+              {qfBlue.map((slot) => (
+                <div key={slot.id} className="relative">
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
+                  {/* Connector line to SF */}
+                  <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-cyan-400" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* SF Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Semifinales</div>
+            <div className="flex flex-col justify-around gap-3">
+              {sfBlue.map((slot) => (
+                <div key={slot.id} className="relative">
+                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
+                  {/* Connector line to Final */}
+                  <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-cyan-400" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Final Column */}
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Final</div>
+            <div className="flex flex-col justify-center gap-3">
+              {/* Empty for blue route final */}
+            </div>
+          </div>
         </div>
-        {/* SF */}
-        <div className="flex flex-col gap-12 justify-around">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Semis</h3>
-          {sf.map(s => <BracketTie key={s.id} slot={s} fixtures={fixtures} />)}
+      </div>
+    </div>
+  );
+}
+
+function DarkMatchCard({ 
+  slot, 
+  fixtures, 
+  safeTeamName, 
+  getTeamLogoPath, 
+  getMatchResult, 
+  getRoundDate,
+  isFinal = false 
+}: { 
+  slot: UCLBracketSlot; 
+  fixtures: Fixture[];
+  safeTeamName: (id: string) => string;
+  getTeamLogoPath: (id: string) => string;
+  getMatchResult: (slot: UCLBracketSlot) => { homeGoals: number; awayGoals: number; winner: string } | null;
+  getRoundDate: (slot: UCLBracketSlot) => string;
+  isFinal?: boolean;
+}) {
+  const home = slot.homeId;
+  const away = slot.awayId;
+  const result = getMatchResult(slot);
+  const date = getRoundDate(slot);
+
+  if (!home || !away) {
+    return (
+      <div className="bg-[#111827] rounded-xl border border-gray-700 p-3 opacity-50">
+        <div className="text-gray-500 text-xs">TBD</div>
+      </div>
+    );
+  }
+
+  const homeLogoPath = getTeamLogoPath(home);
+  const awayLogoPath = getTeamLogoPath(away);
+
+  return (
+    <div className="bg-[#111827] rounded-xl border border-cyan-500/30 overflow-hidden">
+      {/* Header */}
+      <div className="px-3 py-2 border-b border-gray-700">
+        <div className="text-gray-300 text-xs">
+          {isFinal ? "Final" : slot.round.toUpperCase()}
+          {result && <span className="ml-2 text-cyan-400">Glo: {result.homeGoals}-{result.awayGoals}</span>}
         </div>
-        {/* Final */}
-        <div className="flex flex-col justify-around">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Final</h3>
-          {fin.map(s => <BracketTie key={s.id} slot={s} fixtures={fixtures} />)}
+      </div>
+
+      {/* Final date/time */}
+      {isFinal && (
+        <div className="px-3 py-1 bg-[#0f172a] text-gray-400 text-xs text-center">
+          {date}
+        </div>
+      )}
+
+      {/* Teams */}
+      <div className="p-2">
+        <div className="flex items-center justify-between py-1">
+          <div className="flex items-center gap-2">
+            {homeLogoPath ? (
+              <img src={homeLogoPath} alt={safeTeamName(home)} className="w-6 h-6 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            ) : (
+              <TeamBadge teamId={home} size={24} />
+            )}
+            <span className="text-white text-xs font-medium">{safeTeamName(home)}</span>
+          </div>
+          {result && <span className="text-cyan-400 text-xs font-bold">{result.homeGoals}</span>}
+        </div>
+        <div className="flex items-center justify-between py-1">
+          <div className="flex items-center gap-2">
+            {awayLogoPath ? (
+              <img src={awayLogoPath} alt={safeTeamName(away)} className="w-6 h-6 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            ) : (
+              <TeamBadge teamId={away} size={24} />
+            )}
+            <span className="text-white text-xs font-medium">{safeTeamName(away)}</span>
+          </div>
+          {result && <span className="text-cyan-400 text-xs font-bold">{result.awayGoals}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResultsListView({ fixtures, safeTeamName, getTeamLogoPath }: { 
+  fixtures: Fixture[];
+  safeTeamName: (id: string) => string;
+  getTeamLogoPath: (id: string) => string;
+}) {
+  // Group fixtures by tie (same teams in both legs)
+  const ties = new Map<string, Fixture[]>();
+  
+  for (const f of fixtures) {
+    const key = [f.homeId, f.awayId].sort().join('-');
+    if (!ties.has(key)) {
+      ties.set(key, []);
+    }
+    ties.get(key)!.push(f);
+  }
+
+  const tieArray = Array.from(ties.values());
+
+  const getRoundLabel = (round: string | undefined): string => {
+    if (!round) return "";
+    if (round.includes("Playoff")) return "Play-off";
+    if (round.includes("R16")) return "Octavos";
+    if (round.includes("QF")) return "Cuartos";
+    if (round.includes("SF")) return "Semifinales";
+    if (round === "Final") return "Final";
+    return round;
+  };
+
+  const getAggregateScore = (leg1: Fixture, leg2: Fixture): { home: number; away: number } => {
+    const h1 = leg1.result?.homeGoals || 0;
+    const a1 = leg1.result?.awayGoals || 0;
+    const h2 = leg2.result?.homeGoals || 0;
+    const a2 = leg2.result?.awayGoals || 0;
+    
+    // Aggregate: leg1.home + leg2.away (team from leg1 home)
+    const aggHome = h1 + a2;
+    const aggAway = a1 + h2;
+    
+    return { home: aggHome, away: aggAway };
+  };
+
+  const formatDate = (matchday: number): string => {
+    // Simple date formatting based on matchday
+    const baseDate = new Date(2026, 2, 1); // March 2026
+    baseDate.setDate(baseDate.getDate() + matchday);
+    return baseDate.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+  };
+
+  return (
+    <div className="w-full bg-[#040714] min-h-screen p-6">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold text-white uppercase tracking-wider">Resultados</h2>
+          <select className="bg-[#111827] text-white border border-cyan-500/30 rounded px-3 py-2 text-sm">
+            <option value="playoff">Play-off</option>
+            <option value="r16">Octavos</option>
+            <option value="qf">Cuartos</option>
+            <option value="sf">Semifinales</option>
+            <option value="final">Final</option>
+          </select>
+        </div>
+
+        {/* Ties */}
+        <div className="space-y-4">
+          {tieArray.map((tieFixtures, idx) => {
+            if (tieFixtures.length === 0) return null;
+            
+            const leg1 = tieFixtures[0];
+            const leg2 = tieFixtures[1];
+            const roundLabel = getRoundLabel(leg1.round);
+            
+            const aggregate = leg1.result && leg2.result 
+              ? getAggregateScore(leg1, leg2) 
+              : null;
+
+            const homeLogo1 = getTeamLogoPath(leg1.homeId);
+            const awayLogo1 = getTeamLogoPath(leg1.awayId);
+            const homeLogo2 = leg2 ? getTeamLogoPath(leg2.homeId) : '';
+            const awayLogo2 = leg2 ? getTeamLogoPath(leg2.awayId) : '';
+
+            return (
+              <div key={idx} className="bg-[#0b0f19] rounded-xl border border-gray-800 overflow-hidden">
+                {/* Aggregate Score Row */}
+                {aggregate && (
+                  <div className="bg-[#1a1f2e] px-4 py-3 border-b border-gray-800">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {homeLogo1 ? (
+                          <img src={homeLogo1} alt={safeTeamName(leg1.homeId)} className="w-5 h-5 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                        ) : (
+                          <TeamBadge teamId={leg1.homeId} size={20} />
+                        )}
+                        <span className="text-white text-sm font-medium">{safeTeamName(leg1.homeId)}</span>
+                      </div>
+                      <div className="text-cyan-400 text-lg font-bold">
+                        {aggregate.home} - {aggregate.away}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white text-sm font-medium">{safeTeamName(leg1.awayId)}</span>
+                        {awayLogo1 ? (
+                          <img src={awayLogo1} alt={safeTeamName(leg1.awayId)} className="w-5 h-5 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                        ) : (
+                          <TeamBadge teamId={leg1.awayId} size={20} />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Leg 1 */}
+                <div className="px-4 py-3 border-b border-gray-800/50">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-5 bg-gray-700 rounded flex items-center justify-center">
+                      <span className="text-white text-[10px] font-bold">FIN</span>
+                    </div>
+                    <div className="flex-1 flex flex-col items-center">
+                      <span className="text-gray-400 text-xs mb-1">{roundLabel}</span>
+                      <div className="flex items-center justify-between w-full max-w-xs">
+                        <div className="flex items-center gap-2">
+                          {homeLogo1 ? (
+                            <img src={homeLogo1} alt={safeTeamName(leg1.homeId)} className="w-4 h-4 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                          ) : (
+                            <TeamBadge teamId={leg1.homeId} size={16} />
+                          )}
+                          <span className="text-gray-300 text-xs">{safeTeamName(leg1.homeId)}</span>
+                        </div>
+                        <span className="text-white text-sm font-bold">{leg1.result ? `${leg1.result.homeGoals} - ${leg1.result.awayGoals}` : ' - '}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-300 text-xs">{safeTeamName(leg1.awayId)}</span>
+                          {awayLogo1 ? (
+                            <img src={awayLogo1} alt={safeTeamName(leg1.awayId)} className="w-4 h-4 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                          ) : (
+                            <TeamBadge teamId={leg1.awayId} size={16} />
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-gray-500 text-[10px] mt-1">{formatDate(leg1.matchday)}</span>
+                    </div>
+                    <div className="w-12"></div>
+                  </div>
+                </div>
+
+                {/* Leg 2 */}
+                {leg2 && (
+                  <div className="px-4 py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="w-12 h-5 bg-gray-700 rounded flex items-center justify-center">
+                        <span className="text-white text-[10px] font-bold">FIN</span>
+                      </div>
+                      <div className="flex-1 flex flex-col items-center">
+                        <span className="text-gray-400 text-xs mb-1">{roundLabel}</span>
+                        <div className="flex items-center justify-between w-full max-w-xs">
+                          <div className="flex items-center gap-2">
+                            {homeLogo2 ? (
+                              <img src={homeLogo2} alt={safeTeamName(leg2.homeId)} className="w-4 h-4 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                            ) : (
+                              <TeamBadge teamId={leg2.homeId} size={16} />
+                            )}
+                            <span className="text-gray-300 text-xs">{safeTeamName(leg2.homeId)}</span>
+                          </div>
+                          <span className="text-white text-sm font-bold">{leg2.result ? `${leg2.result.homeGoals} - ${leg2.result.awayGoals}` : ' - '}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-300 text-xs">{safeTeamName(leg2.awayId)}</span>
+                            {awayLogo2 ? (
+                              <img src={awayLogo2} alt={safeTeamName(leg2.awayId)} className="w-4 h-4 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                            ) : (
+                              <TeamBadge teamId={leg2.awayId} size={16} />
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-gray-500 text-[10px] mt-1">{formatDate(leg2.matchday)}</span>
+                      </div>
+                      <div className="w-12"></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -249,11 +771,13 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 type Tab = "tabla" | "bracket" | "partidos";
+type PhaseTab = "liga" | "playoff" | "r16" | "qf" | "sf" | "final";
 
 function UCLPage() {
   const [save, setSave] = useState<SaveGame | null>(null);
   const [tab, setTab] = useState<Tab>("tabla");
   const [selectedRound, setSelectedRound] = useState<string | null>(null);
+  const [phaseTab, setPhaseTab] = useState<PhaseTab>("liga");
 
   useEffect(() => {
     setSave(loadSave());
@@ -266,7 +790,7 @@ function UCLPage() {
   const ucl = save.ucl;
   const fixtures = save.uclFixtures ?? [];
 
-  if (!ucl) {
+  if (!ucl || !ucl.phase || !ucl.participants) {
     return (
       <div className="p-6 text-center space-y-2">
         <div className="text-4xl">🏆</div>
@@ -279,8 +803,8 @@ function UCLPage() {
   const isKnockoutPhase = ["r16", "qf", "sf", "final", "done"].includes(ucl.phase);
 
   // Group fixtures by round, sorted by matchday offset
-  const leagueFixtures = fixtures.filter(f => f.round?.startsWith("Jornada"));
-  const otherFixtures = fixtures.filter(f => !f.round?.startsWith("Jornada"));
+  const leagueFixtures = fixtures.filter(f => f.round?.startsWith("Jornada") && f.matchday > 0);
+  const otherFixtures = fixtures.filter(f => f.round && !f.round.startsWith("Jornada") && f.matchday > 0);
 
   // Sort jornadas by matchday offset
   const jornadas = [...new Map<string, { matchday: number; fixtures: Fixture[] }>(
@@ -334,92 +858,158 @@ function UCLPage() {
       {/* Content */}
       <div className="p-4">
         {tab === "tabla" && (
-          <TableView table={ucl.table} userTeamId={save.myTeamId} />
+          <TableView table={ucl.table ?? []} userTeamId={save.myTeamId} fixtures={fixtures} />
         )}
 
-        {tab === "partidos" && (
-          <div className="space-y-3">
-            {/* Round selector */}
-            {roundNames.length > 0 && (
-              <div className="flex gap-1 flex-wrap">
-                {roundNames.map(r => {
-                  const info = jornadas.find(([name]) => name === r);
-                  const md = info ? info[1].matchday : 0;
-                  const hasUser = info ? info[1].fixtures.some(f => f.homeId === save.myTeamId || f.awayId === save.myTeamId) : false;
-                  return (
+        {tab === "partidos" && (() => {
+          // Build phase buckets
+          const playoffFx = fixtures.filter(f => f.round?.startsWith("Playoff") && f.matchday > 0);
+          const r16Fx = fixtures.filter(f => f.round?.startsWith("R16") && f.matchday > 0);
+          const qfFx  = fixtures.filter(f => f.round?.startsWith("QF") && f.matchday > 0);
+          const sfFx  = fixtures.filter(f => f.round?.startsWith("SF") && f.matchday > 0);
+          const finalFx = fixtures.filter(f => f.round === "Final" && f.matchday > 0);
+
+          const phaseBuckets: { key: PhaseTab; label: string; fxs: Fixture[] }[] = [
+            { key: "liga",    label: "Fase de Liga",  fxs: leagueFixtures },
+            { key: "playoff", label: "Play-offs",     fxs: playoffFx },
+            { key: "r16",     label: "Octavos",       fxs: r16Fx },
+            { key: "qf",      label: "Cuartos",       fxs: qfFx },
+            { key: "sf",      label: "Semifinales",   fxs: sfFx },
+            { key: "final",   label: "Final",         fxs: finalFx },
+          ].filter(b => b.fxs.length > 0);
+
+          const activePhase = phaseBuckets.find(b => b.key === phaseTab) ?? phaseBuckets[0];
+
+          return (
+            <div className="space-y-3">
+              {/* Phase sub-tabs */}
+              {phaseBuckets.length > 1 && (
+                <div className="flex gap-1 flex-wrap border-b border-border/50 pb-2">
+                  {phaseBuckets.map(b => (
                     <button
-                      key={r}
-                      onClick={() => setSelectedRound(r)}
-                      className={`px-3 py-1 rounded text-xs font-medium transition-colors relative ${
-                        activeRound === r
-                          ? "bg-blue-600 text-white"
+                      key={b.key}
+                      onClick={() => { setPhaseTab(b.key); setSelectedRound(null); }}
+                      className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                        activePhase?.key === b.key
+                          ? "bg-blue-700 text-white"
                           : "bg-muted text-muted-foreground hover:bg-muted/80"
                       }`}
                     >
-                      {r}
-                      <span className="ml-1 text-[0.6rem] opacity-70">{uclFixtureDate(md)}</span>
-                      {hasUser && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-400" />}
+                      {b.label}
                     </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Fixtures for selected round */}
-            {activeRound && (() => {
-              const info = jornadas.find(([r]) => r === activeRound);
-              if (!info) return null;
-              const [, { matchday, fixtures: fxs }] = info;
-              const played = fxs.filter(f => f.result).length;
-              return (
-                <div className="rounded-lg border border-border overflow-hidden">
-                  <div className="bg-blue-950/60 px-4 py-2.5 flex items-center justify-between">
-                    <div>
-                      <span className="text-sm font-bold text-blue-200">{activeRound}</span>
-                      <span className="ml-2 text-xs text-blue-400">{uclFixtureDate(matchday)}</span>
-                    </div>
-                    <span className="text-xs text-blue-400">{played}/{fxs.length} jugados</span>
-                  </div>
-                  <div className="divide-y divide-border">
-                    {fxs
-                      .sort((a, b) => {
-                        const aUser = a.homeId === save.myTeamId || a.awayId === save.myTeamId;
-                        const bUser = b.homeId === save.myTeamId || b.awayId === save.myTeamId;
-                        return aUser === bUser ? 0 : aUser ? -1 : 1;
-                      })
-                      .map(f => <FixtureRow key={f.id} f={f} myTeamId={save.myTeamId} />)
-                    }
-                  </div>
+                  ))}
                 </div>
-              );
-            })()}
+              )}
 
-            {/* Other rounds (playoffs, knockouts) if any */}
-            {otherFixtures.length > 0 && tab === "partidos" && (
-              <div className="mt-4 space-y-3">
-                {[...new Set(otherFixtures.map(f => f.round ?? "Otro"))].map(r => (
-                  <div key={r} className="rounded-lg border border-border overflow-hidden">
-                    <div className="bg-muted/60 px-4 py-2 text-xs font-semibold text-muted-foreground uppercase">{r}</div>
-                    <div className="divide-y divide-border">
-                      {otherFixtures.filter(f => (f.round ?? "Otro") === r).map(f => (
-                        <FixtureRow key={f.id} f={f} myTeamId={save.myTeamId} />
-                      ))}
+              {activePhase && (() => {
+                if (activePhase.key === "liga") {
+                  // Jornada selector
+                  return (
+                    <div className="space-y-3">
+                      {roundNames.length > 0 && (
+                        <div className="flex gap-1 flex-wrap">
+                          {roundNames.map(r => {
+                            const info = jornadas.find(([name]) => name === r);
+                            const md = info ? info[1].matchday : 0;
+                            const hasUser = info ? info[1].fixtures.some(f => f.homeId === save.myTeamId || f.awayId === save.myTeamId) : false;
+                            return (
+                              <button
+                                key={r}
+                                onClick={() => setSelectedRound(r)}
+                                className={`px-3 py-1 rounded text-xs font-medium transition-colors relative ${
+                                  activeRound === r ? "bg-blue-600 text-white" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                                }`}
+                              >
+                                {r}
+                                <span className="ml-1 text-[0.6rem] opacity-70">{uclFixtureDate(md)}</span>
+                                {hasUser && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-400" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {activeRound && (() => {
+                        const info = jornadas.find(([r]) => r === activeRound);
+                        if (!info) return null;
+                        const [, { matchday, fixtures: fxs }] = info;
+                        const played = fxs.filter(f => f.result).length;
+                        return (
+                          <div className="rounded-lg border border-border overflow-hidden">
+                            <div className="bg-blue-950/60 px-4 py-2.5 flex items-center justify-between">
+                              <div>
+                                <span className="text-sm font-bold text-blue-200">{activeRound}</span>
+                                <span className="ml-2 text-xs text-blue-400">{uclFixtureDate(matchday)}</span>
+                              </div>
+                              <span className="text-xs text-blue-400">{played}/{fxs.length} jugados</span>
+                            </div>
+                            <div className="divide-y divide-border">
+                              {fxs
+                                .sort((a, b) => {
+                                  const aUser = a.homeId === save.myTeamId || a.awayId === save.myTeamId;
+                                  const bUser = b.homeId === save.myTeamId || b.awayId === save.myTeamId;
+                                  return aUser === bUser ? 0 : aUser ? -1 : 1;
+                                })
+                                .map(f => <FixtureRow key={f.id} f={f} myTeamId={save.myTeamId} />)}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {leagueFixtures.length === 0 && (
+                        <p className="text-muted-foreground text-sm text-center py-8">Los partidos aparecerán aquí tras el sorteo de la fase de liga.</p>
+                      )}
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  );
+                }
 
-            {fixtures.length === 0 && (
-              <p className="text-muted-foreground text-sm text-center py-8">
-                Los partidos aparecerán aquí tras el sorteo de la fase de liga.
-              </p>
-            )}
-          </div>
-        )}
+                // Knockout phase: group by Leg1 / Leg2 (or just list for Final)
+                const byRound = [...new Map(
+                  activePhase.fxs.reduce((acc, f) => {
+                    const r = f.round ?? "";
+                    if (!acc.has(r)) acc.set(r, { matchday: f.matchday, fxs: [] as Fixture[] });
+                    acc.get(r)!.fxs.push(f);
+                    return acc;
+                  }, new Map<string, { matchday: number; fxs: Fixture[] }>())
+                ).entries()].sort((a, b) => a[1].matchday - b[1].matchday);
+
+                const roundLabel: Record<string, string> = {
+                  "Playoff-Leg1": "Ida", "Playoff-Leg2": "Vuelta",
+                  "R16-Leg1": "Ida", "R16-Leg2": "Vuelta",
+                  "QF-Leg1": "Ida",  "QF-Leg2": "Vuelta",
+                  "SF-Leg1": "Ida",  "SF-Leg2": "Vuelta",
+                  "Final": "Final",
+                };
+
+                return (
+                  <div className="space-y-3">
+                    {byRound.map(([r, { matchday, fxs }]) => (
+                      <div key={r} className="rounded-lg border border-border overflow-hidden">
+                        <div className="bg-blue-950/60 px-4 py-2.5 flex items-center justify-between">
+                          <div>
+                            <span className="text-sm font-bold text-blue-200">{roundLabel[r] ?? r}</span>
+                            <span className="ml-2 text-xs text-blue-400">{uclFixtureDate(matchday)}</span>
+                          </div>
+                          <span className="text-xs text-blue-400">{fxs.filter(f => f.result).length}/{fxs.length} jugados</span>
+                        </div>
+                        <div className="divide-y divide-border">
+                          {fxs
+                            .sort((a, b) => {
+                              const aU = a.homeId === save.myTeamId || a.awayId === save.myTeamId;
+                              const bU = b.homeId === save.myTeamId || b.awayId === save.myTeamId;
+                              return aU === bU ? 0 : aU ? -1 : 1;
+                            })
+                            .map(f => <FixtureRow key={f.id} f={f} myTeamId={save.myTeamId} />)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
 
         {tab === "bracket" && (
-          <BracketView bracket={ucl.bracket} fixtures={fixtures} />
+          <BracketView bracket={ucl.bracket ?? []} fixtures={fixtures} />
         )}
       </div>
     </div>
