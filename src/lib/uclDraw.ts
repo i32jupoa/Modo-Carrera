@@ -245,147 +245,125 @@ export function runSwissDraw(participants: string[]): { assignments: Map<string,
 // ============================================================
 
 export function assignmentsToFixtures(
-
   assignments: Map<string, Opponent[]>,
-
   participants: string[],
-
-  startDayOffset: number, // UCL_CALENDAR.leagueDay[0] — day offset from UCL_START for matchday 1
-
+  startDayOffset: number,
 ): Fixture[] {
+  // Build 8 perfect matchings (1-factors) from the 8-regular graph
+  // Each round must have exactly 18 matches (36 teams / 2)
 
-  // Fast greedy edge-coloring
-
-  // Assign each pair to the first available round where both teams are free
-
-  
-
-  // Step 1: Extract all unique pairs (home/away)
-
-  const pairs: { homeId: string; awayId: string }[] = [];
-
+  // Step 1: Extract all unique pairs
+  const allPairs: { homeId: string; awayId: string }[] = [];
   const seen = new Set<string>();
-
-  for (const [team, opps] of assignments) {
-
-    for (const opp of opps) {
-
-      if (opp.isHome) {
-
-        const key = `${team}__${opp.teamId}`;
-
-        if (!seen.has(key)) {
-
-          seen.add(key);
-
-          pairs.push({ homeId: team, awayId: opp.teamId });
-
-        }
-
-      }
-
-    }
-
-  }
-
-
-
-  // Step 2: Assign rounds greedily
-
-  const pairToRound = new Map<string, number>();
-
-  const teamRoundUsage = new Map<string, Set<number>>();
-
+  const teamOpponentCount = new Map<string, number>();
   
-
   for (const team of participants) {
-
-    teamRoundUsage.set(team, new Set());
-
+    teamOpponentCount.set(team, 0);
   }
-
-
-
-  // Sort pairs randomly for better distribution
-
-  const shuffledPairs = shuffle([...pairs]);
-
-
-
-  for (const { homeId, awayId } of shuffledPairs) {
-
-    const pairKey = `${homeId}__${awayId}`;
-
-    const homeRounds = teamRoundUsage.get(homeId)!;
-
-    const awayRounds = teamRoundUsage.get(awayId)!;
-
-    
-
-    // Find first available round
-
-    for (let round = 0; round < 8; round++) {
-
-      if (!homeRounds.has(round) && !awayRounds.has(round)) {
-
-        pairToRound.set(pairKey, round);
-
-        homeRounds.add(round);
-
-        awayRounds.add(round);
-
-        break;
-
+  
+  for (const [team, opps] of assignments) {
+    for (const opp of opps) {
+      if (opp.isHome) {
+        const key = `${team}__${opp.teamId}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          allPairs.push({ homeId: team, awayId: opp.teamId });
+          teamOpponentCount.set(team, (teamOpponentCount.get(team) || 0) + 1);
+          teamOpponentCount.set(opp.teamId, (teamOpponentCount.get(opp.teamId) || 0) + 1);
+        }
       }
-
     }
-
   }
+  
+  // Log opponent counts for debugging
+  console.log(`[assignmentsToFixtures] Total pairs: ${allPairs.length}`);
+  console.log(`[assignmentsToFixtures] Team opponent counts:`, 
+    Array.from(teamOpponentCount.entries()).map(([t, c]) => ({ team: t, count: c })).filter(t => t.count !== 8)
+  );
 
-
+  // Step 2: Build rounds sequentially with retry logic
+  // Each round must be a perfect matching (18 matches, all 36 teams)
+  
+  const rounds: { homeId: string; awayId: string }[][] = [];
+  let remainingPairs = [...allPairs];
+  
+  // Build team -> remaining opponents map
+  const buildTeamOpponents = () => {
+    const map = new Map<string, Set<string>>();
+    for (const team of participants) map.set(team, new Set());
+    for (const p of remainingPairs) {
+      map.get(p.homeId)!.add(p.awayId);
+      map.get(p.awayId)!.add(p.homeId);
+    }
+    return map;
+  };
+  
+  for (let round = 0; round < 8; round++) {
+    let roundMatches: { homeId: string; awayId: string }[] = [];
+    let bestAttempt: { homeId: string; awayId: string }[] | null = null;
+    let bestCoverage = 0;
+    
+    // Try multiple times to get a good matching
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const shuffled = shuffle([...remainingPairs]);
+      const matches: { homeId: string; awayId: string }[] = [];
+      const usedTeams = new Set<string>();
+      
+      // Greedy matching
+      for (const pair of shuffled) {
+        if (usedTeams.has(pair.homeId) || usedTeams.has(pair.awayId)) continue;
+        matches.push(pair);
+        usedTeams.add(pair.homeId);
+        usedTeams.add(pair.awayId);
+        if (matches.length === 18) break;
+      }
+      
+      if (matches.length > bestCoverage) {
+        bestCoverage = matches.length;
+        bestAttempt = matches;
+        if (matches.length === 18) break; // Perfect!
+      }
+    }
+    
+    if (bestAttempt) {
+      roundMatches = bestAttempt;
+    }
+    
+    // Remove used pairs
+    const usedKeys = new Set(roundMatches.map(m => `${m.homeId}__${m.awayId}`));
+    remainingPairs = remainingPairs.filter(p => !usedKeys.has(`${p.homeId}__${p.awayId}`));
+    
+    rounds.push(roundMatches);
+    console.log(`[assignmentsToFixtures] Round ${round}: ${roundMatches.length} matches, ${remainingPairs.length} remaining`);
+  }
+  
+  // Log distribution
+  const roundCounts = rounds.map(r => r.length);
+  console.log(`[assignmentsToFixtures] Round distribution:`, roundCounts);
+  console.log(`[assignmentsToFixtures] Total assigned: ${roundCounts.reduce((a, b) => a + b, 0)} / ${allPairs.length}`);
 
   // Step 3: Emit fixtures
-
   const fixtures: Fixture[] = [];
-
-  for (const { homeId, awayId } of pairs) {
-
-    const round = pairToRound.get(`${homeId}__${awayId}`) ?? 0;
-
+  for (let round = 0; round < 8; round++) {
     const dayOffset = UCL_CALENDAR.leagueDay[round];
-
-    fixtures.push({
-
-      id: `ucl-sw-md${round + 1}-${homeId}-${awayId}`,
-
-      competition: "ucl",
-
-      league: teamById(homeId).league,
-
-      matchday: dayOffset,
-
-      round: `Jornada ${round + 1}`,
-
-      homeId,
-
-      awayId,
-
-    });
-
+    for (const { homeId, awayId } of rounds[round]) {
+      fixtures.push({
+        id: `ucl-sw-md${round + 1}-${homeId}-${awayId}`,
+        competition: "ucl",
+        league: teamById(homeId).league,
+        matchday: dayOffset,
+        round: `Jornada ${round + 1}`,
+        homeId,
+        awayId,
+      });
+    }
   }
 
-
-
-  // Log fixtures for a specific team (e.g., rma) to debug distribution
-
+  // Log for debugging
   const rmaFixtures = fixtures.filter(f => f.homeId === "rma" || f.awayId === "rma");
-
-  console.log(`[assignmentsToFixtures] rma fixtures:`, rmaFixtures.map(f => ({ id: f.id, round: f.round, matchday: f.matchday, homeId: f.homeId, awayId: f.awayId })));
-
-
+  console.log(`[assignmentsToFixtures] rma fixtures:`, rmaFixtures.map(f => ({ round: f.round, homeId: f.homeId, awayId: f.awayId })));
 
   return fixtures;
-
 }
 
 
