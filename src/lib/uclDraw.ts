@@ -281,60 +281,108 @@ export function assignmentsToFixtures(
     Array.from(teamOpponentCount.entries()).map(([t, c]) => ({ team: t, count: c })).filter(t => t.count !== 8)
   );
 
-  // Step 2: Build rounds sequentially with retry logic
-  // Each round must be a perfect matching (18 matches, all 36 teams)
+  // Step 2: Use DFS-based maximum matching for each round
+  // This guarantees finding a perfect matching if one exists
+  
+  function findPerfectMatching(pairs: { homeId: string; awayId: string }[]): { homeId: string; awayId: string }[] | null {
+    // Build adjacency list
+    const adj = new Map<string, string[]>();
+    for (const team of participants) adj.set(team, []);
+    for (const p of pairs) {
+      adj.get(p.homeId)!.push(p.awayId);
+      adj.get(p.awayId)!.push(p.homeId);
+    }
+    
+    // Shuffle adjacency lists for randomness
+    for (const list of adj.values()) {
+      shuffle(list);
+    }
+    
+    const match = new Map<string, string | null>();
+    for (const team of participants) match.set(team, null);
+    
+    function dfs(u: string, visited: Set<string>): boolean {
+      for (const v of adj.get(u)!) {
+        if (visited.has(v)) continue;
+        visited.add(v);
+        
+        const currentMatch = match.get(v);
+        if (currentMatch === null || dfs(currentMatch, visited)) {
+          match.set(u, v);
+          match.set(v, u);
+          return true;
+        }
+      }
+      return false;
+    }
+    
+    let matchingSize = 0;
+    for (const team of participants) {
+      if (match.get(team) === null) {
+        const visited = new Set<string>();
+        if (dfs(team, visited)) {
+          matchingSize++;
+        }
+      }
+    }
+    
+    // Check if we have a perfect matching (18 edges = 36 matched vertices)
+    if (matchingSize !== 18) return null;
+    
+    // Extract pairs from matching
+    const result: { homeId: string; awayId: string }[] = [];
+    const used = new Set<string>();
+    for (const [u, v] of match.entries()) {
+      if (v && !used.has(u) && !used.has(v)) {
+        // Find the original pair
+        const pair = pairs.find(p => 
+          (p.homeId === u && p.awayId === v) || (p.homeId === v && p.awayId === u)
+        );
+        if (pair) {
+          result.push(pair);
+          used.add(u);
+          used.add(v);
+        }
+      }
+    }
+    
+    return result.length === 18 ? result : null;
+  }
   
   const rounds: { homeId: string; awayId: string }[][] = [];
   let remainingPairs = [...allPairs];
   
-  // Build team -> remaining opponents map
-  const buildTeamOpponents = () => {
-    const map = new Map<string, Set<string>>();
-    for (const team of participants) map.set(team, new Set());
-    for (const p of remainingPairs) {
-      map.get(p.homeId)!.add(p.awayId);
-      map.get(p.awayId)!.add(p.homeId);
-    }
-    return map;
-  };
-  
   for (let round = 0; round < 8; round++) {
-    let roundMatches: { homeId: string; awayId: string }[] = [];
-    let bestAttempt: { homeId: string; awayId: string }[] | null = null;
-    let bestCoverage = 0;
+    let matching: { homeId: string; awayId: string }[] | null = null;
     
-    // Try multiple times to get a good matching
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const shuffled = shuffle([...remainingPairs]);
-      const matches: { homeId: string; awayId: string }[] = [];
-      const usedTeams = new Set<string>();
-      
-      // Greedy matching
-      for (const pair of shuffled) {
-        if (usedTeams.has(pair.homeId) || usedTeams.has(pair.awayId)) continue;
-        matches.push(pair);
-        usedTeams.add(pair.homeId);
-        usedTeams.add(pair.awayId);
-        if (matches.length === 18) break;
-      }
-      
-      if (matches.length > bestCoverage) {
-        bestCoverage = matches.length;
-        bestAttempt = matches;
-        if (matches.length === 18) break; // Perfect!
-      }
+    // Try multiple shuffles to find a perfect matching
+    for (let attempt = 0; attempt < 50; attempt++) {
+      // Shuffle remaining pairs
+      remainingPairs = shuffle([...remainingPairs]);
+      matching = findPerfectMatching(remainingPairs);
+      if (matching) break;
     }
     
-    if (bestAttempt) {
-      roundMatches = bestAttempt;
+    if (!matching) {
+      console.warn(`[assignmentsToFixtures] Could not find perfect matching for round ${round}`);
+      // Fallback to greedy
+      matching = [];
+      const usedTeams = new Set<string>();
+      for (const p of remainingPairs) {
+        if (!usedTeams.has(p.homeId) && !usedTeams.has(p.awayId)) {
+          matching.push(p);
+          usedTeams.add(p.homeId);
+          usedTeams.add(p.awayId);
+        }
+      }
     }
     
     // Remove used pairs
-    const usedKeys = new Set(roundMatches.map(m => `${m.homeId}__${m.awayId}`));
+    const usedKeys = new Set(matching.map(m => `${m.homeId}__${m.awayId}`));
     remainingPairs = remainingPairs.filter(p => !usedKeys.has(`${p.homeId}__${p.awayId}`));
     
-    rounds.push(roundMatches);
-    console.log(`[assignmentsToFixtures] Round ${round}: ${roundMatches.length} matches, ${remainingPairs.length} remaining`);
+    rounds.push(matching);
+    console.log(`[assignmentsToFixtures] Round ${round}: ${matching.length} matches, ${remainingPairs.length} remaining`);
   }
   
   // Log distribution
