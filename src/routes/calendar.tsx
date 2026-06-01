@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 
-import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound, getRoundNameByTeamCount, getSurvivingCupTeams, simulateCupMatchday, simulateCupMatchdayLayered, simulateBackgroundLeaguesOnly, scheduleBackgroundCupsOnly, processScheduledBackgroundSims, fixCupDraws, applyUCLLeagueDraw, applyUCLPlayoffDraw, applyUCLKnockoutDraw } from "@/lib/store";
+import { loadSave, saveSave, applyCupDraw, autoDrawForeignCups, simulateRemainingCupMatches, getCurrentCupRound, getRoundNameByTeamCount, getSurvivingCupTeams, simulateCupMatchday, simulateCupMatchdayLayered, simulateBackgroundLeaguesOnly, scheduleBackgroundCupsOnly, processScheduledBackgroundSims, fixCupDraws, applyUCLLeagueDraw, applyUCLPlayoffDraw, applyUCLKnockoutDraw, simulatePendingUCLThroughDay } from "@/lib/store";
 
 import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
 
@@ -20,7 +20,7 @@ import { CupDrawModal } from "@/components/CupDrawModal";
 
 import { UCLDrawModal } from "@/components/UCLDrawModal";
 
-import { UCL_START, UCL_CALENDAR } from "@/data/ucl";
+import { UCL_START, UCL_CALENDAR, uclDayOffset } from "@/data/ucl";
 
 import { teamById, LEAGUES, getPrimaryLeagueForCountry, type LeagueId } from "@/data/teams";
 
@@ -1610,7 +1610,9 @@ function CalendarPage() {
 
           onComplete={(updated) => {
 
-            saveSave(updated);
+            const offset = uclDayOffset(usePlayersStore.getState().currentDate);
+            const synced = simulatePendingUCLThroughDay(updated, offset, updated.myTeamId);
+            saveSave(synced);
 
             setSave(loadSave());
 

@@ -855,7 +855,7 @@ function MatchPage() {
     homeFormation = matchFormation || save.formations[fixture.homeId] || "Táctica 4-4-2";
   } else {
     // CPU team - use getStartersWithFormation to get both XI and the formation used
-    const { players: homePlayers, formation: homeFmt } = getStartersWithFormation(save, fixture.homeId);
+    const { players: homePlayers, formation: homeFmt } = getStartersWithFormation(save, fixture.homeId, { randomFormation: true });
     homeLineup = homePlayers;
     homeFormation = homeFmt;
   }
@@ -871,7 +871,7 @@ function MatchPage() {
     awayFormation = matchFormation || save.formations[fixture.awayId] || "Táctica 4-4-2";
   } else {
     // CPU team - use getStartersWithFormation to get both XI and the formation used
-    const { players: awayPlayers, formation: awayFmt } = getStartersWithFormation(save, fixture.awayId);
+    const { players: awayPlayers, formation: awayFmt } = getStartersWithFormation(save, fixture.awayId, { randomFormation: true });
     awayLineup = awayPlayers;
     awayFormation = awayFmt;
   }

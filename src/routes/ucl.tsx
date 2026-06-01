@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { loadSave, SaveGame } from "@/lib/store";
+import { loadSave, saveSave, SaveGame, simulatePendingUCLThroughDay } from "@/lib/store";
+import { uclDayOffset } from "@/data/ucl";
+import { usePlayersStore } from "@/store/playersStore";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
@@ -295,7 +297,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
   const fin = bracket.filter(s => s.round === "final");
 
   if (bracket.length === 0) {
-    return <p className="text-muted-foreground text-sm p-4">El cuadro se generará tras el sorteo de octavos.</p>;
+    return <p className="text-muted-foreground text-sm p-4">El cuadro se generará tras el sorteo de play-offs.</p>;
   }
 
   // Split into silver route (top half) and blue route (bottom half)
@@ -310,6 +312,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
 
   // Safe helpers
   const safeTeamName = (id: string): string => {
+    if (!id || id.startsWith("winner-")) return "Por definir";
     try { return teamName(id); } catch { return id; }
   };
 
@@ -773,15 +776,34 @@ function ResultsListView({ fixtures, safeTeamName, getTeamLogoPath }: {
 type Tab = "tabla" | "bracket" | "partidos";
 type PhaseTab = "liga" | "playoff" | "r16" | "qf" | "sf" | "final";
 
+const PHASE_TAB_ORDER: PhaseTab[] = ["liga", "playoff", "r16", "qf", "sf", "final"];
+
+function uclPhaseToMaxTab(phase: string, playoffDone: boolean): PhaseTab {
+  if (phase === "league") return playoffDone ? "playoff" : "liga";
+  if (phase === "done") return "final";
+  if (PHASE_TAB_ORDER.includes(phase as PhaseTab)) return phase as PhaseTab;
+  return "liga";
+}
+
 function UCLPage() {
   const [save, setSave] = useState<SaveGame | null>(null);
   const [tab, setTab] = useState<Tab>("tabla");
   const [selectedRound, setSelectedRound] = useState<string | null>(null);
   const [phaseTab, setPhaseTab] = useState<PhaseTab>("liga");
 
+  const currentDate = usePlayersStore((s) => s.currentDate);
+
   useEffect(() => {
-    setSave(loadSave());
-  }, []);
+    const raw = loadSave();
+    if (!raw?.ucl?.drawState.leagueDone) {
+      setSave(raw);
+      return;
+    }
+    const offset = uclDayOffset(currentDate);
+    const synced = simulatePendingUCLThroughDay(raw, offset, raw.myTeamId);
+    saveSave(synced);
+    setSave(synced);
+  }, [currentDate]);
 
   if (!save) {
     return <div className="p-6 text-muted-foreground">Cargando...</div>;
@@ -800,7 +822,9 @@ function UCLPage() {
     );
   }
 
-  const isKnockoutPhase = ["r16", "qf", "sf", "final", "done"].includes(ucl.phase);
+  const showBracket = (ucl.bracket?.length ?? 0) > 0;
+  const isKnockoutPhase = ["playoff", "r16", "qf", "sf", "final", "done"].includes(ucl.phase);
+  const displayTable = ucl.leaguePhaseTable ?? ucl.table ?? [];
 
   // Group fixtures by round, sorted by matchday offset
   const leagueFixtures = fixtures.filter(f => f.round?.startsWith("Jornada") && f.matchday > 0);
@@ -842,7 +866,7 @@ function UCLPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 px-4 py-2 border-b border-border bg-card">
-        {(["tabla", "partidos", ...(isKnockoutPhase ? ["bracket"] : [])] as Tab[]).map(t => (
+        {(["tabla", "partidos", ...(showBracket ? ["bracket"] : [])] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -858,7 +882,7 @@ function UCLPage() {
       {/* Content */}
       <div className="p-4">
         {tab === "tabla" && (
-          <TableView table={ucl.table ?? []} userTeamId={save.myTeamId} fixtures={fixtures} />
+          <TableView table={displayTable} userTeamId={save.myTeamId} fixtures={fixtures} />
         )}
 
         {tab === "partidos" && (() => {
@@ -869,6 +893,9 @@ function UCLPage() {
           const sfFx  = fixtures.filter(f => f.round?.startsWith("SF") && f.matchday > 0);
           const finalFx = fixtures.filter(f => f.round === "Final" && f.matchday > 0);
 
+          const maxUnlockedTab = uclPhaseToMaxTab(ucl.phase, ucl.drawState.playoffDone);
+          const maxUnlockedIdx = PHASE_TAB_ORDER.indexOf(maxUnlockedTab);
+
           const phaseBuckets: { key: PhaseTab; label: string; fxs: Fixture[] }[] = [
             { key: "liga",    label: "Fase de Liga",  fxs: leagueFixtures },
             { key: "playoff", label: "Play-offs",     fxs: playoffFx },
@@ -876,28 +903,40 @@ function UCLPage() {
             { key: "qf",      label: "Cuartos",       fxs: qfFx },
             { key: "sf",      label: "Semifinales",   fxs: sfFx },
             { key: "final",   label: "Final",         fxs: finalFx },
-          ].filter(b => b.fxs.length > 0);
+          ].filter(b => {
+            if (b.fxs.length === 0) return false;
+            const idx = PHASE_TAB_ORDER.indexOf(b.key);
+            if (idx > maxUnlockedIdx) return false;
+            if (b.key === "playoff" && !ucl.drawState.playoffDone) return false;
+            return true;
+          });
 
-          const activePhase = phaseBuckets.find(b => b.key === phaseTab) ?? phaseBuckets[0];
+          const activePhase = phaseBuckets.find(b => b.key === phaseTab) ?? phaseBuckets[phaseBuckets.length - 1];
 
           return (
             <div className="space-y-3">
               {/* Phase sub-tabs */}
               {phaseBuckets.length > 1 && (
                 <div className="flex gap-1 flex-wrap border-b border-border/50 pb-2">
-                  {phaseBuckets.map(b => (
+                  {phaseBuckets.map(b => {
+                    const locked = PHASE_TAB_ORDER.indexOf(b.key) > maxUnlockedIdx;
+                    return (
                     <button
                       key={b.key}
-                      onClick={() => { setPhaseTab(b.key); setSelectedRound(null); }}
+                      disabled={locked}
+                      onClick={() => { if (!locked) { setPhaseTab(b.key); setSelectedRound(null); } }}
                       className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
-                        activePhase?.key === b.key
+                        locked
+                          ? "bg-muted/40 text-muted-foreground/50 cursor-not-allowed"
+                          : activePhase?.key === b.key
                           ? "bg-blue-700 text-white"
                           : "bg-muted text-muted-foreground hover:bg-muted/80"
                       }`}
                     >
                       {b.label}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 

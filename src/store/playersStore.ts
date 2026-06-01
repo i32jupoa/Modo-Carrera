@@ -2,7 +2,31 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
  * Global player database (EA FC 26 JSON) + mutable season stats.
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -14,7 +38,43 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import { create } from "zustand";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -22,7 +82,31 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 import playersData from "@/data/players.json";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -30,11 +114,47 @@ import { TEAMS, teamById, leagueIdFromName, type LeagueId, teamsByLeague } from 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 import { defaultLineup, type Player, type Position, marketValueFor } from "@/data/players";
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 import {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -42,7 +162,31 @@ import {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   GAME_START_DATE,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -50,11 +194,47 @@ import {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 } from "@/lib/transferWindows";
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 import {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -62,7 +242,31 @@ import {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   mergeScheduleWithPlayed,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -70,7 +274,31 @@ import {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   type ScheduleFixture,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -78,7 +306,31 @@ import {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 import { rescheduleUnplayedFixtures } from "@/lib/fixtureScheduler";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -86,214 +338,869 @@ import { generateLeagueFixtures } from "@/lib/season";
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 import type { SimResult } from "@/lib/simulation";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 import {
 
+
+
+
+
+
+
   applyFixtureResult,
+
+
+
+
+
+
 
   involvesTeam,
 
+
+
+
+
+
+
   simulateScheduleFixture,
+
+
+
+
+
+
 
   simulateScheduleFixtureDetailed,
 
+
+
+
+
+
+
   unplayedOnDate,
+
+
+
+
+
+
 
 } from "@/lib/matchEngine";
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 import {
+
+
+
+
+
+
 
   loadSave,
 
+
+
+
+
+
+
   saveSave,
+
+
+
+
+
+
 
   generateRealisticStatsForO1Leagues,
 
+
+
+
+
+
+
   autoDrawForeignCups,
+
+
+
+
+
+
 
   simulateCupMatchdayLayered,
 
+
+
+
+
+
+
   simulateBackgroundLeaguesOnly,
+
+
+
+
+
+
 
   scheduleBackgroundCupsOnly,
 
+
+
+
+
+
+
   processScheduledBackgroundSims,
+
+
+
+
+
+
 
   fixCupDraws,
 
+
+
+
+
+
+
   simulateUCLKnockoutMatchday,
+
+
+
   simulateUCLLeagueMatchday,
+
+
+
+  simulateBackgroundUCLDay,
+
+  simulatePendingUCLThroughDay,
+
+
+
+  applyUCLPlayoffDraw,
+
+
+
+
+
+
 
   type SaveGame,
 
+
+
+
+
+
+
 } from "@/lib/store";
 
+
+
+
+
+
+
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
-import { UCL_CALENDAR, UCL_START, UCL_SEASON1_IDS, uclDayOffset, emptyTableEntry, assignUCLPots } from "@/data/ucl";
-import { runSwissDraw, assignmentsToFixtures, drawUCLPlayoffs, playoffPairsToFixtures, buildUCLBracket } from "@/lib/uclDraw";
+
+
+
+import { UCL_CALENDAR, UCL_START, UCL_SEASON1_IDS, uclDayOffset, emptyTableEntry, assignUCLPots, sortUCLTable } from "@/data/ucl";
+
+
+
+import { runSwissDraw, assignmentsToFixtures } from "@/lib/uclDraw";
+
+
+
+
+
+
 
 import { LEAGUES, getPrimaryLeagueForCountry } from "@/data/teams";
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 // Big 5 European leagues for VIP deep simulation
+
+
+
+
+
+
 
 const BIG5_LEAGUES: LeagueId[] = ["laliga", "premier", "seriea", "bundesliga", "ligue1"];
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 // Additional important leagues for VIP deep simulation
+
+
+
+
+
+
 
 const IMPORTANT_LEAGUES: LeagueId[] = ["ligaportugal", "1aproleague", "eredivisie", "trendyolsperlig"];
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
+
+
+
+
+
+
 
   return leagueId === userLeague || BIG5_LEAGUES.includes(leagueId) || IMPORTANT_LEAGUES.includes(leagueId);
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 // Track which matchdays have already generated stats to avoid duplicates
 
+
+
+
+
+
+
 const GENERATED_STATS_KEY = "fcsim:generated_stats";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 function getGeneratedMatchdays(): Record<string, number> {
 
+
+
+
+
+
+
   try {
+
+
+
+
+
+
 
     return JSON.parse(localStorage.getItem(GENERATED_STATS_KEY) || "{}");
 
+
+
+
+
+
+
   } catch {
+
+
+
+
+
+
 
     return {};
 
+
+
+
+
+
+
   }
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 function setGeneratedMatchday(leagueId: LeagueId, matchday: number) {
 
+
+
+
+
+
+
   const current = getGeneratedMatchdays();
+
+
+
+
+
+
 
   current[leagueId] = Math.max(current[leagueId] || 0, matchday);
 
+
+
+
+
+
+
   localStorage.setItem(GENERATED_STATS_KEY, JSON.stringify(current));
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 function hasGeneratedMatchday(leagueId: LeagueId, matchday: number): boolean {
 
+
+
+
+
+
+
   const current = getGeneratedMatchdays();
+
+
+
+
+
+
 
   return (current[leagueId] || 0) >= matchday;
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 // Clear the tracker to force regeneration
 
+
+
+
+
+
+
 export function clearGeneratedStatsTracker() {
+
+
+
+
+
+
 
   localStorage.removeItem(GENERATED_STATS_KEY);
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 // Generate stats on-demand for a specific league if it's O(1
 
+
+
+
+
+
+
 export function ensureStatsForLeague(leagueId: LeagueId) {
+
+
+
+
+
+
 
   const save = loadSave();
 
+
+
+
+
+
+
   if (!save) return;
+
+
+
+
+
+
 
   if (!isVIPLeague(leagueId, save.myLeague)) {
 
+
+
+
+
+
+
     const currentMatchday = save.currentMatchday[leagueId] - 1;
+
+
+
+
+
+
 
     if (currentMatchday < 1) return;
 
+
+
+
+
+
+
     
+
+
+
+
+
+
 
     // Get the last matchday we generated stats for
 
+
+
+
+
+
+
     const lastGenerated = getGeneratedMatchdays()[leagueId] || 0;
+
+
+
+
+
+
 
     
 
+
+
+
+
+
+
     // Only generate stats for matchdays we haven't processed yet
+
+
+
+
+
+
 
     if (lastGenerated < currentMatchday) {
 
+
+
+
+
+
+
       // Clear existing stats for this league's players to avoid accumulation
+
+
+
+
+
+
 
       const store = usePlayersStore.getState();
 
+
+
+
+
+
+
       const leagueTeams = teamsByLeague(leagueId);
+
+
+
+
+
+
 
       for (const team of leagueTeams) {
 
+
+
+
+
+
+
         const squad = store.getSimSquad(team.id);
+
+
+
+
+
+
 
         for (const player of squad) {
 
+
+
+
+
+
+
           // Reset stats for this player
+
+
+
+
+
+
 
           const currentStats = store.stats[player.id];
 
+
+
+
+
+
+
           if (currentStats) {
+
+
+
+
+
+
 
             store.stats = {
 
+
+
+
+
+
+
               ...store.stats,
+
+
+
+
+
+
 
               [player.id]: {
 
+
+
+
+
+
+
                 ...currentStats,
+
+
+
+
+
+
 
                 appearances: 0,
 
+
+
+
+
+
+
                 goals: 0,
+
+
+
+
+
+
 
                 assists: 0,
 
+
+
+
+
+
+
               }
+
+
+
+
+
+
 
             };
 
+
+
+
+
+
+
           }
+
+
+
+
+
+
 
         }
 
+
+
+
+
+
+
       }
+
+
+
+
+
+
 
       
 
+
+
+
+
+
+
       generateRealisticStatsForO1Leagues(save, [leagueId], save.currentMatchday[save.myLeague], lastGenerated + 1);
+
+
+
+
+
+
 
       setGeneratedMatchday(leagueId, currentMatchday);
 
+
+
+
+
+
+
     }
+
+
+
+
+
+
 
   }
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -303,37 +1210,169 @@ export function ensureStatsForLeague(leagueId: LeagueId) {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export type FcPlayer = {
+
+
+
+
+
+
 
   ID: number;
 
+
+
+
+
+
+
   Name: string;
+
+
+
+
+
+
 
   OVR: number;
 
+
+
+
+
+
+
   PAC: number;
+
+
+
+
+
+
 
   SHO: number;
 
+
+
+
+
+
+
   PAS: number;
+
+
+
+
+
+
 
   DRI: number;
 
+
+
+
+
+
+
   DEF: number;
+
+
+
+
+
+
 
   PHY: number;
 
+
+
+
+
+
+
   Position: string;
+
+
+
+
+
+
 
   Age: number;
 
+
+
+
+
+
+
   Team: string;
+
+
+
+
+
+
 
   League: string;
 
+
+
+
+
+
+
   card?: string;
 
+
+
+
+
+
+
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -345,7 +1384,43 @@ export const INITIAL_BUDGET = 100_000_000;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 export { GAME_START_DATE } from "@/lib/transferWindows";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -357,7 +1432,31 @@ export type TransferResult =
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   | { ok: true }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -369,7 +1468,43 @@ export type TransferResult =
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export type PlayerStats = {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -377,7 +1512,31 @@ export type PlayerStats = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   assists: number;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -385,7 +1544,31 @@ export type PlayerStats = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   cupGoals: number;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -393,7 +1576,31 @@ export type PlayerStats = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   cupAppearances: number;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -401,7 +1608,31 @@ export type PlayerStats = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   injuryReason?: string;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -409,7 +1640,31 @@ export type PlayerStats = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   formHistory: number[];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -417,7 +1672,31 @@ export type PlayerStats = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   redCards: number;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -425,7 +1704,43 @@ export type PlayerStats = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -437,7 +1752,43 @@ const RAW_PLAYERS = playersData as FcPlayer[];
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 export const PLAYERS_DB_SIZE = RAW_PLAYERS.length;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -449,11 +1800,59 @@ const TEAM_NAME_TO_ID: Record<string, string> = Object.fromEntries(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   TEAMS.map((t) => [t.name, t.id]),
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 );
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -465,7 +1864,31 @@ const PLAYERS_BY_TEAM: Record<string, FcPlayer[]> = {};
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 for (const p of RAW_PLAYERS) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -473,11 +1896,59 @@ for (const p of RAW_PLAYERS) {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   PLAYERS_BY_TEAM[p.Team].push(p);
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -489,7 +1960,31 @@ const FC_BY_ID = new Map<string, FcPlayer>(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   RAW_PLAYERS.map((p) => [String(p.ID), p]),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -501,7 +1996,43 @@ const FC_BY_ID = new Map<string, FcPlayer>(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function defaultStats(): PlayerStats {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -509,7 +2040,31 @@ function defaultStats(): PlayerStats {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     goals: 0,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -517,7 +2072,31 @@ function defaultStats(): PlayerStats {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     appearances: 0,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -525,7 +2104,31 @@ function defaultStats(): PlayerStats {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     cupAssists: 0,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -533,7 +2136,31 @@ function defaultStats(): PlayerStats {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     injuredUntil: 0,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -541,7 +2168,31 @@ function defaultStats(): PlayerStats {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     formHistory: [],
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -549,7 +2200,31 @@ function defaultStats(): PlayerStats {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     redCards: 0,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -557,11 +2232,59 @@ function defaultStats(): PlayerStats {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   };
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -573,7 +2296,31 @@ export function mapEaPosition(pos: string): Position {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   if (pos === "GK") return "GK";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -581,7 +2328,31 @@ export function mapEaPosition(pos: string): Position {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   if (["CB", "LB", "RB", "LWB", "RWB", "SW", "LCB", "RCB"].includes(u)) return "DEF";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -589,11 +2360,59 @@ export function mapEaPosition(pos: string): Position {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   return "MID";
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -603,27 +2422,117 @@ export function mapEaPosition(pos: string): Position {
 
 // Sophisticated market valuation using the new Transfermarkt-style system
 
+
+
+
+
+
+
 export function marketValueMillions(ovr: number, age: number, pos = "MID", teamId = "", leagueId = "", isStar = false, teamAvgRating = 75): number {
+
+
+
+
+
+
 
   const result = marketValueFor(ovr, age, pos, teamId, leagueId, 0, 0, 0, isStar, teamAvgRating);
 
+
+
+
+
+
+
   return result.value;
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 export function marketValueEuros(fc: FcPlayer, teamId = "", leagueId = "", teamAvgRating = 75): number {
 
+
+
+
+
+
+
   const isStar = fc.OVR >= 82;
+
+
+
+
+
+
 
   // If leagueId not provided, get it from player's league name
 
+
+
+
+
+
+
   const effectiveLeagueId = leagueId || leagueIdFromName(fc.League || "");
+
+
+
+
+
+
 
   return Math.round(marketValueMillions(fc.OVR, fc.Age, fc.Position, teamId, effectiveLeagueId, isStar, teamAvgRating) * 1_000_000);
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -635,7 +2544,31 @@ export function teamInitialBudget(avgOvr: number, leagueId = ""): number {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   // Piecewise linear interpolation with anchors: 90→160M, 85→125M, 75→35M, 70→13M
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -643,99 +2576,399 @@ export function teamInitialBudget(avgOvr: number, leagueId = ""): number {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   let budget = 160_000_000;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
   if (avgOvr >= 90) {
 
+
+
+
+
+
+
     budget = 160_000_000;
+
+
+
+
+
+
 
   } else {
 
+
+
+
+
+
+
     let found = false;
+
+
+
+
+
+
 
     for (let i = 0; i < anchors.length - 1; i++) {
 
+
+
+
+
+
+
       const [ovrHi, budHi] = anchors[i];
+
+
+
+
+
+
 
       const [ovrLo, budLo] = anchors[i + 1];
 
+
+
+
+
+
+
       if (avgOvr >= ovrLo) {
+
+
+
+
+
+
 
         const t = (avgOvr - ovrLo) / (ovrHi - ovrLo);
 
+
+
+
+
+
+
         budget = Math.round((budLo + t * (budHi - budLo)) * 1_000_000);
+
+
+
+
+
+
 
         found = true;
 
+
+
+
+
+
+
         break;
+
+
+
+
+
+
 
       }
 
+
+
+
+
+
+
     }
+
+
+
+
+
+
 
     if (!found) {
 
+
+
+
+
+
+
       // Below 70: steep drop to floor
+
+
+
+
+
+
 
       const below = Math.max(1, 13 - (70 - avgOvr) * 2);
 
+
+
+
+
+
+
       budget = Math.round(below * 1_000_000);
+
+
+
+
+
+
 
     }
 
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
   // +40% global increase for all teams
 
+
+
+
+
+
+
   budget = Math.round(budget * 1.40);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
   // 20% discount for teams NOT in top 5 leagues (except specific leagues)
 
+
+
+
+
+
+
   const top5Leagues = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
 
+
+
+
+
+
+
   
+
+
+
+
+
+
 
   // Leagues that should NOT have the 20% discount: Portugal, Belgium, Turkey, Netherlands
 
+
+
+
+
+
+
   const noDiscountLeagues = new Set([
+
+
+
+
+
+
 
     "ligaportugal",      // Liga Portugal
 
+
+
+
+
+
+
     "1aproleague",       // 1A Pro League (Belgium)
+
+
+
+
+
+
 
     "trendyolsperlig",   // Trendyol Süper Lig (Turkey)
 
+
+
+
+
+
+
     "eredivisie",        // Eredivisie (Netherlands)
+
+
+
+
+
+
 
   ]);
 
+
+
+
+
+
+
   
+
+
+
+
+
+
 
   // Saudi League gets +450% bonus instead of discount
 
+
+
+
+
+
+
   const saudiLeagueId = "roshnsaudileague"; // ROSHN Saudi League
+
+
+
+
+
+
 
   
 
+
+
+
+
+
+
   if (leagueId === saudiLeagueId) {
+
+
+
+
+
+
 
     // +450% bonus for Saudi teams (budget * 5.5 = original + 450%)
 
+
+
+
+
+
+
     budget = Math.round(budget * 5.5);
+
+
+
+
+
+
 
   } else if (leagueId && !top5Leagues.has(leagueId) && !noDiscountLeagues.has(leagueId)) {
 
+
+
+
+
+
+
     // -20% for non-top-5 leagues (except the ones listed above)
+
+
+
+
+
+
 
     budget = Math.round(budget * 0.8);
 
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -743,7 +2976,43 @@ export function teamInitialBudget(avgOvr: number, leagueId = ""): number {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -755,7 +3024,31 @@ export function formatEuro(amount: number): string {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   if (amount >= 1_000_000) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -763,7 +3056,31 @@ export function formatEuro(amount: number): string {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     return m >= 10 ? `€${Math.round(m)}M` : `€${m.toFixed(1)}M`;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -771,7 +3088,31 @@ export function formatEuro(amount: number): string {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   if (amount >= 1_000) return `€${Math.round(amount / 1_000)}K`;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -779,7 +3120,43 @@ export function formatEuro(amount: number): string {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -791,7 +3168,31 @@ export const POS_LABEL_ES: Record<Position, string> = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   GK: "POR",
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -799,7 +3200,31 @@ export const POS_LABEL_ES: Record<Position, string> = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   MID: "MED",
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -807,7 +3232,43 @@ export const POS_LABEL_ES: Record<Position, string> = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -819,7 +3280,31 @@ function syncSquadFromRoster(rosterIds: string[]): FcPlayer[] {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   return rosterIds
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -827,11 +3312,59 @@ function syncSquadFromRoster(rosterIds: string[]): FcPlayer[] {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     .filter((p): p is FcPlayer => !!p);
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -843,7 +3376,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   fc: FcPlayer,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -851,7 +3408,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   teamIdOverride?: string,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -859,7 +3440,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   let teamId = teamIdOverride ?? TEAM_NAME_TO_ID[fc.Team];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -867,7 +3472,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   if (!teamId && fc.Team) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -875,7 +3504,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     const team = teamById(normalizedName);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -883,7 +3536,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       teamId = team.id;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -891,7 +3568,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -899,7 +3600,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   const id = String(fc.ID);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -907,7 +3632,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     id,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -915,7 +3664,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     position: mapEaPosition(fc.Position),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -923,7 +3696,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     age: fc.Age,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -931,7 +3728,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     marketValue: marketValueMillions(fc.OVR, fc.Age, fc.Position),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -939,7 +3760,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     goals: stats.goals,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -947,7 +3792,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     appearances: stats.appearances,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -955,7 +3824,31 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     injuryReason: stats.injuryReason,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -963,11 +3856,47 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     formHistory: stats.formHistory,
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -979,7 +3908,43 @@ function fcToPlayer(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 type PlayersState = {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -987,7 +3952,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   myTeamId: string | null;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -995,7 +3984,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   rosterIds: string[];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1003,7 +4016,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   /** ISO date YYYY-MM-DD */
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1011,7 +4048,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   /** Calendario completo de liga con fechas y resultados */
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1019,7 +4080,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   /** Partido del usuario pendiente de simular (día de partido) */
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1027,7 +4112,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   /** Resultado recién simulado (modal post-partido) */
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1035,7 +4144,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   stats: Record<string, PlayerStats>;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1043,16 +4176,79 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   dismissedMatchIds: string[];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
   /** Sorteo de copa pendiente (bloquea el avance igual que pendingUserMatch) */
 
+
+
+
+
+
+
   pendingCupDraw: boolean;
 
+
+
+
+
+
+
   /** Sorteo UCL pendiente */
+
+
+
   pendingUclDraw: "league" | "playoff" | "knockout" | null;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1064,7 +4260,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   advanceTime: (days: number) => number;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1072,15 +4292,63 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   clearPendingMatch: () => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
   clearPendingCupDraw: () => void;
 
+
+
+
+
+
+
   clearPendingUclDraw: () => void;
 
+
+
+
+
+
+
   dismissMatch: (matchId: string) => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1088,7 +4356,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   isMarketOpen: () => boolean;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1096,7 +4388,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   ensureLeagueSchedule: () => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1104,7 +4420,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   hydrateMyTeam: () => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1112,11 +4452,47 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   resetAllStats: () => void;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   resetBudget: () => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1128,7 +4504,43 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   buyPlayer: (playerId: string, cost: number) => TransferResult;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1136,7 +4548,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   isInMyRoster: (playerId: string) => boolean;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1144,7 +4580,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     search: string;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1152,11 +4612,47 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     limit?: number;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   }) => FcPlayer[];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1168,7 +4664,43 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   getFcSquadByTeamId: (teamId: string) => FcPlayer[];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1176,7 +4708,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   getSimSquad: (teamId: string) => Player[];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1188,7 +4744,43 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   recordAppearance: (playerId: string, competition?: string) => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1196,7 +4788,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   recordAssist: (playerId: string, competition?: string) => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1204,7 +4820,31 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   recordRedCard: (playerId: string) => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1212,11 +4852,47 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   resetAccumulatedYellowCards: (playerId: string) => void;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   recordInjury: (playerId: string, injuredUntil: number, reason: string) => void;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1228,7 +4904,43 @@ type PlayersState = {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export const usePlayersStore = create<PlayersState>()(
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1236,7 +4948,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     (set, get) => ({
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1244,7 +4980,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       myTeamId: null,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1252,7 +5012,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       rosterIds: [],
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1260,7 +5044,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       currentDate: GAME_START_DATE,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1268,7 +5076,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       pendingUserMatch: null,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1276,7 +5108,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       pendingCupDraw: false,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1284,7 +5140,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       stats: {},
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1296,7 +5176,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       generateLeagueSchedule: (_myTeamId, league) => {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1304,7 +5220,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           fixtures: buildFullLeagueSchedule(league),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1312,7 +5252,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           lastUserMatchResult: null,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1320,7 +5284,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1332,7 +5332,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const { myTeamId, fixtures } = get();
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1340,7 +5364,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const team = teamById(myTeamId);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1348,7 +5396,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const full = buildFullLeagueSchedule(league);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1356,7 +5428,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           set({ fixtures: full });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1364,7 +5460,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1372,7 +5492,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           set({ fixtures: mergeScheduleWithPlayed(full, fixtures, league) });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1380,7 +5524,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1388,7 +5556,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           set({
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1396,7 +5588,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
               fixtures,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1404,7 +5620,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             ),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1412,11 +5652,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1428,7 +5716,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set({ pendingUserMatch: null, lastUserMatchResult: null }),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1440,7 +5764,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       clearPendingUclDraw: () => set({ pendingUclDraw: null }),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1452,7 +5812,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set((state) => ({
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1460,11 +5844,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           pendingUserMatch: null,
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           lastUserMatchResult: null,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1476,7 +5896,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       simulateMatch: (matchId) => {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1484,11 +5940,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         state.init();
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const fixture = state.fixtures.find((f) => f.id === matchId);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1500,7 +5992,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         const sim = simulateScheduleFixtureDetailed(fixture, (teamId, matchday) =>
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1508,7 +6036,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         );
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1516,7 +6068,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           homeScore: sim.homeGoals,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1524,7 +6100,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1536,7 +6136,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         const sameDay = unplayedOnDate(nextFixtures, fixture.date).filter(
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1544,7 +6180,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         );
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1552,7 +6212,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           const otherScores = simulateScheduleFixture(other, (teamId, md) =>
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1560,11 +6244,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           );
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           nextFixtures = applyFixtureResult(nextFixtures, other.id, otherScores);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1576,7 +6296,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         set({
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1584,7 +6340,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           lastUserMatchResult: sim,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1592,7 +6372,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1604,7 +6420,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         if (days <= 0) return 0;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1612,7 +6452,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1620,7 +6484,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           set({ currentDate: addDaysToIso(state.currentDate, days) });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1628,11 +6516,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1644,11 +6568,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         const onDay = unplayedOnDate(state.fixtures, state.currentDate);
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const userMatch = onDay.find((f) => involvesTeam(f, state.myTeamId!));
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1660,255 +6632,1050 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         if (get().pendingUserMatch) return 0;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
         if (get().pendingCupDraw) return 0;
 
+
+
+
+
+
+
         if (get().pendingUclDraw) return 0;
+
+
+
+
+
+
 
         // --- Copa: procesar al avanzar día, sin depender del calendario ---
 
+
+
+
+
+
+
         {
+
+
+
+
+
+
 
           const rawSave = loadSave();
 
+
+
+
+
+
+
           if (rawSave) {
+
+
+
+
+
+
 
             const nextDate = addDaysToIso(state.currentDate, 1);
 
+
+
+
+
+
+
             // 1. Procesar copas extranjeras solo en temporada de copa (julio-mayo)
+
+
+
             let currentSave = rawSave;
+
+
+
             const nextDateObj = new Date(nextDate + "T00:00:00Z");
+
+
+
             const month = nextDateObj.getMonth() + 1; // 1-12
+
+
+
             const isCupSeason = month >= 7 || month <= 5; // Julio-Diciembre o Enero-Mayo
 
+
+
+
+
+
+
             if (isCupSeason) {
+
+
+
               try {
+
+
+
                 currentSave = autoDrawForeignCups(fixCupDraws(rawSave), nextDate);
+
+
+
               } catch { /* keep rawSave */ }
+
+
+
             }
 
+
+
+
+
+
+
             // 3. Programar ligas background alrededor del próximo partido del usuario
+
+
+
             try {
+
+
+
               // Get next match date from schedule fixtures (ScheduleFixture[] with real ISO dates)
+
+
+
               const storeState = usePlayersStore.getState();
+
+
+
               const nextScheduledMatch = storeState.fixtures.find(f => !f.isPlayed);
+
+
+
               const nextMatchDate = nextScheduledMatch?.date;
 
+
+
+
+
+
+
               simulateBackgroundLeaguesOnly(currentSave, nextDate, nextMatchDate).then(result => {
+
+
+
                 if (result) {
+
+
+
                   // Programar copas background también
+
+
+
                   scheduleBackgroundCupsOnly(result, result.currentMatchday[result.myLeague], nextDate).then(withCups => {
+
+
+
                     if (withCups) {
+
+
+
                       const withProcessed = processScheduledBackgroundSims(withCups, nextDate);
+
+
+
                       saveSave(withProcessed);
+
+
+
                     }
+
+
+
                   });
+
+
+
                 }
+
+
+
               });
+
+
+
             } catch { /* keep currentSave */ }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
             // 2. Detectar si hoy es día de sorteo del usuario
 
+
+
+
+
+
+
             try {
+
+
+
+
+
+
 
               const userCountry = LEAGUES[currentSave.myLeague]?.country;
 
+
+
+
+
+
+
               const primaryLeague = userCountry
+
+
+
+
+
+
 
                 ? getPrimaryLeagueForCountry(userCountry)
 
+
+
+
+
+
+
                 : currentSave.myLeague;
+
+
+
+
+
+
 
               const cupKey = (primaryLeague || currentSave.myLeague) as LeagueId;
 
+
+
+
+
+
+
               const CUP_START = new Date("2025-07-07T00:00:00Z");
+
+
+
+
+
+
 
               const todayOffset = Math.floor(
 
+
+
+
+
+
+
                 (new Date(nextDate).getTime() - CUP_START.getTime()) / 86400000
+
+
+
+
+
+
 
               );
 
+
+
+
+
+
+
               const cupStructure =
+
+
+
+
+
+
 
                 (currentSave.cupFixtures as any)[`${cupKey}_structure`] ||
 
+
+
+
+
+
+
                 getCupStructureForCountry(userCountry || "");
+
+
+
+
+
+
 
               const cupSchedule = cupStructure.schedule;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
               const isInPreliminary = (() => {
+
+
+
+
+
+
 
                 try { return initCup(userCountry || "").preliminaryParticipants?.includes(currentSave.myTeamId) || false; }
 
+
+
+
+
+
+
                 catch { return false; }
+
+
+
+
+
+
 
               })();
 
+
+
+
+
+
+
               const relevantSchedule = cupSchedule.filter((s: any) =>
+
+
+
+
+
+
 
                 s.round === "Preliminar" ? isInPreliminary : true
 
+
+
+
+
+
+
               );
+
+
+
+
+
+
 
               const cupFixtures = currentSave.cupFixtures[cupKey] || [];
 
+
+
+
+
+
+
               const isDrawDay = relevantSchedule.some((s: any) => {
+
+
+
+
+
+
 
                 const drawDate = new Date(CUP_START.getTime() + s.drawMatchday * 86400000);
 
+
+
+
+
+
+
                 const drawDateIso = drawDate.toISOString().slice(0, 10);
+
+
+
+
+
+
 
                 if (drawDateIso !== nextDate) return false;
 
+
+
+
+
+
+
                 return !cupFixtures.some((f: any) => f.round === s.round);
+
+
+
+
+
+
 
               });
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
               if (isDrawDay) {
+
+
+
+
+
+
 
                 // Guardar copas extranjeras procesadas y bloquear para sorteo
 
+
+
+
+
+
+
                 saveSave(currentSave);
+
+
+
+
+
+
 
                 set({ currentDate: nextDate, pendingCupDraw: true });
 
+
+
+
+
+
+
                 return 1;
 
+
+
+
+
+
+
               }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
               // 3. Simular prelim del usuario 2 días antes del sorteo, si no está en prelim
 
+
+
+
+
+
+
               const prelimRound = cupSchedule.find((s: any) => s.round === "Preliminar");
+
+
+
+
+
+
 
               if (prelimRound && !isInPreliminary) {
 
+
+
+
+
+
+
                 const triggerOffset = prelimRound.drawMatchday - 2;
+
+
+
+
+
+
 
                 if (todayOffset === triggerOffset) {
 
+
+
+
+
+
+
                   const prelimFixturesExist = (currentSave.cupFixtures[cupKey] || []).some(
+
+
+
+
+
+
 
                     (f: any) => f.round === "Preliminar"
 
+
+
+
+
+
+
                   );
+
+
+
+
+
+
 
                   if (!prelimFixturesExist) {
 
+
+
+
+
+
+
                     try {
+
+
+
+
+
+
 
                       const cupData = initCup(userCountry || "");
 
+
+
+
+
+
+
                       const prelimTeams = cupData.preliminaryParticipants || [];
+
+
+
+
+
+
 
                       if (!currentSave.cupFixtures[cupKey]) currentSave.cupFixtures[cupKey] = [];
 
+
+
+
+
+
+
                       for (let i = 0; i + 1 < prelimTeams.length; i += 2) {
+
+
+
+
+
+
 
                         const hg = Math.floor(Math.random() * 4);
 
+
+
+
+
+
+
                         const ag = Math.floor(Math.random() * 4);
+
+
+
+
+
+
 
                         (currentSave.cupFixtures[cupKey] as any[]).push({
 
+
+
+
+
+
+
                           id: `cup-${cupKey}-prelim-${i}`,
+
+
+
+
+
+
 
                           competition: "cup",
 
+
+
+
+
+
+
                           league: cupKey,
+
+
+
+
+
+
 
                           matchday: prelimRound.matchday,
 
+
+
+
+
+
+
                           round: "Preliminar",
+
+
+
+
+
+
 
                           homeId: prelimTeams[i],
 
+
+
+
+
+
+
                           awayId: prelimTeams[i + 1],
+
+
+
+
+
+
 
                           result: { homeGoals: hg, awayGoals: ag, events: [], injuries: [], xgHome: hg, xgAway: ag },
 
+
+
+
+
+
+
                         });
+
+
+
+
+
+
 
                       }
 
+
+
+
+
+
+
                     } catch { /* ignore */ }
+
+
+
+
+
+
 
                   }
 
+
+
+
+
+
+
                 }
 
+
+
+
+
+
+
               }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
               // 4. Simular matchday de copa si usuario eliminado y es día de partido
 
+
+
+
+
+
+
               const todayMatchday = cupSchedule.find((s: any) => s.matchday === todayOffset)?.matchday;
+
+
+
+
+
+
 
               if (todayMatchday !== undefined) {
 
+
+
+
+
+
+
                 const unplayedCupFixtures = (currentSave.cupFixtures[cupKey] || []).filter((f: any) => !f.result);
+
+
+
+
+
+
 
                 const userHasCupFixture = unplayedCupFixtures.some(
 
+
+
+
+
+
+
                   (f: any) => f.homeId === currentSave.myTeamId || f.awayId === currentSave.myTeamId
+
+
+
+
+
+
 
                 );
 
+
+
+
+
+
+
                 if (!userHasCupFixture && unplayedCupFixtures.length > 0) {
+
+
+
+
+
+
 
                   // Simular sincrónicamente con resultados simples
 
+
+
+
+
+
+
                   for (const f of unplayedCupFixtures.filter((f: any) => f.matchday === todayMatchday)) {
+
+
+
+
+
+
 
                     const hg = Math.floor(Math.random() * 4);
 
+
+
+
+
+
+
                     const ag = Math.floor(Math.random() * 4);
+
+
+
+
+
+
 
                     const idx = (currentSave.cupFixtures[cupKey] as any[]).findIndex((x: any) => x.id === f.id);
 
+
+
+
+
+
+
                     if (idx >= 0) {
+
+
+
+
+
+
 
                       (currentSave.cupFixtures[cupKey] as any[])[idx] = {
 
+
+
+
+
+
+
                         ...f,
+
+
+
+
+
+
 
                         result: { homeGoals: hg, awayGoals: ag, events: [], injuries: [], xgHome: hg, xgAway: ag },
 
+
+
+
+
+
+
                       };
+
+
+
+
+
+
 
                     }
 
+
+
+
+
+
+
                   }
 
+
+
+
+
+
+
                 }
+
+
+
+
+
+
 
               }
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
               saveSave(currentSave);
+
+
+
+
+
+
 
             } catch (e) {
 
+
+
+
+
+
+
               saveSave(currentSave);
+
+
+
+
+
+
 
             }
 
+
+
+
+
+
+
           }
 
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1918,90 +7685,245 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         // --- UCL: detectar dias de sorteo y partidos ---
+
+
+
         {
+
+
+
           const rawSave = loadSave();
+
+
+
           if (rawSave) {
+
+
+
             const nextDate = addDaysToIso(state.currentDate, 1);
+
+
+
             const offset = uclDayOffset(nextDate);
 
+
+
+            console.log(`[advanceTime] currentDate: ${state.currentDate}, nextDate: ${nextDate}, offset: ${offset}`);
+
+
+
+            console.log(`[advanceTime] UCL Calendar - leagueDraw: ${UCL_CALENDAR.leagueDraw}, playoffDraw: ${UCL_CALENDAR.playoffDraw}, knockoutDraw: ${UCL_CALENDAR.knockoutDraw}`);
+
+
+
+            console.log(`[advanceTime] drawState:`, rawSave.ucl?.drawState);
+
+
+
+
+
+
+
             if (!rawSave.ucl && offset >= UCL_CALENDAR.leagueDraw) {
+
+
+
               rawSave.ucl = {
+
+
+
                 phase: "league" as const,
+
+
+
                 seasonNumber: 1,
+
+
+
                 participants: UCL_SEASON1_IDS,
+
+
+
                 table: UCL_SEASON1_IDS.map(emptyTableEntry),
+
+
+
                 drawState: { leagueDone: false, playoffDone: false, knockoutDone: false },
+
+
+
+                leaguePhaseTable: null,
+
+
+
                 bracket: [],
+
+
+
               };
+
+
+
               saveSave(rawSave);
+
+
+
             }
+
+
+
+
+
+
 
             if (rawSave.ucl) {
+
+
+
               const ucl = rawSave.ucl;
 
+
+
+
+
+
+
               // League draw day
+
+
+
+              console.log(`[advanceTime] Checking league draw: offset=${offset}, leagueDraw=${UCL_CALENDAR.leagueDraw}, leagueDone=${ucl.drawState.leagueDone}`);
+
+
+
               if (offset === UCL_CALENDAR.leagueDraw && !ucl.drawState.leagueDone) {
+
+
+
+                console.log(`[advanceTime] TRIGGERING LEAGUE DRAW`);
+
+
+
                 saveSave(rawSave);
+
+
+
                 set({ currentDate: nextDate, pendingUclDraw: "league" });
+
+
+
                 return 1;
+
+
+
               }
 
-              // Playoff draw day
+
+
+
+
+
+
+              // Playoff draw day - ALWAYS show modal regardless of team position
+
+
+
+              console.log(`[advanceTime] Checking playoff draw: offset=${offset}, playoffDraw=${UCL_CALENDAR.playoffDraw}, leagueDone=${ucl.drawState.leagueDone}, playoffDone=${ucl.drawState.playoffDone}`);
+
+
+
               if (offset === UCL_CALENDAR.playoffDraw && ucl.drawState.leagueDone && !ucl.drawState.playoffDone) {
-                saveSave(rawSave);
+
+
+
+                console.log(`[advanceTime] TRIGGERING PLAYOFF DRAW - Always shown`);
+
+
+
+                const drawn = applyUCLPlayoffDraw(rawSave);
+
+
+
+                saveSave(drawn);
+
+
+
                 set({ currentDate: nextDate, pendingUclDraw: "playoff" });
+
+
+
                 return 1;
+
+
+
               }
+
+
+
+
+
+
 
               // Knockout draw day
-              if (offset === UCL_CALENDAR.knockoutDraw && ucl.drawState.playoffDone && !ucl.drawState.knockoutDone) {
+
+
+
+              console.log(`[advanceTime] Checking knockout draw: offset=${offset}, knockoutDraw=${UCL_CALENDAR.knockoutDraw}, knockoutDone=${ucl.drawState.knockoutDone}`);
+
+
+
+              // Octavos draw day (15 Jul): mark draw done; phase advances only after play-offs finish
+              if (offset === UCL_CALENDAR.knockoutDraw && !ucl.drawState.knockoutDone) {
+                rawSave.ucl.drawState.knockoutDone = true;
                 saveSave(rawSave);
-                set({ currentDate: nextDate, pendingUclDraw: "knockout" });
-                return 1;
               }
 
-              // Simulate AI UCL fixtures for any UCL match day
-              const allUclRounds = [
-                ...UCL_CALENDAR.leagueDay.map((_, i) => `Jornada ${i + 1}`),
-                "Playoff-Leg1", "Playoff-Leg2",
-                "R16-Leg1", "R16-Leg2", "QF-Leg1", "QF-Leg2", "SF-Leg1", "SF-Leg2", "Final"
-              ];
-              const dayUclRound =
-                UCL_CALENDAR.leagueDay.indexOf(offset) >= 0 ? `Jornada ${UCL_CALENDAR.leagueDay.indexOf(offset) + 1}` :
-                offset === UCL_CALENDAR.playoffLeg1 ? "Playoff-Leg1" :
-                offset === UCL_CALENDAR.playoffLeg2 ? "Playoff-Leg2" :
-                offset === UCL_CALENDAR.r16Leg1 ? "R16-Leg1" :
-                offset === UCL_CALENDAR.r16Leg2 ? "R16-Leg2" :
-                offset === UCL_CALENDAR.qfLeg1 ? "QF-Leg1" :
-                offset === UCL_CALENDAR.qfLeg2 ? "QF-Leg2" :
-                offset === UCL_CALENDAR.sfLeg1 ? "SF-Leg1" :
-                offset === UCL_CALENDAR.sfLeg2 ? "SF-Leg2" :
-                offset === UCL_CALENDAR.final ? "Final" : null;
 
-              if (dayUclRound) {
-                const dayFixtures = rawSave.uclFixtures.filter((f: any) => f.round === dayUclRound && !f.result);
-                const userHas = dayFixtures.some((f: any) => f.homeId === rawSave.myTeamId || f.awayId === rawSave.myTeamId);
-                if (!userHas) {
-                  const isKnockout = dayUclRound.includes('-Leg') || dayUclRound === 'Final';
-                  if (isKnockout) {
-                    // Use proper two-leg simulation with ET+penalties on leg2
-                    const simmed = simulateUCLKnockoutMatchday(rawSave as any, dayFixtures[0]?.matchday ?? 0);
-                    rawSave.uclFixtures = simmed.uclFixtures;
-                    rawSave.ucl = simmed.ucl;
-                  } else {
-                    // Use proper simulation for league phase
-                    const simmed = simulateUCLLeagueMatchday(rawSave as any, dayFixtures[0]?.matchday ?? 0);
-                    rawSave.uclFixtures = simmed.uclFixtures;
-                    rawSave.ucl = simmed.ucl;
-                  }
-                  saveSave(rawSave);
-                }
+
+
+
+
+
+              // Catch up all UCL AI fixtures through this date (play-offs, knockouts, etc.)
+              if (ucl.drawState.leagueDone && offset >= UCL_CALENDAR.leagueDay[0]) {
+                const synced = simulatePendingUCLThroughDay(rawSave, offset, rawSave.myTeamId);
+                rawSave.uclFixtures = synced.uclFixtures;
+                if (synced.ucl) rawSave.ucl = synced.ucl;
+                if (synced.uclChampion) rawSave.uclChampion = synced.uclChampion;
+                saveSave(rawSave);
               }
+
+
+
             }
+
+
+
           }
+
+
+
         }
 
+
+
+
+
+
+
         let date = state.currentDate;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2009,7 +7931,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         let advanced = 0;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2021,7 +7967,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         const simFixture = (f: ScheduleFixture) => {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2029,7 +8011,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             get().getSimXI(teamId, [], md),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2037,51 +8043,207 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           // Record stats from simulation events
+
+
+
+
+
+
 
           const homeXI = get().getSimXI(f.homeTeam, [], f.matchday);
 
+
+
+
+
+
+
           const awayXI = get().getSimXI(f.awayTeam, [], f.matchday);
 
+
+
+
+
+
+
           
+
+
+
+
+
+
 
           // Record appearances for all starters
 
+
+
+
+
+
+
           for (const p of [...homeXI, ...awayXI]) {
+
+
+
+
+
+
 
             get().recordAppearance(p.id);
 
+
+
+
+
+
+
           }
+
+
+
+
+
+
 
           
 
+
+
+
+
+
+
           // Record goals and assists from events
+
+
+
+
+
+
 
           for (const ev of result.events) {
 
+
+
+
+
+
+
             if (ev.type === "goal") {
+
+
+
+
+
+
 
               get().recordGoal(ev.scorerId);
 
+
+
+
+
+
+
               if (ev.assistId) {
+
+
+
+
+
+
 
                 get().recordAssist(ev.assistId);
 
+
+
+
+
+
+
               }
+
+
+
+
+
+
 
             }
 
+
+
+
+
+
+
           }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
           fixtures = applyFixtureResult(fixtures, f.id, { 
 
+
+
+
+
+
+
             homeScore: result.homeGoals, 
+
+
+
+
+
+
 
             awayScore: result.awayGoals 
 
+
+
+
+
+
+
           });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2093,7 +8255,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         for (let d = 0; d < days; d++) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2101,7 +8299,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           const onDay = unplayedOnDate(fixtures, nextDate);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2109,7 +8331,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             involvesTeam(f, state.myTeamId!),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2121,7 +8367,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
           if (userMatch) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2129,7 +8411,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
               if (f.id !== userMatch.id) simFixture(f);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2137,7 +8443,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             date = nextDate;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2145,11 +8475,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             pendingUserMatch = fixtures.find((f) => f.id === userMatch.id) ?? userMatch;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             break;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2161,7 +8527,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
           for (const f of onDay) simFixture(f);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2169,7 +8571,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           advanced++;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2181,7 +8607,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         set({
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2189,7 +8651,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           fixtures,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2197,7 +8683,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2205,7 +8715,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2221,7 +8767,55 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       isMarketOpen: () => isMarketOpenForIso(get().currentDate),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2233,7 +8827,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         if (get().loaded) return;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2241,7 +8859,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           set({ loaded: true });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2249,7 +8891,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           if (teamId) get().hydrateMyTeam();
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2257,7 +8923,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2269,7 +8971,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const team = teamById(teamId);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2277,7 +9003,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const rosterIds = defaultSquad.map((p) => String(p.ID));
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2285,7 +9035,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const avgOvr = defaultSquad.length > 0
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2293,7 +9067,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           : Math.round((team.att + team.mid + team.def) / 3);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2301,7 +9099,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           myTeamId: teamId,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2309,7 +9131,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           squad: defaultSquad,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2317,7 +9163,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             opts?.resetBudget || prev.myTeamId !== teamId
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2325,7 +9195,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
               : prev.budget,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2333,7 +9227,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2345,7 +9275,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const { myTeamId, rosterIds } = get();
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2353,7 +9307,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         if (rosterIds.length === 0) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2361,7 +9339,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           const defaultSquad = PLAYERS_BY_TEAM[team.name] ?? [];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2369,7 +9371,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           set({ rosterIds: ids, squad: defaultSquad });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2377,11 +9403,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set({ squad: syncSquadFromRoster(rosterIds) });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2393,7 +9455,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       clear: () =>
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2401,7 +9499,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           squad: [],
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2409,7 +9531,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           myTeamId: null,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2417,7 +9563,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           currentDate: GAME_START_DATE,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2425,7 +9595,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           pendingUserMatch: null,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2433,11 +9627,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           dismissedMatchIds: [],
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2453,7 +9695,55 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       resetBudget: () => set({ budget: INITIAL_BUDGET }),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2469,7 +9759,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       buyPlayer: (playerId, cost) => {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2477,7 +9803,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         if (!isMarketOpenForIso(state.currentDate)) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2485,7 +9835,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             ok: false,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2493,11 +9867,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           };
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2505,11 +9915,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return { ok: false, reason: "No hay equipo seleccionado." };
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2517,11 +9963,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return { ok: false, reason: "El jugador ya está en tu plantilla." };
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2529,7 +10011,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         if (!fc) return { ok: false, reason: "Jugador no encontrado." };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2537,7 +10043,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2545,7 +10075,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             reason: `Presupuesto insuficiente (disponible: ${formatEuro(state.budget)}).`,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2553,7 +10107,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2561,7 +10139,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set({
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2569,7 +10171,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           rosterIds,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2577,7 +10203,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2585,7 +10235,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2597,7 +10283,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const state = get();
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2605,11 +10315,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             ok: false,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2617,11 +10363,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           };
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2629,11 +10411,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return { ok: false, reason: "No hay equipo seleccionado." };
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2641,11 +10459,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return { ok: false, reason: "El jugador no está en tu plantilla." };
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2653,7 +10507,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2661,7 +10539,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             reason: "Debes mantener al menos 11 jugadores en la plantilla.",
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2669,7 +10571,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2677,7 +10603,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set({
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2685,7 +10635,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           rosterIds,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2693,7 +10667,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2701,7 +10699,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2713,7 +10747,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const inRoster = new Set(get().rosterIds);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2721,7 +10779,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const out: FcPlayer[] = [];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2729,7 +10811,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           const id = String(p.ID);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2737,7 +10843,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           if (position !== "all" && mapEaPosition(p.Position) !== position) continue;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2745,7 +10875,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           out.push(p);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2753,7 +10907,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         out.sort((a, b) => b.OVR - a.OVR);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2761,7 +10939,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2773,7 +10975,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       importLegacyStats: (players) => {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2781,7 +11019,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         for (const p of Object.values(players)) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2789,7 +11051,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             goals: p.goals,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2797,7 +11083,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             appearances: p.appearances,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2805,7 +11115,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             injuryReason: p.injuryReason,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2813,7 +11147,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             formHistory: p.formHistory ?? [],
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2821,7 +11179,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             redCards: 0,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2829,7 +11211,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2837,11 +11243,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set({ stats: next });
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2853,7 +11307,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const { myTeamId, rosterIds } = get();
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2861,11 +11339,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return syncSquadFromRoster(rosterIds);
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2873,7 +11387,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         if (!team) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2881,11 +11419,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return [];
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2893,7 +11467,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         if (!squad) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2901,7 +11499,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return [];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2909,11 +11531,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         return squad;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2925,7 +11595,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const fc = FC_BY_ID.get(playerId);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2933,7 +11627,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const stats = get().stats[playerId] ?? defaultStats();
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2941,7 +11659,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const teamIdOverride =
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2949,11 +11691,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         return fcToPlayer(fc, stats, teamIdOverride);
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2965,7 +11755,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const posOrder: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2973,7 +11787,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         if (!squad || squad.length === 0) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2981,7 +11819,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           return [];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2989,7 +11851,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         return squad
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2997,7 +11883,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           .filter((p): p is Player => !!p)
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3005,7 +11915,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             (a, b) =>
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3013,11 +11947,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           );
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3029,7 +12011,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const unavailable = new Set(
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3037,7 +12043,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             .getSimSquad(teamId)
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3045,7 +12075,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
             .map((p) => p.id),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3053,7 +12107,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const xi = lineupIds
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3061,7 +12139,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
           .filter((p): p is Player => !!p && !unavailable.has(p.id));
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3069,7 +12171,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3081,7 +12219,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const next = { ...get().stats };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3089,7 +12251,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const isCup = competition === "cup";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3097,11 +12283,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set({ stats: next });
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3113,7 +12347,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const next = { ...get().stats };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3121,7 +12379,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const isCup = competition === "cup";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3129,11 +12411,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set({ stats: next });
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3145,7 +12475,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const next = { ...get().stats };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3153,7 +12507,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const isCup = competition === "cup";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3161,11 +12539,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         set({ stats: next });
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3177,7 +12603,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const next = { ...get().stats };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3185,7 +12635,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         next[playerId] = { ...s, yellowCards: s.yellowCards + 1 };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3193,7 +12667,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3205,7 +12715,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const next = { ...get().stats };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3213,7 +12747,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         next[playerId] = { ...s, redCards: s.redCards + 1 };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3221,7 +12779,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3233,7 +12827,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const next = { ...get().stats };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3241,7 +12859,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         next[playerId] = { ...s, accumulatedYellowCards: s.accumulatedYellowCards + 1 };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3249,7 +12891,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3261,7 +12939,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const next = { ...get().stats };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3269,7 +12971,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         next[playerId] = { ...s, accumulatedYellowCards: 0 };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3277,7 +13003,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3289,7 +13051,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         const next = { ...get().stats };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3297,7 +13083,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         next[playerId] = { ...s, injuredUntil, injuryReason: reason };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3305,7 +13115,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       },
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3313,7 +13147,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3321,7 +13179,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       storage: createJSONStorage(() => localStorage),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3329,7 +13211,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         ...current,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3337,7 +13243,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         currentDate:
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3345,11 +13275,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         fixtures: (persisted as Partial<PlayersState>)?.fixtures ?? [],
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
       }),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3357,7 +13323,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         stats: s.stats,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3365,7 +13355,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         rosterIds: s.rosterIds,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3373,7 +13387,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         currentDate: s.currentDate,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3381,7 +13419,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
         dismissedMatchIds: s.dismissedMatchIds,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3389,11 +13451,47 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     },
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   ),
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3405,7 +13503,43 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /** @deprecated Use usePlayersStore — kept for existing imports */
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3417,85 +13551,367 @@ export const useUserTeam = usePlayersStore;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export function playersStoreInit() {
+
+
+
+
+
+
 
   usePlayersStore.getState().init();
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 export function useCurrentDate(): string {
 
+
+
+
+
+
+
   return usePlayersStore((s) => s.currentDate);
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 export function selectTopScorers(
 
+
+
+
+
+
+
   leagueFilter?: LeagueId,
+
+
+
+
+
+
 
   limit = 30,
 
+
+
+
+
+
+
   competition: "all" | "league" | "cup" = "all",
+
+
+
+
+
+
 
   cupCountry?: string,
 
+
+
+
+
+
+
 ): Player[] {
+
+
+
+
+
+
 
   const store = usePlayersStore.getState();
 
+
+
+
+
+
+
   store.init();
 
+
+
+
+
+
+
   
+
+
+
+
+
+
 
   const out: Player[] = [];
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   for (const [id, st] of Object.entries(store.stats)) {
+
+
+
+
+
+
 
     const goals = competition === "cup"
 
+
+
+
+
+
+
       ? (st.cupGoals ?? 0)
+
+
+
+
+
+
 
       : competition === "league"
 
+
+
+
+
+
+
         ? st.goals - (st.cupGoals ?? 0)
+
+
+
+
+
+
 
         : st.goals;
 
+
+
+
+
+
+
     if (goals <= 0) continue;
+
+
+
+
+
+
 
     const p = store.getSimPlayer(id);
 
+
+
+
+
+
+
     if (!p) continue;
+
+
+
+
+
+
 
     if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
 
+
+
+
+
+
+
     if (competition === "cup" && cupCountry) {
+
+
+
+
+
+
 
       const teamCountry = LEAGUES[teamById(p.teamId).league as LeagueId]?.country;
 
+
+
+
+
+
+
       if (teamCountry !== cupCountry) continue;
+
+
+
+
+
+
 
     }
 
+
+
+
+
+
+
     out.push({ ...p, goals, assists: competition === "cup" ? (st.cupAssists ?? 0) : competition === "league" ? st.assists - (st.cupAssists ?? 0) : st.assists, appearances: competition === "cup" ? (st.cupAppearances ?? 0) : competition === "league" ? st.appearances - (st.cupAppearances ?? 0) : st.appearances });
+
+
+
+
+
+
 
   }
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   return out
+
+
+
+
+
+
 
     .sort((a, b) => b.goals - a.goals || b.assists - a.assists)
 
+
+
+
+
+
+
     .slice(0, limit);
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3505,135 +13921,549 @@ export function selectTopScorers(
 
 export function selectTopAssisters(
 
+
+
+
+
+
+
   leagueFilter?: LeagueId,
+
+
+
+
+
+
 
   limit = 30,
 
+
+
+
+
+
+
   competition: "all" | "league" | "cup" = "all",
+
+
+
+
+
+
 
   cupCountry?: string,
 
+
+
+
+
+
+
 ): Player[] {
+
+
+
+
+
+
 
   const store = usePlayersStore.getState();
 
+
+
+
+
+
+
   store.init();
 
+
+
+
+
+
+
   
+
+
+
+
+
+
 
   const out: Player[] = [];
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   for (const [id, st] of Object.entries(store.stats)) {
+
+
+
+
+
+
 
     const assists = competition === "cup"
 
+
+
+
+
+
+
       ? (st.cupAssists ?? 0)
+
+
+
+
+
+
 
       : competition === "league"
 
+
+
+
+
+
+
         ? st.assists - (st.cupAssists ?? 0)
+
+
+
+
+
+
 
         : st.assists;
 
+
+
+
+
+
+
     if (assists <= 0) continue;
+
+
+
+
+
+
 
     const p = store.getSimPlayer(id);
 
+
+
+
+
+
+
     if (!p) continue;
+
+
+
+
+
+
 
     if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
 
+
+
+
+
+
+
     if (competition === "cup" && cupCountry) {
+
+
+
+
+
+
 
       const teamCountry = LEAGUES[teamById(p.teamId).league as LeagueId]?.country;
 
+
+
+
+
+
+
       if (teamCountry !== cupCountry) continue;
+
+
+
+
+
+
 
     }
 
+
+
+
+
+
+
     out.push({ ...p, goals: competition === "cup" ? (st.cupGoals ?? 0) : competition === "league" ? st.goals - (st.cupGoals ?? 0) : st.goals, assists, appearances: competition === "cup" ? (st.cupAppearances ?? 0) : competition === "league" ? st.appearances - (st.cupAppearances ?? 0) : st.appearances });
 
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
   return out
 
+
+
+
+
+
+
     .sort((a, b) => b.assists - a.assists || b.goals - a.goals)
+
+
+
+
+
+
 
     .slice(0, limit);
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 export function selectTopYellowCards(
 
+
+
+
+
+
+
   leagueFilter?: LeagueId,
+
+
+
+
+
+
 
   limit = 30,
 
+
+
+
+
+
+
 ): (Player & { yellowCards: number; redCards: number })[] {
+
+
+
+
+
+
 
   const store = usePlayersStore.getState();
 
+
+
+
+
+
+
   store.init();
+
+
+
+
+
+
 
   const out: (Player & { yellowCards: number; redCards: number })[] = [];
 
+
+
+
+
+
+
   for (const [id, st] of Object.entries(store.stats)) {
+
+
+
+
+
+
 
     if ((st.yellowCards ?? 0) <= 0) continue;
 
+
+
+
+
+
+
     const p = store.getSimPlayer(id);
+
+
+
+
+
+
 
     if (!p) continue;
 
+
+
+
+
+
+
     if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+
+
+
+
+
+
 
     out.push({ ...p, yellowCards: st.yellowCards ?? 0, redCards: st.redCards ?? 0 });
 
+
+
+
+
+
+
   }
+
+
+
+
+
+
 
   return out.sort((a, b) => b.yellowCards - a.yellowCards || b.redCards - a.redCards).slice(0, limit);
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 export function selectTopRedCards(
 
+
+
+
+
+
+
   leagueFilter?: LeagueId,
+
+
+
+
+
+
 
   limit = 30,
 
+
+
+
+
+
+
 ): (Player & { yellowCards: number; redCards: number })[] {
+
+
+
+
+
+
 
   const store = usePlayersStore.getState();
 
+
+
+
+
+
+
   store.init();
+
+
+
+
+
+
 
   const out: (Player & { yellowCards: number; redCards: number })[] = [];
 
+
+
+
+
+
+
   for (const [id, st] of Object.entries(store.stats)) {
+
+
+
+
+
+
 
     if ((st.redCards ?? 0) <= 0) continue;
 
+
+
+
+
+
+
     const p = store.getSimPlayer(id);
+
+
+
+
+
+
 
     if (!p) continue;
 
+
+
+
+
+
+
     if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+
+
+
+
+
+
 
     out.push({ ...p, yellowCards: st.yellowCards ?? 0, redCards: st.redCards ?? 0 });
 
+
+
+
+
+
+
   }
+
+
+
+
+
+
 
   return out.sort((a, b) => b.redCards - a.redCards || b.yellowCards - a.yellowCards).slice(0, limit);
 
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3643,7 +14473,25 @@ export function selectTopRedCards(
 
 export function selectInjuredPlayers(
 
+
+
+
+
+
+
   matchdaysByLeague: Record<LeagueId, number>,
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3651,7 +14499,31 @@ export function selectInjuredPlayers(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 ): Player[] {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3659,7 +14531,31 @@ export function selectInjuredPlayers(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   store.init();
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3667,7 +14563,31 @@ export function selectInjuredPlayers(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   for (const [id, st] of Object.entries(store.stats)) {
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3675,7 +14595,31 @@ export function selectInjuredPlayers(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     const p = store.getSimPlayer(id);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3683,7 +14627,31 @@ export function selectInjuredPlayers(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     const md = matchdaysByLeague[teamById(p.teamId).league];
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3691,7 +14659,31 @@ export function selectInjuredPlayers(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     if (teamId && String(p.teamId) !== String(teamId)) continue;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3699,7 +14691,31 @@ export function selectInjuredPlayers(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3707,7 +14723,43 @@ export function selectInjuredPlayers(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3719,7 +14771,31 @@ export function buildDefaultLineups(): Record<string, string[]> {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   const store = usePlayersStore.getState();
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3727,7 +14803,31 @@ export function buildDefaultLineups(): Record<string, string[]> {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   const lineups: Record<string, string[]> = {};
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3735,7 +14835,31 @@ export function buildDefaultLineups(): Record<string, string[]> {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
     const squad = store.getSimSquad(t.id);
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3743,7 +14867,31 @@ export function buildDefaultLineups(): Record<string, string[]> {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3751,7 +14899,31 @@ export function buildDefaultLineups(): Record<string, string[]> {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

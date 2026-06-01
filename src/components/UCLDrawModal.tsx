@@ -86,10 +86,19 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
         participants,
         table: s.ucl?.table?.length === 36 ? s.ucl.table : participants.map(emptyTableEntry),
         drawState: s.ucl?.drawState ?? { leagueDone: false, playoffDone: false, knockoutDone: false },
+        leaguePhaseTable: s.ucl?.leaguePhaseTable ?? null,
         bracket: s.ucl?.bracket ?? [],
       },
     };
   }
+
+  useEffect(() => {
+    if (type === "playoff" && save.ucl?.drawState.playoffDone) {
+      setResult(ensureUcl(save));
+      setMyFixtures([]);
+      setStep("done");
+    }
+  }, [type, save]);
 
   function revealNext() {
     setVisibleCount(c => {
@@ -132,7 +141,9 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
           return potOf.get(rival) ?? 0;
         }));
       } else if (type === "playoff") {
-        updated = applyUCLPlayoffDraw(currentSave);
+        updated = currentSave.ucl?.drawState.playoffDone
+          ? currentSave
+          : applyUCLPlayoffDraw(currentSave);
         fixtures = updated.uclFixtures.filter(
           f => (f.homeId === myTeamId || f.awayId === myTeamId) &&
                (f.round === "Playoff-Leg1" || f.round === "Playoff-Leg2")
@@ -144,7 +155,12 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
         );
       }
 
-      if (fixtures.length === 0) { setResult(updated); setStep("done"); return; }
+      if (fixtures.length === 0) {
+        setResult(updated);
+        setMyFixtures([]);
+        setStep("done");
+        return;
+      }
 
       setResult(updated);
       setMyFixtures(fixtures);
@@ -337,7 +353,9 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
 
                 {step === "done" && (
                   <p className="text-sm text-green-400 font-semibold text-center py-2 shrink-0">
-                    ✓ Sorteo completado — {myFixtures.length} partidos generados
+                    {type === "playoff" && myFixtures.length === 0
+                      ? "✓ Clasificación directa a octavos — cuadro completo generado"
+                      : `✓ Sorteo completado — ${myFixtures.length} partidos generados`}
                   </p>
                 )}
               </>

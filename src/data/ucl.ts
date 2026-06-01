@@ -34,13 +34,19 @@ export type UCLState = {
   seasonNumber: number;           // 1 = hardcoded, 2+ = merit
   participants: string[];         // 36 teamIds in pot order (pot1[0..8], pot2[0..8], ...)
   table: UCLTableEntry[];
+  /** Snapshot after league MD8 — standings UI uses this once set */
+  leaguePhaseTable: UCLTableEntry[] | null;
   drawState: {
     leagueDone: boolean;
     playoffDone: boolean;
     knockoutDone: boolean;
   };
-  bracket: UCLBracketSlot[];      // fixed from R16 onwards
+  bracket: UCLBracketSlot[];      // full tree from play-off draw onward
 };
+
+export function isUCLLeaguePhaseFixture(round: string | undefined): boolean {
+  return !!round?.startsWith("Jornada");
+}
 
 // ============================================================
 //  HARDCODED SEASON 1 PARTICIPANTS (36 teams)
@@ -206,6 +212,35 @@ export function uclDayOffset(isoDate: string): number {
   const start = new Date(UCL_START + "T00:00:00Z").getTime();
   const d = new Date(isoDate + "T00:00:00Z").getTime();
   return Math.floor((d - start) / 86400000);
+}
+
+/** UCL matchdays in chronological order (for background simulation catch-up). */
+export const UCL_SIMULATION_DAYS: number[] = [
+  ...UCL_CALENDAR.leagueDay,
+  UCL_CALENDAR.playoffLeg1,
+  UCL_CALENDAR.playoffLeg2,
+  UCL_CALENDAR.r16Leg1,
+  UCL_CALENDAR.r16Leg2,
+  UCL_CALENDAR.qfLeg1,
+  UCL_CALENDAR.qfLeg2,
+  UCL_CALENDAR.sfLeg1,
+  UCL_CALENDAR.sfLeg2,
+  UCL_CALENDAR.final,
+];
+
+export function uclRoundForOffset(offset: number): string | null {
+  const li = UCL_CALENDAR.leagueDay.indexOf(offset);
+  if (li >= 0) return `Jornada ${li + 1}`;
+  if (offset === UCL_CALENDAR.playoffLeg1) return "Playoff-Leg1";
+  if (offset === UCL_CALENDAR.playoffLeg2) return "Playoff-Leg2";
+  if (offset === UCL_CALENDAR.r16Leg1) return "R16-Leg1";
+  if (offset === UCL_CALENDAR.r16Leg2) return "R16-Leg2";
+  if (offset === UCL_CALENDAR.qfLeg1) return "QF-Leg1";
+  if (offset === UCL_CALENDAR.qfLeg2) return "QF-Leg2";
+  if (offset === UCL_CALENDAR.sfLeg1) return "SF-Leg1";
+  if (offset === UCL_CALENDAR.sfLeg2) return "SF-Leg2";
+  if (offset === UCL_CALENDAR.final) return "Final";
+  return null;
 }
 
 // ============================================================

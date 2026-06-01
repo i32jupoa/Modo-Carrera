@@ -1,5 +1,5 @@
 import { Player } from "@/data/players";
-import { FORMATION_COORDINATES, type FormationName, type PositionRole } from "@/lib/formations";
+import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName, type PositionRole } from "@/lib/formations";
 import { teamById } from "@/data/teams";
 import { CardEvent } from "@/lib/simulation";
 
@@ -137,8 +137,7 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
 
 // Helper function to generate CPU lineup
 export function generateCPULineup(roster: Player[]): { lineup: Player[]; formation: FormationName } {
-  // Default formation for CPU
-  const formation: FormationName = "Táctica 4-4-2";
+  const formation: FormationName = ALL_FORMATIONS[Math.floor(Math.random() * ALL_FORMATIONS.length)];
   
   // Filter out injured players
   const availablePlayers = roster.filter(p => p.injuredUntil <= 0);
