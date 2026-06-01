@@ -250,65 +250,212 @@ function FixtureRow({ f, myTeamId }: { f: Fixture; myTeamId: string }) {
 
 // ── Bracket view ──────────────────────────────────────────────────────────────
 
-function BracketTie({
-  slot,
-  fixtures,
-}: {
-  slot: UCLBracketSlot;
-  fixtures: Fixture[];
-}) {
-  const leg1 = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round?.includes("Leg1"));
-  const leg2 = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round?.includes("Leg2"));
-  const final = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round === "Final");
+// Immutable bracket structure
+interface BracketMatchup {
+  id: string;                // "R16-1", "QF-1", etc.
+  round: string;             // "playoff", "r16", "qf", "sf", "final"
+  homeTeam: string | null;   // ID del equipo original (inmutable una vez se establece)
+  awayTeam: string | null;   // ID del equipo original (inmutable una vez se establece)
+  winner: string | null;     // ID del ÚNICO ganador de esta llave que avanza a la siguiente ronda
+}
 
-  const home = slot.homeId;
-  const away = slot.awayId;
+interface ImmutableBracketState {
+  playoff: BracketMatchup[];
+  r16: BracketMatchup[];
+  qf: BracketMatchup[];
+  sf: BracketMatchup[];
+  final: BracketMatchup;
+}
 
-  return (
-    <div className="border border-border rounded-lg p-2 min-w-[200px] bg-card text-sm">
-      <div className="text-xs text-muted-foreground mb-1 font-semibold">{slot.id}</div>
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          {home ? <><TeamBadge teamId={home} size={16} /><span className="truncate">{teamName(home)}</span></> : <span className="text-muted-foreground italic">TBD</span>}
-        </div>
-        <div className="flex items-center gap-2">
-          {away ? <><TeamBadge teamId={away} size={16} /><span className="truncate">{teamName(away)}</span></> : <span className="text-muted-foreground italic">TBD</span>}
-        </div>
-      </div>
-      {leg1 && (
-        <div className="mt-1 text-xs text-muted-foreground">
-          Ida: <Result f={leg1} /> · Vta: {leg2 ? <Result f={leg2} /> : "–"}
-        </div>
-      )}
-      {final && (
-        <div className="mt-1 text-xs text-muted-foreground">
-          Final: <Result f={final} />
-        </div>
-      )}
-    </div>
-  );
+// Build immutable bracket state from fixtures (not bracket slots)
+function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState {
+  const playoff: BracketMatchup[] = [];
+  const r16: BracketMatchup[] = [];
+  const qf: BracketMatchup[] = [];
+  const sf: BracketMatchup[] = [];
+  let final: BracketMatchup = { id: "F", round: "final", homeTeam: null, awayTeam: null, winner: null };
+
+  // Helper to group fixtures by tie (same teams in both legs)
+  const groupFixturesByTie = (roundPrefix: string): Map<string, Fixture[]> => {
+    const ties = new Map<string, Fixture[]>();
+    const roundFixtures = fixtures.filter(f => f.round?.startsWith(roundPrefix) && f.matchday > 0);
+    
+    for (const f of roundFixtures) {
+      const key = [f.homeId, f.awayId].sort().join('-');
+      if (!ties.has(key)) {
+        ties.set(key, []);
+      }
+      ties.get(key)!.push(f);
+    }
+    
+    return ties;
+  };
+
+  // Helper to calculate winner from leg1 and leg2
+  const calculateWinnerFromLegs = (leg1: Fixture, leg2: Fixture): string | null => {
+    if (!leg1.result || !leg2.result) return null;
+    
+    // Aggregate: leg1.homeGoals + leg2.awayGoals (team from leg1 home)
+    const aggHome = leg1.result.homeGoals + leg2.result.awayGoals;
+    const aggAway = leg1.result.awayGoals + leg2.result.homeGoals;
+    
+    return aggHome > aggAway ? leg1.homeId : leg1.awayId;
+  };
+
+  // Build playoff matchups from fixtures
+  const playoffTies = groupFixturesByTie("Playoff");
+  let playoffIndex = 0;
+  for (const [key, tieFixtures] of playoffTies) {
+    if (tieFixtures.length >= 1) {
+      const leg1 = tieFixtures.find(f => f.round?.includes("Leg1"));
+      const leg2 = tieFixtures.find(f => f.round?.includes("Leg2"));
+      
+      playoff.push({
+        id: `PO-${playoffIndex + 1}`,
+        round: "playoff",
+        homeTeam: leg1?.homeId || null,
+        awayTeam: leg1?.awayId || null,
+        winner: leg1 && leg2 ? calculateWinnerFromLegs(leg1, leg2) : null,
+      });
+      playoffIndex++;
+    }
+  }
+
+  // Build R16 matchups from fixtures
+  const r16Ties = groupFixturesByTie("R16");
+  let r16Index = 0;
+  for (const [key, tieFixtures] of r16Ties) {
+    if (tieFixtures.length >= 1) {
+      const leg1 = tieFixtures.find(f => f.round?.includes("Leg1"));
+      const leg2 = tieFixtures.find(f => f.round?.includes("Leg2"));
+      
+      r16.push({
+        id: `R16-${r16Index + 1}`,
+        round: "r16",
+        homeTeam: leg1?.homeId || null,
+        awayTeam: leg1?.awayId || null,
+        winner: leg1 && leg2 ? calculateWinnerFromLegs(leg1, leg2) : null,
+      });
+      r16Index++;
+    }
+  }
+
+  // Build QF matchups from fixtures
+  const qfTies = groupFixturesByTie("QF");
+  let qfIndex = 0;
+  for (const [key, tieFixtures] of qfTies) {
+    if (tieFixtures.length >= 1) {
+      const leg1 = tieFixtures.find(f => f.round?.includes("Leg1"));
+      const leg2 = tieFixtures.find(f => f.round?.includes("Leg2"));
+      
+      qf.push({
+        id: `QF-${qfIndex + 1}`,
+        round: "qf",
+        homeTeam: leg1?.homeId || null,
+        awayTeam: leg1?.awayId || null,
+        winner: leg1 && leg2 ? calculateWinnerFromLegs(leg1, leg2) : null,
+      });
+      qfIndex++;
+    }
+  }
+
+  // Build SF matchups from fixtures
+  const sfTies = groupFixturesByTie("SF");
+  let sfIndex = 0;
+  for (const [key, tieFixtures] of sfTies) {
+    if (tieFixtures.length >= 1) {
+      const leg1 = tieFixtures.find(f => f.round?.includes("Leg1"));
+      const leg2 = tieFixtures.find(f => f.round?.includes("Leg2"));
+      
+      sf.push({
+        id: `SF-${sfIndex + 1}`,
+        round: "sf",
+        homeTeam: leg1?.homeId || null,
+        awayTeam: leg1?.awayId || null,
+        winner: leg1 && leg2 ? calculateWinnerFromLegs(leg1, leg2) : null,
+      });
+      sfIndex++;
+    }
+  }
+
+  // Build final from fixtures
+  const finalFixture = fixtures.find(f => f.round === "Final");
+  if (finalFixture) {
+    final = {
+      id: "F",
+      round: "final",
+      homeTeam: finalFixture.homeId,
+      awayTeam: finalFixture.awayId,
+      winner: finalFixture.result 
+        ? (finalFixture.result.homeGoals > finalFixture.result.awayGoals ? finalFixture.homeId : finalFixture.awayId)
+        : null,
+    };
+  }
+
+  return { playoff, r16, qf, sf, final };
+}
+
+// Calculate real aggregate result from fixtures by tie
+function getRealMatchResult(matchup: BracketMatchup, fixtures: Fixture[]): { homeGoals: number; awayGoals: number; winner: string } | null {
+  if (!matchup.homeTeam || !matchup.awayTeam) return null;
+  
+  // For final, find the single fixture
+  if (matchup.round === "final") {
+    const finalMatch = fixtures.find(f => f.round === "Final");
+    if (finalMatch?.result) {
+      return { 
+        homeGoals: finalMatch.result.homeGoals, 
+        awayGoals: finalMatch.result.awayGoals, 
+        winner: finalMatch.result.homeGoals > finalMatch.result.awayGoals ? finalMatch.homeId : finalMatch.awayId 
+      };
+    }
+    return null;
+  }
+  
+  // For two-legged ties, find both legs by team IDs
+  const roundPrefix = matchup.round === "playoff" ? "Playoff" : matchup.round.toUpperCase();
+  const roundFixtures = fixtures.filter(f => f.round?.startsWith(roundPrefix) && f.matchday > 0);
+  
+  // Find the two legs for this tie
+  const leg1 = roundFixtures.find(f => f.homeId === matchup.homeTeam && f.awayId === matchup.awayTeam);
+  const leg2 = roundFixtures.find(f => f.homeId === matchup.awayTeam && f.awayId === matchup.homeTeam);
+  
+  if (leg1?.result && leg2?.result) {
+    // Correct aggregate calculation for two-legged ties
+    const homeAgg = leg1.result.homeGoals + leg2.result.awayGoals;
+    const awayAgg = leg1.result.awayGoals + leg2.result.homeGoals;
+    return { homeGoals: homeAgg, awayGoals: awayAgg, winner: homeAgg > awayAgg ? leg1.homeId : leg1.awayId };
+  }
+  
+  // If only leg1 is played, show leg1 result
+  if (leg1?.result) {
+    return { 
+      homeGoals: leg1.result.homeGoals, 
+      awayGoals: leg1.result.awayGoals, 
+      winner: leg1.result.homeGoals > leg1.result.awayGoals ? leg1.homeId : leg1.awayId 
+    };
+  }
+  
+  return null;
 }
 
 function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixtures: Fixture[] }) {
-  const playoff = bracket.filter(s => s.round === "playoff");
-  const r16 = bracket.filter(s => s.round === "r16");
-  const qf  = bracket.filter(s => s.round === "qf");
-  const sf  = bracket.filter(s => s.round === "sf");
-  const fin = bracket.filter(s => s.round === "final");
-
   if (bracket.length === 0) {
     return <p className="text-muted-foreground text-sm p-4">El cuadro se generará tras el sorteo de play-offs.</p>;
   }
 
-  // Split into silver route (top half) and blue route (bottom half)
-  const playoffSilver = playoff.slice(0, 4);
-  const playoffBlue = playoff.slice(4);
-  const r16Silver = r16.slice(0, 4);
-  const r16Blue = r16.slice(4);
-  const qfSilver = qf.slice(0, 2);
-  const qfBlue = qf.slice(2);
-  const sfSilver = sf.slice(0, 1);
-  const sfBlue = sf.slice(1);
+  // Build immutable bracket state from fixtures
+  const bracketState = buildImmutableBracketState(fixtures);
+
+  // Split into left half (routes A & B) and right half (routes C & D)
+  const playoffLeft = bracketState.playoff.slice(0, 4);
+  const playoffRight = bracketState.playoff.slice(4);
+  const r16Left = bracketState.r16.slice(0, 4);
+  const r16Right = bracketState.r16.slice(4);
+  const qfLeft = bracketState.qf.slice(0, 2);
+  const qfRight = bracketState.qf.slice(2);
+  const sfLeft = bracketState.sf.slice(0, 1);
+  const sfRight = bracketState.sf.slice(1);
 
   // Safe helpers
   const safeTeamName = (id: string): string => {
@@ -317,190 +464,565 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
   };
 
   const getTeamLogoPath = (teamId: string): string => {
+    if (!teamId || teamId.startsWith("PO-WINNER-") || teamId.startsWith("winner-")) {
+      return '';
+    }
+    
     try {
       const team = teamById(teamId);
-      const leagueName = getLeagueName(team.league).toLowerCase().replace(/\s+/g, '_');
-      const teamName = team.name.toLowerCase().replace(/\s+/g, '_').replace(/[^\w-]/g, '');
-      return `/logos/${leagueName}/${teamName}.png`;
+      const leagueFolderMap: Record<string, string> = {
+        "laliga": "LALIGA EA SPORTS",
+        "premier": "Premier League",
+        "seriea": "Serie A Enilive",
+        "bundesliga": "Bundesliga",
+        "ligue1": "Ligue 1 McDonald's",
+        "laliga2": "LALIGA HYPERMOTION",
+        "championship": "EFL Championship",
+        "leagueone": "EFL League One",
+        "leaguetwo": "EFL League Two",
+        "serieb": "Serie BKT",
+        "bundesliga2": "Bundesliga 2",
+        "liga3": "3. Liga",
+        "ligue2": "Ligue 2 BKT",
+        "ligaportugal": "Liga Portugal",
+        "eredivisie": "Eredivisie",
+        "scottish": "Scottish Prem",
+        "austrianbundesliga": "Ö. Bundesliga",
+      };
+      
+      const leagueFolder = leagueFolderMap[team.league] || getLeagueName(team.league);
+      const teamName = team.name;
+      
+      const svgTeams: Record<string, string> = {
+        "juv": "Juventus.svg",
+      };
+      
+      if (svgTeams[teamId]) {
+        return `/logos/${leagueFolder}/${svgTeams[teamId]}`;
+      }
+      
+      return `/logos/${leagueFolder}/${teamName}.png`;
     } catch {
       return '';
     }
   };
 
-  const getMatchResult = (slot: UCLBracketSlot): { homeGoals: number; awayGoals: number; winner: string } | null => {
-    const leg1 = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round?.includes("Leg1"));
-    const leg2 = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round?.includes("Leg2"));
-    const final = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round === "Final");
-    
-    if (final && final.result) {
-      return { homeGoals: final.result.homeGoals, awayGoals: final.result.awayGoals, winner: final.result.homeGoals > final.result.awayGoals ? final.homeId : final.awayId };
-    }
-    
-    if (leg1?.result && leg2?.result) {
-      const homeAgg = leg1.result.homeGoals + leg2.result.homeGoals;
-      const awayAgg = leg1.result.awayGoals + leg2.result.awayGoals;
-      return { homeGoals: homeAgg, awayGoals: awayAgg, winner: homeAgg > awayAgg ? leg1.homeId : leg1.awayId };
-    }
-    return null;
-  };
+  return (
+    <div className="w-full min-h-screen p-8 relative overflow-hidden" style={{
+      background: 'radial-gradient(ellipse at center, #1a1f3a 0%, #0a0e27 100%)',
+      backgroundImage: `
+        radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.15) 0%, transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(147, 51, 234, 0.15) 0%, transparent 40%),
+        radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.05) 0%, transparent 60%)
+      `
+    }}>
+      {/* Star pattern overlay */}
+      <div className="absolute inset-0 opacity-5 pointer-events-none" style={{
+        backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 5L32 25H52L36 37L42 57L30 45L18 57L24 37L8 25H28L30 5Z' fill='%23ffffff'/%3E%3C/svg%3E")`,
+        backgroundSize: '60px 60px'
+      }} />
+      
+      <div className="max-w-7xl mx-auto relative z-10">
+        
+        {/* Bracket with CSS connector lines */}
+        <div className="flex items-center justify-between gap-6 min-h-[900px] py-8">
+          
+          {/* Left Block - Routes A & B */}
+          <div className="flex-1 flex items-center gap-4">
+            {/* Play-off */}
+            <div className="flex-1 flex flex-col justify-around gap-8">
+              <div className="text-center text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">Play-off</div>
+              {playoffLeft.map((matchup, idx) => (
+                <div key={matchup.id} className="relative bracket-match-container">
+                  <ImmutableMatchCard 
+                    matchup={matchup} 
+                    fixtures={fixtures} 
+                    safeTeamName={safeTeamName} 
+                    getTeamLogoPath={getTeamLogoPath} 
+                  />
+                  {/* CSS connector lines */}
+                  {idx < 2 && <div className="bracket-connector-right" />}
+                </div>
+              ))}
+            </div>
+            
+            {/* R16 */}
+            <div className="flex-1 flex flex-col justify-around gap-8">
+              <div className="text-center text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">Octavos</div>
+              {r16Left.map((matchup, idx) => (
+                <div key={matchup.id} className="relative bracket-match-container">
+                  <ImmutableMatchCard 
+                    matchup={matchup} 
+                    fixtures={fixtures} 
+                    safeTeamName={safeTeamName} 
+                    getTeamLogoPath={getTeamLogoPath} 
+                  />
+                  {idx === 0 && <div className="bracket-connector-right" />}
+                </div>
+              ))}
+            </div>
+            
+            {/* QF */}
+            <div className="flex-1 flex flex-col justify-around gap-8">
+              <div className="text-center text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">Cuartos</div>
+              {qfLeft.map((matchup) => (
+                <div key={matchup.id} className="relative bracket-match-container">
+                  <ImmutableMatchCard 
+                    matchup={matchup} 
+                    fixtures={fixtures} 
+                    safeTeamName={safeTeamName} 
+                    getTeamLogoPath={getTeamLogoPath} 
+                  />
+                  <div className="bracket-connector-right" />
+                </div>
+              ))}
+            </div>
+            
+            {/* SF */}
+            <div className="flex-1 flex flex-col justify-center gap-8">
+              <div className="text-center text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">Semifinales</div>
+              {sfLeft.map((matchup) => (
+                <div key={matchup.id} className="relative bracket-match-container">
+                  <ImmutableMatchCard 
+                    matchup={matchup} 
+                    fixtures={fixtures} 
+                    safeTeamName={safeTeamName} 
+                    getTeamLogoPath={getTeamLogoPath} 
+                  />
+                  <div className="bracket-connector-right-long" />
+                </div>
+              ))}
+            </div>
+          </div>
 
-  const getRoundDate = (slot: UCLBracketSlot): string => {
-    const leg1 = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round?.includes("Leg1"));
-    const final = fixtures.find(f => f.id.includes(slot.id.toLowerCase()) && f.round === "Final");
-    const matchday = leg1?.matchday || final?.matchday || 0;
-    return uclFixtureDate(matchday);
-  };
+          {/* Center Block - Trophy with Finalists */}
+          <div className="w-48 flex flex-col items-center justify-center gap-6">
+            {/* Final Matchup */}
+            {bracketState.final.homeTeam && bracketState.final.awayTeam && (
+              <div className="flex items-center gap-4 mb-4">
+                {/* Finalist 1 */}
+                <div className="relative group">
+                  {getTeamLogoPath(bracketState.final.homeTeam) ? (
+                    <img 
+                      src={getTeamLogoPath(bracketState.final.homeTeam)} 
+                      alt={safeTeamName(bracketState.final.homeTeam)} 
+                      className="w-16 h-16 object-contain"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+                    />
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-white/5 border border-white/20 flex items-center justify-center">
+                      <div className="text-white/30 text-xs">TBD</div>
+                    </div>
+                  )}
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/90 text-white text-xs rounded opacity-0 group-hover:opacity-100 whitespace-nowrap z-20">
+                    {safeTeamName(bracketState.final.homeTeam)}
+                  </div>
+                </div>
+
+                {/* Trophy */}
+                <div className="relative">
+                  <img 
+                    src="/trofeos/Champions.png" 
+                    alt="Champions League Trophy" 
+                    className="w-20 h-auto object-contain drop-shadow-2xl"
+                    style={{ filter: 'drop-shadow(0 0 20px rgba(251, 191, 36, 0.3))' }}
+                    onError={(e) => {
+                      e.currentTarget.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fbbf24'%3E%3Cpath d='M12 2L15 8H21L16 12L18 18L12 15L6 18L8 12L3 8H9L12 2Z'/%3E%3C/svg%3E";
+                    }}
+                  />
+                </div>
+
+                {/* Finalist 2 */}
+                <div className="relative group">
+                  {getTeamLogoPath(bracketState.final.awayTeam) ? (
+                    <img 
+                      src={getTeamLogoPath(bracketState.final.awayTeam)} 
+                      alt={safeTeamName(bracketState.final.awayTeam)} 
+                      className="w-16 h-16 object-contain"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+                    />
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-white/5 border border-white/20 flex items-center justify-center">
+                      <div className="text-white/30 text-xs">TBD</div>
+                    </div>
+                  )}
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/90 text-white text-xs rounded opacity-0 group-hover:opacity-100 whitespace-nowrap z-20">
+                    {safeTeamName(bracketState.final.awayTeam)}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Final Result */}
+            <div className="text-center">
+              <div className="text-xs font-bold text-yellow-400 uppercase tracking-wider mb-2">Final</div>
+              {(() => {
+                const result = getRealMatchResult(bracketState.final, fixtures);
+                return result ? (
+                  <div className="inline-flex items-center gap-2 bg-white/10 px-4 py-2 rounded-lg border border-white/20">
+                    <span className="text-white font-bold text-lg">{result.homeGoals}</span>
+                    <span className="text-white/40">-</span>
+                    <span className="text-white font-bold text-lg">{result.awayGoals}</span>
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center bg-white/5 px-4 py-2 rounded-lg border border-white/10">
+                    <span className="text-white/40 text-sm">Pendiente</span>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Right Block - Routes C & D */}
+          <div className="flex-1 flex items-center gap-4">
+            {/* SF */}
+            <div className="flex-1 flex flex-col justify-center gap-8">
+              <div className="text-center text-sm font-bold text-purple-400 uppercase tracking-wider mb-4">Semifinales</div>
+              {sfRight.map((matchup) => (
+                <div key={matchup.id} className="relative bracket-match-container">
+                  <ImmutableMatchCard 
+                    matchup={matchup} 
+                    fixtures={fixtures} 
+                    safeTeamName={safeTeamName} 
+                    getTeamLogoPath={getTeamLogoPath} 
+                  />
+                  <div className="bracket-connector-left-long" />
+                </div>
+              ))}
+            </div>
+            
+            {/* QF */}
+            <div className="flex-1 flex flex-col justify-around gap-8">
+              <div className="text-center text-sm font-bold text-purple-400 uppercase tracking-wider mb-4">Cuartos</div>
+              {qfRight.map((matchup) => (
+                <div key={matchup.id} className="relative bracket-match-container">
+                  <ImmutableMatchCard 
+                    matchup={matchup} 
+                    fixtures={fixtures} 
+                    safeTeamName={safeTeamName} 
+                    getTeamLogoPath={getTeamLogoPath} 
+                  />
+                  <div className="bracket-connector-left" />
+                </div>
+              ))}
+            </div>
+            
+            {/* R16 */}
+            <div className="flex-1 flex flex-col justify-around gap-8">
+              <div className="text-center text-sm font-bold text-purple-400 uppercase tracking-wider mb-4">Octavos</div>
+              {r16Right.map((matchup, idx) => (
+                <div key={matchup.id} className="relative bracket-match-container">
+                  <ImmutableMatchCard 
+                    matchup={matchup} 
+                    fixtures={fixtures} 
+                    safeTeamName={safeTeamName} 
+                    getTeamLogoPath={getTeamLogoPath} 
+                  />
+                  {idx === 0 && <div className="bracket-connector-left" />}
+                </div>
+              ))}
+            </div>
+            
+            {/* Play-off */}
+            <div className="flex-1 flex flex-col justify-around gap-8">
+              <div className="text-center text-sm font-bold text-purple-400 uppercase tracking-wider mb-4">Play-off</div>
+              {playoffRight.map((matchup, idx) => (
+                <div key={matchup.id} className="relative bracket-match-container">
+                  <ImmutableMatchCard 
+                    matchup={matchup} 
+                    fixtures={fixtures} 
+                    safeTeamName={safeTeamName} 
+                    getTeamLogoPath={getTeamLogoPath} 
+                  />
+                  {idx < 2 && <div className="bracket-connector-left" />}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* CSS for connector lines */}
+      <style>{`
+        .bracket-match-container {
+          position: relative;
+        }
+        
+        .bracket-connector-right {
+          position: absolute;
+          right: -16px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 16px;
+          height: 2px;
+          background: rgba(59, 130, 246, 0.6);
+        }
+        
+        .bracket-connector-right::after {
+          content: '';
+          position: absolute;
+          right: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 8px;
+          height: 8px;
+          border-top: 2px solid rgba(59, 130, 246, 0.6);
+          border-right: 2px solid rgba(59, 130, 246, 0.6);
+          border-top-right-radius: 4px;
+        }
+        
+        .bracket-connector-right-long {
+          position: absolute;
+          right: -24px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 24px;
+          height: 2px;
+          background: rgba(59, 130, 246, 0.6);
+        }
+        
+        .bracket-connector-right-long::after {
+          content: '';
+          position: absolute;
+          right: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 8px;
+          height: 8px;
+          border-top: 2px solid rgba(59, 130, 246, 0.6);
+          border-right: 2px solid rgba(59, 130, 246, 0.6);
+          border-top-right-radius: 4px;
+        }
+        
+        .bracket-connector-left {
+          position: absolute;
+          left: -16px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 16px;
+          height: 2px;
+          background: rgba(147, 51, 234, 0.6);
+        }
+        
+        .bracket-connector-left::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 8px;
+          height: 8px;
+          border-top: 2px solid rgba(147, 51, 234, 0.6);
+          border-left: 2px solid rgba(147, 51, 234, 0.6);
+          border-top-left-radius: 4px;
+        }
+        
+        .bracket-connector-left-long {
+          position: absolute;
+          left: -24px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 24px;
+          height: 2px;
+          background: rgba(147, 51, 234, 0.6);
+        }
+        
+        .bracket-connector-left-long::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 8px;
+          height: 8px;
+          border-top: 2px solid rgba(147, 51, 234, 0.6);
+          border-left: 2px solid rgba(147, 51, 234, 0.6);
+          border-top-left-radius: 4px;
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// Immutable match card component
+function ImmutableMatchCard({ 
+  matchup, 
+  fixtures, 
+  safeTeamName, 
+  getTeamLogoPath,
+}: { 
+  matchup: BracketMatchup;
+  fixtures: Fixture[];
+  safeTeamName: (id: string) => string;
+  getTeamLogoPath: (id: string) => string;
+}) {
+  const home = matchup.homeTeam;
+  const away = matchup.awayTeam;
+  const result = getRealMatchResult(matchup, fixtures);
+
+  if (!home || !away) {
+    return (
+      <div className="bg-white/5 rounded-full w-14 h-14 flex items-center justify-center border border-white/10">
+        <div className="text-white/30 text-xs">TBD</div>
+      </div>
+    );
+  }
+
+  const homeLogoPath = getTeamLogoPath(home);
+  const awayLogoPath = getTeamLogoPath(away);
 
   return (
-    <div className="w-full bg-gradient-to-b from-[#040714] to-[#0b0f19] min-h-screen p-6">
-      <div className="max-w-7xl mx-auto">
-        
-        {/* Silver Route (Top Half) */}
-        <div className="flex items-start gap-4 mb-8">
-          <div className="w-12 flex items-center justify-center">
-            <span className="text-gray-400 text-xs font-bold uppercase" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Ruta Plateada</span>
+    <div className="flex flex-col items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10 backdrop-blur-sm">
+      {/* Home team */}
+      <div className="relative group">
+        {homeLogoPath ? (
+          <img 
+            src={homeLogoPath} 
+            alt={safeTeamName(home)} 
+            className="w-14 h-14 object-contain" 
+            onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+          />
+        ) : (
+          <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+            <div className="text-white/30 text-xs">TBD</div>
           </div>
-          
-          {/* Play-off Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Play-off</div>
-            <div className="flex flex-col justify-around gap-3">
-              {playoffSilver.map((slot, idx) => (
-                <div key={slot.id} className="relative">
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
-                  {/* Connector line to R16 */}
-                  {idx < 2 && <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-gray-400" />}
-                </div>
-              ))}
-            </div>
+        )}
+        {/* Tooltip */}
+        {home && (
+          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1.5 bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 whitespace-nowrap z-20 transition-opacity">
+            {safeTeamName(home)}
           </div>
+        )}
+      </div>
 
-          {/* R16 Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Octavos de Final</div>
-            <div className="flex flex-col justify-around gap-3">
-              {r16Silver.map((slot, idx) => (
-                <div key={slot.id} className="relative">
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
-                  {/* Connector line to QF */}
-                  {idx === 0 && <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-gray-400" />}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* QF Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Cuartos de Final</div>
-            <div className="flex flex-col justify-around gap-3">
-              {qfSilver.map((slot) => (
-                <div key={slot.id} className="relative">
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
-                  {/* Connector line to SF */}
-                  <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-gray-400" />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* SF Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Semifinales</div>
-            <div className="flex flex-col justify-around gap-3">
-              {sfSilver.map((slot) => (
-                <div key={slot.id} className="relative">
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
-                  {/* Connector line to Final */}
-                  <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-gray-400" />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Final Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Final</div>
-            <div className="flex flex-col justify-center gap-3">
-              {fin.map((slot) => (
-                <div key={slot.id} className="relative">
-                  <div className="text-4xl mb-2">🏆</div>
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} isFinal={true} />
-                </div>
-              ))}
-            </div>
-          </div>
+      {/* Result - Constant size pill */}
+      {result ? (
+        <div className="inline-flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg border border-white/20 min-w-[80px] justify-center">
+          <span className="text-white font-bold text-sm">{result.homeGoals}</span>
+          <span className="text-white/40 text-sm">-</span>
+          <span className="text-white font-bold text-sm">{result.awayGoals}</span>
         </div>
-
-        {/* Blue Route (Bottom Half) */}
-        <div className="flex items-start gap-4">
-          <div className="w-12 flex items-center justify-center">
-            <span className="text-cyan-400 text-xs font-bold uppercase" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Ruta Azul</span>
-          </div>
-          
-          {/* Play-off Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Play-off</div>
-            <div className="flex flex-col justify-around gap-3">
-              {playoffBlue.map((slot, idx) => (
-                <div key={slot.id} className="relative">
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
-                  {/* Connector line to R16 */}
-                  {idx < 2 && <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-cyan-400" />}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* R16 Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Octavos de Final</div>
-            <div className="flex flex-col justify-around gap-3">
-              {r16Blue.map((slot, idx) => (
-                <div key={slot.id} className="relative">
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
-                  {/* Connector line to QF */}
-                  {idx === 0 && <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-cyan-400" />}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* QF Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Cuartos de Final</div>
-            <div className="flex flex-col justify-around gap-3">
-              {qfBlue.map((slot) => (
-                <div key={slot.id} className="relative">
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
-                  {/* Connector line to SF */}
-                  <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-cyan-400" />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* SF Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Semifinales</div>
-            <div className="flex flex-col justify-around gap-3">
-              {sfBlue.map((slot) => (
-                <div key={slot.id} className="relative">
-                  <DarkMatchCard slot={slot} fixtures={fixtures} safeTeamName={safeTeamName} getTeamLogoPath={getTeamLogoPath} getMatchResult={getMatchResult} getRoundDate={getRoundDate} />
-                  {/* Connector line to Final */}
-                  <div className="absolute right-0 top-1/2 w-4 h-0.5 bg-cyan-400" />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Final Column */}
-          <div className="flex-1">
-            <div className="text-gray-400 text-xs font-bold uppercase mb-2">Final</div>
-            <div className="flex flex-col justify-center gap-3">
-              {/* Empty for blue route final */}
-            </div>
-          </div>
+      ) : (
+        <div className="inline-flex items-center bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 min-w-[80px] justify-center">
+          <span className="text-white/40 text-xs">Pendiente</span>
         </div>
+      )}
+
+      {/* Away team */}
+      <div className="relative group">
+        {awayLogoPath ? (
+          <img 
+            src={awayLogoPath} 
+            alt={safeTeamName(away)} 
+            className="w-14 h-14 object-contain" 
+            onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+          />
+        ) : (
+          <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+            <div className="text-white/30 text-xs">TBD</div>
+          </div>
+        )}
+        {/* Tooltip */}
+        {away && (
+          <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-3 py-1.5 bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 whitespace-nowrap z-20 transition-opacity">
+            {safeTeamName(away)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CompactMatchCard({ 
+  slot, 
+  fixtures, 
+  safeTeamName, 
+  getTeamLogoPath, 
+  getMatchResult, 
+  getRoundDate,
+  isFinal = false 
+}: { 
+  slot: UCLBracketSlot; 
+  fixtures: Fixture[];
+  safeTeamName: (id: string) => string;
+  getTeamLogoPath: (id: string) => string;
+  getMatchResult: (slot: UCLBracketSlot) => { homeGoals: number; awayGoals: number; winner: string } | null;
+  getRoundDate: (slot: UCLBracketSlot) => string;
+  isFinal?: boolean;
+}) {
+  const home = slot.homeId;
+  const away = slot.awayId;
+  const result = getMatchResult(slot);
+  const date = getRoundDate(slot);
+
+  if (!home || !away) {
+    return (
+      <div className="bg-white/5 rounded-full w-14 h-14 flex items-center justify-center border border-white/10">
+        <div className="text-white/30 text-xs">TBD</div>
+      </div>
+    );
+  }
+
+  const homeLogoPath = getTeamLogoPath(home);
+  const awayLogoPath = getTeamLogoPath(away);
+
+  return (
+    <div className="flex flex-col items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10 backdrop-blur-sm">
+      {/* Home team */}
+      <div className="relative group">
+        {homeLogoPath ? (
+          <img 
+            src={homeLogoPath} 
+            alt={safeTeamName(home)} 
+            className="w-14 h-14 object-contain" 
+            onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+          />
+        ) : (
+          <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+            <div className="text-white/30 text-xs">TBD</div>
+          </div>
+        )}
+        {/* Tooltip */}
+        {home && (
+          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1.5 bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 whitespace-nowrap z-20 transition-opacity">
+            {safeTeamName(home)}
+          </div>
+        )}
+      </div>
+
+      {/* Result - Constant size pill */}
+      {result ? (
+        <div className="inline-flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg border border-white/20 min-w-[80px] justify-center">
+          <span className="text-white font-bold text-sm">{result.homeGoals}</span>
+          <span className="text-white/40 text-sm">-</span>
+          <span className="text-white font-bold text-sm">{result.awayGoals}</span>
+        </div>
+      ) : (
+        <div className="inline-flex items-center bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 min-w-[80px] justify-center">
+          <span className="text-white/40 text-xs">Pendiente</span>
+        </div>
+      )}
+
+      {/* Away team */}
+      <div className="relative group">
+        {awayLogoPath ? (
+          <img 
+            src={awayLogoPath} 
+            alt={safeTeamName(away)} 
+            className="w-14 h-14 object-contain" 
+            onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+          />
+        ) : (
+          <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+            <div className="text-white/30 text-xs">TBD</div>
+          </div>
+        )}
+        {/* Tooltip */}
+        {away && (
+          <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-3 py-1.5 bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 whitespace-nowrap z-20 transition-opacity">
+            {safeTeamName(away)}
+          </div>
+        )}
       </div>
     </div>
   );

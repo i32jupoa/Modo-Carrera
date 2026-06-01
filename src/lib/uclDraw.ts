@@ -307,7 +307,7 @@ export function assignmentsToFixtures(
         visited.add(v);
         
         const currentMatch = match.get(v);
-        if (currentMatch === null || dfs(currentMatch, visited)) {
+        if (currentMatch === null || (currentMatch && dfs(currentMatch, visited))) {
           match.set(u, v);
           match.set(v, u);
           return true;
@@ -968,7 +968,7 @@ export function advanceUCLBracket(
 
   },
 
-): { fixtures: Fixture[]; bracket: UCLBracketSlot[]; nextPhase: "qf" | "sf" | "final" | "done" } {
+): { fixtures: Fixture[]; bracket: UCLBracketSlot[]; nextPhase: "r16" | "qf" | "sf" | "final" | "done" } {
 
   const updatedBracket = [...bracket];
 
@@ -1002,19 +1002,8 @@ export function advanceUCLBracket(
 
       winners.push(winnerId!);
 
-
-
-      // Update bracket slot with winner for QF
-
-      const r16Slot = updatedBracket.find(s => s.id === `R16-${i + 1}`);
-
-      if (r16Slot) {
-
-        r16Slot.homeId = leg1.homeId;
-
-        r16Slot.awayId = leg1.awayId;
-
-      }
+      // DO NOT update bracket slot - keep original teams immutable
+      // The bracket should always show the original matchup, not the winner
 
     }
 
@@ -1028,20 +1017,24 @@ export function advanceUCLBracket(
 
 
 
-    // Fill QF bracket slots
+    // Fill QF bracket slots respecting bracket tree
+    // R16-1 winner vs R16-2 winner → QF-1
+    // R16-3 winner vs R16-4 winner → QF-2
+    // R16-5 winner vs R16-6 winner → QF-3
+    // R16-7 winner vs R16-8 winner → QF-4
+    const qfMatchups = [
+      { slotId: "QF-1", r16Indices: [0, 1] },
+      { slotId: "QF-2", r16Indices: [2, 3] },
+      { slotId: "QF-3", r16Indices: [4, 5] },
+      { slotId: "QF-4", r16Indices: [6, 7] },
+    ];
 
-    for (let i = 0; i < 4; i++) {
-
-      const qfSlot = updatedBracket.find(s => s.id === `QF-${i + 1}`);
-
+    for (const matchup of qfMatchups) {
+      const qfSlot = updatedBracket.find(s => s.id === matchup.slotId);
       if (qfSlot) {
-
-        qfSlot.homeId = winners[i * 2];
-
-        qfSlot.awayId = winners[i * 2 + 1];
-
+        qfSlot.homeId = winners[matchup.r16Indices[0]];
+        qfSlot.awayId = winners[matchup.r16Indices[1]];
       }
-
     }
 
 
@@ -1088,20 +1081,20 @@ export function advanceUCLBracket(
 
 
 
-    // Fill SF bracket slots
+    // Fill SF bracket slots respecting bracket tree
+    // QF-1 winner vs QF-2 winner → SF-1
+    // QF-3 winner vs QF-4 winner → SF-2
+    const sfMatchups = [
+      { slotId: "SF-1", qfIndices: [0, 1] },
+      { slotId: "SF-2", qfIndices: [2, 3] },
+    ];
 
-    for (let i = 0; i < 2; i++) {
-
-      const sfSlot = updatedBracket.find(s => s.id === `SF-${i + 1}`);
-
+    for (const matchup of sfMatchups) {
+      const sfSlot = updatedBracket.find(s => s.id === matchup.slotId);
       if (sfSlot) {
-
-        sfSlot.homeId = winners[i * 2];
-
-        sfSlot.awayId = winners[i * 2 + 1];
-
+        sfSlot.homeId = winners[matchup.qfIndices[0]];
+        sfSlot.awayId = winners[matchup.qfIndices[1]];
       }
-
     }
 
 
