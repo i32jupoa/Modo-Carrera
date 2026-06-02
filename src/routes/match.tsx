@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { getMyNextFixture, loadSave, playMyNextMatch, playMyNextCupMatch, SaveGame, saveSave, setLineup, setFormation, getMyNextFixtureAny, playSpecificFixture, simulateCupMatchday, simulateUCLMatchday, simulateUCLKnockoutMatchday, advanceMatchdayLayered, simulateCupMatchdayLayered, getStartersWithFormation } from "@/lib/store";
+import { getMyNextFixture, loadSave, playMyNextMatch, playMyNextCupMatch, SaveGame, saveSave, setLineup, setFormation, getMyNextFixtureAny, playSpecificFixture, simulateCupMatchday, simulateUCLMatchday, simulateUCLKnockoutMatchday, advanceMatchdayLayered, simulateCupMatchdayLayered, getStartersWithFormation, simulateUserPhaseUCLDay, processUCLKnockoutProgress } from "@/lib/store";
+import { uclDayOffset } from "@/data/ucl";
 import { Fixture } from "@/lib/season";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
@@ -129,12 +130,12 @@ function MatchPage() {
           console.log(`Cup matches: ${done}/${total}`);
         });
       } else if (matchType === 'UCL') {
-        // UCL: league phase → simulateUCLMatchday; knockout (leg1/leg2/final) → simulateUCLKnockoutMatchday
-        const isKnockoutRound = fixture.round?.includes('-Leg') || fixture.round === 'Final';
-        console.log("Post-match: Simulating UCL matches for matchday:", fixture.matchday, "knockout:", isKnockoutRound);
-        next = isKnockoutRound
-          ? simulateUCLKnockoutMatchday(save, fixture.matchday)
-          : simulateUCLMatchday(save, fixture.matchday);
+        // UCL: Simulate AI matches in user's phase on return to season
+        console.log("Post-match: Simulating AI UCL matches for matchday:", fixture.matchday);
+        next = simulateUserPhaseUCLDay(save, fixture.matchday, save.myTeamId);
+        // Process knockout progression if needed
+        const offset = uclDayOffset(usePlayersStore.getState().currentDate);
+        next = processUCLKnockoutProgress(next, offset);
       } else {
         // LEAGUE: Execute the league matchday simulation
         console.log("Post-match: Simulating LEAGUE matches");

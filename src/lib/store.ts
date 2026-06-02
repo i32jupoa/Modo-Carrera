@@ -17523,6 +17523,40 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
 
 }
 
+/** Check if user team is participating in a specific UCL phase */
+function isUserParticipatingInUCLPhase(save: SaveGame, userTeamId: string, fixtureRound: string): boolean {
+  if (!save.ucl) return false;
+
+  // League phase: check if user is in participants
+  if (isUCLLeaguePhaseFixture(fixtureRound)) {
+    return save.ucl.participants.includes(userTeamId);
+  }
+
+  // Playoff: check if user is in playoff bracket (positions 9-16 in league table)
+  if (fixtureRound?.includes("Playoff")) {
+    if (!save.ucl.table) return false;
+    const sorted = sortUCLTable(save.ucl.table);
+    const userIndex = sorted.findIndex(e => e.teamId === userTeamId);
+    return userIndex >= 8 && userIndex < 16; // Positions 9-16
+  }
+
+  // Knockout phases: check if user is in bracket for that round
+  if (save.ucl.bracket) {
+    const phase = fixtureRound?.includes("R16") ? "r16" :
+                  fixtureRound?.includes("QF") ? "qf" :
+                  fixtureRound?.includes("SF") ? "sf" :
+                  fixtureRound === "Final" ? "final" : null;
+    
+    if (phase) {
+      return save.ucl.bracket.some(
+        slot => slot.round === phase && (slot.homeId === userTeamId || slot.awayId === userTeamId)
+      );
+    }
+  }
+
+  return false;
+}
+
 /** Simulate UCL fixtures on a calendar day that do not involve the user's team. */
 export function simulateBackgroundUCLDay(save: SaveGame, dayOffset: number, userTeamId: string): SaveGame {
   const dayFixtures = (save.uclFixtures ?? []).filter(
@@ -17536,6 +17570,13 @@ export function simulateBackgroundUCLDay(save: SaveGame, dayOffset: number, user
       isRealTeamId(f.awayId),
   );
   if (aiFixtures.length === 0) return save;
+
+  // Skip simulation if user is participating in this phase
+  const userParticipating = aiFixtures.some(f => isUserParticipatingInUCLPhase(save, userTeamId, f.round || ""));
+  if (userParticipating) {
+    console.log(`[simulateBackgroundUCLDay] Skipping AI matches on day ${dayOffset} - user is participating in this phase`);
+    return save;
+  }
 
   const isLeagueDay = UCL_CALENDAR.leagueDay.includes(dayOffset);
   if (isLeagueDay) {
@@ -17603,6 +17644,101 @@ export function simulateBackgroundUCLDay(save: SaveGame, dayOffset: number, user
       next = applyMatchToStats(next, simmed);
     }
   }
+  return next;
+}
+
+/** Simulate UCL AI fixtures on a calendar day where user is participating (called on "return to season"). */
+export function simulateUserPhaseUCLDay(save: SaveGame, dayOffset: number, userTeamId: string): SaveGame {
+  const dayFixtures = (save.uclFixtures ?? []).filter(
+    f => f.matchday === dayOffset && !f.result,
+  );
+  const aiFixtures = dayFixtures.filter(
+    f =>
+      f.homeId !== userTeamId &&
+      f.awayId !== userTeamId &&
+      isRealTeamId(f.homeId) &&
+      isRealTeamId(f.awayId),
+  );
+  if (aiFixtures.length === 0) return save;
+
+  // Only simulate if user is participating in this phase
+  const userParticipating = aiFixtures.some(f => isUserParticipatingInUCLPhase(save, userTeamId, f.round || ""));
+  if (!userParticipating) {
+    console.log(`[simulateUserPhaseUCLDay] Skipping - user is not participating in this phase`);
+    return save;
+  }
+
+  const isLeagueDay = UCL_CALENDAR.leagueDay.includes(dayOffset);
+  if (isLeagueDay) {
+    let next = JSON.parse(JSON.stringify(save)) as SaveGame;
+    for (const f of aiFixtures) {
+      const simmed = simulateFixtureInline(next, f, false, false);
+      const idx = next.uclFixtures!.findIndex(x => x.id === f.id);
+      if (idx >= 0 && simmed.result) {
+        next.uclFixtures![idx] = simmed;
+        next = applyMatchToStats(next, simmed);
+        if (next.ucl && isUCLLeaguePhaseFixture(simmed.round)) {
+          next.ucl.table = applyUCLTableResult(
+            next.ucl.table,
+            simmed.homeId,
+            simmed.awayId,
+            simmed.result.homeGoals,
+            simmed.result.awayGoals,
+          );
+        }
+      }
+    }
+    return next;
+  }
+
+  let next = JSON.parse(JSON.stringify(save)) as SaveGame;
+  for (const f of aiFixtures) {
+    const isLeg2 = f.round?.endsWith("-Leg2");
+    const isFinal = f.round === "Final";
+    let simmed: Fixture;
+    if (isFinal) {
+      simmed = simulateFixtureInline(next, f, false, true);
+    } else if (isLeg2) {
+      simmed = simulateFixtureInline(next, f, false, false);
+      if (simmed.result) {
+        const leg1 = next.uclFixtures!.find(l =>
+          l.round === f.round!.replace("Leg2", "Leg1") &&
+          ((l.homeId === f.awayId && l.awayId === f.homeId) ||
+            (l.homeId === f.homeId && l.awayId === f.awayId)),
+        );
+        if (leg1?.result) {
+          const leg2HomeAgg = simmed.result.homeGoals + leg1.result.awayGoals;
+          const leg2AwayAgg = simmed.result.awayGoals + leg1.result.homeGoals;
+          if (leg2HomeAgg === leg2AwayAgg) {
+            const home = teamById(simmed.homeId);
+            const away = teamById(simmed.awayId);
+            const homeXI = getStarters(next, simmed.homeId);
+            const awayXI = getStarters(next, simmed.awayId);
+            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+            simmed.result.extraTime = { homeGoals: etResult.homeGoals, awayGoals: etResult.awayGoals, events: etResult.events };
+            const etHomeAgg = leg2HomeAgg + etResult.homeGoals;
+            const etAwayAgg = leg2AwayAgg + etResult.awayGoals;
+            if (etHomeAgg === etAwayAgg) {
+              const penResult = simulatePenaltyShootout(homeXI, awayXI);
+              simmed.result.penalties = { homeGoals: penResult.homeGoals, awayGoals: penResult.awayGoals, shootout: penResult.shootout };
+            }
+          }
+        }
+      }
+    } else {
+      simmed = simulateFixtureInline(next, f, false, false);
+    }
+
+    console.log(`[simulateUserPhaseUCLDay] simulated ${f.id} (${f.round}): ${simmed.result?.homeGoals}-${simmed.result?.awayGoals}`);
+
+    const idx = next.uclFixtures.findIndex(x => x.id === f.id);
+    if (idx >= 0) {
+      next.uclFixtures[idx] = simmed;
+      next = applyMatchToStats(next, simmed);
+    }
+
+  }
+
   return next;
 }
 
