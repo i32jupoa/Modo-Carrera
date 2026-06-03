@@ -17409,6 +17409,7 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
 
     if (!isRealTeamId(f.homeId) || !isRealTeamId(f.awayId)) continue;
 
+    const isUserMatch = f.homeId === next.myTeamId || f.awayId === next.myTeamId;
     const isLeg2 = f.round?.endsWith("-Leg2");
 
     const isFinal = f.round === "Final";
@@ -17425,11 +17426,39 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
 
       simmed = simulateFixtureInline(next, f, false, true);
 
+      // Force draw for testing (only for AI matches)
+      if (simmed.result && !isUserMatch) {
+        const drawScore = Math.floor(Math.random() * 3) + 1; // 1-3 goals each
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
+        // Remove extraTime and penalties to force them to be recalculated
+        simmed.result.extraTime = undefined;
+        simmed.result.penalties = undefined;
+        // Re-simulate extra time and penalties since it's a draw
+        const home = teamById(simmed.homeId);
+        const away = teamById(simmed.awayId);
+        const homeXI = getStarters(next, simmed.homeId);
+        const awayXI = getStarters(next, simmed.awayId);
+        const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+        simmed.result.extraTime = { homeGoals: etResult.homeGoals, awayGoals: etResult.awayGoals, events: etResult.events };
+        if (etResult.homeGoals === etResult.awayGoals) {
+          const penResult = simulatePenaltyShootout(homeXI, awayXI);
+          simmed.result.penalties = { homeGoals: penResult.homeGoals, awayGoals: penResult.awayGoals, shootout: penResult.shootout };
+        }
+      }
+
     } else if (isLeg2) {
 
       // Simulate the 90 minutes normally
 
       simmed = simulateFixtureInline(next, f, false, false);
+
+      // Force draw for testing (only for AI matches)
+      if (simmed.result && !isUserMatch) {
+        const drawScore = Math.floor(Math.random() * 3) + 1; // 1-3 goals each
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
+      }
 
 
 
@@ -17603,13 +17632,41 @@ export function simulateBackgroundUCLDay(save: SaveGame, dayOffset: number, user
 
   let next = JSON.parse(JSON.stringify(save)) as SaveGame;
   for (const f of aiFixtures) {
+    const isUserMatch = f.homeId === next.myTeamId || f.awayId === next.myTeamId;
     const isLeg2 = f.round?.endsWith("-Leg2");
     const isFinal = f.round === "Final";
+    const isKnockout = isFinal || isLeg2 || f.round?.includes("Playoff") || f.round?.includes("R16") || f.round?.includes("QF") || f.round?.includes("SF");
     let simmed: Fixture;
     if (isFinal) {
       simmed = simulateFixtureInline(next, f, false, true);
+      // Force draw for testing (only for AI matches)
+      if (simmed.result && !isUserMatch) {
+        const drawScore = Math.floor(Math.random() * 3) + 1;
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
+        // Remove extraTime and penalties to force them to be recalculated
+        simmed.result.extraTime = undefined;
+        simmed.result.penalties = undefined;
+        // Re-simulate extra time and penalties since it's a draw
+        const home = teamById(simmed.homeId);
+        const away = teamById(simmed.awayId);
+        const homeXI = getStarters(next, simmed.homeId);
+        const awayXI = getStarters(next, simmed.awayId);
+        const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+        simmed.result.extraTime = { homeGoals: etResult.homeGoals, awayGoals: etResult.awayGoals, events: etResult.events };
+        if (etResult.homeGoals === etResult.awayGoals) {
+          const penResult = simulatePenaltyShootout(homeXI, awayXI);
+          simmed.result.penalties = { homeGoals: penResult.homeGoals, awayGoals: penResult.awayGoals, shootout: penResult.shootout };
+        }
+      }
     } else if (isLeg2) {
       simmed = simulateFixtureInline(next, f, false, false);
+      // Force draw for testing (only for AI matches)
+      if (simmed.result && !isUserMatch) {
+        const drawScore = Math.floor(Math.random() * 3) + 1;
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
+      }
       if (simmed.result) {
         const leg1 = next.uclFixtures!.find(l =>
           l.round === f.round!.replace("Leg2", "Leg1") &&
@@ -17634,6 +17691,14 @@ export function simulateBackgroundUCLDay(save: SaveGame, dayOffset: number, user
             }
           }
         }
+      }
+    } else if (isKnockout) {
+      simmed = simulateFixtureInline(next, f, false, false);
+      // Force draw for testing (only for AI matches)
+      if (simmed.result && !isUserMatch) {
+        const drawScore = Math.floor(Math.random() * 3) + 1;
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
       }
     } else {
       simmed = simulateFixtureInline(next, f, false, false);
@@ -17693,13 +17758,27 @@ export function simulateUserPhaseUCLDay(save: SaveGame, dayOffset: number, userT
 
   let next = JSON.parse(JSON.stringify(save)) as SaveGame;
   for (const f of aiFixtures) {
+    const isUserMatch = f.homeId === next.myTeamId || f.awayId === next.myTeamId;
     const isLeg2 = f.round?.endsWith("-Leg2");
     const isFinal = f.round === "Final";
+    const isKnockout = isFinal || isLeg2 || f.round?.includes("Playoff") || f.round?.includes("R16") || f.round?.includes("QF") || f.round?.includes("SF");
     let simmed: Fixture;
     if (isFinal) {
       simmed = simulateFixtureInline(next, f, false, true);
+      // Force draw for testing (only for AI matches)
+      if (simmed.result && !isUserMatch) {
+        const drawScore = Math.floor(Math.random() * 3) + 1;
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
+      }
     } else if (isLeg2) {
       simmed = simulateFixtureInline(next, f, false, false);
+      // Force draw for testing (only for AI matches)
+      if (simmed.result && !isUserMatch) {
+        const drawScore = Math.floor(Math.random() * 3) + 1;
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
+      }
       if (simmed.result) {
         const leg1 = next.uclFixtures!.find(l =>
           l.round === f.round!.replace("Leg2", "Leg1") &&
@@ -17724,6 +17803,14 @@ export function simulateUserPhaseUCLDay(save: SaveGame, dayOffset: number, userT
             }
           }
         }
+      }
+    } else if (isKnockout) {
+      simmed = simulateFixtureInline(next, f, false, false);
+      // Force draw for testing (only for AI matches)
+      if (simmed.result && !isUserMatch) {
+        const drawScore = Math.floor(Math.random() * 3) + 1;
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
       }
     } else {
       simmed = simulateFixtureInline(next, f, false, false);

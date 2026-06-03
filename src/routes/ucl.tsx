@@ -30,7 +30,7 @@ function uclFixtureDate(matchday: number): string {
 function Result({ f }: { f: Fixture }) {
   if (!f.result) return <span className="text-muted-foreground text-xs">vs</span>;
   const { homeGoals, awayGoals, extraTime, penalties } = f.result;
-  
+
   if (penalties) {
     // Format: 2 (3) - (2) 2
     const totalHome = homeGoals + (extraTime?.homeGoals || 0);
@@ -40,11 +40,16 @@ function Result({ f }: { f: Fixture }) {
     const totalHome = homeGoals + extraTime.homeGoals;
     const totalAway = awayGoals + extraTime.awayGoals;
     if (totalHome !== totalAway) {
-      return <span className="font-mono font-semibold whitespace-nowrap">{totalHome} - {totalAway} (prórroga)</span>;
+      return (
+        <div className="flex flex-col items-center">
+          <span className="font-mono font-semibold whitespace-nowrap">{totalHome} - {totalAway}</span>
+          <span className="text-[10px] text-muted-foreground">(prórroga)</span>
+        </div>
+      );
     }
     return <span className="font-mono font-semibold whitespace-nowrap">{totalHome} - {totalAway}</span>;
   }
-  
+
   return <span className="font-mono font-semibold whitespace-nowrap">{homeGoals} – {awayGoals}</span>;
 }
 
@@ -249,7 +254,7 @@ function FixtureRow({ f, myTeamId }: { f: Fixture; myTeamId: string }) {
         <span className={`text-right truncate max-w-[130px] ${f.homeId === myTeamId ? "font-bold text-white" : ""}`}>{teamName(f.homeId)}</span>
         <Logo id={f.homeId} />
       </div>
-      <div className="w-14 text-center shrink-0">
+      <div className="w-24 text-center shrink-0 py-1">
         {played
           ? (() => {
               const { homeGoals, awayGoals, extraTime, penalties } = f.result!;
@@ -261,7 +266,12 @@ function FixtureRow({ f, myTeamId }: { f: Fixture; myTeamId: string }) {
                 const totalHome = homeGoals + extraTime.homeGoals;
                 const totalAway = awayGoals + extraTime.awayGoals;
                 if (totalHome !== totalAway) {
-                  return <span className="font-mono font-bold text-xs whitespace-nowrap">{totalHome} - {totalAway} (prórroga)</span>;
+                  return (
+                    <div className="flex flex-col items-center">
+                      <span className="font-mono font-bold text-xs whitespace-nowrap">{totalHome} - {totalAway}</span>
+                      <span className="text-[9px] text-muted-foreground">(prórroga)</span>
+                    </div>
+                  );
                 }
                 return <span className="font-mono font-bold text-xs whitespace-nowrap">{totalHome} - {totalAway}</span>;
               }
