@@ -237,12 +237,29 @@ function MatchPage() {
   function handleExtraTimeFinished() {
     const totalHomeScore = homeScore + extraTimeHomeScoreRef.current;
     const totalAwayScore = awayScore + extraTimeAwayScoreRef.current;
-    
+
     console.log(`Extra time finished: Home: ${homeScore} + ${extraTimeHomeScoreRef.current} = ${totalHomeScore}, Away: ${awayScore} + ${extraTimeAwayScoreRef.current} = ${totalAwayScore}`);
     console.log(`Comparison: ${totalHomeScore} === ${totalAwayScore} = ${totalHomeScore === totalAwayScore}`);
     console.log(`Type check: typeof totalHomeScore = ${typeof totalHomeScore}, typeof totalAwayScore = ${typeof totalAwayScore}`);
-    
-    if (totalHomeScore === totalAwayScore) {
+
+    // Check if aggregate is tied for UCL two-legged ties
+    let aggregateTied = totalHomeScore === totalAwayScore;
+    const isLeg2 = fixtureRef.current?.round?.endsWith("-Leg2");
+    if (isLeg2 && save?.uclFixtures) {
+      const leg1 = save.uclFixtures.find(l =>
+        l.round === fixtureRef.current!.round!.replace("Leg2", "Leg1") &&
+        ((l.homeId === fixtureRef.current!.awayId && l.awayId === fixtureRef.current!.homeId) ||
+         (l.homeId === fixtureRef.current!.homeId && l.awayId === fixtureRef.current!.awayId))
+      );
+      if (leg1?.result) {
+        const aggHome = totalHomeScore + leg1.result.awayGoals;
+        const aggAway = totalAwayScore + leg1.result.homeGoals;
+        aggregateTied = aggHome === aggAway;
+        console.log(`Aggregate check: leg1 ${leg1.result.homeGoals}-${leg1.result.awayGoals}, leg2 ${totalHomeScore}-${totalAwayScore}, agg ${aggHome}-${aggAway}, tied: ${aggregateTied}`);
+      }
+    }
+
+    if (aggregateTied) {
       // Go to penalties
       console.log("Scores are tied, going to penalties");
       handlePenaltyShootout();
@@ -341,15 +358,15 @@ function MatchPage() {
   
   function handlePenaltyShootoutFinished(homePenaltyScore?: number, awayPenaltyScore?: number) {
     if (!save || !fixtureRef.current) return;
-    
+
     const fixture = fixtureRef.current;
-    
+
     // Use provided scores or current state
     const finalHomePenaltyScore = homePenaltyScore !== undefined ? homePenaltyScore : penaltyHomeScore;
     const finalAwayPenaltyScore = awayPenaltyScore !== undefined ? awayPenaltyScore : penaltyAwayScore;
-    
+
     console.log(`handlePenaltyShootoutFinished: finalHomePenaltyScore=${finalHomePenaltyScore}, finalAwayPenaltyScore=${finalAwayPenaltyScore}`);
-    
+
     // Save result with penalties
     updateFixtureInStore(
       fixture.id,
@@ -357,33 +374,46 @@ function MatchPage() {
       awayScore + extraTimeAwayScoreRef.current,
       true,
       { homeGoals: extraTimeHomeScoreRef.current, awayGoals: extraTimeAwayScoreRef.current },
-      { homeGoals: finalHomePenaltyScore, awayGoals: finalAwayPenaltyScore }
+      { homeGoals: finalHomePenaltyScore, awayGoals: finalAwayPenaltyScore },
+      matchType === 'UCL'
     );
-    
+
     // Reload the fixture from save to get updated result
     const s = loadSave();
     if (s) {
-      for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
-        const found = fixtures.find(f => f.id === fixture.id);
+      let found = null;
+      // Check UCL fixtures first if it's a UCL match
+      if (matchType === 'UCL' && s.uclFixtures) {
+        found = s.uclFixtures.find(f => f.id === fixture.id);
         if (found) {
           fixtureRef.current = found;
-          console.log("Reloaded fixture with result after penalties:", found.result);
-          break;
+          console.log("Reloaded UCL fixture with result after penalties:", found.result);
         }
       }
-      
+      // If not found in UCL, check cup fixtures
+      if (!found) {
+        for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
+          found = fixtures.find(f => f.id === fixture.id);
+          if (found) {
+            fixtureRef.current = found;
+            console.log("Reloaded cup fixture with result after penalties:", found.result);
+            break;
+          }
+        }
+      }
+
       // Update the save state with the reloaded save
       setSave(s);
-      
+
       // Clear pending match after simulation
       usePlayersStore.setState({ pendingUserMatch: null });
-      
+
       // Clear clock timeout
       if (clockTimeoutRef.current !== null) {
         window.clearTimeout(clockTimeoutRef.current);
         clockTimeoutRef.current = null;
       }
-      
+
       // Set phase to done immediately, then simulate remaining matches in background
       setPhase("done");
       simulateRemainingCupMatches(fixture.matchday, s);
@@ -405,38 +435,52 @@ function MatchPage() {
   
   function handleMatchEndWithExtraTime() {
     if (!save || !fixtureRef.current) return;
-    
+
     const fixture = fixtureRef.current;
-    
+
     console.log(`handleMatchEndWithExtraTime called: homeScore=${homeScore}, extraTimeHomeScoreRef=${extraTimeHomeScoreRef.current}, awayScore=${awayScore}, extraTimeAwayScoreRef=${extraTimeAwayScoreRef.current}`);
-    
+
     // Save result with extra time
     updateFixtureInStore(
       fixture.id,
       homeScore + extraTimeHomeScoreRef.current,
       awayScore + extraTimeAwayScoreRef.current,
       true,
-      { homeGoals: extraTimeHomeScoreRef.current, awayGoals: extraTimeAwayScoreRef.current }
+      { homeGoals: extraTimeHomeScoreRef.current, awayGoals: extraTimeAwayScoreRef.current },
+      undefined,
+      matchType === 'UCL'
     );
-    
+
     // Reload the fixture from save to get updated result
     const s = loadSave();
     if (s) {
-      for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
-        const found = fixtures.find(f => f.id === fixture.id);
+      let found = null;
+      // Check UCL fixtures first if it's a UCL match
+      if (matchType === 'UCL' && s.uclFixtures) {
+        found = s.uclFixtures.find(f => f.id === fixture.id);
         if (found) {
           fixtureRef.current = found;
-          console.log("Reloaded fixture with result:", found.result);
-          break;
+          console.log("Reloaded UCL fixture with result:", found.result);
         }
       }
-      
+      // If not found in UCL, check cup fixtures
+      if (!found) {
+        for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
+          found = fixtures.find(f => f.id === fixture.id);
+          if (found) {
+            fixtureRef.current = found;
+            console.log("Reloaded cup fixture with result:", found.result);
+            break;
+          }
+        }
+      }
+
       // Update the save state with the reloaded save
       setSave(s);
-      
+
       // Clear pending match after simulation
       usePlayersStore.setState({ pendingUserMatch: null });
-      
+
       // Set phase to done immediately, then simulate remaining matches in background
       console.log("Setting phase to done in handleMatchEndWithExtraTime");
       setPhase("done");
@@ -444,7 +488,7 @@ function MatchPage() {
     } else {
       // Clear pending match after simulation
       usePlayersStore.setState({ pendingUserMatch: null });
-      
+
       // Set phase to done immediately, then simulate remaining matches in background
       console.log("Setting phase to done in handleMatchEndWithExtraTime");
       setPhase("done");
@@ -472,24 +516,24 @@ function MatchPage() {
     }
   }
 
-  function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number, isCup: boolean = false, extraTimeData?: { homeGoals: number; awayGoals: number }, penaltyData?: { homeGoals: number; awayGoals: number }) {
-    console.log(`updateFixtureInStore called: fixtureId=${fixtureId}, homeScore=${homeScore}, awayScore=${awayScore}, isCup=${isCup}, extraTimeData=${JSON.stringify(extraTimeData)}, penaltyData=${JSON.stringify(penaltyData)}`);
-    
-    if (isCup) {
+  function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number, isCup: boolean = false, extraTimeData?: { homeGoals: number; awayGoals: number }, penaltyData?: { homeGoals: number; awayGoals: number }, isUCL: boolean = false) {
+    console.log(`updateFixtureInStore called: fixtureId=${fixtureId}, homeScore=${homeScore}, awayScore=${awayScore}, isCup=${isCup}, isUCL=${isUCL}, extraTimeData=${JSON.stringify(extraTimeData)}, penaltyData=${JSON.stringify(penaltyData)}`);
+
+    if (isUCL) {
       const s = loadSave();
-      if (s) {
-        // For cup matches, homeGoals and awayGoals should be regular time only
+      if (s && s.uclFixtures) {
+        // For UCL matches, homeGoals and awayGoals should be regular time only
         // extraTime.homeGoals and extraTime.awayGoals are the additional goals in extra time
-        const result: any = { 
-          homeGoals: homeScore - (extraTimeData?.homeGoals || 0), 
-          awayGoals: awayScore - (extraTimeData?.awayGoals || 0), 
-          events: allEventsRef.current, 
-          cards: allCardsRef.current, 
-          injuries: [], 
-          xgHome: 0, 
-          xgAway: 0 
+        const result: any = {
+          homeGoals: homeScore - (extraTimeData?.homeGoals || 0),
+          awayGoals: awayScore - (extraTimeData?.awayGoals || 0),
+          events: allEventsRef.current,
+          cards: allCardsRef.current,
+          injuries: [],
+          xgHome: 0,
+          xgAway: 0
         };
-        
+
         if (extraTimeData) {
           result.extraTime = {
             homeGoals: extraTimeData.homeGoals,
@@ -498,7 +542,7 @@ function MatchPage() {
           };
           console.log("Adding extraTime to result:", result.extraTime);
         }
-        
+
         if (penaltyData) {
           result.penalties = {
             homeGoals: penaltyData.homeGoals,
@@ -507,9 +551,53 @@ function MatchPage() {
           };
           console.log("Adding penalties to result:", result.penalties);
         }
-        
+
         console.log("Final result to save:", result);
-        
+
+        const updated = s.uclFixtures.map((f) =>
+          f.id === fixtureId
+            ? { ...f, result }
+            : f
+        );
+        const newSave = { ...s, uclFixtures: updated };
+        saveSave(newSave);
+        console.log("UCL result saved successfully");
+      }
+    } else if (isCup) {
+      const s = loadSave();
+      if (s) {
+        // For cup matches, homeGoals and awayGoals should be regular time only
+        // extraTime.homeGoals and extraTime.awayGoals are the additional goals in extra time
+        const result: any = {
+          homeGoals: homeScore - (extraTimeData?.homeGoals || 0),
+          awayGoals: awayScore - (extraTimeData?.awayGoals || 0),
+          events: allEventsRef.current,
+          cards: allCardsRef.current,
+          injuries: [],
+          xgHome: 0,
+          xgAway: 0
+        };
+
+        if (extraTimeData) {
+          result.extraTime = {
+            homeGoals: extraTimeData.homeGoals,
+            awayGoals: extraTimeData.awayGoals,
+            events: extraTimeEventsRef.current
+          };
+          console.log("Adding extraTime to result:", result.extraTime);
+        }
+
+        if (penaltyData) {
+          result.penalties = {
+            homeGoals: penaltyData.homeGoals,
+            awayGoals: penaltyData.awayGoals,
+            shootout: penaltyShootoutData
+          };
+          console.log("Adding penalties to result:", result.penalties);
+        }
+
+        console.log("Final result to save:", result);
+
         // Find the fixture to determine which league it belongs to
         let fixtureLeague = s.myLeague;
         for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
@@ -519,13 +607,13 @@ function MatchPage() {
             break;
           }
         }
-        
+
         const leagueFixtures = s.cupFixtures[fixtureLeague];
         if (!leagueFixtures) {
           console.error(`No cup fixtures found for league: ${fixtureLeague}`);
           return;
         }
-        
+
         const updated = leagueFixtures.map((f) =>
           f.id === fixtureId
             ? { ...f, result }
@@ -995,33 +1083,71 @@ function MatchPage() {
           )}
           {phase === "done" && (
             <>
-              {console.log("Phase done - checking buttons: isCupMatch=", isCupMatch, "fixture.competition=", fixture?.competition, "hasExtraTime=", !!fixtureRef.current?.result?.extraTime, "hasPenalties=", !!fixtureRef.current?.result?.penalties)}
-              {console.log("Phase done - fixture result:", JSON.stringify(fixtureRef.current?.result, null, 2))}
-              {(isCupMatch || fixture?.competition === "cup") && 
-               fixtureRef.current?.result?.homeGoals === fixtureRef.current?.result?.awayGoals &&
-               !fixtureRef.current?.result?.extraTime && 
-               !fixtureRef.current?.result?.penalties ? (
-                // Cup match ended in draw without extra time/penalties - show edit lineup and extra time buttons
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => navigate({ to: "/lineup", state: { fromMatch: true, returningFromLineupEdit: true, matchType, cupRound, fixtureId: fixture.id } })}
-                    className="px-6 py-3 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition"
-                  >
-                    Editar alineación
+              {(() => {
+                const isUCLKnockout = matchType === 'UCL' && fixture?.round && (
+                  fixture.round === "Final" ||
+                  fixture.round.includes("Playoff") ||
+                  fixture.round.includes("R16") ||
+                  fixture.round.includes("QF") ||
+                  fixture.round.includes("SF") ||
+                  fixture.round.endsWith("-Leg2")
+                );
+                const isLeg2 = fixture?.round?.endsWith("-Leg2");
+                const isFinal = fixture?.round === "Final";
+
+                // Check if aggregate is tied for two-legged ties
+                let aggregateTied = false;
+                if (isLeg2 && save?.uclFixtures) {
+                  const leg1 = save.uclFixtures.find(l =>
+                    l.round === fixture.round!.replace("Leg2", "Leg1") &&
+                    ((l.homeId === fixture.awayId && l.awayId === fixture.homeId) ||
+                     (l.homeId === fixture.homeId && l.awayId === fixture.awayId))
+                  );
+                  if (leg1?.result && fixtureRef.current?.result) {
+                    const aggHome = fixtureRef.current.result.homeGoals + leg1.result.awayGoals;
+                    const aggAway = fixtureRef.current.result.awayGoals + leg1.result.homeGoals;
+                    aggregateTied = aggHome === aggAway;
+                  }
+                }
+
+                // For cup matches: show ET button if match is drawn without ET/penalties
+                const shouldShowExtraTimeButtonForCup = (isCupMatch || fixture?.competition === "cup") &&
+                  fixtureRef.current?.result?.homeGoals === fixtureRef.current?.result?.awayGoals &&
+                  !fixtureRef.current?.result?.extraTime &&
+                  !fixtureRef.current?.result?.penalties;
+
+                // For UCL knockout: show ET button only in leg2 when aggregate is tied, or in final when match is drawn
+                const shouldShowExtraTimeButtonForUCL = isUCLKnockout &&
+                  !fixtureRef.current?.result?.extraTime &&
+                  !fixtureRef.current?.result?.penalties &&
+                  ((isFinal && fixtureRef.current?.result?.homeGoals === fixtureRef.current?.result?.awayGoals) ||
+                   (isLeg2 && aggregateTied));
+
+                const shouldShowExtraTimeButton = shouldShowExtraTimeButtonForCup || shouldShowExtraTimeButtonForUCL;
+
+                return shouldShowExtraTimeButton ? (
+                  // Cup/UCL knockout match ended in draw without extra time/penalties - show edit lineup and extra time buttons
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => navigate({ to: "/lineup", state: { fromMatch: true, returningFromLineupEdit: true, matchType, cupRound, fixtureId: fixture.id } })}
+                      className="px-6 py-3 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition"
+                    >
+                      Editar alineación
+                    </button>
+                    <button
+                      onClick={handleGoToExtraTime}
+                      className="px-6 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition"
+                    >
+                      Ir a la prorroga
+                    </button>
+                  </div>
+                ) : (
+                  // Normal match or cup match with winner/resolved - show return to season button
+                  <button onClick={handleReturnToSeason} disabled={isSimulating} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition disabled:opacity-50">
+                    {isSimulating ? 'Simulando...' : 'Volver a la temporada →'}
                   </button>
-                  <button 
-                    onClick={handleGoToExtraTime}
-                    className="px-6 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition"
-                  >
-                    Ir a la prorroga
-                  </button>
-                </div>
-              ) : (
-                // Normal match or cup match with winner/resolved - show return to season button
-                <button onClick={handleReturnToSeason} disabled={isSimulating} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition disabled:opacity-50">
-                  {isSimulating ? 'Simulando...' : 'Volver a la temporada →'}
-                </button>
-              )}
+                );
+              })()}
             </>
           )}
         </div>

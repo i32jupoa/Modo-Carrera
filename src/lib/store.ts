@@ -17411,8 +17411,11 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
 
     const isUserMatch = f.homeId === next.myTeamId || f.awayId === next.myTeamId;
     const isLeg2 = f.round?.endsWith("-Leg2");
+    const isLeg1 = f.round?.endsWith("-Leg1");
 
     const isFinal = f.round === "Final";
+
+    const isKnockout = isFinal || isLeg2 || isLeg1 || f.round?.includes("Playoff") || f.round?.includes("R16") || f.round?.includes("QF") || f.round?.includes("SF");
 
 
 
@@ -17426,8 +17429,8 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
 
       simmed = simulateFixtureInline(next, f, false, true);
 
-      // Force draw for testing (only for AI matches)
-      if (simmed.result && !isUserMatch) {
+      // Force draw for testing (all matches including user)
+      if (simmed.result) {
         const drawScore = Math.floor(Math.random() * 3) + 1; // 1-3 goals each
         simmed.result.homeGoals = drawScore;
         simmed.result.awayGoals = drawScore;
@@ -17453,75 +17456,21 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
 
       simmed = simulateFixtureInline(next, f, false, false);
 
-      // Force draw for testing (only for AI matches)
-      if (simmed.result && !isUserMatch) {
+      // Force draw for testing (all matches including user)
+      if (simmed.result) {
         const drawScore = Math.floor(Math.random() * 3) + 1; // 1-3 goals each
         simmed.result.homeGoals = drawScore;
         simmed.result.awayGoals = drawScore;
       }
 
-
-
+    } else if (isKnockout) {
+      simmed = simulateFixtureInline(next, f, false, false);
+      // Force draw for testing (all matches including user)
       if (simmed.result) {
-
-        // Find the corresponding leg1 fixture
-
-        const leg1 = next.uclFixtures.find(l =>
-
-          l.round === f.round!.replace("Leg2", "Leg1") &&
-
-          ((l.homeId === f.awayId && l.awayId === f.homeId) ||
-
-           (l.homeId === f.homeId && l.awayId === f.awayId))
-
-        );
-
-        if (leg1?.result) {
-
-          // Aggregate: leg2 homeId scored across both legs
-
-          const leg2HomeAgg = simmed.result.homeGoals + leg1.result.awayGoals;
-
-          const leg2AwayAgg = simmed.result.awayGoals + leg1.result.homeGoals;
-
-
-
-          if (leg2HomeAgg === leg2AwayAgg) {
-
-            // Aggregate tied → extra time
-
-            const home = teamById(simmed.homeId);
-
-            const away = teamById(simmed.awayId);
-
-            const homeXI = getStarters(next, simmed.homeId);
-
-            const awayXI = getStarters(next, simmed.awayId);
-
-            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
-
-            simmed.result.extraTime = { homeGoals: etResult.homeGoals, awayGoals: etResult.awayGoals, events: etResult.events };
-
-            const etHomeAgg = leg2HomeAgg + etResult.homeGoals;
-
-            const etAwayAgg = leg2AwayAgg + etResult.awayGoals;
-
-            if (etHomeAgg === etAwayAgg) {
-
-              // Still tied → penalties
-
-              const penResult = simulatePenaltyShootout(homeXI, awayXI);
-
-              simmed.result.penalties = { homeGoals: penResult.homeGoals, awayGoals: penResult.awayGoals, shootout: penResult.shootout };
-
-            }
-
-          }
-
-        }
-
+        const drawScore = Math.floor(Math.random() * 3) + 1;
+        simmed.result.homeGoals = drawScore;
+        simmed.result.awayGoals = drawScore;
       }
-
     } else {
 
       // Leg1 — plain simulation, no ET
