@@ -764,6 +764,22 @@ export function getAggregateWinner(
 
 
 
+  // If there are penalties, determine winner from penalty shootout
+  if (leg2.result.penalties) {
+    const penHome = leg2.result.penalties.homeGoals;
+    const penAway = leg2.result.penalties.awayGoals;
+    if (penHome > penAway) return "leg2Home";
+    if (penAway > penHome) return "leg2Away";
+  }
+
+  // If there's extra time but no penalties, use extra time aggregate
+  if (leg2.result.extraTime) {
+    const etHome = (leg2.result.homeGoals ?? 0) + (leg2.result.extraTime.homeGoals ?? 0) + (leg1.result.awayGoals ?? 0);
+    const etAway = (leg2.result.awayGoals ?? 0) + (leg2.result.extraTime.awayGoals ?? 0) + (leg1.result.homeGoals ?? 0);
+    if (etHome > etAway) return "leg2Home";
+    if (etAway > etHome) return "leg2Away";
+  }
+
   if (aggHome > aggAway) return "leg2Home";
 
   if (aggAway > aggHome) return "leg2Away";

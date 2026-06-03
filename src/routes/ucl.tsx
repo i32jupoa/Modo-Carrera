@@ -29,8 +29,23 @@ function uclFixtureDate(matchday: number): string {
 
 function Result({ f }: { f: Fixture }) {
   if (!f.result) return <span className="text-muted-foreground text-xs">vs</span>;
-  const { homeGoals, awayGoals } = f.result;
-  return <span className="font-mono font-semibold">{homeGoals} – {awayGoals}</span>;
+  const { homeGoals, awayGoals, extraTime, penalties } = f.result;
+  
+  if (penalties) {
+    // Format: 2 (3) - (2) 2
+    const totalHome = homeGoals + (extraTime?.homeGoals || 0);
+    const totalAway = awayGoals + (extraTime?.awayGoals || 0);
+    return <span className="font-mono font-semibold whitespace-nowrap">{totalHome} ({penalties.homeGoals}) - ({penalties.awayGoals}) {totalAway}</span>;
+  } else if (extraTime) {
+    const totalHome = homeGoals + extraTime.homeGoals;
+    const totalAway = awayGoals + extraTime.awayGoals;
+    if (totalHome !== totalAway) {
+      return <span className="font-mono font-semibold whitespace-nowrap">{totalHome} - {totalAway} (prórroga)</span>;
+    }
+    return <span className="font-mono font-semibold whitespace-nowrap">{totalHome} - {totalAway}</span>;
+  }
+  
+  return <span className="font-mono font-semibold whitespace-nowrap">{homeGoals} – {awayGoals}</span>;
 }
 
 // ── Table view (league phase) ─────────────────────────────────────────────────
@@ -236,7 +251,22 @@ function FixtureRow({ f, myTeamId }: { f: Fixture; myTeamId: string }) {
       </div>
       <div className="w-14 text-center shrink-0">
         {played
-          ? <span className="font-mono font-bold text-sm">{f.result!.homeGoals} – {f.result!.awayGoals}</span>
+          ? (() => {
+              const { homeGoals, awayGoals, extraTime, penalties } = f.result!;
+              if (penalties) {
+                const totalHome = homeGoals + (extraTime?.homeGoals || 0);
+                const totalAway = awayGoals + (extraTime?.awayGoals || 0);
+                return <span className="font-mono font-bold text-xs whitespace-nowrap">{totalHome} ({penalties.homeGoals}) - ({penalties.awayGoals}) {totalAway}</span>;
+              } else if (extraTime) {
+                const totalHome = homeGoals + extraTime.homeGoals;
+                const totalAway = awayGoals + extraTime.awayGoals;
+                if (totalHome !== totalAway) {
+                  return <span className="font-mono font-bold text-xs whitespace-nowrap">{totalHome} - {totalAway} (prórroga)</span>;
+                }
+                return <span className="font-mono font-bold text-xs whitespace-nowrap">{totalHome} - {totalAway}</span>;
+              }
+              return <span className="font-mono font-bold text-sm whitespace-nowrap">{homeGoals} – {awayGoals}</span>;
+            })()
           : <span className="text-muted-foreground text-xs font-medium">vs</span>
         }
       </div>
@@ -396,46 +426,68 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
 }
 
 // Calculate real aggregate result from fixtures by tie
-function getRealMatchResult(matchup: BracketMatchup, fixtures: Fixture[]): { homeGoals: number; awayGoals: number; winner: string } | null {
+function getRealMatchResult(matchup: BracketMatchup, fixtures: Fixture[]): { homeGoals: number; awayGoals: number; winner: string; extraTime?: boolean; penalties?: { homeGoals: number; awayGoals: number } } | null {
   if (!matchup.homeTeam || !matchup.awayTeam) return null;
-  
+
   // For final, find the single fixture
   if (matchup.round === "final") {
     const finalMatch = fixtures.find(f => f.round === "Final");
     if (finalMatch?.result) {
-      return { 
-        homeGoals: finalMatch.result.homeGoals, 
-        awayGoals: finalMatch.result.awayGoals, 
-        winner: finalMatch.result.homeGoals > finalMatch.result.awayGoals ? finalMatch.homeId : finalMatch.awayId 
+      const extraTime = !!finalMatch.result.extraTime;
+      const penalties = finalMatch.result.penalties ? { homeGoals: finalMatch.result.penalties.homeGoals, awayGoals: finalMatch.result.penalties.awayGoals } : undefined;
+      return {
+        homeGoals: finalMatch.result.homeGoals,
+        awayGoals: finalMatch.result.awayGoals,
+        winner: finalMatch.result.homeGoals > finalMatch.result.awayGoals ? finalMatch.homeId : finalMatch.awayId,
+        extraTime,
+        penalties
       };
     }
     return null;
   }
-  
+
   // For two-legged ties, find both legs by team IDs
   const roundPrefix = matchup.round === "playoff" ? "Playoff" : matchup.round.toUpperCase();
   const roundFixtures = fixtures.filter(f => f.round?.startsWith(roundPrefix) && f.matchday > 0);
-  
+
   // Find the two legs for this tie
   const leg1 = roundFixtures.find(f => f.homeId === matchup.homeTeam && f.awayId === matchup.awayTeam);
   const leg2 = roundFixtures.find(f => f.homeId === matchup.awayTeam && f.awayId === matchup.homeTeam);
-  
+
   if (leg1?.result && leg2?.result) {
+    // Check if leg2 went to extra time or penalties
+    const extraTime = !!leg2.result.extraTime;
+    const penalties = leg2.result.penalties ? { homeGoals: leg2.result.penalties.homeGoals, awayGoals: leg2.result.penalties.awayGoals } : undefined;
+
+    // Determine winner based on penalties if they exist
+    let winner: string;
+    if (penalties) {
+      winner = penalties.homeGoals > penalties.awayGoals ? leg2.homeId : leg2.awayId;
+    } else if (extraTime) {
+      const homeAgg = leg1.result.homeGoals + leg2.result.awayGoals + (leg2.result.extraTime?.awayGoals || 0);
+      const awayAgg = leg1.result.awayGoals + leg2.result.homeGoals + (leg2.result.extraTime?.homeGoals || 0);
+      winner = homeAgg > awayAgg ? leg1.homeId : leg1.awayId;
+    } else {
+      const homeAgg = leg1.result.homeGoals + leg2.result.awayGoals;
+      const awayAgg = leg1.result.awayGoals + leg2.result.homeGoals;
+      winner = homeAgg > awayAgg ? leg1.homeId : leg1.awayId;
+    }
+
     // Correct aggregate calculation for two-legged ties
-    const homeAgg = leg1.result.homeGoals + leg2.result.awayGoals;
-    const awayAgg = leg1.result.awayGoals + leg2.result.homeGoals;
-    return { homeGoals: homeAgg, awayGoals: awayAgg, winner: homeAgg > awayAgg ? leg1.homeId : leg1.awayId };
+    const homeAgg = leg1.result.homeGoals + leg2.result.awayGoals + (leg2.result.extraTime?.awayGoals || 0);
+    const awayAgg = leg1.result.awayGoals + leg2.result.homeGoals + (leg2.result.extraTime?.homeGoals || 0);
+    return { homeGoals: homeAgg, awayGoals: awayAgg, winner, extraTime, penalties };
   }
-  
+
   // If only leg1 is played, show leg1 result
   if (leg1?.result) {
-    return { 
-      homeGoals: leg1.result.homeGoals, 
-      awayGoals: leg1.result.awayGoals, 
-      winner: leg1.result.homeGoals > leg1.result.awayGoals ? leg1.homeId : leg1.awayId 
+    return {
+      homeGoals: leg1.result.homeGoals,
+      awayGoals: leg1.result.awayGoals,
+      winner: leg1.result.homeGoals > leg1.result.awayGoals ? leg1.homeId : leg1.awayId
     };
   }
-  
+
   return null;
 }
 
@@ -1028,20 +1080,20 @@ function CompactMatchCard({
   );
 }
 
-function DarkMatchCard({ 
-  slot, 
-  fixtures, 
-  safeTeamName, 
-  getTeamLogoPath, 
-  getMatchResult, 
+function DarkMatchCard({
+  slot,
+  fixtures,
+  safeTeamName,
+  getTeamLogoPath,
+  getMatchResult,
   getRoundDate,
-  isFinal = false 
-}: { 
-  slot: UCLBracketSlot; 
+  isFinal = false
+}: {
+  slot: UCLBracketSlot;
   fixtures: Fixture[];
   safeTeamName: (id: string) => string;
   getTeamLogoPath: (id: string) => string;
-  getMatchResult: (slot: UCLBracketSlot) => { homeGoals: number; awayGoals: number; winner: string } | null;
+  getMatchResult: (slot: UCLBracketSlot) => { homeGoals: number; awayGoals: number; winner: string; extraTime?: boolean; penalties?: { homeGoals: number; awayGoals: number } } | null;
   getRoundDate: (slot: UCLBracketSlot) => string;
   isFinal?: boolean;
 }) {
@@ -1061,13 +1113,25 @@ function DarkMatchCard({
   const homeLogoPath = getTeamLogoPath(home);
   const awayLogoPath = getTeamLogoPath(away);
 
+  // Format aggregate result with extra time/penalties info
+  const formatAggregate = (res: typeof result) => {
+    if (!res) return "";
+    let aggStr = `${res.homeGoals}-${res.awayGoals}`;
+    if (res.penalties) {
+      aggStr += ` (${res.penalties.homeGoals}-${res.penalties.awayGoals} pen)`;
+    } else if (res.extraTime) {
+      aggStr += " (prórroga)";
+    }
+    return aggStr;
+  };
+
   return (
     <div className="bg-[#111827] rounded-xl border border-cyan-500/30 overflow-hidden">
       {/* Header */}
       <div className="px-3 py-2 border-b border-gray-700">
         <div className="text-gray-300 text-xs">
           {isFinal ? "Final" : slot.round.toUpperCase()}
-          {result && <span className="ml-2 text-cyan-400">Glo: {result.homeGoals}-{result.awayGoals}</span>}
+          {result && <span className="ml-2 text-cyan-400">Glo: {formatAggregate(result)}</span>}
         </div>
       </div>
 
@@ -1234,7 +1298,24 @@ function ResultsListView({ fixtures, safeTeamName, getTeamLogoPath }: {
                           )}
                           <span className="text-gray-300 text-xs">{safeTeamName(leg1.homeId)}</span>
                         </div>
-                        <span className="text-white text-sm font-bold">{leg1.result ? `${leg1.result.homeGoals} - ${leg1.result.awayGoals}` : ' - '}</span>
+                        <span className="text-white text-sm font-bold whitespace-nowrap">
+                          {leg1.result ? (() => {
+                            const { homeGoals, awayGoals, extraTime, penalties } = leg1.result;
+                            if (penalties) {
+                              const totalHome = homeGoals + (extraTime?.homeGoals || 0);
+                              const totalAway = awayGoals + (extraTime?.awayGoals || 0);
+                              return `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
+                            } else if (extraTime) {
+                              const totalHome = homeGoals + extraTime.homeGoals;
+                              const totalAway = awayGoals + extraTime.awayGoals;
+                              if (totalHome !== totalAway) {
+                                return `${totalHome} - ${totalAway} (prórroga)`;
+                              }
+                              return `${totalHome} - ${totalAway}`;
+                            }
+                            return `${homeGoals} - ${awayGoals}`;
+                          })() : ' - '}
+                        </span>
                         <div className="flex items-center gap-2">
                           <span className="text-gray-300 text-xs">{safeTeamName(leg1.awayId)}</span>
                           {awayLogo1 ? (
@@ -1268,7 +1349,24 @@ function ResultsListView({ fixtures, safeTeamName, getTeamLogoPath }: {
                             )}
                             <span className="text-gray-300 text-xs">{safeTeamName(leg2.homeId)}</span>
                           </div>
-                          <span className="text-white text-sm font-bold">{leg2.result ? `${leg2.result.homeGoals} - ${leg2.result.awayGoals}` : ' - '}</span>
+                          <span className="text-white text-sm font-bold whitespace-nowrap">
+                            {leg2.result ? (() => {
+                              const { homeGoals, awayGoals, extraTime, penalties } = leg2.result;
+                              if (penalties) {
+                                const totalHome = homeGoals + (extraTime?.homeGoals || 0);
+                                const totalAway = awayGoals + (extraTime?.awayGoals || 0);
+                                return `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
+                              } else if (extraTime) {
+                                const totalHome = homeGoals + extraTime.homeGoals;
+                                const totalAway = awayGoals + extraTime.awayGoals;
+                                if (totalHome !== totalAway) {
+                                  return `${totalHome} - ${totalAway} (prórroga)`;
+                                }
+                                return `${totalHome} - ${totalAway}`;
+                              }
+                              return `${homeGoals} - ${awayGoals}`;
+                            })() : ' - '}
+                          </span>
                           <div className="flex items-center gap-2">
                             <span className="text-gray-300 text-xs">{safeTeamName(leg2.awayId)}</span>
                             {awayLogo2 ? (
