@@ -596,3 +596,70 @@
     inset 0 0 20px rgba(255,255,255,.05),
     0 0 30px rgba(59,130,246,.15);
 }
+
+/* Premium utilities: glass, buttons, gradients and microanimations */
+.glass {
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+  border: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 0.75rem;
+}
+
+.glass-dark {
+  background: linear-gradient(180deg, rgba(0,0,0,0.5), rgba(0,0,0,0.35));
+  border: 1px solid rgba(255,255,255,0.04);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-radius: 1rem;
+}
+
+.button-premium {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.9rem;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--color-primary) 60%, transparent), color-mix(in oklab, var(--color-accent) 40%, transparent));
+  color: white;
+  font-weight: 800;
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 40px color-mix(in oklab, var(--color-primary) 12%, transparent);
+  transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+}
+
+.button-premium:hover {
+  transform: translateY(-4px) scale(1.02);
+  filter: saturate(1.05) brightness(1.03);
+  box-shadow: 0 28px 80px rgba(0,0,0,0.55), 0 0 80px color-mix(in oklab, var(--color-primary) 24%, transparent);
+}
+
+.gradient-text-premium {
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@keyframes premium-pulse {
+  0% { box-shadow: 0 6px 30px rgba(0,0,0,0.45), 0 0 0 rgba(0,0,0,0); }
+  50% { box-shadow: 0 28px 80px rgba(0,0,0,0.55), 0 0 120px color-mix(in oklab, var(--color-primary) 18%, transparent); }
+  100% { box-shadow: 0 6px 30px rgba(0,0,0,0.45), 0 0 0 rgba(0,0,0,0); }
+}
+
+.premium-cta {
+  padding: 1rem 2rem;
+  font-size: 1.125rem;
+  border-radius: 1.25rem;
+  animation: premium-pulse 4.5s ease-in-out infinite;
+}
+
+.glass .button-premium {
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.text-muted-foreground { color: var(--muted-foreground); }
+
+/* Small utility for subtle glow on hover */
+.hover-glow:hover { box-shadow: 0 10px 40px color-mix(in oklab, var(--color-primary) 20%, transparent); }
