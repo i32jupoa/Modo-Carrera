@@ -94,7 +94,7 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
           const playerCardList = playerCards[player.id] || [];
           const hasYellowCard = playerCardList.some(c => c.cardType === "yellow");
           const hasRedCard = playerCardList.some(c => c.cardType === "red");
-          const cardEmoji = hasRedCard ? "🔴" : hasYellowCard ? "🟨" : null;
+          const cardType = hasRedCard ? 'red' : hasYellowCard ? 'yellow' : null;
 
           return (
             <div
@@ -118,9 +118,9 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
                 }}
               >
                 {player.rating}
-                {cardEmoji && (
-                  <div className="absolute -top-1 -right-1 text-[0.6rem]">
-                    {cardEmoji}
+                {cardType && (
+                  <div className="absolute -top-1 -right-1">
+                    <span className={`w-3 h-2 inline-block rounded-sm ${cardType === 'red' ? 'bg-red-500' : 'bg-yellow-400'}`} />
                   </div>
                 )}
               </div>

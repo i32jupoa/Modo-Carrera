@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import { useEffect, useState, useRef } from "react";
+import { Trophy } from "lucide-react";
 
 import { loadSave, SaveGame } from "@/lib/store";
 
@@ -362,7 +363,7 @@ function CupPage() {
 
         <div>
 
-          <h1 className="text-2xl font-black">🛡 Copa nacional</h1>
+          <h1 className="text-2xl font-black">Copa nacional</h1>
 
           <p className="text-xs text-muted-foreground">Eliminatoria a partido único · Todos los equipos del país</p>
 
@@ -392,7 +393,7 @@ function CupPage() {
 
         <div className="panel-glow p-6 mb-6 text-center">
 
-          <div className="text-4xl mb-2">🏆</div>
+          <Trophy className="h-10 w-10 mx-auto mb-2 text-primary/90" />
 
           <div className="text-xs uppercase tracking-wider text-muted-foreground">Campeón</div>
 

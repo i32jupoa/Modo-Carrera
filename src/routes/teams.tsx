@@ -227,14 +227,14 @@ function TeamsPage() {
                       const suspensions = save.suspensions[save.myTeamId] ?? [];
                       const suspension = suspensions.find(s => s.playerId === String(p.ID));
                       if (suspension && suspension.matchdaysRemaining > 0) {
-                        suspensionStatus = `🔴 ${suspension.matchdaysRemaining}j`;
+                        suspensionStatus = `S${suspension.matchdaysRemaining}j`;
                       }
                     }
                     
                     // Check injury status
                     let injuryStatus = "";
                     if (stats.injuredUntil > 0) {
-                      injuryStatus = `🚑 ${stats.injuredUntil}j`;
+                      injuryStatus = `I${stats.injuredUntil}j`;
                     }
                     
                     const status = suspensionStatus || injuryStatus || "-";
@@ -257,8 +257,8 @@ function TeamsPage() {
                         <td className="py-2 px-1 text-center font-semibold text-primary">{stats.goals}</td>
                         <td className="py-2 px-1 text-center font-semibold text-accent">{stats.assists}</td>
                         <td className="py-2 px-1 text-center font-bold">{goalContributions}</td>
-                        <td className="py-2 px-1 text-center text-yellow-500">🟨 {stats.yellowCards}</td>
-                        <td className="py-2 px-1 text-center text-red-500">🟥 {stats.redCards}</td>
+                        <td className="py-2 px-1 text-center text-yellow-500">{stats.yellowCards}</td>
+                        <td className="py-2 px-1 text-center text-red-500">{stats.redCards}</td>
                         <td className="py-2 px-1 text-center font-semibold">{status}</td>
                       </tr>
                     );
@@ -267,7 +267,7 @@ function TeamsPage() {
             </table>
           </div>
           <p className="text-[0.65rem] text-muted-foreground mt-3">
-            PJ = Partidos Jugados · Contrib. = Goles + Asistencias · Amarillas y rojas simuladas · Estado: 🔴 = Suspendido, 🚑 = Lesionado, j = jornadas restantes
+            PJ = Partidos Jugados · Contrib. = Goles + Asistencias · Amarillas y rojas simuladas · Estado: S = Suspendido, I = Lesionado, j = jornadas restantes
           </p>
         </div>
       )}

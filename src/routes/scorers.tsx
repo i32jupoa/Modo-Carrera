@@ -29,10 +29,10 @@ const PRIORITY_COUNTRIES = ["España", "Inglaterra", "Italia", "Alemania", "Fran
 type Tab = "scorers" | "assisters" | "yellows" | "reds";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "scorers",   label: "Goleadores",  icon: "⚽" },
-  { id: "assisters", label: "Asistentes",  icon: "🎯" },
-  { id: "yellows",   label: "Amarillas",   icon: "🟨" },
-  { id: "reds",      label: "Rojas",       icon: "🟥" },
+  { id: "scorers",   label: "Goleadores",  icon: "" },
+  { id: "assisters", label: "Asistentes",  icon: "" },
+  { id: "yellows",   label: "Amarillas",   icon: "" },
+  { id: "reds",      label: "Rojas",       icon: "" },
 ];
 
 export const Route = createFileRoute("/scorers")({ component: ScorersPage });
@@ -91,9 +91,7 @@ function ScorersPage() {
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-5">
       {/* Header */}
-      <h1 className="text-2xl font-black">
-        {currentTab.icon} Rankings — {currentTab.label}
-      </h1>
+      <h1 className="text-2xl font-black">Rankings — {currentTab.label}</h1>
 
       {/* Tab bar */}
       <div className="flex rounded-lg overflow-hidden border border-border text-sm font-semibold w-fit">
@@ -117,9 +115,9 @@ function ScorersPage() {
               <SelectValue placeholder="Competición" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">🌍 Todas las competiciones</SelectItem>
-              <SelectItem value="league">🏆 Liga</SelectItem>
-              <SelectItem value="cup">🥇 Copa nacional</SelectItem>
+              <SelectItem value="all">Todas las competiciones</SelectItem>
+              <SelectItem value="league">Liga</SelectItem>
+              <SelectItem value="cup">Copa nacional</SelectItem>
             </SelectContent>
           </Select>
         )}
@@ -131,7 +129,7 @@ function ScorersPage() {
               <SelectValue placeholder="Todas las ligas" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">🌍 Todas las ligas</SelectItem>
+              <SelectItem value="all">Todas las ligas</SelectItem>
               {ALL_LEAGUES.map((lg) => (
                 <SelectItem key={lg} value={lg}>
                   <div className="flex items-center gap-2">
@@ -151,7 +149,7 @@ function ScorersPage() {
               <SelectValue placeholder="Todos los países" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">🌍 Todos los países</SelectItem>
+              <SelectItem value="all">Todos los países</SelectItem>
               {allCountries.map((country) => (
                 <SelectItem key={country} value={country}>
                   <div className="flex items-center gap-2">

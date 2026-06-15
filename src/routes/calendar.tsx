@@ -19,6 +19,7 @@ import { TeamLogo } from "@/components/TeamLogo";
 import { CupDrawModal } from "@/components/CupDrawModal";
 
 import { UCLDrawModal } from "@/components/UCLDrawModal";
+import { Trophy } from "lucide-react";
 
 import { UCL_START, UCL_CALENDAR, uclDayOffset } from "@/data/ucl";
 
@@ -1406,7 +1407,7 @@ function CalendarPage() {
 
                       const bgColor = isCup ? "bg-purple-600/90" : "bg-red-600/90";
 
-                      const label = isCup ? "🛡" : `J${f.matchday}`;
+                      const label = isCup ? "C" : `J${f.matchday}`;
 
                       return (
 
@@ -1451,11 +1452,7 @@ function CalendarPage() {
                   {isDrawDay && inMonth && !isToday && (
 
                     <div className="mx-auto flex items-center gap-1 px-2 py-1 bg-purple-500/20 border border-purple-500/40 rounded-full">
-
-                      <span className="text-[0.4rem] font-bold text-purple-400">🎱</span>
-
                       <span className="text-[0.35rem] font-bold text-purple-300 uppercase">Sorteo</span>
-
                     </div>
 
                   )}
@@ -1463,11 +1460,8 @@ function CalendarPage() {
                   {uclDrawDays.has(iso) && inMonth && (
 
                     <div className="mx-auto flex items-center gap-1 px-2 py-1 bg-blue-500/20 border border-blue-500/40 rounded-full">
-
-                      <span className="text-[0.4rem] font-bold text-blue-400">🏆</span>
-
+                      <Trophy className="h-3 w-3 text-blue-300" />
                       <span className="text-[0.35rem] font-bold text-blue-300 uppercase">UCL Draw</span>
-
                     </div>
 
                   )}
@@ -1500,7 +1494,7 @@ function CalendarPage() {
 
                           {!isHome && <TeamLogo teamName={opponent.name} leagueName={getLeagueName(opponent.league)} size={12} />}
 
-                          <span>🏆</span>
+                          <Trophy className="h-3 w-3 inline-block text-white/90" />
 
                           {isHome && <TeamLogo teamName={opponent.name} leagueName={getLeagueName(opponent.league)} size={14} />}
 

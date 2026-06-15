@@ -455,9 +455,9 @@ function NextMatchCard({ fixture, myId, onPlayMatch }: { fixture: Fixture; myId:
   
   let headerText = "";
   if (fixture.competition === "cup") {
-    headerText = `🛡 Copa Nacional · ${roundNames[fixture.round || ""] || fixture.round || ""}`;
+    headerText = `Copa Nacional · ${roundNames[fixture.round || ""] || fixture.round || ""}`;
   } else if (fixture.competition === "ucl") {
-    headerText = `🏆 Champions League · ${fixture.round || 'Fase de Liga'}`;
+    headerText = `Champions League · ${fixture.round || 'Fase de Liga'}`;
   } else {
     headerText = `Liga · Jornada ${fixture.matchday}`;
   }

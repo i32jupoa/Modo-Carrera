@@ -13,6 +13,8 @@ export type Team = {
   def: number;
   stars: string[]; // mejores jugadores
   color: string; // color base
+  category?: 'Gigante' | 'Aspirante' | 'Modesto'; // clasificación del equipo
+  budget?: number; // presupuesto inicial en millones €
 };
 
 const LEAGUE_TO_COUNTRY: Record<string, { country: string; flag: string }> = {

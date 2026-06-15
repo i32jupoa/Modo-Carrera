@@ -1,6 +1,6 @@
 import React from "react";
 import { motion } from "framer-motion";
-import { Globe, Users, TrendingUp, Wallet } from "lucide-react";
+import { Globe, Users, TrendingUp, Wallet, Cpu } from "lucide-react";
 import MainActionCards from "./MainActionCards";
 
 export default function HeroAAA({ hasSave, resetGame, loading }: { hasSave: boolean; resetGame: () => void; loading: boolean; }) {
@@ -32,15 +32,15 @@ export default function HeroAAA({ hasSave, resetGame, loading }: { hasSave: bool
           <div className="flex items-center justify-center gap-6 mb-12">
             <div className="h-px w-32 bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
 
-            <motion.span className="text-5xl animate-float" animate={{ y: [-6, 6, -6] }} transition={{ duration: 4, repeat: Infinity }}>⚽</motion.span>
+            <motion.div className="w-12 h-12 rounded-full bg-white/5 border border-white/8 animate-float" animate={{ y: [-6, 6, -6] }} transition={{ duration: 4, repeat: Infinity }} />
 
             <div className="h-px w-32 bg-gradient-to-r from-transparent via-accent/50 to-transparent" />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto mt-14">
-            {[{ title: "Mercado dinámico", desc: "Negociaciones vivas", icon: "💰" }, { title: "IA avanzada", desc: "Clubes con identidad", icon: "🧠" }, { title: "Historias emergentes", desc: "Historias únicas", icon: "🌍" }, { title: "Simulación profunda", desc: "Cada decisión importa", icon: "⚽" }].map((item, idx) => (
+            {[{ title: "Mercado dinámico", desc: "Negociaciones vivas", Icon: Wallet }, { title: "IA avanzada", desc: "Clubes con identidad", Icon: Cpu }, { title: "Historias emergentes", desc: "Historias únicas", Icon: Globe }, { title: "Simulación profunda", desc: "Cada decisión importa", Icon: TrendingUp }].map((item, idx) => (
               <motion.div key={item.title} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.08, duration: 0.35 }} className="feature-card-aaa">
-                <div className="text-3xl mb-4">{item.icon}</div>
+                <div className="text-3xl mb-4"><item.Icon className="h-7 w-7" /></div>
                 <div className="text-lg font-black mb-1">{item.title}</div>
                 <div className="text-sm text-white/60">{item.desc}</div>
               </motion.div>

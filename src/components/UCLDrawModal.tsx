@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Trophy } from "lucide-react";
 import { SaveGame, applyUCLLeagueDraw, applyUCLPlayoffDraw, applyUCLKnockoutDraw } from "@/lib/store";
 import { assignUCLPots, UCL_SEASON1_IDS, emptyTableEntry } from "@/data/ucl";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
@@ -189,7 +190,7 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
 
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-950 to-indigo-900 px-6 py-3 rounded-t-xl flex items-center gap-3 shrink-0">
-          <span className="text-2xl">🏆</span>
+          <Trophy className="h-6 w-6 text-white/90" />
           <div>
             <h2 className="text-white font-bold text-base">{titles[type]}</h2>
             <p className="text-blue-300 text-xs">UEFA Champions League</p>
@@ -247,7 +248,7 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
             {/* INTRO */}
             {step === "intro" && (
               <div className="flex flex-col gap-2 flex-1 justify-center items-center text-center">
-                <div className="text-5xl mb-2">🎰</div>
+                <div className="text-5xl mb-2 opacity-80">Sorteo</div>
                 <h3 className="text-lg font-bold text-white">¿Listo para el sorteo?</h3>
                 <p className="text-sm text-muted-foreground max-w-xs">
                   {type === "league"

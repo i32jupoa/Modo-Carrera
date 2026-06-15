@@ -27,7 +27,7 @@ export function GameDayBar() {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 text-xs font-semibold hover:bg-blue-500/25 transition"
         >
           <Trophy className="h-3.5 w-3.5 shrink-0" />
-          🏆 Sorteo UCL · Ir al Calendario
+          Sorteo UCL · Ir al Calendario
         </Link>
       )}
       {pendingCupDraw && (
@@ -36,7 +36,7 @@ export function GameDayBar() {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/25 transition"
         >
           <Trophy className="h-3.5 w-3.5 shrink-0" />
-          ¡Sorteo de copa! Ir al Calendario
+          Sorteo de copa · Ir al Calendario
         </Link>
       )}
       <span className="hidden sm:inline text-xs text-muted-foreground capitalize truncate max-w-[12rem]">

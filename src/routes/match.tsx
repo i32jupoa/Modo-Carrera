@@ -74,7 +74,7 @@ function MatchPage() {
 
     for (const inj of result.injuries || []) {
       if (inj.team === myTeam) {
-        toast.error(`🚑 ${inj.playerName} se ha lesionado (${inj.reason}) — ${inj.weeks} partido${inj.weeks > 1 ? 's' : ''} de baja`);
+        toast.error(`${inj.playerName} se ha lesionado (${inj.reason}) — ${inj.weeks} partido${inj.weeks > 1 ? 's' : ''} de baja`);
       }
     }
 
@@ -82,7 +82,7 @@ function MatchPage() {
       if (card.cardType === "red" && card.team === myTeam) {
         const susp = save.suspensions[myTeamId]?.find(s => s.playerId === card.playerId);
         const matchdays = susp?.matchdaysRemaining ?? 1;
-        toast.error(`🔴 ${card.playerName} expulsado — suspensión de ${matchdays} partido${matchdays > 1 ? 's' : ''}`);
+        toast.error(`${card.playerName} expulsado — suspensión de ${matchdays} partido${matchdays > 1 ? 's' : ''}`);
       }
     }
   }, [phase]);
@@ -981,9 +981,9 @@ function MatchPage() {
   
   // Determine header text based on match type
   const headerText = matchType === 'CUP'
-    ? `🛡 Copa Nacional · ${cupRound || fixture.round || ""}`
+    ? `Copa Nacional · ${cupRound || fixture.round || ""}`
     : matchType === 'UCL'
-    ? `⭐ Champions League · Jornada ${fixture.matchday}`
+    ? `Champions League · Jornada ${fixture.matchday}`
     : `Liga · Jornada ${fixture.matchday}`;
 
   return (
@@ -1170,12 +1170,11 @@ function MatchPage() {
                   // Card event
                   const card = e as CardEvent;
                   const cardTeam = card.team === "home" ? home : away;
-                  const cardEmoji = card.cardType === "yellow" ? "🟨" : "🔴";
                   const cardText = card.isSecondYellow ? "2ª amarilla → roja" : card.cardType === "yellow" ? "Tarjeta amarilla" : "Tarjeta roja";
                   return (
                     <div key={`card-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
                       <span className="scoreline text-sm text-primary font-bold w-10">{card.minute}'</span>
-                      <span className="text-lg">{cardEmoji}</span>
+                      <span className={`w-5 h-3 rounded-sm shrink-0 ${card.cardType === 'yellow' ? 'bg-yellow-400' : 'bg-red-500'}`} />
                       <TeamLogo teamName={cardTeam.name} leagueName={getLeagueName(cardTeam.league)} size={22} />
                       <div className="text-sm min-w-0">
                         <span className="font-bold">{card.playerName}</span>
@@ -1191,7 +1190,9 @@ function MatchPage() {
                   return (
                     <div key={`goal-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
                       <span className="scoreline text-sm text-primary font-bold w-10">{e.minute}'</span>
-                      <span className="text-lg">{isPenalty ? '🎯' : '⚽'}</span>
+                      <span className="text-lg">
+                        {isPenalty ? <span className="px-1.5 py-0.5 text-[0.8rem] font-bold rounded bg-white/6">P</span> : <span className="w-3 h-3 inline-block rounded-full bg-white/80" />}
+                      </span>
                       <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
                       <div className="text-sm min-w-0">
                         <span className="font-bold">{e.scorerName}</span>
@@ -1211,9 +1212,9 @@ function MatchPage() {
         )}
         {phase === "done" && fixture.result && (
           <>
-            {injuries.length > 0 && (
+                {injuries.length > 0 && (
               <div className="mt-4 pt-4 border-t border-border/60">
-                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">🚑 Lesiones</div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Lesiones</div>
                 {injuries.map((inj, i) => {
                   const team = inj.team === "home" ? home : away;
                   return (

@@ -54,13 +54,13 @@ function AssistsPage() {
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <h1 className="text-2xl font-black">🎯 Máximos asistentes</h1>
+        <h1 className="text-2xl font-black">Máximos asistentes</h1>
         <Select value={league} onValueChange={(value) => setLeague(value as LeagueId | "all")}>
           <SelectTrigger className="w-[200px]">
             <SelectValue placeholder="Todas las ligas" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">🌍 Todas las ligas</SelectItem>
+            <SelectItem value="all">Todas las ligas</SelectItem>
             {ALL_LEAGUES.map((lg) => (
               <SelectItem key={lg} value={lg}>
                 <div className="flex items-center gap-2">

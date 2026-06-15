@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { Trophy } from "lucide-react";
 import { loadSave, saveSave, SaveGame, simulatePendingUCLThroughDay } from "@/lib/store";
 import { uclDayOffset } from "@/data/ucl";
 import { usePlayersStore } from "@/store/playersStore";
@@ -1445,7 +1446,7 @@ function UCLPage() {
   if (!ucl || !ucl.phase || !ucl.participants) {
     return (
       <div className="p-6 text-center space-y-2">
-        <div className="text-4xl">🏆</div>
+        <div className="text-4xl"><Trophy className="h-10 w-10 text-white/90" /></div>
         <h2 className="text-xl font-bold">Champions League</h2>
         <p className="text-muted-foreground">La Champions League comenzará el 3 de julio con el sorteo de la fase de liga.</p>
       </div>
@@ -1478,7 +1479,7 @@ function UCLPage() {
       {/* Header */}
       <div className="bg-gradient-to-r from-blue-950 to-indigo-950 border-b border-border px-4 py-5">
         <div className="flex items-center gap-3">
-          <div className="text-3xl">🏆</div>
+          <div className="text-3xl"><Trophy className="h-8 w-8 text-white/90" /></div>
           <div>
             <h1 className="text-xl font-bold text-white">UEFA Champions League</h1>
             <p className="text-blue-300 text-sm">

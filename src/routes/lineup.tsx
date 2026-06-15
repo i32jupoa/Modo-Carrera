@@ -698,7 +698,7 @@ function LineupPage() {
             <span className="font-bold text-primary">Titulares: {activeStartersCount}/11</span>
             <span className="font-bold text-muted-foreground">Suplentes: {bench.length}</span>
             {!isLineupComplete && (
-              <span className="text-destructive font-bold">⚠️ La plantilla no está completa.</span>
+              <span className="text-destructive font-bold">La plantilla no está completa.</span>
             )}
           </div>
           <div className="text-2xl font-black scoreline text-primary">
@@ -806,15 +806,17 @@ function LineupPage() {
                     <div className="font-semibold truncate text-sm flex items-center gap-1">
                       {player.name}
                       {isInjured && (
-                        <span className="text-xs text-destructive">
-                          🚑 {player.injuredUntil - leagueMd}p
+                        <span className="text-xs text-destructive flex items-center gap-1">
+                          <span className="w-3 h-3 rounded-full bg-orange-400 inline-block" />
+                          {player.injuredUntil - leagueMd}p
                         </span>
                       )}
                       {isSuspended && (() => {
                         const susp = save?.suspensions[save.myTeamId]?.find(s => s.playerId === player.id);
                         return (
-                          <span className="text-xs text-destructive">
-                            🔴 {susp?.matchdaysRemaining ?? 0}p
+                          <span className="text-xs text-destructive flex items-center gap-1">
+                            <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
+                            {susp?.matchdaysRemaining ?? 0}p
                           </span>
                         );
                       })()}

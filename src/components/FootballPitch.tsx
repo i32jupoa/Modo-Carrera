@@ -95,8 +95,12 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
       <span className="text-[0.7rem] font-bold leading-tight">{player.rating}</span>
       <span className="text-[0.55rem] leading-tight truncate max-w-full px-1">{shortName}</span>
       <span className="text-[0.45rem] leading-tight text-muted-foreground">{player.position}</span>
-      {player.injured && <span className="absolute -top-1 -right-1 text-xs">🚑</span>}
-      {player.suspended && <span className="absolute -top-1 -right-1 text-xs">🔴</span>}
+      {player.injured && (
+        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-orange-400" title="Lesionado" />
+      )}
+      {player.suspended && (
+        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500" title="Suspendido" />
+      )}
     </button>
   );
 }

@@ -718,7 +718,7 @@ function TransfersPage() {
                         loading="lazy"
                       />
                     ) : (
-                      <span className="text-2xl opacity-40">⚽</span>
+                      <div className="w-6 h-6 rounded-full bg-white/5 opacity-80" />
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
