@@ -1,5 +1,5 @@
 import { Team, TEAMS, teamById } from "./teams";
-import playersData from "./players.json";
+import playersData from "./playersData";
 
 export type Position = "GK" | "DEF" | "MID" | "FWD";
 

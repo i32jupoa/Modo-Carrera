@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";

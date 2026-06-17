@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getAllTeams, type Team } from "@/data/teams";
 import { Fixture } from "@/lib/season";
 

@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useNavigate, useSearch, useLocation } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSave, SaveGame, saveSave, setLineup, setFormation } from "@/lib/store";
-import { teamById } from "@/data/teams";
+import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
+import { TeamLogo } from "@/components/TeamLogo";
 import { Position } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { usePlayersStore } from "@/store/playersStore";
@@ -14,6 +15,26 @@ import {
   type PositionRole,
 } from "@/lib/formations";
 import { toast } from "sonner";
+import {
+  loadTactics,
+  saveTactics,
+  type TeamTactics,
+  type PlayStyle,
+  type Pressure,
+  type DefenseLine,
+} from "@/lib/teamTactics";
+import { Shield, Swords, Scale, ChevronsDown, ChevronsUp, Minus, Crown, Goal, Flag, CornerDownRight, CalendarClock } from "lucide-react";
+
+// Friendly label for an empty slot, derived from formation position key.
+function emptySlotLabel(posKey: string): string {
+  const k = posKey.toLowerCase().replace(/\d+$/, "");
+  const MAP: Record<string, string> = {
+    gk: "POR", cb: "DFC", lb: "LD", rb: "LI", lwb: "CAD", rwb: "CAI",
+    cdm: "MCD", cm: "MC", cam: "MCO", lm: "MI", rm: "MD",
+    lw: "EI", rw: "ED", st: "DC", cf: "SD",
+  };
+  return MAP[k] ?? posKey.toUpperCase();
+}
 
 export const Route = createFileRoute("/lineup")({ component: LineupPage });
 
@@ -242,6 +263,19 @@ function LineupPage() {
 
   const formationPositions = getFormationPositions(selectedFormation);
 
+  // ---- Tactics (style / pressure / defense line / captain & set-piece takers) ----
+  const [tactics, setTactics] = useState<TeamTactics>(() => loadTactics(save?.myTeamId ?? ""));
+  useEffect(() => {
+    if (save?.myTeamId) setTactics(loadTactics(save.myTeamId));
+  }, [save?.myTeamId]);
+  function updateTactics(patch: Partial<TeamTactics>) {
+    setTactics((prev) => {
+      const next = { ...prev, ...patch };
+      if (save?.myTeamId) saveTactics(save.myTeamId, next);
+      return next;
+    });
+  }
+
   // Map players to formation positions
   const playerPositions = useMemo(() => {
     const positions: { [key: string]: any } = {};
@@ -270,6 +304,55 @@ function LineupPage() {
     }
     return null;
   }
+
+  // ---- XI summary metrics ----
+  const xiPlayers = useMemo(
+    () =>
+      startingXI
+        .map((id) => (id ? squad.find((p) => p.id === id) : null))
+        .filter((p): p is NonNullable<typeof p> => !!p),
+    [startingXI, squad],
+  );
+  const avgOvrXI = xiPlayers.length
+    ? Math.round(xiPlayers.reduce((s, p) => s + (p.rating ?? 0), 0) / xiPlayers.length)
+    : 0;
+  const avgAgeXI = xiPlayers.length
+    ? (xiPlayers.reduce((s, p) => s + (p.age ?? 0), 0) / xiPlayers.length).toFixed(1)
+    : "—";
+
+  // Chemistry: % of XI placed in their natural role
+  const chemistry = useMemo(() => {
+    if (xiPlayers.length === 0) return 0;
+    let matched = 0;
+    let total = 0;
+    Object.entries(playerPositions).forEach(([posKey, player]) => {
+      if (!player) return;
+      total += 1;
+      const requiredRole = FORMATION_COORDINATES[selectedFormation][posKey]?.role;
+      const playerRole = getPlayerRole((player as any).position);
+      if (requiredRole && playerRole && requiredRole === playerRole) matched += 1;
+    });
+    return total ? Math.round((matched / total) * 100) : 0;
+  }, [playerPositions, selectedFormation, xiPlayers.length]);
+
+  // Next match (league only, simple lookup)
+  const nextMatch = useMemo(() => {
+    if (!save) return null;
+    const myId = save.myTeamId;
+    const all = save.fixtures[save.myLeague] ?? [];
+    const upcoming = all.find(
+      (f) => !f.result && (f.homeId === myId || f.awayId === myId),
+    );
+    if (!upcoming) return null;
+    const isHome = upcoming.homeId === myId;
+    const rivalId = isHome ? upcoming.awayId : upcoming.homeId;
+    return {
+      rival: teamById(rivalId),
+      isHome,
+      matchday: upcoming.matchday,
+      competition: "Liga" as const,
+    };
+  }, [save]);
 
   // Get the role for a position key in the current formation
   function getPositionRoleForKey(posKey: string): PositionRole {
@@ -668,44 +751,105 @@ function LineupPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-black">Alineación</h1>
-          <p className="text-xs text-muted-foreground">{myTeam.name}</p>
+      <div className="panel-glow mb-6 overflow-hidden">
+        <div className="flex flex-wrap items-center gap-4 p-5">
+          <TeamLogo
+            teamName={myTeam.name}
+            leagueName={LEAGUES[myTeam.league as LeagueId]?.name || myTeam.league}
+            size={72}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+              Dirección de equipo · Pizarra del míster
+            </p>
+            <h1 className="truncate text-2xl font-black sm:text-3xl">{myTeam.name}</h1>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              {LEAGUES[myTeam.league as LeagueId]?.name || myTeam.league} · {selectedFormation}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-center">
+              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">OVR del 11</p>
+              <p className="scoreline text-2xl font-black text-primary">{avgOvrXI || "—"}</p>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-center">
+              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Química</p>
+              <p className={`scoreline text-2xl font-black ${chemistry >= 85 ? "text-emerald-400" : chemistry >= 60 ? "text-yellow-300" : "text-destructive"}`}>
+                {xiPlayers.length ? `${chemistry}%` : "—"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedFormation}
+              onChange={(e) => handleFormationChange(e.target.value as FormationName)}
+              className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold transition hover:border-primary/60"
+            >
+              {ALL_FORMATIONS.map(f => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+            {!fromSeason && !fromMatch && (
+              <button onClick={save_} disabled={!isLineupComplete}
+                className="rounded-lg bg-primary px-5 py-2 text-sm font-bold text-primary-foreground glow-neon disabled:opacity-40 disabled:glow-cyan-0">
+                Guardar
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={selectedFormation}
-            onChange={(e) => handleFormationChange(e.target.value as FormationName)}
-            className="px-3 py-2 rounded-lg bg-card border border-border text-sm hover:border-accent transition"
-          >
-            {ALL_FORMATIONS.map(f => (
-              <option key={f} value={f}>{f}</option>
-            ))}
-          </select>
-          {!fromSeason && !fromMatch && (
-            <button onClick={save_} disabled={!isLineupComplete}
-              className="px-5 py-2 rounded-lg bg-primary text-primary-foreground font-bold text-sm glow-neon disabled:opacity-40 disabled:glow-cyan-0">
-              Guardar
-            </button>
-          )}
+        <div className="border-t border-border/40 bg-background/40 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${
+                isLineupComplete
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                  : "border-destructive/40 bg-destructive/10 text-destructive"
+              }`}>
+                <span className={`h-2 w-2 rounded-full ${isLineupComplete ? "bg-emerald-400" : "bg-destructive"}`} />
+                Titulares {activeStartersCount}/11
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-3 py-1 text-xs font-bold text-muted-foreground">
+                Suplentes {bench.length}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-3 py-1 text-xs font-bold text-muted-foreground">
+                Edad media {avgAgeXI}
+              </span>
+              {!isLineupComplete && (
+                <span className="text-xs font-bold text-destructive">La plantilla no está completa.</span>
+              )}
+            </div>
+            <div className="scoreline text-xl font-black text-primary sm:text-2xl">
+              {selectedFormation}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="panel-glow p-4 mb-6">
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-4">
-            <span className="font-bold text-primary">Titulares: {activeStartersCount}/11</span>
-            <span className="font-bold text-muted-foreground">Suplentes: {bench.length}</span>
-            {!isLineupComplete && (
-              <span className="text-destructive font-bold">La plantilla no está completa.</span>
-            )}
+      {nextMatch && (
+        <div className="panel mb-6 flex flex-wrap items-center justify-between gap-4 p-4">
+          <div className="flex items-center gap-3">
+            <CalendarClock className="h-5 w-5 text-primary" />
+            <div>
+              <p className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                Próximo partido · J{nextMatch.matchday} {nextMatch.competition}
+              </p>
+              <p className="text-sm font-bold">
+                {nextMatch.isHome ? "Local" : "Visitante"} · vs {nextMatch.rival.name}
+              </p>
+            </div>
           </div>
-          <div className="text-2xl font-black scoreline text-primary">
-            {selectedFormation}
+          <div className="flex items-center gap-3">
+            <TeamLogo
+              teamName={nextMatch.rival.name}
+              leagueName={LEAGUES[nextMatch.rival.league as LeagueId]?.name || nextMatch.rival.league}
+              size={48}
+            />
+            <span className="scoreline text-lg font-black text-muted-foreground">
+              {nextMatch.isHome ? "vs" : "@"}
+            </span>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-6 mb-6">
         {/* Football Pitch */}
@@ -762,9 +906,11 @@ function LineupPage() {
                     }}
                   >
                     <div
-                      className="w-10 h-10 rounded-full border-2 border-dashed border-muted-foreground/50 bg-muted/20 flex items-center justify-center text-muted-foreground/50 text-xs font-bold"
+                      className="w-12 h-12 rounded-full border-2 border-dashed border-primary/40 bg-background/40 flex flex-col items-center justify-center text-primary/70 text-[0.55rem] font-black leading-tight"
+                      title={`Hueco vacío: ${emptySlotLabel(posKey)}`}
                     >
-                      +
+                      <span className="scoreline text-[0.6rem]">{emptySlotLabel(posKey)}</span>
+                      <span className="text-base leading-none">+</span>
                     </div>
                   </div>
                 );
@@ -833,6 +979,13 @@ function LineupPage() {
         </div>
       </div>
 
+      {/* Tactics panel */}
+      <TacticsPanel
+        tactics={tactics}
+        updateTactics={updateTactics}
+        xiPlayers={xiPlayers as any}
+      />
+
       {(fromSeason || fromMatch) && (
         <div className="mt-8 flex justify-end">
           <button
@@ -870,6 +1023,196 @@ function LineupPage() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// Tactics panel — style, pressure, defense line, set-piece roles
+// ============================================================
+type XiPlayer = { id: string; name: string; position: string; rating: number };
+
+function TacticsPanel({
+  tactics,
+  updateTactics,
+  xiPlayers,
+}: {
+  tactics: TeamTactics;
+  updateTactics: (patch: Partial<TeamTactics>) => void;
+  xiPlayers: XiPlayer[];
+}) {
+  const styles: { id: PlayStyle; label: string; icon: any; tone: string; desc: string }[] = [
+    { id: "defensive", label: "Defensivo", icon: Shield, tone: "border-sky-500/40 bg-sky-500/10 text-sky-300", desc: "Bloque bajo, contragolpe" },
+    { id: "balanced", label: "Equilibrado", icon: Scale, tone: "border-primary/40 bg-primary/10 text-primary", desc: "Posesión y control" },
+    { id: "offensive", label: "Ofensivo", icon: Swords, tone: "border-rose-500/40 bg-rose-500/10 text-rose-300", desc: "Presión arriba, ataque directo" },
+  ];
+  const pressureOpts: { id: Pressure; label: string; icon: any }[] = [
+    { id: "low", label: "Baja", icon: ChevronsDown },
+    { id: "medium", label: "Media", icon: Minus },
+    { id: "high", label: "Alta", icon: ChevronsUp },
+  ];
+  const lineOpts: { id: DefenseLine; label: string; icon: any }[] = [
+    { id: "low", label: "Baja", icon: ChevronsDown },
+    { id: "medium", label: "Media", icon: Minus },
+    { id: "high", label: "Alta", icon: ChevronsUp },
+  ];
+
+  const TakerSelect = ({
+    label,
+    icon: Icon,
+    value,
+    onChange,
+    tone,
+  }: {
+    label: string;
+    icon: any;
+    value: string | null;
+    onChange: (id: string | null) => void;
+    tone: string;
+  }) => (
+    <div className={`rounded-lg border ${tone} p-3`}>
+      <div className="mb-1.5 flex items-center gap-1.5 text-[0.6rem] font-bold uppercase tracking-wider">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </div>
+      <select
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value || null)}
+        className="w-full rounded-md border border-border/60 bg-background/60 px-2 py-1.5 text-xs font-semibold"
+      >
+        <option value="">— Sin asignar —</option>
+        {xiPlayers.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name} ({p.position} · {p.rating})
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+
+  return (
+    <div className="panel-glow mt-6 mb-6 p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-sm font-black uppercase tracking-wider">Tácticas avanzadas</h2>
+        <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+          Auto-guardado
+        </span>
+      </div>
+
+      {/* Play style */}
+      <div className="mb-5">
+        <p className="mb-2 text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
+          Estilo de juego
+        </p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {styles.map((s) => {
+            const active = tactics.style === s.id;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => updateTactics({ style: s.id })}
+                className={`flex items-center gap-3 rounded-xl border-2 p-3 text-left transition ${
+                  active ? `${s.tone} ring-2 ring-current/40` : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/40"
+                }`}
+              >
+                <s.icon className="h-5 w-5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-black">{s.label}</p>
+                  <p className="truncate text-[0.65rem] opacity-80">{s.desc}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Pressure + Defense line */}
+      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <p className="mb-2 text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
+            Presión
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {pressureOpts.map((o) => {
+              const active = tactics.pressure === o.id;
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => updateTactics({ pressure: o.id })}
+                  className={`flex flex-col items-center gap-1 rounded-lg border-2 py-2 text-xs font-bold transition ${
+                    active ? "border-primary bg-primary/10 text-primary" : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  <o.icon className="h-4 w-4" />
+                  {o.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <p className="mb-2 text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
+            Línea defensiva
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {lineOpts.map((o) => {
+              const active = tactics.defenseLine === o.id;
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => updateTactics({ defenseLine: o.id })}
+                  className={`flex flex-col items-center gap-1 rounded-lg border-2 py-2 text-xs font-bold transition ${
+                    active ? "border-accent bg-accent/10 text-accent" : "border-border/60 bg-card/60 text-muted-foreground hover:border-accent/40"
+                  }`}
+                >
+                  <o.icon className="h-4 w-4" />
+                  {o.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Captain & set-piece takers */}
+      <div>
+        <p className="mb-2 text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
+          Capitán y lanzadores
+        </p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <TakerSelect
+            label="Capitán"
+            icon={Crown}
+            value={tactics.captainId}
+            onChange={(id) => updateTactics({ captainId: id })}
+            tone="border-amber-500/40 bg-amber-500/10 text-amber-300"
+          />
+          <TakerSelect
+            label="Penaltis"
+            icon={Goal}
+            value={tactics.penaltyTakerId}
+            onChange={(id) => updateTactics({ penaltyTakerId: id })}
+            tone="border-rose-500/40 bg-rose-500/10 text-rose-300"
+          />
+          <TakerSelect
+            label="Faltas"
+            icon={Flag}
+            value={tactics.freekickTakerId}
+            onChange={(id) => updateTactics({ freekickTakerId: id })}
+            tone="border-primary/40 bg-primary/10 text-primary"
+          />
+          <TakerSelect
+            label="Córners"
+            icon={CornerDownRight}
+            value={tactics.cornerTakerId}
+            onChange={(id) => updateTactics({ cornerTakerId: id })}
+            tone="border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+          />
+        </div>
+      </div>
     </div>
   );
 }

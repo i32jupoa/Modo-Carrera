@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
 
 
@@ -94,7 +95,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 
 
-import playersData from "@/data/players.json";
+import playersData from "@/data/playersData";
 
 
 

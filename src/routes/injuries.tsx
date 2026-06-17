@@ -7,7 +7,7 @@ import { LeagueLogo } from "@/components/LeagueLogo";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { selectInjuredPlayers } from "@/store/playersStore";
 import type { Player } from "@/data/players";
-import { Activity, Shield, Check, Filter, X } from "lucide-react";
+import { Activity, Shield, Filter, X, Stethoscope, AlertTriangle, Clock } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -132,6 +132,27 @@ function InjuriesPage() {
     setShowFilters(false);
   };
 
+  const summary = useMemo(() => {
+    if (!save) return { total: 0, severe: 0, light: 0, avg: 0 };
+    let severe = 0;
+    let light = 0;
+    let totalOut = 0;
+    for (const p of filteredList) {
+      const team = teamById(p.teamId);
+      const md = save.currentMatchday[team.league] ?? 0;
+      const out = p.injuredUntil - md;
+      totalOut += out;
+      if (out >= 6) severe++;
+      else light++;
+    }
+    return {
+      total: filteredList.length,
+      severe,
+      light,
+      avg: filteredList.length ? Math.round(totalOut / filteredList.length) : 0,
+    };
+  }, [filteredList, save]);
+
   if (!save) return null;
   if (loading) {
     return (
@@ -148,10 +169,15 @@ function InjuriesPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-destructive/20 text-destructive grid place-items-center">
-            <Activity className="h-5 w-5" />
+          <div className="grid h-11 w-11 place-items-center rounded-xl border border-destructive/40 bg-destructive/15 text-destructive">
+            <Stethoscope className="h-5 w-5" />
           </div>
-          <h1 className="text-2xl font-black">Parte de lesiones</h1>
+          <div>
+            <h1 className="text-2xl font-black leading-tight">Parte de lesiones</h1>
+            <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+              Servicios médicos del club
+            </p>
+          </div>
         </div>
 
         {/* Filter Toggle Button */}
@@ -172,6 +198,32 @@ function InjuriesPage() {
             </span>
           )}
         </button>
+      </div>
+
+      {/* Summary tiles */}
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="rounded-xl border border-border/60 bg-card/60 p-3">
+          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">En enfermería</p>
+          <p className="scoreline text-2xl font-black text-destructive">{summary.total}</p>
+        </div>
+        <div className="rounded-xl border border-border/60 bg-card/60 p-3">
+          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Lesión grave</p>
+          <p className="scoreline text-2xl font-black text-orange-400">
+            <AlertTriangle className="mr-1 inline h-4 w-4" />
+            {summary.severe}
+          </p>
+        </div>
+        <div className="rounded-xl border border-border/60 bg-card/60 p-3">
+          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Lesión leve</p>
+          <p className="scoreline text-2xl font-black text-yellow-300">{summary.light}</p>
+        </div>
+        <div className="rounded-xl border border-border/60 bg-card/60 p-3">
+          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Baja media</p>
+          <p className="scoreline text-2xl font-black text-primary">
+            <Clock className="mr-1 inline h-4 w-4" />
+            {summary.avg}j
+          </p>
+        </div>
       </div>
 
       {/* Filters Panel */}
@@ -296,23 +348,65 @@ function InjuriesPage() {
         </div>
       ) : (
         /* List */
-        <div className="panel divide-y divide-border/40">
+        <div className="space-y-2">
           {filteredList.map((p) => {
             const team = teamById(p.teamId);
             const md = save.currentMatchday[team.league];
             const out = p.injuredUntil - md;
+            const severe = out >= 6;
+            const moderate = out >= 3 && out < 6;
+            const tone = severe
+              ? "border-destructive/50 from-destructive/15"
+              : moderate
+              ? "border-orange-500/40 from-orange-500/10"
+              : "border-yellow-500/40 from-yellow-500/10";
+            const accent = severe
+              ? "text-destructive"
+              : moderate
+              ? "text-orange-400"
+              : "text-yellow-300";
+            const totalDuration = Math.max(out, 4);
+            const recoveryPct = Math.max(
+              0,
+              Math.min(100, ((totalDuration - out) / totalDuration) * 100),
+            );
             return (
-              <div key={p.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-3">
-                <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={32} />
+              <div
+                key={p.id}
+                className={`grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-xl border bg-gradient-to-r to-transparent p-3 ${tone}`}
+              >
+                <TeamLogo
+                  teamName={team.name}
+                  leagueName={getLeagueName(team.league)}
+                  size={40}
+                />
                 <div className="min-w-0">
-                  <div className="font-bold truncate">{p.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {team.short} · <span className="capitalize">{p.injuryReason ?? "lesión"}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-bold">{p.name}</span>
+                    <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-wider text-foreground/70">
+                      {team.short}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-[0.65rem] text-muted-foreground">
+                    <Activity className={`h-3 w-3 ${accent}`} />
+                    <span className="capitalize">{p.injuryReason ?? "lesión muscular"}</span>
+                    <span>·</span>
+                    <span>
+                      {severe ? "Grave" : moderate ? "Moderada" : "Leve"}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
+                    <div
+                      className={`h-full ${
+                        severe ? "bg-destructive" : moderate ? "bg-orange-400" : "bg-yellow-400"
+                      }`}
+                      style={{ width: `${recoveryPct}%` }}
+                    />
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-lg font-black scoreline text-destructive">{out}</div>
-                  <div className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                  <div className={`scoreline text-2xl font-black ${accent}`}>{out}</div>
+                  <div className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
                     {out === 1 ? "jornada" : "jornadas"}
                   </div>
                 </div>

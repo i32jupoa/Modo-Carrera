@@ -1,4 +1,4 @@
-import playersData from "./players.json";
+import playersData from "./playersData";
 
 export type LeagueId = "laliga" | "premier" | "seriea" | "bundesliga" | "ligue1" | string;
 
