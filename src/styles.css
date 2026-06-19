@@ -116,11 +116,15 @@
 }
 
 button, [role="button"], a {
-  transition: transform var(--motion-duration) ease, box-shadow var(--motion-duration) ease, background-color var(--motion-duration) ease, opacity var(--motion-duration) ease;
+  transition: transform 150ms ease-in-out, box-shadow 150ms ease-in-out, background-color 150ms ease-in-out, opacity 150ms ease-in-out;
+}
+
+button:hover, [role="button"]:hover, a:hover {
+  transform: scale(1.02);
 }
 
 button:active, [role="button"]:active {
-  transform: translateY(1px) scale(0.998);
+  transform: scale(0.98);
 }
 
 button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
@@ -133,20 +137,476 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
 
 
 @layer utilities {
+  /* Glassmorphism Base */
+  .glass {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .glass-strong {
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  /* Shadow System */
+  .shadow-xs {
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  }
+
+  .shadow-sm {
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  }
+
+  .shadow-md {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  }
+
+  .shadow-lg {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  }
+
+  .shadow-xl {
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Glow Effects */
   .glow-neon {
     box-shadow: 0 0 24px -4px color-mix(in oklab, var(--color-primary) 60%, transparent),
                 0 0 1px 1px color-mix(in oklab, var(--color-primary) 40%, transparent);
   }
+
   .glow-cyan {
     box-shadow: 0 0 20px -4px color-mix(in oklab, var(--color-accent) 60%, transparent);
   }
+
+  .glow-ucl {
+    box-shadow: 0 0 30px -6px color-mix(in oklab, var(--color-ucl) 70%, transparent),
+                0 0 60px -12px color-mix(in oklab, var(--color-ucl) 40%, transparent);
+  }
+
+  .glow-gold {
+    box-shadow: 0 0 24px -4px color-mix(in oklab, var(--color-ucl-gold) 60%, transparent),
+                0 0 1px 1px color-mix(in oklab, var(--color-ucl-gold) 40%, transparent);
+  }
+
   .text-glow {
     text-shadow: 0 0 16px color-mix(in oklab, var(--color-primary) 60%, transparent);
   }
+
+  /* Panel Styles */
   .panel {
-    background: linear-gradient(180deg, color-mix(in oklab, var(--color-card) 92%, transparent), color-mix(in oklab, var(--color-background) 95%, transparent));
-    border: 1px solid color-mix(in oklab, var(--color-border) 80%, transparent);
-    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .panel-glow {
+    background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+    border: 1px solid color-mix(in oklab, var(--color-primary) 30%, transparent);
+    border-radius: 24px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow: 0 0 32px -10px color-mix(in oklab, var(--color-primary) 50%, transparent);
+  }
+
+  /* Card Styles */
+  .card {
+    background: rgba(255,255,255,0.05);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 18px;
+    transition: transform 150ms ease-in-out, box-shadow 150ms ease-in-out;
+  }
+
+  .card:hover {
+    transform: translateY(-4px) scale(1.01);
+    box-shadow: 0 20px 40px -12px rgba(0,0,0,0.3);
+    border-color: rgba(255,255,255,0.12);
+  }
+
+  .card-elite {
+    background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
+    border: 1px solid color-mix(in oklab, var(--color-ucl-gold) 40%, transparent);
+    box-shadow: 0 0 20px -4px color-mix(in oklab, var(--color-ucl-gold) 30%, transparent);
+  }
+
+  .card-elite:hover {
+    box-shadow: 0 0 30px -6px color-mix(in oklab, var(--color-ucl-gold) 50%, transparent),
+                0 20px 40px -12px rgba(0,0,0,0.3);
+  }
+
+  /* Chip/Tag Styles */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-primary) 14%, transparent);
+    color: var(--color-primary);
+    border: 1px solid color-mix(in oklab, var(--color-primary) 30%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .chip-gold {
+    background: color-mix(in oklab, var(--color-ucl-gold) 14%, transparent);
+    color: var(--color-ucl-gold);
+    border: 1px solid color-mix(in oklab, var(--color-ucl-gold) 30%, transparent);
+  }
+
+  .chip-danger {
+    background: color-mix(in oklab, var(--color-destructive) 14%, transparent);
+    color: var(--color-destructive);
+    border: 1px solid color-mix(in oklab, var(--color-destructive) 30%, transparent);
+  }
+
+  .chip-success {
+    background: color-mix(in oklab, #4ADE80 14%, transparent);
+    color: #4ADE80;
+    border: 1px solid color-mix(in oklab, #4ADE80 30%, transparent);
+  }
+
+  /* Scoreline */
+  .scoreline {
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+    letter-spacing: -0.05em;
+  }
+
+  /* Animation Utilities */
+  .animate-fade-in {
+    animation: fadeIn 300ms ease-in-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 300ms ease-in-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 200ms ease-in-out;
+  }
+
+  .animate-pulse-slow {
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  /* Competition-specific themes */
+  .theme-ucl {
+    --primary: var(--color-ucl);
+    --accent: var(--color-ucl-gold);
+  }
+
+  .theme-cup {
+    --primary: var(--color-cup);
+    --accent: #FFD700;
+  }
+
+  .theme-league {
+    --primary: var(--color-league);
+    --accent: var(--color-primary);
+  }
+
+  /* Button Styles */
+  .btn-primary {
+    background: linear-gradient(135deg, var(--color-primary), color-mix(in oklab, var(--color-primary) 80%, black));
+    color: var(--color-primary-foreground);
+    border: none;
+    border-radius: 12px;
+    padding: 0.75rem 1.5rem;
+    font-weight: 600;
+    box-shadow: 0 4px 12px -4px color-mix(in oklab, var(--color-primary) 40%, transparent);
+    transition: all 150ms ease-in-out;
+  }
+
+  .btn-primary:hover {
+    transform: scale(1.03);
+    box-shadow: 0 8px 20px -4px color-mix(in oklab, var(--color-primary) 60%, transparent);
+  }
+
+  .btn-secondary {
+    background: rgba(255,255,255,0.05);
+    color: #FFFFFF;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 0.75rem 1.5rem;
+    font-weight: 600;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: all 150ms ease-in-out;
+  }
+
+  .btn-secondary:hover {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.12);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 12px;
+    padding: 0.75rem 1.5rem;
+    font-weight: 600;
+    transition: all 150ms ease-in-out;
+  }
+
+  .btn-ghost:hover {
+    background: rgba(255,255,255,0.05);
+  }
+
+  .btn-danger {
+    background: linear-gradient(135deg, var(--color-destructive), color-mix(in oklab, var(--color-destructive) 80%, black));
+    color: var(--color-destructive-foreground);
+    border: none;
+    border-radius: 12px;
+    padding: 0.75rem 1.5rem;
+    font-weight: 600;
+    transition: all 150ms ease-in-out;
+  }
+
+  .btn-danger:hover {
+    transform: scale(1.03);
+    box-shadow: 0 8px 20px -4px color-mix(in oklab, var(--color-destructive) 60%, transparent);
+  }
+
+  /* Input Styles */
+  .input-field {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    color: #FFFFFF;
+    font-size: 16px;
+    transition: all 150ms ease-in-out;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .input-field::placeholder {
+    color: #B8BCC8;
+  }
+
+  .input-field:hover {
+    border-color: rgba(255,255,255,0.12);
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 20%, transparent);
+  }
+
+  /* Progress Bar */
+  .progress-bar {
+    height: 8px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 300ms ease-in-out;
+  }
+
+  .progress-bar-fill.green {
+    background: linear-gradient(90deg, #4ADE80, #22C55E);
+  }
+
+  .progress-bar-fill.yellow {
+    background: linear-gradient(90deg, #FACC15, #EAB308);
+  }
+
+  .progress-bar-fill.red {
+    background: linear-gradient(90deg, #F87171, #EF4444);
+  }
+
+  /* Badge Styles */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .badge-champion {
+    background: linear-gradient(135deg, var(--color-ucl-gold), color-mix(in oklab, var(--color-ucl-gold) 70%, black));
+    color: #0F1117;
+  }
+
+  .badge-captain {
+    background: rgba(255,255,255,0.1);
+    color: #FFFFFF;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+
+  .badge-injured {
+    background: color-mix(in oklab, var(--color-destructive) 20%, transparent);
+    color: var(--color-destructive);
+    border: 1px solid color-mix(in oklab, var(--color-destructive) 30%, transparent);
+  }
+
+  .badge-prospect {
+    background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+    color: var(--color-accent);
+    border: 1px solid color-mix(in oklab, var(--color-accent) 30%, transparent);
+  }
+
+  /* Avatar */
+  .avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(255,255,255,0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    box-shadow: 0 4px 12px -4px rgba(0,0,0,0.3);
+  }
+
+  .avatar-lg {
+    width: 64px;
+    height: 64px;
+  }
+
+  .avatar-xl {
+    width: 96px;
+    height: 96px;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    background: rgba(15, 17, 23, 0.8);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .modal-content {
+    background: #171A23;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 28px;
+    box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+  }
+
+  /* Drawer */
+  .drawer-content {
+    background: #171A23;
+    border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* Toast */
+  .toast {
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 16px;
+    box-shadow: 0 10px 30px -10px rgba(0,0,0,0.4);
+  }
+
+  .toast-success {
+    border-color: color-mix(in oklab, #4ADE80 30%, transparent);
+  }
+
+  .toast-error {
+    border-color: color-mix(in oklab, var(--color-destructive) 30%, transparent);
+  }
+
+  .toast-warning {
+    border-color: color-mix(in oklab, #FACC15 30%, transparent);
+  }
+
+  .toast-info {
+    border-color: color-mix(in oklab, #60A5FA 30%, transparent);
+  }
+
+  /* Skeleton Loading */
+  .skeleton {
+    background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Tab indicator */
+  .tab-indicator {
+    position: absolute;
+    bottom: 0;
+    height: 2px;
+    background: var(--color-primary);
+    border-radius: 2px;
+    transition: all 300ms ease-in-out;
+    box-shadow: 0 0 12px -2px color-mix(in oklab, var(--color-primary) 60%, transparent);
+  }
+
+  /* Responsive breakpoints */
+  @media (max-width: 768px) {
+    h1 { font-size: 32px; }
+    h2 { font-size: 24px; }
+    h3 { font-size: 18px; }
+  }
+
+  @media (max-width: 480px) {
+    h1 { font-size: 28px; }
+    h2 { font-size: 20px; }
+    h3 { font-size: 16px; }
+  }
+}
     backdrop-filter: blur(8px);
   }
   .panel-glow {

@@ -1,36 +1,66 @@
-import React from "react";
-import { motion } from "framer-motion";
+import React, { useState, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { LEAGUES_BY_COUNTRY } from "@/data/teams";
 import { CountryFlag } from "@/components/CountryFlag";
 
-// Coordenadas aproximadas (x%, y%) sobre un mapa estilizado (no real)
-const COUNTRY_COORDS: Record<string, { x: number; y: number }> = {
-  "España": { x: 44, y: 55 },
-  "Inglaterra": { x: 46, y: 38 },
-  "Francia": { x: 48, y: 48 },
-  "Italia": { x: 52, y: 55 },
-  "Alemania": { x: 52, y: 42 },
-  "Portugal": { x: 41, y: 56 },
-  "Países Bajos": { x: 50, y: 41 },
-  "Bélgica": { x: 49, y: 43 },
-  "Turquía": { x: 60, y: 56 },
-  "EE.UU.": { x: 20, y: 50 },
-  "Argentina": { x: 30, y: 82 },
-  "Rumanía": { x: 57, y: 50 },
-  "Escocia": { x: 45, y: 32 },
-  "Polonia": { x: 56, y: 42 },
-  "Suiza": { x: 51, y: 47 },
-  "Dinamarca": { x: 52, y: 36 },
-  "Suecia": { x: 54, y: 32 },
-  "Noruega": { x: 51, y: 30 },
-  "Arabia Saudí": { x: 63, y: 62 },
-  "Austria": { x: 53, y: 47 },
-  "México": { x: 18, y: 60 },
-  "Brasil": { x: 32, y: 73 },
-  "Japón": { x: 85, y: 52 },
-  "Corea del Sur": { x: 83, y: 50 },
-  "Australia": { x: 87, y: 80 },
+// Public CDN topojson (world atlas, 110m). Bundled by react-simple-maps via fetch.
+const GEO_URL =
+  "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+
+// Geographical centroids [lon, lat] for the countries we support.
+const COUNTRY_COORDS: Record<string, [number, number]> = {
+  "España":         [-3.7, 40.4],
+  "Inglaterra":     [-1.5, 52.5],
+  "Escocia":        [-4.2, 56.5],
+  "Francia":        [2.2, 46.6],
+  "Italia":         [12.5, 41.9],
+  "Alemania":       [10.5, 51.2],
+  "Portugal":       [-8.2, 39.4],
+  "Países Bajos":   [5.3, 52.1],
+  "Bélgica":        [4.7, 50.5],
+  "Turquía":        [35.2, 39.0],
+  "EE.UU.":         [-98.6, 39.8],
+  "Argentina":      [-63.6, -38.4],
+  "Rumanía":        [25.0, 45.9],
+  "Polonia":        [19.1, 51.9],
+  "Suiza":          [8.2, 46.8],
+  "Dinamarca":      [9.5, 56.0],
+  "Suecia":         [15.0, 62.0],
+  "Noruega":        [8.5, 60.5],
+  "Arabia Saudí":   [45.0, 23.9],
+  "Austria":        [14.6, 47.5],
+  "México":         [-102.5, 23.6],
+  "Brasil":         [-51.9, -14.2],
+  "Japón":          [138.3, 36.2],
+  "Corea del Sur":  [127.8, 35.9],
+  "Australia":      [134.5, -25.3],
 };
+
+type Region = "all" | "europe" | "northam" | "southam" | "asia" | "oceania";
+
+const REGIONS: { id: Region; label: string; center: [number, number]; zoom: number }[] = [
+  { id: "all",     label: "Todo el mundo",  center: [10, 25],   zoom: 1.05 },
+  { id: "europe",  label: "Europa",         center: [15, 50],   zoom: 4.0  },
+  { id: "northam", label: "Norteamérica",   center: [-95, 38],  zoom: 2.4  },
+  { id: "southam", label: "Sudamérica",     center: [-58, -20], zoom: 2.2  },
+  { id: "asia",    label: "Asia",           center: [100, 35],  zoom: 2.0  },
+  { id: "oceania", label: "Oceanía",        center: [140, -25], zoom: 2.6  },
+];
+
+function inRegion(country: string, region: Region): boolean {
+  if (region === "all") return true;
+  const c = COUNTRY_COORDS[country];
+  if (!c) return false;
+  const [lon, lat] = c;
+  switch (region) {
+    case "europe":  return lon >= -12 && lon <= 45  && lat >= 35  && lat <= 72;
+    case "northam": return lon >= -170 && lon <= -50 && lat >= 12 && lat <= 75;
+    case "southam": return lon >= -90 && lon <= -30 && lat >= -56 && lat <= 12;
+    case "asia":    return (lon >= 45 && lon <= 150) && (lat >= -10 && lat <= 60);
+    case "oceania": return lon >= 110 && lon <= 180 && lat >= -50 && lat <= 0;
+  }
+}
 
 export default function WorldMap({
   onPickCountry,
@@ -40,79 +70,155 @@ export default function WorldMap({
   selectedCountry: string | null;
 }) {
   const countries = Object.keys(LEAGUES_BY_COUNTRY);
+  const [region, setRegion] = useState<Region>("all");
+  const currentRegion = REGIONS.find((r) => r.id === region)!;
 
   return (
-    <div className="world-map-wrapper relative w-full rounded-2xl overflow-hidden border border-white/10 bg-gradient-to-br from-slate-900/80 via-slate-950/80 to-black/80">
-      {/* Fondo estilizado */}
-      <svg
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-        className="absolute inset-0 w-full h-full opacity-30"
-        aria-hidden
-      >
-        <defs>
-          <radialGradient id="oceanGlow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="hsl(var(--primary) / 0.4)" />
-            <stop offset="100%" stopColor="transparent" />
-          </radialGradient>
-          <pattern id="dots" width="3" height="3" patternUnits="userSpaceOnUse">
-            <circle cx="1.5" cy="1.5" r="0.3" fill="currentColor" className="text-white/20" />
-          </pattern>
-        </defs>
-        <rect width="100" height="100" fill="url(#dots)" />
-        <circle cx="50" cy="50" r="40" fill="url(#oceanGlow)" />
-      </svg>
+    <div className="world-map-wrapper relative w-full rounded-2xl overflow-hidden border border-white/10 bg-gradient-to-br from-slate-900/90 via-slate-950/90 to-black">
+      {/* Region selector */}
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-1.5 p-1 rounded-full bg-black/60 backdrop-blur-xl border border-white/10">
+        {REGIONS.map((r) => (
+          <button
+            key={r.id}
+            onClick={() => setRegion(r.id)}
+            className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider transition ${
+              region === r.id
+                ? "bg-primary text-white shadow"
+                : "text-white/65 hover:text-white hover:bg-white/10"
+            }`}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
 
-      {/* "Continentes" estilizados */}
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full opacity-20" aria-hidden>
-        <path d="M15,40 Q25,30 35,40 L40,55 Q35,65 25,65 L18,55 Z" fill="currentColor" className="text-emerald-500/40" />
-        <path d="M42,30 Q55,28 62,35 L65,55 Q55,62 45,60 L42,45 Z" fill="currentColor" className="text-blue-500/40" />
-        <path d="M70,40 Q85,38 92,50 L90,70 Q80,75 72,65 Z" fill="currentColor" className="text-purple-500/40" />
-        <path d="M25,70 Q35,68 40,78 L35,90 Q28,90 25,82 Z" fill="currentColor" className="text-orange-500/40" />
-      </svg>
+      <div className="relative w-full" style={{ aspectRatio: "16 / 9" }}>
+        <ComposableMap
+          projection="geoEqualEarth"
+          projectionConfig={{ scale: 175 }}
+          style={{ width: "100%", height: "100%" }}
+        >
+          <defs>
+            <radialGradient id="seaGlow" cx="50%" cy="50%" r="65%">
+              <stop offset="0%" stopColor="hsl(220 50% 25%)" stopOpacity={0.5} />
+              <stop offset="100%" stopColor="transparent" />
+            </radialGradient>
+          </defs>
+          <rect x={-1000} y={-1000} width={3000} height={3000} fill="url(#seaGlow)" />
 
-      <div className="relative w-full" style={{ aspectRatio: "16 / 8" }}>
-        {countries.map((country) => {
-          const c = COUNTRY_COORDS[country];
-          if (!c) return null;
-          const isSelected = selectedCountry === country;
-          const leagueCount = LEAGUES_BY_COUNTRY[country]?.length ?? 0;
-          return (
-            <motion.button
-              key={country}
-              onClick={() => onPickCountry(country)}
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              whileHover={{ scale: 1.15, zIndex: 30 }}
-              transition={{ type: "spring", stiffness: 280, damping: 18 }}
-              className={`absolute -translate-x-1/2 -translate-y-1/2 group flex flex-col items-center gap-1 ${
-                isSelected ? "z-20" : "z-10"
-              }`}
-              style={{ left: `${c.x}%`, top: `${c.y}%` }}
-              title={`${country} · ${leagueCount} ligas`}
-            >
-              <span
-                className={`relative flex items-center justify-center w-7 h-7 rounded-full text-base ring-2 transition-all ${
-                  isSelected
-                    ? "ring-primary bg-primary/30 shadow-[0_0_24px_rgba(99,102,241,0.8)]"
-                    : "ring-white/30 bg-white/10 hover:ring-white/60"
-                }`}
-              >
-                <CountryFlag country={country} />
-                {isSelected && (
-                  <span className="absolute inset-0 rounded-full animate-ping bg-primary/40" />
-                )}
-              </span>
-              <span
-                className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider whitespace-nowrap transition-opacity ${
-                  isSelected ? "bg-primary text-white opacity-100" : "bg-black/60 text-white/70 opacity-0 group-hover:opacity-100"
-                }`}
-              >
-                {country}
-              </span>
-            </motion.button>
-          );
-        })}
+          <ZoomableGroup
+            center={currentRegion.center}
+            zoom={currentRegion.zoom}
+            minZoom={0.8}
+            maxZoom={8}
+          >
+            <Geographies geography={GEO_URL}>
+              {({ geographies }) =>
+                geographies.map((geo) => (
+                  <Geography
+                    key={geo.rsmKey}
+                    geography={geo}
+                    style={{
+                      default: {
+                        fill: "rgba(255,255,255,0.07)",
+                        stroke: "rgba(255,255,255,0.18)",
+                        strokeWidth: 0.4,
+                        outline: "none",
+                      },
+                      hover: {
+                        fill: "rgba(255,255,255,0.12)",
+                        stroke: "rgba(255,255,255,0.3)",
+                        outline: "none",
+                      },
+                      pressed: { outline: "none" },
+                    }}
+                  />
+                ))
+              }
+            </Geographies>
+
+            {countries.map((country) => {
+              const c = COUNTRY_COORDS[country];
+              if (!c) return null;
+              const isSelected = selectedCountry === country;
+              const isInRegion = inRegion(country, region);
+              const leagueCount = LEAGUES_BY_COUNTRY[country]?.length ?? 0;
+              return (
+                <Marker key={country} coordinates={c}>
+                  <g
+                    style={{
+                      cursor: "pointer",
+                      opacity: isInRegion ? 1 : 0.25,
+                      transition: "opacity 0.4s",
+                    }}
+                    onClick={() => onPickCountry(country)}
+                  >
+                    <circle
+                      r={isSelected ? 5 : 3.5}
+                      fill={isSelected ? "hsl(var(--primary))" : "#fff"}
+                      fillOpacity={isSelected ? 0.95 : 0.85}
+                      stroke={isSelected ? "#fff" : "rgba(255,255,255,0.55)"}
+                      strokeWidth={isSelected ? 1.5 : 0.8}
+                    />
+                    {isSelected && (
+                      <circle r={9} fill="hsl(var(--primary))" fillOpacity={0.25}>
+                        <animate
+                          attributeName="r"
+                          values="6;14;6"
+                          dur="1.8s"
+                          repeatCount="indefinite"
+                        />
+                        <animate
+                          attributeName="opacity"
+                          values="0.6;0;0.6"
+                          dur="1.8s"
+                          repeatCount="indefinite"
+                        />
+                      </circle>
+                    )}
+                    <title>
+                      {country} · {leagueCount} ligas
+                    </title>
+                  </g>
+                </Marker>
+              );
+            })}
+          </ZoomableGroup>
+        </ComposableMap>
+      </div>
+
+      {/* Country chip grid below the map for quick access (only those in region) */}
+      <div className="px-3 pb-3 pt-1">
+        <AnimatePresence>
+          <motion.div
+            key={region}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+            className="flex flex-wrap items-center justify-center gap-1.5"
+          >
+            {countries
+              .filter((c) => inRegion(c, region))
+              .sort()
+              .map((country) => {
+                const isSelected = selectedCountry === country;
+                return (
+                  <button
+                    key={country}
+                    onClick={() => onPickCountry(country)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] border transition ${
+                      isSelected
+                        ? "bg-primary/20 border-primary/60 text-white"
+                        : "bg-white/[0.04] border-white/10 text-white/70 hover:border-white/30"
+                    }`}
+                  >
+                    <CountryFlag country={country} />
+                    <span>{country}</span>
+                  </button>
+                );
+              })}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   );

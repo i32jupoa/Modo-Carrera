@@ -16,40 +16,71 @@ export function calculateTeamBudget(overall: number): number {
 }
 
 /**
- * Clasifica un equipo como Gigante, Aspirante o Modesto basándose en Overall + Presupuesto.
+ * Clasificación granular de un equipo.
+ * Elite Mundial · Gigante · Aspirante · Media tabla · Modesto · Humilde
  */
-export function getTeamCategory(team: Team): 'Gigante' | 'Aspirante' | 'Modesto' {
+export type TeamCategory =
+  | 'Elite Mundial'
+  | 'Gigante'
+  | 'Aspirante'
+  | 'Media tabla'
+  | 'Modesto'
+  | 'Humilde';
+
+export function getTeamCategory(team: Team): TeamCategory {
   const overall = Math.round((team.att + team.mid + team.def) / 3);
-  const budget = team.budget || calculateTeamBudget(overall);
-  
-  // Gigante: OVR >= 80 o Presupuesto >= 100M
-  if (overall >= 80 || budget >= 100) {
-    return 'Gigante';
-  }
-  
-  // Aspirante: OVR 70-79 o Presupuesto 50-99M
-  if (overall >= 70 || budget >= 50) {
-    return 'Aspirante';
-  }
-  
-  // Modesto: OVR < 70 o Presupuesto < 50M
-  return 'Modesto';
+  if (overall >= 86) return 'Elite Mundial';
+  if (overall >= 80) return 'Gigante';
+  if (overall >= 75) return 'Aspirante';
+  if (overall >= 70) return 'Media tabla';
+  if (overall >= 65) return 'Modesto';
+  return 'Humilde';
 }
 
 /**
- * Determina la dificultad del reto basándose en el overall del equipo.
+ * Dificultad del modo carrera (cuanto mayor overall, menor dificultad).
+ * 5 niveles: Muy Fácil · Fácil · Media · Difícil · Muy Difícil · Extrema
  */
-export function getTeamDifficulty(overall: number): 'Fácil' | 'Medio' | 'Difícil' {
-  if (overall >= 82) return 'Difícil';
-  if (overall >= 72) return 'Medio';
-  return 'Fácil';
+export type TeamDifficulty =
+  | 'Muy Fácil'
+  | 'Fácil'
+  | 'Media'
+  | 'Difícil'
+  | 'Muy Difícil'
+  | 'Extrema';
+
+export function getTeamDifficulty(overall: number): TeamDifficulty {
+  if (overall >= 86) return 'Muy Fácil';
+  if (overall >= 80) return 'Fácil';
+  if (overall >= 74) return 'Media';
+  if (overall >= 68) return 'Difícil';
+  if (overall >= 62) return 'Muy Difícil';
+  return 'Extrema';
 }
+
+export const DIFFICULTY_COLORS: Record<TeamDifficulty, { bg: string; text: string; border: string }> = {
+  'Muy Fácil':   { bg: 'bg-emerald-500/20', text: 'text-emerald-300', border: 'border-emerald-500/40' },
+  'Fácil':       { bg: 'bg-green-500/20',   text: 'text-green-300',   border: 'border-green-500/40' },
+  'Media':       { bg: 'bg-yellow-500/20',  text: 'text-yellow-300',  border: 'border-yellow-500/40' },
+  'Difícil':     { bg: 'bg-orange-500/20',  text: 'text-orange-300',  border: 'border-orange-500/40' },
+  'Muy Difícil': { bg: 'bg-red-500/20',     text: 'text-red-300',     border: 'border-red-500/40' },
+  'Extrema':     { bg: 'bg-fuchsia-600/20', text: 'text-fuchsia-300', border: 'border-fuchsia-600/40' },
+};
+
+export const CATEGORY_COLORS: Record<TeamCategory, { bg: string; text: string; border: string }> = {
+  'Elite Mundial': { bg: 'bg-amber-500/20',  text: 'text-amber-300',  border: 'border-amber-500/40' },
+  'Gigante':       { bg: 'bg-yellow-500/20', text: 'text-yellow-300', border: 'border-yellow-500/40' },
+  'Aspirante':     { bg: 'bg-blue-500/20',   text: 'text-blue-300',   border: 'border-blue-500/40' },
+  'Media tabla':   { bg: 'bg-cyan-500/20',   text: 'text-cyan-300',   border: 'border-cyan-500/40' },
+  'Modesto':       { bg: 'bg-gray-500/20',   text: 'text-gray-300',   border: 'border-gray-500/40' },
+  'Humilde':       { bg: 'bg-zinc-600/30',   text: 'text-zinc-300',   border: 'border-zinc-500/40' },
+};
 
 /**
  * Genera objetivos realistas para un equipo según su categoría y overall.
  */
-export function getTeamObjectives(overall: number, category: 'Gigante' | 'Aspirante' | 'Modesto'): string[] {
-  if (category === 'Gigante') {
+export function getTeamObjectives(overall: number, category: TeamCategory): string[] {
+  if (category === 'Elite Mundial' || category === 'Gigante') {
     if (overall >= 88) {
       return [
         'Ganar la liga nacional',
@@ -63,8 +94,8 @@ export function getTeamObjectives(overall: number, category: 'Gigante' | 'Aspira
       'Consolidar proyecto ganador'
     ];
   }
-  
-  if (category === 'Aspirante') {
+
+  if (category === 'Aspirante' || category === 'Media tabla') {
     if (overall >= 75) {
       return [
         'Clasificarse para competiciones europeas',
@@ -78,8 +109,8 @@ export function getTeamObjectives(overall: number, category: 'Gigante' | 'Aspira
       'Equilibrio financiero'
     ];
   }
-  
-  // Modesto
+
+  // Modesto / Humilde
   return [
     'Evitar el descenso',
     'Descubrir talentos desapercibidos',

@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { TeamLogo } from "@/components/TeamLogo";
 import { MapPin } from "lucide-react";
 import { overall, LEAGUES } from "@/data/teams";
-import { getTeamCategory, getTeamDifficulty } from "@/lib/utils";
+import { getTeamCategory, getTeamDifficulty, CATEGORY_COLORS, DIFFICULTY_COLORS } from "@/lib/utils";
 
 export default function ClubCardPremium({
   team,
@@ -25,6 +25,8 @@ export default function ClubCardPremium({
   const defPct = Math.round((team.def / 100) * 100);
   const category = getTeamCategory(team);
   const difficulty = getTeamDifficulty(ov);
+  const catCol = CATEGORY_COLORS[category];
+  const difCol = DIFFICULTY_COLORS[difficulty];
   
   // Usar color del equipo para fondo personalizado
   const teamColor = team.color || "#1a1a2e";
@@ -97,24 +99,12 @@ export default function ClubCardPremium({
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="text-white/50">Clasificación</span>
-              <span className={`font-semibold px-2 py-0.5 rounded-full text-[0.7rem] ${
-                category === 'Gigante' 
-                  ? 'bg-yellow-500/20 text-yellow-300' 
-                  : category === 'Aspirante' 
-                  ? 'bg-blue-500/20 text-blue-300' 
-                  : 'bg-gray-500/20 text-gray-300'
-              }`}>{category}</span>
+              <span className={`font-semibold px-2 py-0.5 rounded-full text-[0.7rem] ${catCol.bg} ${catCol.text}`}>{category}</span>
             </div>
 
             <div className="flex items-center justify-between text-xs">
               <span className="text-white/50">Dificultad</span>
-              <span className={`font-semibold px-2 py-0.5 rounded-full text-[0.7rem] ${
-                difficulty === 'Difícil' 
-                  ? 'bg-red-500/20 text-red-300' 
-                  : difficulty === 'Medio' 
-                  ? 'bg-yellow-500/20 text-yellow-300' 
-                  : 'bg-green-500/20 text-green-300'
-              }`}>{difficulty}</span>
+              <span className={`font-semibold px-2 py-0.5 rounded-full text-[0.7rem] ${difCol.bg} ${difCol.text}`}>{difficulty}</span>
             </div>
           </div>
         </div>

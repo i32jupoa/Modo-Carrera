@@ -5,7 +5,8 @@ import { LeagueLogo } from "@/components/LeagueLogo";
 import { CountryFlag } from "@/components/CountryFlag";
 import WorldMap from "./WorldMap";
 import ClubCardPremium from "./ClubCardPremium";
-import { ArrowLeft, ArrowRight, Zap, Globe2, Trophy, Sparkles } from "lucide-react";
+import RandomPickModal from "./RandomPickModal";
+import { ArrowLeft, ArrowRight, Dice5, Globe2, Trophy, Sparkles } from "lucide-react";
 
 type Step = "intro" | "country" | "league" | "team";
 
@@ -15,12 +16,14 @@ export default function MainMenuWizard({
   loading,
 }: {
   onPickTeam: (id: string) => void;
-  onQuickStart: () => void;
+  /** @deprecated kept for backwards compat — no longer used directly */
+  onQuickStart?: () => void;
   loading: boolean;
 }) {
   const [step, setStep] = useState<Step>("intro");
   const [country, setCountry] = useState<string | null>(null);
   const [league, setLeague] = useState<LeagueId | null>(null);
+  const [randomOpen, setRandomOpen] = useState(false);
 
   // Persistencia de progreso
   useEffect(() => {
@@ -84,12 +87,12 @@ export default function MainMenuWizard({
             ))}
           </div>
           <button
-            onClick={onQuickStart}
+            onClick={() => setRandomOpen(true)}
             disabled={loading}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider text-white bg-gradient-to-r from-amber-500 to-orange-600 hover:brightness-110 transition shadow-lg shadow-orange-500/30"
-            title="Empieza inmediatamente con un equipo top aleatorio"
+            title="Escoge una dificultad y deja que el destino elija tu club"
           >
-            <Zap className="h-3.5 w-3.5 fill-white" /> Quick Start
+            <Dice5 className="h-3.5 w-3.5" /> Elección aleatoria
           </button>
         </div>
       </div>
@@ -98,7 +101,7 @@ export default function MainMenuWizard({
         <AnimatePresence mode="wait">
           {step === "intro" && (
             <motion.div key="intro" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.4 }}>
-              <IntroStep onStart={() => setStep("country")} onQuickStart={onQuickStart} loading={loading} />
+              <IntroStep onStart={() => setStep("country")} onRandom={() => setRandomOpen(true)} loading={loading} />
             </motion.div>
           )}
 
@@ -106,20 +109,6 @@ export default function MainMenuWizard({
             <motion.div key="country" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.35 }}>
               <SectionHeader icon={<Globe2 className="h-5 w-5" />} title="Elige un país" subtitle="Selecciona la nación donde quieres iniciar tu carrera" />
               <WorldMap selectedCountry={country} onPickCountry={(c) => { setCountry(c); setLeague(null); }} />
-              <div className="mt-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                {Object.keys(LEAGUES_BY_COUNTRY).map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => { setCountry(c); setLeague(null); }}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition ${
-                      country === c ? "border-primary bg-primary/15 text-white" : "border-white/10 bg-white/[0.03] text-white/70 hover:border-white/30"
-                    }`}
-                  >
-                    <CountryFlag country={c} />
-                    <span className="truncate">{c}</span>
-                  </button>
-                ))}
-              </div>
               {country && (
                 <div className="mt-8 flex justify-end">
                   <button onClick={goNext} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-white font-black hover:brightness-125 transition shadow-lg shadow-primary/40">
@@ -190,6 +179,12 @@ export default function MainMenuWizard({
           )}
         </AnimatePresence>
       </div>
+
+      <RandomPickModal
+        open={randomOpen}
+        onOpenChange={setRandomOpen}
+        onPickTeam={onPickTeam}
+      />
     </div>
   );
 }
@@ -206,7 +201,7 @@ function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title
   );
 }
 
-function IntroStep({ onStart, onQuickStart, loading }: { onStart: () => void; onQuickStart: () => void; loading: boolean }) {
+function IntroStep({ onStart, onRandom, loading }: { onStart: () => void; onRandom: () => void; loading: boolean }) {
   return (
     <div className="text-center py-12">
       <motion.div
@@ -221,7 +216,7 @@ function IntroStep({ onStart, onQuickStart, loading }: { onStart: () => void; on
         ¿Por dónde<br/>quieres empezar?
       </h2>
       <p className="text-white/60 max-w-xl mx-auto mb-10">
-        Construye tu dinastía desde cero. Elige cuidadosamente o salta directo al banquillo de un grande con Quick Start.
+        Construye tu dinastía desde cero. Elige cuidadosamente tu club o deja que el destino lo decida con Elección aleatoria.
       </p>
       <div className="flex items-center justify-center gap-3 flex-wrap">
         <button
@@ -231,11 +226,11 @@ function IntroStep({ onStart, onQuickStart, loading }: { onStart: () => void; on
           <Globe2 className="h-5 w-5" /> Empezar guiado
         </button>
         <button
-          onClick={onQuickStart}
+          onClick={onRandom}
           disabled={loading}
           className="flex items-center gap-2 px-7 py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-black hover:brightness-110 transition shadow-lg shadow-orange-500/40 disabled:opacity-60"
         >
-          <Zap className="h-5 w-5 fill-white" /> Quick Start
+          <Dice5 className="h-5 w-5" /> Elección aleatoria
         </button>
       </div>
     </div>

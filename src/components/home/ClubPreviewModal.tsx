@@ -8,8 +8,10 @@ import { getAllTeams, overall, LEAGUES } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { motion } from "framer-motion";
-import { getTeamCategory, getTeamDifficulty, getTeamObjectives, estimateTeamFinancials } from "@/lib/utils";
+import { getTeamCategory, getTeamDifficulty, getTeamObjectives, estimateTeamFinancials, CATEGORY_COLORS, DIFFICULTY_COLORS } from "@/lib/utils";
 import { getRivals, getRecentHistory } from "@/data/teamExtras";
+import { getClubExtra } from "@/data/clubExtras";
+import playersData from "@/data/playersData";
 import { Trophy, Users, Building2, Target, Wallet, Swords, History, Sparkles } from "lucide-react";
 
 export default function ClubPreviewModal({
@@ -35,6 +37,21 @@ export default function ClubPreviewModal({
   const rivals = getRivals(team);
   const history = getRecentHistory(team);
   const teamColor = team.color || "#1a1a2e";
+  const extra = getClubExtra(team.name);
+  const catCol = CATEGORY_COLORS[category];
+  const difCol = DIFFICULTY_COLORS[difficulty];
+
+  // Build full squad from players JSON, deterministic order by OVR
+  const squad = React.useMemo(() => {
+    const data: any[] = Array.isArray(playersData) ? (playersData as any[]) : [];
+    const norm = (s: string) =>
+      s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+    const tn = norm(team.name);
+    const matches = data.filter((p) => p?.Team && norm(p.Team) === tn);
+    return matches
+      .sort((a, b) => (b.OVR || 0) - (a.OVR || 0))
+      .slice(0, 50);
+  }, [team.name]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -66,16 +83,8 @@ export default function ClubPreviewModal({
                     <LeagueLogo league={LEAGUES[team.league]?.name ?? team.league} size="sm" />
                     <span className="text-xs text-white/80">{LEAGUES[team.league]?.name ?? team.league}</span>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                    category === 'Gigante' ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
-                    : category === 'Aspirante' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                    : 'bg-gray-500/20 text-gray-300 border border-gray-500/30'
-                  }`}>{category}</span>
-                  <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                    difficulty === 'Difícil' ? 'bg-red-500/20 text-red-300 border border-red-500/30'
-                    : difficulty === 'Medio' ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
-                    : 'bg-green-500/20 text-green-300 border border-green-500/30'
-                  }`}>Dificultad: {difficulty}</span>
+                  <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider border ${catCol.bg} ${catCol.text} ${catCol.border}`}>{category}</span>
+                  <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider border ${difCol.bg} ${difCol.text} ${difCol.border}`}>Dificultad: {difficulty}</span>
                 </div>
               </div>
               <div className="hidden md:flex flex-col items-end">
@@ -118,31 +127,18 @@ export default function ClubPreviewModal({
 
             {/* PLANTILLA */}
             <TabsContent value="plantilla" className="mt-5">
-              <div className="text-xs uppercase tracking-wider text-white/50 mb-3">Jugadores clave</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {team.stars && team.stars.length > 0 ? (
-                  team.stars.slice(0, 10).map((s: string, i: number) => (
-                    <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
-                      className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.04] border border-white/8">
-                      <span className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white" style={{ background: teamColor }}>{i + 1}</span>
-                      <span className="text-sm font-semibold text-white/90">{s}</span>
-                    </motion.div>
-                  ))
-                ) : (
-                  <div className="text-xs text-white/50">Sin datos de plantilla</div>
-                )}
-              </div>
+              <SquadView squad={squad} teamColor={teamColor} fallbackStars={team.stars || []} />
             </TabsContent>
 
             {/* ESTADIO */}
             <TabsContent value="estadio" className="mt-5">
               <div className="rounded-xl p-6 border border-white/10 bg-gradient-to-br from-emerald-900/30 to-black/50 text-center">
                 <Building2 className="h-12 w-12 mx-auto mb-3 text-white/60" />
-                <div className="text-lg font-black text-white">Estadio de {team.city}</div>
-                <div className="text-xs text-white/60 mt-1 mb-4">Casa de {team.name}</div>
+                <div className="text-lg font-black text-white">{extra?.stadium ?? `Estadio de ${team.city}`}</div>
+                <div className="text-xs text-white/60 mt-1 mb-4">Casa de {team.name} · {extra?.country ?? team.city}</div>
                 <div className="grid grid-cols-3 gap-3 mt-4">
-                  <Mini label="Aforo" value={`${20 + (ov - 60) * 800} pl.`} />
-                  <Mini label="Año constr." value={`${1900 + (ov % 80)}`} />
+                  <Mini label="Aforo" value={extra?.capacity ? `${extra.capacity.toLocaleString("es-ES")} pl.` : "—"} />
+                  <Mini label="Año constr." value={extra?.year ? `${extra.year}` : "—"} />
                   <Mini label="Ambiente" value={ov > 80 ? "Caldera" : ov > 70 ? "Vibrante" : "Familiar"} />
                 </div>
               </div>
@@ -285,6 +281,131 @@ function FinBlock({ label, value, color }: { label: string; value: string; color
     <div className="rounded-xl p-4 border bg-white/[0.03]" style={{ borderColor: `${color}33` }}>
       <div className="text-xs text-white/50 mb-1">{label}</div>
       <div className="text-2xl font-black" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+// Group player positions into lines (GK / DEF / MID / FWD)
+function posLine(pos: string | undefined): "GK" | "DEF" | "MID" | "FWD" | "—" {
+  if (!pos) return "—";
+  if (pos === "GK") return "GK";
+  if (["CB", "LB", "RB", "LWB", "RWB"].includes(pos)) return "DEF";
+  if (["CM", "CDM", "CAM", "LM", "RM"].includes(pos)) return "MID";
+  if (["ST", "CF", "LW", "RW", "LF", "RF"].includes(pos)) return "FWD";
+  return "MID";
+}
+
+function SquadView({
+  squad,
+  teamColor,
+  fallbackStars,
+}: {
+  squad: any[];
+  teamColor: string;
+  fallbackStars: string[];
+}) {
+  if (!squad || squad.length === 0) {
+    return (
+      <div>
+        <div className="text-xs uppercase tracking-wider text-white/50 mb-3">Jugadores clave</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {fallbackStars.length > 0 ? (
+            fallbackStars.slice(0, 10).map((s, i) => (
+              <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.04] border border-white/10">
+                <span
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white"
+                  style={{ background: teamColor }}
+                >
+                  {i + 1}
+                </span>
+                <span className="text-sm font-semibold text-white/90">{s}</span>
+              </div>
+            ))
+          ) : (
+            <div className="text-xs text-white/50">Sin datos de plantilla</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const groups: Record<"GK" | "DEF" | "MID" | "FWD", any[]> = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const p of squad) {
+    const ln = posLine(p.Position);
+    if (ln === "—") continue;
+    groups[ln].push(p);
+  }
+  const order: { key: "GK" | "DEF" | "MID" | "FWD"; label: string }[] = [
+    { key: "GK", label: "Porteros" },
+    { key: "DEF", label: "Defensas" },
+    { key: "MID", label: "Centrocampistas" },
+    { key: "FWD", label: "Delanteros" },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="text-xs uppercase tracking-wider text-white/50">Plantilla completa</div>
+        <div className="text-[11px] text-white/60">
+          {squad.length} jugadores · OVR medio{" "}
+          <span className="font-bold text-white">
+            {Math.round(squad.reduce((s, p) => s + (p.OVR || 70), 0) / squad.length)}
+          </span>
+        </div>
+      </div>
+      {order.map(({ key, label }) =>
+        groups[key].length === 0 ? null : (
+          <div key={key}>
+            <div className="flex items-center gap-2 mb-2">
+              <span
+                className="text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider text-white"
+                style={{ background: teamColor }}
+              >
+                {key}
+              </span>
+              <span className="text-xs text-white/60">
+                {label} ({groups[key].length})
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {groups[key].map((p, i) => {
+                const ovr = p.OVR ?? 70;
+                const ovrTone =
+                  ovr >= 85
+                    ? "from-amber-400 to-amber-600 text-black"
+                    : ovr >= 80
+                    ? "from-emerald-400 to-emerald-600 text-black"
+                    : ovr >= 75
+                    ? "from-sky-400 to-sky-600 text-black"
+                    : "from-zinc-500 to-zinc-700 text-white";
+                return (
+                  <motion.div
+                    key={`${p.Name}-${i}`}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25, delay: i * 0.015 }}
+                    className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.04] border border-white/10 hover:border-white/25 transition"
+                  >
+                    <div
+                      className={`w-10 h-10 rounded-lg bg-gradient-to-br ${ovrTone} flex items-center justify-center font-black text-sm flex-shrink-0 shadow`}
+                    >
+                      {ovr}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-bold text-white truncate">{p.Name ?? "—"}</div>
+                      <div className="text-[11px] text-white/55 flex items-center gap-2">
+                        <span className="font-mono">{p.Position ?? "—"}</span>
+                        {p.Nation && <span className="truncate">· {p.Nation}</span>}
+                        {typeof p.Age === "number" && <span>· {p.Age}a</span>}
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+        )
+      )}
     </div>
   );
 }

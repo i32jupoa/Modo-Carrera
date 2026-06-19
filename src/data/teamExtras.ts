@@ -1,4 +1,6 @@
 import { Team, getAllTeams, teamById } from "./teams";
+import { getClubExtra } from "./clubExtras";
+import { realRecentTrophies } from "./leagueWinners";
 
 // Mapa de rivalidades clásicas (por nombre, normalizado en minúsculas y sin acentos)
 const RIVAL_MAP: Record<string, string[]> = {
@@ -42,9 +44,26 @@ function norm(s: string): string {
 }
 
 export function getRivals(team: Team): Team[] {
+  const all = getAllTeams();
+  // 1) Try enriched data (rival1/rival2)
+  const extra = getClubExtra(team.name);
+  if (extra && (extra.rival1 || extra.rival2)) {
+    const names = [extra.rival1, extra.rival2].filter(Boolean) as string[];
+    const matches = names
+      .map((n) => {
+        const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+        const target = norm(n);
+        return all.find((t) => {
+          const tn = norm(t.name);
+          return tn === target || tn.includes(target) || target.includes(tn);
+        });
+      })
+      .filter((t): t is Team => !!t && t.id !== team.id);
+    if (matches.length) return matches;
+  }
+  // 2) Legacy hardcoded map
   const key = norm(team.name);
   const names = RIVAL_MAP[key];
-  const all = getAllTeams();
   if (names && names.length) {
     return names
       .map((n) => all.find((t) => norm(t.name) === norm(n)))
@@ -76,18 +95,20 @@ export type HistoryEntry = {
 export function getRecentHistory(team: Team): HistoryEntry[] {
   const seed = seedHash(team.id);
   const ov = (team.att + team.mid + team.def) / 3;
-  const seasons = ["24/25", "23/24", "22/23", "21/22", "20/21"];
+  const seasons = ["24/25", "23/24", "22/23"];
   const star = team.stars && team.stars[0] ? team.stars[0] : "Capitán";
-  const cupNames = ["Copa Nacional", "Supercopa", "Champions League", "Europa League", "Liga"];
+  const real = realRecentTrophies(team.name, team.league);
 
   return seasons.map((s, i) => {
     const variance = ((seed >> (i * 2)) & 0xf) - 7;
-    const basePos = ov > 82 ? 2 : ov > 76 ? 5 : ov > 70 ? 9 : 14;
-    const position = Math.max(1, Math.min(20, basePos + variance));
-    const trophies: string[] = [];
-    if (position === 1) trophies.push("Liga");
-    if (((seed >> (i * 3)) & 7) === 0 && ov > 72) trophies.push(cupNames[(seed + i) % cupNames.length]);
-    const goals = Math.max(8, Math.round(18 + (ov - 70) * 0.6 + ((seed >> i) & 15) - 7));
+    const basePos = ov > 84 ? 2 : ov > 78 ? 5 : ov > 72 ? 9 : ov > 66 ? 13 : 17;
+    let position = Math.max(1, Math.min(20, basePos + variance));
+    const trophies = real[s] ?? [];
+    // Si gana la liga, position = 1
+    if (trophies.some((t) => /liga|premier|bundesliga|serie a|ligue 1|eredivisie|portugal|scottish/i.test(t))) {
+      position = 1;
+    }
+    const goals = Math.max(6, Math.round(15 + (ov - 70) * 0.55 + ((seed >> i) & 11) - 5));
     return { season: s, position, trophies, topScorer: star, goals };
   });
 }
