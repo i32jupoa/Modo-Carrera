@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { getAllTeams, overall, LEAGUES } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
@@ -145,10 +144,14 @@ export default function RandomPickModal({
   const pool = useMemo(() => (diff ? poolForDifficulty(diff) : []), [diff]);
   const [rollSeed, setRollSeed] = useState(0);
   const candidates = useMemo(() => pickThree(pool), [pool, rollSeed]);
+  const [showCandidates, setShowCandidates] = useState(false);
 
   function close() {
     onOpenChange(false);
-    setTimeout(() => setDiff(null), 300);
+    setTimeout(() => {
+      setDiff(null);
+      setShowCandidates(false);
+    }, 300);
   }
 
   return (
@@ -168,127 +171,116 @@ export default function RandomPickModal({
             </div>
           </div>
           <h2 className="text-2xl md:text-3xl font-black text-white">
-            {diff ? "Tus 3 candidatos" : "Escoge un nivel de dificultad"}
+            {showCandidates ? "Tus 3 candidatos" : "Escoge un nivel de dificultad"}
           </h2>
           <p className="text-sm text-white/55 mt-1">
-            {diff
+            {showCandidates
               ? "Elige uno para previsualizar el club, o tira de nuevo el dado."
               : "Cuanto mayor sea la dificultad, más pequeño será tu club."}
           </p>
 
-          <AnimatePresence mode="wait">
-            {!diff ? (
-              <motion.div
-                key="diffs"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3"
-              >
-                {DIFFICULTIES.map((d) => {
-                  const count = poolForDifficulty(d.id).length;
-                  return (
+          {!showCandidates ? (
+            <div
+              key="diffs"
+              className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3 animate-fade-in"
+            >
+              {DIFFICULTIES.map((d) => {
+                const count = poolForDifficulty(d.id).length;
+                return (
+                  <button
+                    key={d.id}
+                    disabled={count === 0}
+                    onClick={() => {
+                      setDiff(d.id);
+                      setRollSeed((x) => x + 1);
+                      setShowCandidates(true);
+                    }}
+                    className={`text-left p-4 rounded-xl border bg-gradient-to-br ${d.gradient} hover:brightness-125 transition disabled:opacity-40 disabled:cursor-not-allowed`}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className={d.color}>{d.icon}</span>
+                      <span className="text-lg font-black text-white">{d.title}</span>
+                    </div>
+                    <div className="text-xs text-white/70">{d.subtitle}</div>
+                    <div className="mt-2 flex items-center justify-between text-[11px]">
+                      <span className={`font-mono ${d.color}`}>{d.range}</span>
+                      <span className="text-white/50">{count} equipos</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div
+              key="picks"
+              className="mt-6 animate-fade-in"
+            >
+              {candidates.length === 0 ? (
+                <div className="rounded-xl p-6 border border-white/10 bg-white/[0.03] text-center text-white/70">
+                  No hay equipos para esta dificultad.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {candidates.map((t) => (
                     <button
-                      key={d.id}
-                      disabled={count === 0}
+                      key={t.id}
                       onClick={() => {
-                        setDiff(d.id);
-                        setRollSeed((x) => x + 1);
+                        onOpenChange(false);
+                        setTimeout(() => onPickTeam(t.id), 80);
                       }}
-                      className={`text-left p-4 rounded-xl border bg-gradient-to-br ${d.gradient} hover:brightness-125 transition disabled:opacity-40 disabled:cursor-not-allowed`}
+                      className="p-4 rounded-xl border border-white/10 bg-white/[0.04] hover:border-primary/50 text-left transition hover:scale-105 active:scale-95"
+                      style={{
+                        background: `linear-gradient(135deg, ${t.color}22, transparent 60%)`,
+                        borderColor: `${t.color}55`,
+                      }}
                     >
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className={d.color}>{d.icon}</span>
-                        <span className="text-lg font-black text-white">{d.title}</span>
+                      <div className="w-16 h-16 rounded-xl bg-black/40 border border-white/10 flex items-center justify-center mb-3 p-2">
+                        <TeamLogo
+                          teamName={t.name}
+                          leagueName={LEAGUES[t.league]?.name ?? t.league}
+                          size={56}
+                        />
                       </div>
-                      <div className="text-xs text-white/70">{d.subtitle}</div>
-                      <div className="mt-2 flex items-center justify-between text-[11px]">
-                        <span className={`font-mono ${d.color}`}>{d.range}</span>
-                        <span className="text-white/50">{count} equipos</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </motion.div>
-            ) : (
-              <motion.div
-                key="picks"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="mt-6"
-              >
-                {candidates.length === 0 ? (
-                  <div className="rounded-xl p-6 border border-white/10 bg-white/[0.03] text-center text-white/70">
-                    No hay equipos para esta dificultad.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    {candidates.map((t) => (
-                      <motion.button
-                        key={t.id}
-                        onClick={() => {
-                          onOpenChange(false);
-                          setTimeout(() => onPickTeam(t.id), 80);
-                        }}
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        whileHover={{ scale: 1.03 }}
-                        whileTap={{ scale: 0.98 }}
-                        className="p-4 rounded-xl border border-white/10 bg-white/[0.04] hover:border-primary/50 text-left transition"
-                        style={{
-                          background: `linear-gradient(135deg, ${t.color}22, transparent 60%)`,
-                          borderColor: `${t.color}55`,
-                        }}
-                      >
-                        <div className="w-16 h-16 rounded-xl bg-black/40 border border-white/10 flex items-center justify-center mb-3 p-2">
-                          <TeamLogo
-                            teamName={t.name}
-                            leagueName={LEAGUES[t.league]?.name ?? t.league}
-                            size={56}
+                      <div className="text-sm font-black text-white truncate">{t.name}</div>
+                      <div className="text-[11px] text-white/55 mb-2 truncate">{t.city}</div>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <div className="flex items-center gap-1.5 text-white/70">
+                          <LeagueLogo
+                            league={LEAGUES[t.league]?.name ?? t.league}
+                            size="sm"
                           />
-                        </div>
-                        <div className="text-sm font-black text-white truncate">{t.name}</div>
-                        <div className="text-[11px] text-white/55 mb-2 truncate">{t.city}</div>
-                        <div className="flex items-center justify-between text-[11px]">
-                          <div className="flex items-center gap-1.5 text-white/70">
-                            <LeagueLogo
-                              league={LEAGUES[t.league]?.name ?? t.league}
-                              size="sm"
-                            />
-                            <span className="truncate max-w-[120px]">
-                              {LEAGUES[t.league]?.name ?? t.league}
-                            </span>
-                          </div>
-                          <span
-                            className="font-black text-base"
-                            style={{ color: t.color || "#fff" }}
-                          >
-                            {overall(t)}
+                          <span className="truncate max-w-[120px]">
+                            {LEAGUES[t.league]?.name ?? t.league}
                           </span>
                         </div>
-                      </motion.button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="mt-6 flex items-center justify-between gap-2 flex-wrap">
-                  <button
-                    onClick={() => setDiff(null)}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-white/15 text-white/75 hover:bg-white/10 transition"
-                  >
-                    <ArrowLeft className="h-4 w-4" /> Cambiar dificultad
-                  </button>
-                  <button
-                    onClick={() => setRollSeed((x) => x + 1)}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-black text-white bg-gradient-to-r from-amber-500 to-orange-600 shadow-lg shadow-orange-500/30 hover:brightness-110 transition"
-                  >
-                    <Dice5 className="h-4 w-4" /> Tirar de nuevo
-                  </button>
+                        <span
+                          className="font-black text-base"
+                          style={{ color: t.color || "#fff" }}
+                        >
+                          {overall(t)}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              )}
+
+              <div className="mt-6 flex items-center justify-between gap-2 flex-wrap">
+                <button
+                  onClick={() => setShowCandidates(false)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-white/15 text-white/75 hover:bg-white/10 transition"
+                >
+                  <ArrowLeft className="h-4 w-4" /> Cambiar dificultad
+                </button>
+                <button
+                  onClick={() => setRollSeed((x) => x + 1)}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-black text-white bg-gradient-to-r from-amber-500 to-orange-600 shadow-lg shadow-orange-500/30 hover:brightness-110 transition"
+                >
+                  <Dice5 className="h-4 w-4" /> Tirar de nuevo
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

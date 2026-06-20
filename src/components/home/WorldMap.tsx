@@ -1,5 +1,4 @@
 import React, { useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { LEAGUES_BY_COUNTRY } from "@/data/teams";
 import { CountryFlag, getFlagUrl } from "@/components/CountryFlag";
@@ -203,36 +202,31 @@ export default function WorldMap({
 
       {/* Country chip grid below the map for quick access (only those in region) */}
       <div className="px-3 pb-3 pt-1">
-        <AnimatePresence>
-          <motion.div
-            key={region}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25 }}
-            className="flex flex-wrap items-center justify-center gap-1.5"
-          >
-            {countries
-              .filter((c) => inRegion(c, region))
-              .sort()
-              .map((country) => {
-                const isSelected = selectedCountry === country;
-                return (
-                  <button
-                    key={country}
-                    onClick={() => onPickCountry(country)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] border transition ${
-                      isSelected
-                        ? "bg-primary/20 border-primary/60 text-white"
-                        : "bg-white/[0.04] border-white/10 text-white/70 hover:border-white/30"
-                    }`}
-                  >
-                    <CountryFlag country={country} />
-                    <span>{country}</span>
-                  </button>
-                );
-              })}
-          </motion.div>
-        </AnimatePresence>
+        <div
+          key={region}
+          className="flex flex-wrap items-center justify-center gap-1.5 animate-fade-in"
+        >
+          {countries
+            .filter((c) => inRegion(c, region))
+            .sort()
+            .map((country) => {
+              const isSelected = selectedCountry === country;
+              return (
+                <button
+                  key={country}
+                  onClick={() => onPickCountry(country)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] border transition ${
+                    isSelected
+                      ? "bg-primary/20 border-primary/60 text-white"
+                      : "bg-white/[0.04] border-white/10 text-white/70 hover:border-white/30"
+                  }`}
+                >
+                  <CountryFlag country={country} />
+                  <span>{country}</span>
+                </button>
+              );
+            })}
+        </div>
       </div>
     </div>
   );

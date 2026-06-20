@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { LEAGUES_BY_COUNTRY, LEAGUES, getAllTeams, teamsByLeague, overall, LeagueId } from "@/data/teams";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { CountryFlag } from "@/components/CountryFlag";
@@ -98,15 +97,14 @@ export default function MainMenuWizard({
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-8 min-h-[60vh]">
-        <AnimatePresence mode="wait">
           {step === "intro" && (
-            <motion.div key="intro" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.4 }}>
+            <div key="intro" className="animate-fade-in">
               <IntroStep onStart={() => setStep("country")} onRandom={() => setRandomOpen(true)} loading={loading} />
-            </motion.div>
+            </div>
           )}
 
           {step === "country" && (
-            <motion.div key="country" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.35 }}>
+            <div key="country" className="animate-slide-in">
               <SectionHeader icon={<Globe2 className="h-5 w-5" />} title="Elige un país" subtitle="Selecciona la nación donde quieres iniciar tu carrera" />
               <WorldMap selectedCountry={country} onPickCountry={(c) => { setCountry(c); setLeague(null); }} />
               {country && (
@@ -116,11 +114,11 @@ export default function MainMenuWizard({
                   </button>
                 </div>
               )}
-            </motion.div>
+            </div>
           )}
 
           {step === "league" && country && (
-            <motion.div key="league" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.35 }}>
+            <div key="league" className="animate-slide-in">
               <SectionHeader icon={<Trophy className="h-5 w-5" />} title={`Ligas de ${country}`} subtitle="Elige la competición donde competirás" />
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {leagues.map((lg) => {
@@ -151,11 +149,11 @@ export default function MainMenuWizard({
                   </button>
                 </div>
               )}
-            </motion.div>
+            </div>
           )}
 
           {step === "team" && league && (
-            <motion.div key="team" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.35 }}>
+            <div key="team" className="animate-slide-in">
               <SectionHeader
                 icon={<Sparkles className="h-5 w-5" />}
                 title={LEAGUES[league]?.name ?? "Equipos"}
@@ -175,9 +173,8 @@ export default function MainMenuWizard({
                   );
                 })}
               </div>
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
       </div>
 
       <RandomPickModal
@@ -204,14 +201,11 @@ function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title
 function IntroStep({ onStart, onRandom, loading }: { onStart: () => void; onRandom: () => void; loading: boolean }) {
   return (
     <div className="text-center py-12">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.6 }}
-        className="inline-block mb-6 px-4 py-1.5 rounded-full border border-white/10 bg-white/5 text-xs uppercase tracking-[0.3em] text-white/70 font-bold"
+      <div
+        className="inline-block mb-6 px-4 py-1.5 rounded-full border border-white/10 bg-white/5 text-xs uppercase tracking-[0.3em] text-white/70 font-bold animate-fade-in"
       >
         Nueva carrera
-      </motion.div>
+      </div>
       <h2 className="text-4xl md:text-6xl font-black text-white mb-4 leading-tight">
         ¿Por dónde<br/>quieres empezar?
       </h2>

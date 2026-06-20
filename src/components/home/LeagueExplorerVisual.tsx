@@ -1,6 +1,5 @@
 // @ts-nocheck
 import React from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { LEAGUES_BY_COUNTRY, League } from "@/data/teams";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";

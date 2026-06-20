@@ -1427,6 +1427,18 @@ export type SaveGame = {
 
 
 const STORAGE_KEY = "fcsim:save:v2";
+const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
+
+export type SavedGameMeta = {
+  id: string;
+  teamId: string;
+  teamName: string;
+  teamColor: string;
+  league: string;
+  season: string;
+  createdAt: string;
+  lastPlayed: string;
+};
 
 
 

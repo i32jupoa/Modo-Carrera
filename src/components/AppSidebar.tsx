@@ -9,6 +9,7 @@ import {
   SidebarHeader, SidebarFooter, useSidebar,
 } from "@/components/ui/sidebar";
 import { loadSave } from "@/lib/store";
+import { loadAllSaves, loadSaveById } from "@/lib/savedGames";
 import { teamById } from "@/data/teams";
 import { useEffect, useState } from "react";
 
@@ -47,14 +48,35 @@ export function AppSidebar() {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const [teamName, setTeamName] = useState<string | null>(null);
   const [season, setSeason] = useState<string>("");
+  const [hasSave, setHasSave] = useState(false);
 
   useEffect(() => {
-    const s = loadSave();
-    if (s) {
-      setTeamName(teamById(s.myTeamId).name);
-      setSeason(s.season);
+    console.log("AppSidebar useEffect ejecutado, pathname:", pathname);
+    // Verificar si estamos en la página principal
+    const isHomePage = pathname === "/";
+    
+    if (isHomePage) {
+      // En la página principal, bloquear todo
+      setTeamName(null);
+      setSeason("");
+      setHasSave(false);
+      console.log("Página principal: bloqueando todo");
+    } else {
+      // En otras rutas, permitir navegación
+      const s = loadSave();
+      if (s) {
+        setTeamName(teamById(s.myTeamId).name);
+        setSeason(s.season);
+        setHasSave(true);
+        console.log("Otra ruta: permitiendo navegación, teamName:", teamById(s.myTeamId).name);
+      } else {
+        setTeamName(null);
+        setSeason("");
+        setHasSave(false);
+        console.log("Otra ruta pero no hay save: bloqueando todo");
+      }
     }
-  }, [pathname]);
+  }, [pathname]); // Ejecutar cuando cambia el pathname
 
   const isActive = (url: string) => pathname === url;
 
@@ -70,7 +92,7 @@ export function AppSidebar() {
               <div className="font-black tracking-tight leading-none">
                 FC <span className="text-primary">SIM</span>
               </div>
-              {teamName && (
+              {hasSave && teamName && (
                 <div className="text-[0.65rem] text-muted-foreground truncate mt-0.5">
                   {teamName}
                 </div>
@@ -81,14 +103,22 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        <NavGroup label="Principal" items={PRINCIPAL} collapsed={collapsed} isActive={isActive} />
-        <NavGroup label="Mi equipo" items={MI_EQUIPO} collapsed={collapsed} isActive={isActive} />
-        <NavGroup label="Competiciones" items={COMPETICIONES} collapsed={collapsed} isActive={isActive} />
-        <NavGroup label="Estadísticas" items={ESTADISTICAS} collapsed={collapsed} isActive={isActive} />
-        <NavGroup label="Mundo" items={MUNDO} collapsed={collapsed} isActive={isActive} />
+        {hasSave ? (
+          <>
+            <NavGroup label="Principal" items={PRINCIPAL} collapsed={collapsed} isActive={isActive} />
+            <NavGroup label="Mi equipo" items={MI_EQUIPO} collapsed={collapsed} isActive={isActive} />
+            <NavGroup label="Competiciones" items={COMPETICIONES} collapsed={collapsed} isActive={isActive} />
+            <NavGroup label="Estadísticas" items={ESTADISTICAS} collapsed={collapsed} isActive={isActive} />
+            <NavGroup label="Mundo" items={MUNDO} collapsed={collapsed} isActive={isActive} />
+          </>
+        ) : (
+          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+            Carga o inicia una carrera para acceder a las opciones
+          </div>
+        )}
       </SidebarContent>
 
-      {!collapsed && season && (
+      {!collapsed && hasSave && season && (
         <SidebarFooter className="border-t border-border/60 px-4 py-3">
           <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
             Temporada

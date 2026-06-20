@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { motion } from "framer-motion";
 
 const PHASES = [
   "Encendiendo las luces del estadio…",
@@ -19,9 +18,20 @@ export default function StadiumRevealLoader({
 }) {
   const [phase, setPhase] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [particles, setParticles] = useState<Array<{id: number, x: number, y: number, size: number, delay: number}>>([]);
   const color = teamColor || "#6366f1";
 
   useEffect(() => {
+    // Generar partículas
+    const newParticles = Array.from({ length: 30 }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      size: Math.random() * 4 + 2,
+      delay: Math.random() * 2,
+    }));
+    setParticles(newParticles);
+
     const t1 = setInterval(() => setPhase((p) => Math.min(PHASES.length - 1, p + 1)), 700);
     const t2 = setInterval(() => setProgress((p) => Math.min(100, p + 2)), 90);
     return () => {
@@ -31,43 +41,55 @@ export default function StadiumRevealLoader({
   }, []);
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.4 }}
-      className="fixed inset-0 z-[100] flex flex-col items-center justify-center overflow-hidden"
+    <div
+      className="fixed inset-0 z-[100] flex flex-col items-center justify-center overflow-hidden animate-fade-in"
       style={{
         background: `radial-gradient(circle at 50% 60%, ${color}33 0%, #050505 60%)`,
       }}
     >
+      {/* Partículas flotantes */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        {particles.map((p) => (
+          <div
+            key={p.id}
+            className="absolute rounded-full animate-float"
+            style={{
+              left: `${p.x}%`,
+              top: `${p.y}%`,
+              width: `${p.size}px`,
+              height: `${p.size}px`,
+              background: color,
+              opacity: 0.3,
+              animationDelay: `${p.delay}s`,
+              animationDuration: `${3 + p.delay}s`,
+            }}
+          />
+        ))}
+      </div>
+
       {/* Reflectores */}
       <div className="absolute inset-0 pointer-events-none">
         {[0, 1, 2, 3].map((i) => (
-          <motion.div
+          <div
             key={i}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: [0.1, 0.45, 0.1] }}
-            transition={{ duration: 2 + i * 0.3, repeat: Infinity, delay: i * 0.2 }}
-            className="absolute w-[40vw] h-[80vh] origin-top"
+            className="absolute w-[40vw] h-[80vh] origin-top animate-pulse"
             style={{
               left: `${15 + i * 22}%`,
               top: "-10%",
               background: `linear-gradient(180deg, ${color}66 0%, transparent 70%)`,
               filter: "blur(28px)",
               transform: `rotate(${(i - 1.5) * 8}deg)`,
+              animationDelay: `${i * 0.2}s`,
+              animationDuration: `${2 + i * 0.3}s`,
             }}
           />
         ))}
       </div>
 
       {/* Estadio SVG */}
-      <motion.svg
+      <svg
         viewBox="0 0 400 240"
-        className="relative w-[min(90vw,700px)] h-auto drop-shadow-[0_30px_60px_rgba(0,0,0,0.8)]"
-        initial={{ y: 40, scale: 0.9, opacity: 0 }}
-        animate={{ y: 0, scale: 1, opacity: 1 }}
-        transition={{ duration: 0.9, ease: "circOut" }}
+        className="relative w-[min(90vw,700px)] h-auto drop-shadow-[0_30px_60px_rgba(0,0,0,0.8)] animate-slide-up"
       >
         {/* Césped */}
         <defs>
@@ -79,6 +101,10 @@ export default function StadiumRevealLoader({
             <stop offset="0%" stopColor="#1a1a2e" />
             <stop offset="100%" stopColor="#0a0a14" />
           </linearGradient>
+          <radialGradient id="spotlight" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={color} stopOpacity="0.4" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </radialGradient>
         </defs>
         {/* gradas */}
         <ellipse cx="200" cy="170" rx="190" ry="55" fill="url(#stand)" />
@@ -100,48 +126,52 @@ export default function StadiumRevealLoader({
         <ellipse cx="200" cy="180" rx="140" ry="35" fill="none" stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1" />
         <line x1="200" y1="150" x2="200" y2="210" stroke="#ffffff" strokeOpacity="0.4" />
         <circle cx="200" cy="180" r="14" fill="none" stroke="#ffffff" strokeOpacity="0.4" />
-        {/* focos */}
+        {/* focos con efecto de luz */}
         {[60, 200, 340].map((x, i) => (
           <g key={i}>
+            <ellipse cx={x} cy="110" rx="30" ry="50" fill="url(#spotlight)" className="animate-pulse" style={{ animationDelay: `${i * 0.3}s` }} />
             <line x1={x} y1="40" x2={x} y2="110" stroke="#444" strokeWidth="3" />
-            <motion.circle
+            <circle
               cx={x}
               cy={40}
               r={8}
               fill="#fff7c4"
-              initial={{ opacity: 0.3 }}
-              animate={{ opacity: [0.6, 1, 0.6] }}
-              transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.2 }}
+              className="animate-pulse"
+              style={{
+                animationDelay: `${i * 0.2}s`,
+                animationDuration: "1.5s",
+              }}
             />
           </g>
         ))}
-      </motion.svg>
+        {/* Bandera del equipo */}
+        <g transform="translate(320, 60)">
+          <line x1="0" y1="0" x2="0" y2="50" stroke="#666" strokeWidth="2" />
+          <rect x="0" y="0" width="30" height="20" fill={color} className="animate-pulse" style={{ animationDuration: "2s" }} />
+        </g>
+      </svg>
 
       <div className="relative z-10 mt-8 text-center px-6">
         {teamName && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5 }}
-            className="text-2xl md:text-3xl font-black text-white mb-2"
+          <div
+            className="text-2xl md:text-3xl font-black text-white mb-2 animate-fade-in"
             style={{ textShadow: `0 0 24px ${color}` }}
           >
             Bienvenido a {teamName}
-          </motion.div>
+          </div>
         )}
         <div className="text-sm uppercase tracking-[0.3em] text-white/60 mb-6">
           {PHASES[phase]}
         </div>
 
         <div className="w-[min(80vw,400px)] h-2 mx-auto rounded-full bg-white/10 overflow-hidden">
-          <motion.div
-            className="h-full"
-            style={{ background: `linear-gradient(90deg, ${color}, #ffffff)` }}
-            animate={{ width: `${progress}%` }}
+          <div
+            className="h-full transition-all duration-300"
+            style={{ background: `linear-gradient(90deg, ${color}, #ffffff)`, width: `${progress}%` }}
           />
         </div>
         <div className="text-xs text-white/40 mt-3">{progress}%</div>
       </div>
-    </motion.div>
+    </div>
   );
 }

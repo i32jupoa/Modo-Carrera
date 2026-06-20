@@ -7,7 +7,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getAllTeams, overall, LEAGUES } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
-import { motion } from "framer-motion";
 import { getTeamCategory, getTeamDifficulty, getTeamObjectives, estimateTeamFinancials, CATEGORY_COLORS, DIFFICULTY_COLORS } from "@/lib/utils";
 import { getRivals, getRecentHistory } from "@/data/teamExtras";
 import { getClubExtra } from "@/data/clubExtras";
@@ -60,7 +59,7 @@ export default function ClubPreviewModal({
           background: `linear-gradient(180deg, ${teamColor}25 0%, rgba(8,8,15,0.98) 50%)`,
         }}
       >
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+        <div className="animate-fade-in">
           {/* HEADER cinemático */}
           <div className="relative h-44 overflow-hidden border-b border-white/10"
             style={{ background: `radial-gradient(circle at 30% 50%, ${teamColor}aa, transparent 60%), linear-gradient(135deg, ${teamColor}55, #0a0a14)` }}>
@@ -149,11 +148,10 @@ export default function ClubPreviewModal({
               <div className="text-xs uppercase tracking-wider text-white/50 mb-3">Objetivos de temporada</div>
               <div className="space-y-2">
                 {objectives.map((o, i) => (
-                  <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.04] border border-white/8">
+                  <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.04] border border-white/8 animate-slide-in" style={{ animationDelay: `${i * 0.05}s` }}>
                     <Trophy className="h-4 w-4 flex-shrink-0" style={{ color: teamColor }} />
                     <span className="text-sm text-white/90">{o}</span>
-                  </motion.div>
+                  </div>
                 ))}
               </div>
 
@@ -171,8 +169,7 @@ export default function ClubPreviewModal({
                       <div>{e.label}</div><div className="font-bold">{e.value}%</div>
                     </div>
                     <div className="w-full h-2 rounded-full bg-white/[0.08] overflow-hidden">
-                      <motion.div initial={{ width: 0 }} animate={{ width: `${e.value}%` }} transition={{ duration: 0.8 }}
-                        className="h-2 rounded-full" style={{ background: `linear-gradient(90deg, ${teamColor}, #ffffff66)` }} />
+                      <div className="h-2 rounded-full transition-all duration-800" style={{ background: `linear-gradient(90deg, ${teamColor}, #ffffff66)`, width: `${e.value}%` }} />
                     </div>
                   </div>
                 ))}
@@ -217,8 +214,7 @@ export default function ClubPreviewModal({
               <div className="text-xs uppercase tracking-wider text-white/50 mb-3">Últimas temporadas</div>
               <div className="space-y-2">
                 {history.map((h, i) => (
-                  <motion.div key={h.season} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-                    className="flex items-center gap-4 p-3 rounded-lg bg-white/[0.04] border border-white/8">
+                  <div key={h.season} className="flex items-center gap-4 p-3 rounded-lg bg-white/[0.04] border border-white/8 animate-slide-in" style={{ animationDelay: `${i * 0.05}s` }}>
                     <div className="text-xs font-mono text-white/50 w-12">{h.season}</div>
                     <div className="flex items-center gap-2">
                       <span className={`px-2 py-0.5 rounded text-xs font-black ${h.position <= 3 ? "bg-yellow-500/20 text-yellow-300" : h.position <= 6 ? "bg-blue-500/20 text-blue-300" : "bg-white/10 text-white/70"}`}>
@@ -231,7 +227,7 @@ export default function ClubPreviewModal({
                       )) : <span className="text-[10px] text-white/30">sin títulos</span>}
                     </div>
                     <div className="text-xs text-white/60 hidden md:block">⚽ {h.topScorer} ({h.goals})</div>
-                  </motion.div>
+                  </div>
                 ))}
               </div>
             </TabsContent>
@@ -251,7 +247,7 @@ export default function ClubPreviewModal({
               ¡Iniciar carrera!
             </button>
           </div>
-        </motion.div>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -379,12 +375,10 @@ function SquadView({
                     ? "from-sky-400 to-sky-600 text-black"
                     : "from-zinc-500 to-zinc-700 text-white";
                 return (
-                  <motion.div
+                  <div
                     key={`${p.Name}-${i}`}
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: i * 0.015 }}
-                    className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.04] border border-white/10 hover:border-white/25 transition"
+                    className="animate-slide-in flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.04] border border-white/10 hover:border-white/25 transition"
+                    style={{ animationDelay: `${i * 0.015}s` }}
                   >
                     <div
                       className={`w-10 h-10 rounded-lg bg-gradient-to-br ${ovrTone} flex items-center justify-center font-black text-sm flex-shrink-0 shadow`}
@@ -399,7 +393,7 @@ function SquadView({
                         {typeof p.Age === "number" && <span>· {p.Age}a</span>}
                       </div>
                     </div>
-                  </motion.div>
+                  </div>
                 );
               })}
             </div>
