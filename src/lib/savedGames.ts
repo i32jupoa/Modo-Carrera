@@ -4,6 +4,8 @@ import { usePlayersStore } from "@/store/playersStore";
 
 const STORAGE_KEY = "fcsim:save:v2";
 const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
+const CURRENT_SAVE_ID_KEY = "fcsim:save:current";
+const PLAYERS_PERSIST_KEY = "fcsim:players:v1";
 
 export type SavedGameMeta = {
   id: string;
@@ -15,6 +17,60 @@ export type SavedGameMeta = {
   createdAt: string;
   lastPlayed: string;
 };
+
+export function getCurrentSaveId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(CURRENT_SAVE_ID_KEY);
+}
+
+export function setCurrentSaveId(id: string | null) {
+  if (typeof window === "undefined") return;
+  if (id) localStorage.setItem(CURRENT_SAVE_ID_KEY, id);
+  else localStorage.removeItem(CURRENT_SAVE_ID_KEY);
+}
+
+function snapshotPlayersStore() {
+  const s = usePlayersStore.getState();
+  return {
+    loaded: true,
+    myTeamId: s.myTeamId,
+    squad: s.squad,
+    currentDate: s.currentDate,
+    fixtures: s.fixtures,
+    stats: s.stats,
+    rosterIds: s.rosterIds,
+    budget: s.budget,
+    dismissedMatchIds: s.dismissedMatchIds,
+  };
+}
+
+function saveKeyFor(id: string) {
+  return `${STORAGE_KEY}:${id}`;
+}
+
+/**
+ * Persist the current SaveGame and a fresh snapshot of the playersStore
+ * into the active save slot. Called on every saveSave() during gameplay so
+ * that the per-id save stays in sync with the actual progress.
+ */
+export function persistCurrentSave(save: SaveGame) {
+  if (typeof window === "undefined") return;
+  const id = getCurrentSaveId();
+  if (!id) return;
+  const payload = { ...save, playersStoreState: snapshotPlayersStore() };
+  try {
+    localStorage.setItem(saveKeyFor(id), JSON.stringify(payload));
+    // Refresh lastPlayed metadata
+    const saves = loadAllSaves();
+    const meta = saves.find((s) => s.id === id);
+    if (meta) {
+      meta.lastPlayed = new Date().toISOString();
+      saveMultipleSaves(saves);
+    }
+  } catch (err) {
+    console.error("Error persisting current save:", err);
+  }
+}
 
 export function loadAllSaves(): SavedGameMeta[] {
   if (typeof window === "undefined") return [];
@@ -34,7 +90,6 @@ export function saveMultipleSaves(saves: SavedGameMeta[]) {
 }
 
 export function addSaveToMultiple(save: SaveGame) {
-  console.log("addSaveToMultiple llamado con save:", save);
   if (typeof window === "undefined") return;
   const team = teamById(save.myTeamId);
   if (!team) {
@@ -43,7 +98,6 @@ export function addSaveToMultiple(save: SaveGame) {
   }
   
   const saves = loadAllSaves();
-  console.log("Saves actuales:", saves);
   const now = new Date().toISOString();
   
   const meta: SavedGameMeta = {
@@ -57,50 +111,34 @@ export function addSaveToMultiple(save: SaveGame) {
     lastPlayed: now,
   };
   
-  console.log("Meta creado:", meta);
-  
-  // Capturar el estado del playersStore para independencia entre partidas
-  const playersStoreState = usePlayersStore.getState();
-  const saveWithPlayersState = {
-    ...save,
-    playersStoreState: {
-      loaded: playersStoreState.loaded,
-      myTeamId: playersStoreState.myTeamId,
-      squad: playersStoreState.squad,
-      currentDate: playersStoreState.currentDate,
-      fixtures: playersStoreState.fixtures,
-      stats: playersStoreState.stats,
-      rosterIds: playersStoreState.rosterIds,
-      budget: playersStoreState.budget,
-      dismissedMatchIds: playersStoreState.dismissedMatchIds,
-    },
-  };
-  
-  // Guardar también el save completo con el ID
-  localStorage.setItem(`${STORAGE_KEY}:${meta.id}`, JSON.stringify(saveWithPlayersState));
-  console.log("Save guardado con ID:", meta.id);
-  
-  // Agregar a la lista de metadatos
+  // Activar esta partida como la actual ANTES de persistir el snapshot
+  setCurrentSaveId(meta.id);
+
+  const payload = { ...save, playersStoreState: snapshotPlayersStore() };
+  localStorage.setItem(saveKeyFor(meta.id), JSON.stringify(payload));
+
+  // Añadir a la lista de metadatos
   saves.unshift(meta);
   saveMultipleSaves(saves);
-  console.log("Saves después de agregar:", saves);
 }
 
 export function deleteSave(id: string) {
   if (typeof window === "undefined") return;
-  
-  // Eliminar el save completo
-  localStorage.removeItem(`${STORAGE_KEY}:${id}`);
-  
-  // Eliminar de la lista de metadatos
+  localStorage.removeItem(saveKeyFor(id));
   const saves = loadAllSaves().filter(s => s.id !== id);
   saveMultipleSaves(saves);
+  // Si era la partida activa, desactivarla y limpiar estado en memoria
+  if (getCurrentSaveId() === id) {
+    setCurrentSaveId(null);
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(PLAYERS_PERSIST_KEY);
+  }
 }
 
 export function loadSaveById(id: string): SaveGame | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(`${STORAGE_KEY}:${id}`);
+    const raw = localStorage.getItem(saveKeyFor(id));
     if (!raw) return null;
     return JSON.parse(raw) as SaveGame;
   } catch (err) {
@@ -121,51 +159,35 @@ export function updateSaveLastPlayed(id: string) {
 }
 
 export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: any }) {
-  const playersStore = usePlayersStore.getState();
-  
-  // Limpiar el estado persistente para evitar interferencia
-  localStorage.removeItem("fcsim:players:v1");
-  
-  // Si no hay playersStoreState, usar los datos del save directamente
-  if (!save.playersStoreState) {
-    // Compatibilidad con partidas guardadas anteriormente
-    if (save.myTeamId) {
-      playersStore.myTeamId = save.myTeamId;
-    }
+  // Limpia el estado persistido del playersStore para evitar fugas entre partidas
+  localStorage.removeItem(PLAYERS_PERSIST_KEY);
+
+  const snap = save.playersStoreState;
+  if (!snap) {
+    // Partidas antiguas sin snapshot: dejar el estado limpio con sólo el equipo
+    usePlayersStore.setState({
+      loaded: false,
+      myTeamId: save.myTeamId ?? null,
+    } as any);
     return;
   }
-  
-  // Restaurar el estado del playersStore
-  if (save.playersStoreState.loaded !== undefined) {
-    playersStore.loaded = save.playersStoreState.loaded;
-  }
-  if (save.playersStoreState.myTeamId !== undefined) {
-    playersStore.myTeamId = save.playersStoreState.myTeamId;
-  }
-  if (save.playersStoreState.squad !== undefined) {
-    playersStore.squad = save.playersStoreState.squad;
-  }
-  if (save.playersStoreState.currentDate !== undefined) {
-    playersStore.currentDate = save.playersStoreState.currentDate;
-  }
-  if (save.playersStoreState.fixtures !== undefined) {
-    playersStore.fixtures = save.playersStoreState.fixtures;
-  }
-  if (save.playersStoreState.stats !== undefined) {
-    playersStore.stats = save.playersStoreState.stats;
-  }
-  if (save.playersStoreState.rosterIds !== undefined) {
-    playersStore.rosterIds = save.playersStoreState.rosterIds;
-  }
-  if (save.playersStoreState.budget !== undefined) {
-    playersStore.budget = save.playersStoreState.budget;
-  }
-  if (save.playersStoreState.dismissedMatchIds !== undefined) {
-    playersStore.dismissedMatchIds = save.playersStoreState.dismissedMatchIds;
-  }
+
+  // Restaurar usando setState (mutar el objeto devuelto por getState NO notifica
+  // a los componentes ni persiste). Mantener cualquier campo no incluido.
+  usePlayersStore.setState({
+    loaded: true,
+    myTeamId: snap.myTeamId ?? save.myTeamId ?? null,
+    squad: snap.squad ?? [],
+    currentDate: snap.currentDate,
+    fixtures: snap.fixtures ?? [],
+    stats: snap.stats ?? {},
+    rosterIds: snap.rosterIds ?? [],
+    budget: snap.budget,
+    dismissedMatchIds: snap.dismissedMatchIds ?? [],
+  } as any);
 }
 
 export function clearPlayersStorePersist() {
-  // Limpiar el estado persistente del playersStore para evitar estado compartido
-  localStorage.removeItem("fcsim:players:v1");
+  localStorage.removeItem(PLAYERS_PERSIST_KEY);
+  setCurrentSaveId(null);
 }

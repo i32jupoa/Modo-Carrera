@@ -1,6 +1,16 @@
 import React from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Trash2, Play, Calendar, Trophy } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Trash2, Play, Calendar, Trophy, AlertTriangle } from "lucide-react";
 import { loadAllSaves, deleteSave, loadSaveById, updateSaveLastPlayed, type SavedGameMeta } from "@/lib/savedGames";
 import { LEAGUES } from "@/data/teams";
 import { usePlayersStore } from "@/store/playersStore";
@@ -13,10 +23,12 @@ export default function SavedGamesModal({
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onLoadGame: (save: any) => void;
+  onLoadGame: (save: any, id?: string) => void;
   onDeleteGame?: () => void;
 }) {
   const [saves, setSaves] = React.useState<SavedGameMeta[]>([]);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
+  const [deleteTargetId, setDeleteTargetId] = React.useState<string | null>(null);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const initPlayers = usePlayersStore((s) => s.init);
 
@@ -32,9 +44,7 @@ export default function SavedGamesModal({
     if (save) {
       console.log("Save cargado:", save);
       updateSaveLastPlayed(id);
-      // NO llamar a initPlayers ni setMyTeam aquí, dejar que continueGame lo maneje
-      console.log("Llamando a onLoadGame");
-      onLoadGame(save);
+      onLoadGame(save, id);
       onOpenChange(false);
     } else {
       console.error("No se pudo cargar el save con id:", id);
@@ -42,11 +52,18 @@ export default function SavedGamesModal({
   }
 
   function handleDeleteGame(id: string) {
-    if (confirm("¿Estás seguro de que quieres eliminar esta partida guardada?")) {
-      deleteSave(id);
+    setDeleteTargetId(id);
+    setDeleteConfirmOpen(true);
+  }
+
+  function confirmDeleteGame() {
+    if (deleteTargetId) {
+      deleteSave(deleteTargetId);
       setSaves(loadAllSaves());
       onDeleteGame?.();
     }
+    setDeleteTargetId(null);
+    setDeleteConfirmOpen(false);
   }
 
   function formatDate(dateString: string): string {
@@ -143,6 +160,36 @@ export default function SavedGamesModal({
           )}
         </div>
       </DialogContent>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent className="glass-dark border-red-500/20">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center">
+                <AlertTriangle className="h-6 w-6 text-red-400" />
+              </div>
+              <AlertDialogTitle className="text-2xl font-black text-white">
+                Eliminar partida
+              </AlertDialogTitle>
+            </div>
+            <AlertDialogDescription className="text-white/70 text-base">
+              ¿Estás seguro de que quieres eliminar esta partida guardada? Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-3">
+            <AlertDialogCancel className="glass border-white/10 text-white hover:bg-white/5">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteGame}
+              className="bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white font-bold border border-red-400/30"
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

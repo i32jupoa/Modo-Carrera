@@ -1,8 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { getAllTeams, teamById, LEAGUES } from "@/data/teams";
-import { loadSave, newSave, saveSave, clearSave } from "@/lib/store";
-import { loadAllSaves, addSaveToMultiple, loadSaveById, restorePlayersStoreState, clearPlayersStorePersist } from "@/lib/savedGames";
+import { loadSave, newSave, saveSave } from "@/lib/store";
+import {
+  loadAllSaves,
+  addSaveToMultiple,
+  loadSaveById,
+  restorePlayersStoreState,
+  setCurrentSaveId,
+} from "@/lib/savedGames";
 import { usePlayersStore } from "@/store/playersStore";
 
 import ClubPreviewModal from "@/components/home/ClubPreviewModal";
@@ -27,6 +33,7 @@ function Index() {
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const initPlayers = usePlayersStore((s) => s.init);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const savedGames = useMemo(() => loadAllSaves(), [hasSave]);
 
   // Generar partículas solo en el cliente para evitar error de hidratación
@@ -35,12 +42,14 @@ function Index() {
 
   useEffect(() => {
     setMounted(true);
-    setParticles([...Array(20)].map((_, i) => ({
-      left: `${Math.random() * 100}%`,
-      animationDelay: `${Math.random() * 20}s`,
-      animationDuration: `${15 + Math.random() * 10}s`,
-      background: selectedTeamColor || undefined,
-    })));
+    setParticles(
+      [...Array(20)].map((_, i) => ({
+        left: `${Math.random() * 100}%`,
+        animationDelay: `${Math.random() * 20}s`,
+        animationDuration: `${15 + Math.random() * 10}s`,
+        background: selectedTeamColor || undefined,
+      })),
+    );
   }, [selectedTeamColor]);
 
   useEffect(() => {
@@ -67,6 +76,10 @@ function Index() {
     try {
       // Limpiar el estado persistente del playersStore para evitar estado compartido
       localStorage.removeItem("fcsim:players:v1");
+      // Limpiar la partida activa previa y resetear el playersStore en memoria
+      setCurrentSaveId(null);
+      usePlayersStore.getState().clear();
+      usePlayersStore.getState().resetAllStats();
       initPlayers();
       const s = newSave(id);
       setMyTeam(id);
@@ -91,28 +104,28 @@ function Index() {
     if (pick) pickTeam(pick.id);
   }
 
-  function resetGame() {
-    clearSave();
-    clearPlayersStorePersist();
-    setHasSave(false);
-  }
+  function continueGame(save: any, id?: string) {
+    // Activar la partida cargada como la actual (para que saveSave la mantenga)
+    if (id) {
+      setCurrentSaveId(id);
+    } else {
+      const saves = loadAllSaves();
+      const meta = saves.find((m) => m.teamId === save.myTeamId && m.season === save.season);
+      if (meta) setCurrentSaveId(meta.id);
+    }
 
-  function continueGame(save: any) {
-    console.log("continueGame llamado con save:", save);
-    // Limpiar el estado persistente del playersStore para evitar estado compartido
+    // Limpiar el playersStore en memoria y el estado persistido antes de restaurar
+    usePlayersStore.getState().clear();
+    usePlayersStore.getState().resetAllStats();
     localStorage.removeItem("fcsim:players:v1");
-    // Restaurar el estado del playersStore para independencia entre partidas
-    console.log("Restaurando estado del playersStore");
+
+    // Restaurar el snapshot completo (NO llamar a setMyTeam ni init después:
+    // ambas reescribirían rosterIds/squad y perderías los fichajes).
     restorePlayersStoreState(save);
-    // Inicializar players después de restaurar el estado
-    console.log("Inicializando players");
-    initPlayers();
-    console.log("Seteando myTeam:", save.myTeamId);
-    setMyTeam(save.myTeamId);
-    // Guardar en el sistema antiguo para compatibilidad con SeasonPage
-    console.log("Guardando en sistema antiguo");
+
+    // Sincronizar el sistema antiguo (clave única) con la partida cargada
     saveSave(save);
-    console.log("Navegando a /season");
+
     navigate({ to: "/season" });
   }
 
@@ -124,12 +137,12 @@ function Index() {
 
   return (
     <div className="min-h-screen overflow-hidden relative">
-      <div 
-        className="global-bg-aaa" 
+      <div
+        className="global-bg-aaa"
         style={{
-          background: selectedTeamColor 
+          background: selectedTeamColor
             ? `radial-gradient(circle at 50% 50%, ${selectedTeamColor}22 0%, #050505 70%)`
-            : undefined
+            : undefined,
         }}
       />
 
@@ -154,66 +167,48 @@ function Index() {
       {/* Sonido ambiente */}
       <SoundAmbient />
 
-      {/* Mensaje de partidas guardadas */}
-      {!showWizard && !loading && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-40 animate-fade-in">
-          {savedGames.length === 0 ? (
-            <div className="px-6 py-3 rounded-xl bg-white/[0.05] border border-white/10 backdrop-blur-xl text-center">
-              <div className="text-white/70 text-sm">No tienes partidas guardadas</div>
-              <div className="text-white/50 text-xs mt-1">Inicia una nueva carrera para comenzar</div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setSavedGamesOpen(true)}
-              className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-white font-bold text-sm shadow-lg shadow-primary/30 hover:brightness-125 transition border border-white/20 backdrop-blur-xl"
-            >
-              Cargar partida ({savedGames.length})
-            </button>
-          )}
-        </div>
-      )}
-
       {/* Transición entre Hero y Wizard */}
       {!showWizard ? (
         <div className="animate-fade-in">
-          <HeroAAA hasSave={hasSave} resetGame={resetGame} loading={loading} onContinueGame={continueGame} />
-          <div className="text-center pb-12">
-            <button
-              onClick={() => setShowWizard(true)}
-              className="group relative px-10 py-4 rounded-2xl bg-gradient-to-r from-primary via-primary to-primary text-white font-black text-lg shadow-[0_0_40px_rgba(99,102,241,0.4)] hover:shadow-[0_0_60px_rgba(99,102,241,0.6)] hover:scale-105 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-shimmer" />
-              <span className="relative flex items-center gap-3">
-                <span className="text-2xl">🚀</span>
-                Iniciar Carrera
-              </span>
-            </button>
-          </div>
+          <HeroAAA
+            savedGamesCount={savedGames.length}
+            loading={loading}
+            onLoadGame={() => setSavedGamesOpen(true)}
+            onNewGame={() => setShowWizard(true)}
+          />
         </div>
       ) : (
         <div className="animate-slide-in">
-          <MainMenuWizard 
-            onPickTeam={(id) => { 
+          <MainMenuWizard
+            onPickTeam={(id) => {
               const team = teamById(id);
               setSelectedTeamColor(team?.color || null);
-              setSelectedClub(id); 
-              setModalOpen(true); 
-            }} 
-            onQuickStart={quickStart} 
-            loading={loading} 
+              setSelectedClub(id);
+              setModalOpen(true);
+            }}
+            onQuickStart={quickStart}
+            loading={loading}
           />
         </div>
       )}
 
-      <ClubPreviewModal teamId={selectedClub} open={modalOpen} onOpenChange={setModalOpen} onStart={(id) => pickTeam(id)} />
+      <ClubPreviewModal
+        teamId={selectedClub}
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        onStart={(id) => pickTeam(id)}
+      />
 
       {/* Modal de partidas guardadas */}
-      <SavedGamesModal open={savedGamesOpen} onOpenChange={setSavedGamesOpen} onLoadGame={continueGame} onDeleteGame={handleDeleteGame} />
+      <SavedGamesModal
+        open={savedGamesOpen}
+        onOpenChange={setSavedGamesOpen}
+        onLoadGame={continueGame}
+        onDeleteGame={handleDeleteGame}
+      />
 
       {/* Loader temático */}
-      {loading && (
-        <StadiumRevealLoader teamName={loaderTeam?.name} teamColor={loaderTeam?.color} />
-      )}
+      {loading && <StadiumRevealLoader teamName={loaderTeam?.name} teamColor={loaderTeam?.color} />}
     </div>
   );
 }

@@ -1,120 +1,60 @@
-import React, { useMemo } from "react";
-import { Link } from "@tanstack/react-router";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { loadSave, getMyRecentResults } from "@/lib/store";
-import { teamById } from "@/data/teams";
+import React from "react";
+import { Save, Rocket } from "lucide-react";
 
 export default function MainActionCards({
-  hasSave,
-  resetGame,
+  savedGamesCount,
   loading,
-  onContinueGame,
+  onLoadGame,
+  onNewGame,
 }: {
-  hasSave: boolean;
-  resetGame: () => void;
+  savedGamesCount: number;
   loading: boolean;
-  onContinueGame?: (save: any) => void;
+  onLoadGame: () => void;
+  onNewGame: () => void;
 }) {
-  const recentResults = useMemo(() => {
-    const save = hasSave ? loadSave() : null;
-    if (!save) return [];
-    return getMyRecentResults(save, 5);
-  }, [hasSave]);
   return (
-    <div className="mt-8">
-      <div
-        className="flex items-center justify-center gap-6 flex-wrap animate-fade-in"
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl mx-auto mt-10 animate-fade-in">
+      <button
+        onClick={onLoadGame}
+        disabled={loading}
+        className="continue-card-aaa group text-left relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none"
       >
-        {hasSave ? (
-          <div 
-            onClick={() => {
-              const save = loadSave();
-              if (save && onContinueGame) {
-                onContinueGame(save);
-              }
-            }}
-            className="continue-card-aaa group max-w-3xl w-full interactive-hover cursor-pointer"
-          >
-            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-700 bg-gradient-to-r from-primary/10 via-accent/10 to-primary/10" />
-
-            <div className="relative z-10 flex items-center justify-between gap-8">
-              <div>
-                <div className="text-xs uppercase tracking-[0.25em] text-white/50 mb-3">Continuar carrera</div>
-
-                <div className="text-4xl font-black mb-2">Tu carrera guardada</div>
-
-                <div className="flex items-center gap-3 text-white/60 text-sm">
-                  {recentResults.length > 0 ? (
-                    <span>Últimos partidos</span>
-                  ) : (
-                    <span>Próximo reto te espera</span>
-                  )}
-                </div>
-
-                {recentResults.length > 0 && (
-                  <div className="flex gap-2 mt-5">
-                    {recentResults.map((f, i) => {
-                      const r = f.result!;
-                      const teamGoals = f.homeId === loadSave()!.myTeamId ? r.homeGoals : r.awayGoals;
-                      const oppGoals = f.homeId === loadSave()!.myTeamId ? r.awayGoals : r.homeGoals;
-                      const outcome = teamGoals > oppGoals ? 'V' : teamGoals < oppGoals ? 'D' : 'E';
-                      const outcomeColor = outcome === 'V' ? 'bg-green-500/30 text-green-300 border border-green-500/40' : outcome === 'D' ? 'bg-red-500/30 text-red-300 border border-red-500/40' : 'bg-yellow-500/30 text-yellow-300 border border-yellow-500/40';
-
-                      return (
-                        <div
-                          key={f.id}
-                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black ${outcomeColor} animate-slide-in`}
-                          style={{ animationDelay: `${i * 0.05}s` }}
-                          title={`${outcome === 'V' ? 'Victoria' : outcome === 'D' ? 'Derrota' : 'Empate'}: ${teamGoals}-${oppGoals}`}
-                        >
-                          {outcome}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="text-right">
-                <div className="text-sm text-white/50 mb-2">Progreso</div>
-                <div className="text-2xl font-black">Continuar →</div>
-              </div>
+        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-700 bg-gradient-to-br from-primary/10 via-accent/5 to-transparent" />
+        <div className="relative z-10 flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.25em] text-white/50 mb-3">Continuar</div>
+            <div className="text-3xl font-black mb-2">Cargar partida</div>
+            <div className="text-sm text-white/60">
+              {savedGamesCount === 0
+                ? "No tienes partidas guardadas"
+                : `${savedGamesCount} partida${savedGamesCount === 1 ? "" : "s"} guardada${savedGamesCount === 1 ? "" : "s"}`}
             </div>
           </div>
-        ) : (
-          <div className="continue-card-aaa max-w-3xl w-full p-8 text-center">
-            <div className="text-lg font-bold mb-2">No hay ninguna carrera activa.</div>
-            <div className="text-sm text-white/60 mb-4">Crea una carrera y empieza a construir tu dinastía.</div>
-            <AlertDialog>
-                <AlertDialogTrigger asChild>
-                <button className="px-6 py-3 rounded-lg glass text-foreground font-semibold hover:bg-white/10 transition text-lg interactive-hover">Nueva partida</button>
-              </AlertDialogTrigger>
-
-              <AlertDialogContent className="glass-dark">
-                <AlertDialogHeader>
-                  <AlertDialogTitle className="text-2xl font-black gradient-text-premium">¿Crear nueva partida?</AlertDialogTitle>
-                  <AlertDialogDescription className="text-muted-foreground">Se generará una nueva carrera desde cero.</AlertDialogDescription>
-                </AlertDialogHeader>
-
-                <AlertDialogFooter>
-                  <AlertDialogCancel className="glass">Cancelar</AlertDialogCancel>
-                  <AlertDialogAction onClick={resetGame} className="button-premium">Crear y empezar</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+          <div className="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/30 grid place-items-center group-hover:scale-110 transition-transform duration-300">
+            <Save className="h-7 w-7 text-primary" />
           </div>
-        )}
-      </div>
+        </div>
+      </button>
+
+      <button
+        onClick={onNewGame}
+        disabled={loading}
+        className="continue-card-aaa group text-left relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none"
+      >
+        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-700 bg-gradient-to-bl from-accent/10 via-primary/5 to-transparent" />
+        <div className="relative z-10 flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.25em] text-white/50 mb-3">Comenzar</div>
+            <div className="text-3xl font-black mb-2">Nueva Partida</div>
+            <div className="text-sm text-white/60">
+              Elige un club y empieza tu camino hacia la gloria
+            </div>
+          </div>
+          <div className="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-accent/20 to-accent/5 border border-accent/30 grid place-items-center group-hover:scale-110 transition-transform duration-300">
+            <Rocket className="h-7 w-7 text-accent" />
+          </div>
+        </div>
+      </button>
     </div>
   );
 }

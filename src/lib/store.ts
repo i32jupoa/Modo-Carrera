@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { persistCurrentSave } from "./savedGames";
 import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getPrimaryLeagueForCountry, Team } from "@/data/teams";
 
 
@@ -2071,6 +2072,7 @@ export function saveSave(s: SaveGame) {
 
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  try { persistCurrentSave(s); } catch (e) { console.error("persistCurrentSave failed", e); }
 
 
 
