@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { LEAGUES_BY_COUNTRY } from "@/data/teams";
-import { CountryFlag } from "@/components/CountryFlag";
+import { CountryFlag, getFlagUrl } from "@/components/CountryFlag";
 
 // Public CDN topojson (world atlas, 110m). Bundled by react-simple-maps via fetch.
 const GEO_URL =
@@ -143,6 +143,7 @@ export default function WorldMap({
               const isSelected = selectedCountry === country;
               const isInRegion = inRegion(country, region);
               const leagueCount = LEAGUES_BY_COUNTRY[country]?.length ?? 0;
+              const size = isSelected ? 8 : 6;
               return (
                 <Marker key={country} coordinates={c}>
                   <g
@@ -153,15 +154,28 @@ export default function WorldMap({
                     }}
                     onClick={() => onPickCountry(country)}
                   >
+                    <defs>
+                      <clipPath id={`flag-clip-${country}`}>
+                        <circle r={size / 2} />
+                      </clipPath>
+                    </defs>
                     <circle
-                      r={isSelected ? 5 : 3.5}
-                      fill={isSelected ? "hsl(var(--primary))" : "#fff"}
-                      fillOpacity={isSelected ? 0.95 : 0.85}
-                      stroke={isSelected ? "#fff" : "rgba(255,255,255,0.55)"}
-                      strokeWidth={isSelected ? 1.5 : 0.8}
+                      r={size / 2 + 1}
+                      fill={isSelected ? "hsl(var(--primary))" : "rgba(0,0,0,0.5)"}
+                      stroke={isSelected ? "#fff" : "rgba(255,255,255,0.7)"}
+                      strokeWidth={isSelected ? 1.2 : 0.6}
+                    />
+                    <image
+                      href={getFlagUrl(country)}
+                      x={-size / 2}
+                      y={-size / 2}
+                      width={size}
+                      height={size}
+                      preserveAspectRatio="xMidYMid slice"
+                      clipPath={`url(#flag-clip-${country})`}
                     />
                     {isSelected && (
-                      <circle r={9} fill="hsl(var(--primary))" fillOpacity={0.25}>
+                      <circle r={5} fill="hsl(var(--primary))" fillOpacity={0.25}>
                         <animate
                           attributeName="r"
                           values="6;14;6"
