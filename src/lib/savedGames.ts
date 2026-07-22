@@ -6,6 +6,10 @@ const STORAGE_KEY = "fcsim:save:v2";
 const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
 const CURRENT_SAVE_ID_KEY = "fcsim:save:current";
 const PLAYERS_PERSIST_KEY = "fcsim:players:v1";
+const SAVE_PERSIST_THROTTLE_MS = 1200;
+let lastPersistAt = 0;
+let pendingPersist: { id: string; save: SaveGame } | null = null;
+let pendingPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 export type SavedGameMeta = {
   id: string;
@@ -57,15 +61,38 @@ export function persistCurrentSave(save: SaveGame) {
   if (typeof window === "undefined") return;
   const id = getCurrentSaveId();
   if (!id) return;
-  const payload = { ...save, playersStoreState: snapshotPlayersStore() };
-  try {
-    localStorage.setItem(saveKeyFor(id), JSON.stringify(payload));
-    // Refresh lastPlayed metadata
+
+  const flush = (targetId: string, targetSave: SaveGame) => {
+    const payload = { ...targetSave, playersStoreState: snapshotPlayersStore() };
+    localStorage.setItem(saveKeyFor(targetId), JSON.stringify(payload));
+    lastPersistAt = Date.now();
     const saves = loadAllSaves();
-    const meta = saves.find((s) => s.id === id);
+    const meta = saves.find((s) => s.id === targetId);
     if (meta) {
       meta.lastPlayed = new Date().toISOString();
       saveMultipleSaves(saves);
+    }
+  };
+
+  try {
+    if (Date.now() - lastPersistAt >= SAVE_PERSIST_THROTTLE_MS) {
+      flush(id, save);
+      return;
+    }
+
+    pendingPersist = { id, save };
+    if (!pendingPersistTimer) {
+      pendingPersistTimer = setTimeout(() => {
+        const pending = pendingPersist;
+        pendingPersist = null;
+        pendingPersistTimer = null;
+        if (!pending) return;
+        try {
+          flush(pending.id, pending.save);
+        } catch (err) {
+          console.error("Error persisting current save:", err);
+        }
+      }, SAVE_PERSIST_THROTTLE_MS);
     }
   } catch (err) {
     console.error("Error persisting current save:", err);

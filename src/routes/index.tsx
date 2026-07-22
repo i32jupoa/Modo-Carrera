@@ -171,7 +171,7 @@ function Index() {
       {!showWizard ? (
         <div className="animate-fade-in">
           <HeroAAA
-            savedGamesCount={savedGames.length}
+            savedGamesCount={mounted ? savedGames.length : 0}
             loading={loading}
             onLoadGame={() => setSavedGamesOpen(true)}
             onNewGame={() => setShowWizard(true)}

@@ -1590,6 +1590,15 @@ export type PlayerStats = {
 
 
   cupAppearances: number;
+  uclGoals: number;
+  uclAssists: number;
+  uclAppearances: number;
+  cleanSheets: number;
+  cupCleanSheets: number;
+  uclCleanSheets: number;
+  motm: number;
+  cupMotm: number;
+  uclMotm: number;
 
 
 
@@ -2134,6 +2143,15 @@ function defaultStats(): PlayerStats {
 
 
     cupAppearances: 0,
+    uclGoals: 0,
+    uclAssists: 0,
+    uclAppearances: 0,
+    cleanSheets: 0,
+    cupCleanSheets: 0,
+    uclCleanSheets: 0,
+    motm: 0,
+    cupMotm: 0,
+    uclMotm: 0,
 
 
 
@@ -4802,6 +4820,8 @@ type PlayersState = {
 
 
   recordAssist: (playerId: string, competition?: string) => void;
+  recordCleanSheet: (playerId: string, competition?: string) => void;
+  recordMotm: (playerId: string, competition?: string) => void;
 
 
 
@@ -4898,6 +4918,56 @@ type PlayersState = {
 
 
 };
+
+let statsBatchDepth = 0;
+let batchedStats: Record<string, PlayerStats> | null = null;
+
+function mutatePlayerStat(
+  get: () => PlayersState,
+  set: (partial: Partial<PlayersState>) => void,
+  playerId: string,
+  updater: (stats: PlayerStats) => PlayerStats,
+) {
+  const source = batchedStats ?? get().stats;
+  const next = batchedStats ?? { ...source };
+  next[playerId] = updater(source[playerId] ?? defaultStats());
+  if (batchedStats) batchedStats = next;
+  else set({ stats: next });
+}
+
+export function beginPlayerStatsBatch() {
+  if (statsBatchDepth++ === 0) {
+    batchedStats = { ...usePlayersStore.getState().stats };
+  }
+}
+
+export function endPlayerStatsBatch() {
+  if (statsBatchDepth <= 0) return;
+  statsBatchDepth--;
+  if (statsBatchDepth === 0 && batchedStats) {
+    const stats = batchedStats;
+    batchedStats = null;
+    usePlayersStore.setState({ stats } as any);
+  }
+}
+
+export function withPlayerStatsBatch<T>(fn: () => T): T {
+  beginPlayerStatsBatch();
+  try {
+    return fn();
+  } finally {
+    endPlayerStatsBatch();
+  }
+}
+
+export async function withPlayerStatsBatchAsync<T>(fn: () => Promise<T>): Promise<T> {
+  beginPlayerStatsBatch();
+  try {
+    return await fn();
+  } finally {
+    endPlayerStatsBatch();
+  }
+}
 
 
 
@@ -12217,6 +12287,17 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       recordAppearance: (playerId, competition) => {
+        mutatePlayerStat(get, set, playerId, (s) => {
+          const isCup = competition === "cup";
+          const isUcl = competition === "ucl";
+          return {
+            ...s,
+            appearances: s.appearances + 1,
+            cupAppearances: (s.cupAppearances ?? 0) + (isCup ? 1 : 0),
+            uclAppearances: (s.uclAppearances ?? 0) + (isUcl ? 1 : 0),
+          };
+        });
+        return;
 
 
 
@@ -12265,22 +12346,12 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         const isCup = competition === "cup";
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        next[playerId] = { ...s, appearances: s.appearances + 1, cupAppearances: (s.cupAppearances ?? 0) + (isCup ? 1 : 0) };
+        const isUcl = competition === "ucl";
+        next[playerId] = { ...s,
+          appearances: s.appearances + 1,
+          cupAppearances: (s.cupAppearances ?? 0) + (isCup ? 1 : 0),
+          uclAppearances: (s.uclAppearances ?? 0) + (isUcl ? 1 : 0),
+        };
 
 
 
@@ -12345,6 +12416,17 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       recordGoal: (playerId, competition) => {
+        mutatePlayerStat(get, set, playerId, (s) => {
+          const isCup = competition === "cup";
+          const isUcl = competition === "ucl";
+          return {
+            ...s,
+            goals: s.goals + 1,
+            cupGoals: (s.cupGoals ?? 0) + (isCup ? 1 : 0),
+            uclGoals: (s.uclGoals ?? 0) + (isUcl ? 1 : 0),
+          };
+        });
+        return;
 
 
 
@@ -12393,22 +12475,12 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         const isCup = competition === "cup";
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        next[playerId] = { ...s, goals: s.goals + 1, cupGoals: (s.cupGoals ?? 0) + (isCup ? 1 : 0) };
+        const isUcl = competition === "ucl";
+        next[playerId] = { ...s,
+          goals: s.goals + 1,
+          cupGoals: (s.cupGoals ?? 0) + (isCup ? 1 : 0),
+          uclGoals: (s.uclGoals ?? 0) + (isUcl ? 1 : 0),
+        };
 
 
 
@@ -12473,6 +12545,17 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       recordAssist: (playerId, competition) => {
+        mutatePlayerStat(get, set, playerId, (s) => {
+          const isCup = competition === "cup";
+          const isUcl = competition === "ucl";
+          return {
+            ...s,
+            assists: s.assists + 1,
+            cupAssists: (s.cupAssists ?? 0) + (isCup ? 1 : 0),
+            uclAssists: (s.uclAssists ?? 0) + (isUcl ? 1 : 0),
+          };
+        });
+        return;
 
 
 
@@ -12521,53 +12604,59 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         const isCup = competition === "cup";
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        next[playerId] = { ...s, assists: s.assists + 1, cupAssists: (s.cupAssists ?? 0) + (isCup ? 1 : 0) };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        const isUcl = competition === "ucl";
+        next[playerId] = { ...s,
+          assists: s.assists + 1,
+          cupAssists: (s.cupAssists ?? 0) + (isCup ? 1 : 0),
+          uclAssists: (s.uclAssists ?? 0) + (isUcl ? 1 : 0),
+        };
         set({ stats: next });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+      },
+      recordCleanSheet: (playerId, competition) => {
+        mutatePlayerStat(get, set, playerId, (s) => {
+          const isCup = competition === "cup";
+          const isUcl = competition === "ucl";
+          return {
+            ...s,
+            cleanSheets: (s.cleanSheets ?? 0) + 1,
+            cupCleanSheets: (s.cupCleanSheets ?? 0) + (isCup ? 1 : 0),
+            uclCleanSheets: (s.uclCleanSheets ?? 0) + (isUcl ? 1 : 0),
+          };
+        });
+        return;
+        const next = { ...get().stats };
+        const s = next[playerId] ?? defaultStats();
+        const isCup = competition === "cup";
+        const isUcl = competition === "ucl";
+        next[playerId] = { ...s,
+          cleanSheets: (s.cleanSheets ?? 0) + 1,
+          cupCleanSheets: (s.cupCleanSheets ?? 0) + (isCup ? 1 : 0),
+          uclCleanSheets: (s.uclCleanSheets ?? 0) + (isUcl ? 1 : 0),
+        };
+        set({ stats: next });
+      },
+      recordMotm: (playerId, competition) => {
+        mutatePlayerStat(get, set, playerId, (s) => {
+          const isCup = competition === "cup";
+          const isUcl = competition === "ucl";
+          return {
+            ...s,
+            motm: (s.motm ?? 0) + 1,
+            cupMotm: (s.cupMotm ?? 0) + (isCup ? 1 : 0),
+            uclMotm: (s.uclMotm ?? 0) + (isUcl ? 1 : 0),
+          };
+        });
+        return;
+        const next = { ...get().stats };
+        const s = next[playerId] ?? defaultStats();
+        const isCup = competition === "cup";
+        const isUcl = competition === "ucl";
+        next[playerId] = { ...s,
+          motm: (s.motm ?? 0) + 1,
+          cupMotm: (s.cupMotm ?? 0) + (isCup ? 1 : 0),
+          uclMotm: (s.uclMotm ?? 0) + (isUcl ? 1 : 0),
+        };
+        set({ stats: next });
       },
 
 
@@ -12600,7 +12689,26 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       recordYellowCard: (playerId) => {
+        mutatePlayerStat(get, set, playerId, (s) => ({ ...s, yellowCards: s.yellowCards + 1 }));
+        return;
 
 
 
@@ -12713,6 +12821,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       recordRedCard: (playerId) => {
+        mutatePlayerStat(get, set, playerId, (s) => ({ ...s, redCards: s.redCards + 1 }));
+        return;
 
 
 
@@ -12825,6 +12935,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       incrementAccumulatedYellowCards: (playerId) => {
+        mutatePlayerStat(get, set, playerId, (s) => ({ ...s, accumulatedYellowCards: s.accumulatedYellowCards + 1 }));
+        return;
 
 
 
@@ -12937,6 +13049,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       resetAccumulatedYellowCards: (playerId) => {
+        mutatePlayerStat(get, set, playerId, (s) => ({ ...s, accumulatedYellowCards: 0 }));
+        return;
 
 
 
@@ -13049,6 +13163,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       recordInjury: (playerId, injuredUntil, reason) => {
+        mutatePlayerStat(get, set, playerId, (s) => ({ ...s, injuredUntil, injuryReason: reason }));
+        return;
 
 
 
@@ -13192,7 +13308,31 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => {
+        if (typeof window === "undefined") {
+          return { getItem: () => null, setItem: () => {}, removeItem: () => {} } as Storage;
+        }
+        const safe: Storage = {
+          length: 0,
+          key: (i: number) => localStorage.key(i),
+          clear: () => localStorage.clear(),
+          getItem: (k: string) => localStorage.getItem(k),
+          removeItem: (k: string) => localStorage.removeItem(k),
+          setItem: (k: string, v: string) => {
+            try {
+              localStorage.setItem(k, v);
+            } catch (e) {
+              // Quota exceeded: drop this write silently. The multi-save system
+              // (fcsim:save:v2*) is the source of truth; the persisted player
+              // store is only a hot cache for the current session.
+              try { localStorage.removeItem(k); } catch {}
+              // eslint-disable-next-line no-console
+              console.warn("[playersStore] persist skipped (quota):", (e as Error)?.message);
+            }
+          },
+        } as Storage;
+        return safe;
+      }),
 
 
 
@@ -13320,7 +13460,13 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-      partialize: (s) => ({
+      partialize: (s) => statsBatchDepth > 0 ? ({
+        myTeamId: s.myTeamId,
+        rosterIds: s.rosterIds,
+        budget: s.budget,
+        currentDate: s.currentDate,
+        dismissedMatchIds: s.dismissedMatchIds,
+      }) : ({
 
 
 
@@ -13664,7 +13810,7 @@ export function selectTopScorers(
 
 
 
-  competition: "all" | "league" | "cup" = "all",
+  competition: "all" | "league" | "cup" | "ucl" = "all",
 
 
 
@@ -13737,38 +13883,12 @@ export function selectTopScorers(
 
 
     const goals = competition === "cup"
-
-
-
-
-
-
-
       ? (st.cupGoals ?? 0)
-
-
-
-
-
-
-
-      : competition === "league"
-
-
-
-
-
-
-
-        ? st.goals - (st.cupGoals ?? 0)
-
-
-
-
-
-
-
-        : st.goals;
+      : competition === "ucl"
+        ? (st.uclGoals ?? 0)
+        : competition === "league"
+          ? st.goals - (st.cupGoals ?? 0) - (st.uclGoals ?? 0)
+          : st.goals;
 
 
 
@@ -13840,7 +13960,15 @@ export function selectTopScorers(
 
 
 
-    out.push({ ...p, goals, assists: competition === "cup" ? (st.cupAssists ?? 0) : competition === "league" ? st.assists - (st.cupAssists ?? 0) : st.assists, appearances: competition === "cup" ? (st.cupAppearances ?? 0) : competition === "league" ? st.appearances - (st.cupAppearances ?? 0) : st.appearances });
+    const assistsOut = competition === "cup" ? (st.cupAssists ?? 0)
+      : competition === "ucl" ? (st.uclAssists ?? 0)
+      : competition === "league" ? st.assists - (st.cupAssists ?? 0) - (st.uclAssists ?? 0)
+      : st.assists;
+    const apps = competition === "cup" ? (st.cupAppearances ?? 0)
+      : competition === "ucl" ? (st.uclAppearances ?? 0)
+      : competition === "league" ? st.appearances - (st.cupAppearances ?? 0) - (st.uclAppearances ?? 0)
+      : st.appearances;
+    out.push({ ...p, goals, assists: assistsOut, appearances: apps });
 
 
 
@@ -13944,7 +14072,7 @@ export function selectTopAssisters(
 
 
 
-  competition: "all" | "league" | "cup" = "all",
+  competition: "all" | "league" | "cup" | "ucl" = "all",
 
 
 
@@ -14017,38 +14145,12 @@ export function selectTopAssisters(
 
 
     const assists = competition === "cup"
-
-
-
-
-
-
-
       ? (st.cupAssists ?? 0)
-
-
-
-
-
-
-
-      : competition === "league"
-
-
-
-
-
-
-
-        ? st.assists - (st.cupAssists ?? 0)
-
-
-
-
-
-
-
-        : st.assists;
+      : competition === "ucl"
+        ? (st.uclAssists ?? 0)
+        : competition === "league"
+          ? st.assists - (st.cupAssists ?? 0) - (st.uclAssists ?? 0)
+          : st.assists;
 
 
 
@@ -14120,7 +14222,15 @@ export function selectTopAssisters(
 
 
 
-    out.push({ ...p, goals: competition === "cup" ? (st.cupGoals ?? 0) : competition === "league" ? st.goals - (st.cupGoals ?? 0) : st.goals, assists, appearances: competition === "cup" ? (st.cupAppearances ?? 0) : competition === "league" ? st.appearances - (st.cupAppearances ?? 0) : st.appearances });
+    const goalsOut = competition === "cup" ? (st.cupGoals ?? 0)
+      : competition === "ucl" ? (st.uclGoals ?? 0)
+      : competition === "league" ? st.goals - (st.cupGoals ?? 0) - (st.uclGoals ?? 0)
+      : st.goals;
+    const apps2 = competition === "cup" ? (st.cupAppearances ?? 0)
+      : competition === "ucl" ? (st.uclAppearances ?? 0)
+      : competition === "league" ? st.appearances - (st.cupAppearances ?? 0) - (st.uclAppearances ?? 0)
+      : st.appearances;
+    out.push({ ...p, goals: goalsOut, assists, appearances: apps2 });
 
 
 
@@ -14440,6 +14550,57 @@ export function selectTopRedCards(
 
 
 
+}
+
+export function selectTopCleanSheets(
+  leagueFilter?: LeagueId,
+  limit = 30,
+  competition: "all" | "league" | "cup" | "ucl" = "all",
+): (Player & { cleanSheets: number })[] {
+  const store = usePlayersStore.getState();
+  store.init();
+  const out: (Player & { cleanSheets: number })[] = [];
+  for (const [id, st] of Object.entries(store.stats)) {
+    const cs = competition === "cup"
+      ? (st.cupCleanSheets ?? 0)
+      : competition === "ucl"
+        ? (st.uclCleanSheets ?? 0)
+        : competition === "league"
+          ? (st.cleanSheets ?? 0) - (st.cupCleanSheets ?? 0) - (st.uclCleanSheets ?? 0)
+          : (st.cleanSheets ?? 0);
+    if (cs <= 0) continue;
+    const p = store.getSimPlayer(id);
+    if (!p) continue;
+    if (p.position !== "POR" && p.position !== "GK") continue;
+    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+    out.push({ ...p, cleanSheets: cs });
+  }
+  return out.sort((a, b) => b.cleanSheets - a.cleanSheets).slice(0, limit);
+}
+
+export function selectTopMotm(
+  leagueFilter?: LeagueId,
+  limit = 30,
+  competition: "all" | "league" | "cup" | "ucl" = "all",
+): (Player & { motm: number })[] {
+  const store = usePlayersStore.getState();
+  store.init();
+  const out: (Player & { motm: number })[] = [];
+  for (const [id, st] of Object.entries(store.stats)) {
+    const m = competition === "cup"
+      ? (st.cupMotm ?? 0)
+      : competition === "ucl"
+        ? (st.uclMotm ?? 0)
+        : competition === "league"
+          ? (st.motm ?? 0) - (st.cupMotm ?? 0) - (st.uclMotm ?? 0)
+          : (st.motm ?? 0);
+    if (m <= 0) continue;
+    const p = store.getSimPlayer(id);
+    if (!p) continue;
+    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+    out.push({ ...p, motm: m });
+  }
+  return out.sort((a, b) => b.motm - a.motm).slice(0, limit);
 }
 
 

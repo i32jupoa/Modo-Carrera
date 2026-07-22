@@ -188,24 +188,36 @@ export function selectUCLParticipants(
 
 // ============================================================
 //  CALENDAR OFFSETS (days from UCL_START = 2025-07-01)
-//  All of July for testing
+//
+//  Realistic calendar aligned with the real UEFA Champions League:
+//   - League phase: late August → late January
+//   - Play-off round: mid-February
+//   - Round of 16: March · Quarter-finals: April
+//   - Semi-finals: late April / early May · Final: late May
+//
+//  Anchored on Tuesdays/Wednesdays so they never collide with the
+//  Spanish league (Saturdays) or the national cup (Wednesdays on cup
+//  matchdays), and keeping at least a 2-day gap between consecutive
+//  UCL fixtures.
 // ============================================================
 export const UCL_START = "2025-07-01";
 
 export const UCL_CALENDAR = {
-  leagueDraw:   2,  // Jul 3  → draw modal for swiss phase
-  leagueDay:    [3, 4, 5, 6, 7, 8, 9, 10], // Jul 4–11: matchdays 1–8
-  playoffDraw:  11, // Jul 12
-  playoffLeg1:  12, // Jul 13
-  playoffLeg2:  13, // Jul 14
-  knockoutDraw: 14, // Jul 15
-  r16Leg1:      15, // Jul 16
-  r16Leg2:      16, // Jul 17
-  qfLeg1:       17, // Jul 18
-  qfLeg2:       18, // Jul 19
-  sfLeg1:       19, // Jul 20
-  sfLeg2:       20, // Jul 21
-  final:        21, // Jul 22
+  leagueDraw:   56,  // Tue Aug 26 2025 – Swiss-phase draw
+  leagueDay:    [77, 91, 112, 127, 148, 161, 204, 211],
+  //              ^J1 Sep 16  ^J2 Sep 30  ^J3 Oct 21  ^J4 Nov  5
+  //              ^J5 Nov 26  ^J6 Dec  9  ^J7 Jan 21  ^J8 Jan 28
+  playoffDraw:  227, // Fri Feb 13 2026
+  playoffLeg1:  231, // Tue Feb 17 2026
+  playoffLeg2:  238, // Tue Feb 24 2026
+  knockoutDraw: 241, // Fri Feb 27 2026 – R16 bracket draw
+  r16Leg1:      252, // Tue Mar 10 2026
+  r16Leg2:      259, // Tue Mar 17 2026
+  qfLeg1:       280, // Tue Apr  7 2026
+  qfLeg2:       287, // Tue Apr 14 2026
+  sfLeg1:       301, // Tue Apr 28 2026
+  sfLeg2:       308, // Tue May  5 2026
+  final:        330, // Wed May 27 2026 – single-leg final
 };
 
 export function uclDayOffset(isoDate: string): number {

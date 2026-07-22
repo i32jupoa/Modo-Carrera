@@ -407,7 +407,7 @@ function CupPage() {
 
       <div className="space-y-6">
 
-        {cupSchedule.map((step) => {
+        {cupSchedule.map((step: any) => {
 
           const rf = fixtures.filter((f) => f.round === step.round);
 

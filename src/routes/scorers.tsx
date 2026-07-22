@@ -18,6 +18,8 @@ import {
   selectTopAssisters,
   selectTopYellowCards,
   selectTopRedCards,
+  selectTopCleanSheets,
+  selectTopMotm,
 } from "@/store/playersStore";
 
 function getLeagueName(leagueId: string): string {
@@ -26,13 +28,15 @@ function getLeagueName(leagueId: string): string {
 
 const PRIORITY_COUNTRIES = ["España", "Inglaterra", "Italia", "Alemania", "Francia"];
 
-type Tab = "scorers" | "assisters" | "yellows" | "reds";
+type Tab = "scorers" | "assisters" | "cleansheets" | "motm" | "yellows" | "reds";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "scorers",   label: "Goleadores",  icon: "" },
-  { id: "assisters", label: "Asistentes",  icon: "" },
-  { id: "yellows",   label: "Amarillas",   icon: "" },
-  { id: "reds",      label: "Rojas",       icon: "" },
+  { id: "scorers",     label: "Goleadores",  icon: "" },
+  { id: "assisters",   label: "Asistentes",  icon: "" },
+  { id: "cleansheets", label: "Porterías 0", icon: "" },
+  { id: "motm",        label: "MVP",         icon: "" },
+  { id: "yellows",     label: "Amarillas",   icon: "" },
+  { id: "reds",        label: "Rojas",       icon: "" },
 ];
 
 export const Route = createFileRoute("/scorers")({ component: ScorersPage });
@@ -42,7 +46,7 @@ function ScorersPage() {
   const { loading, ready } = usePlayersReady();
   const [save, setSave] = useState<SaveGame | null>(null);
   const [tab, setTab] = useState<Tab>("scorers");
-  const [competition, setCompetition] = useState<"all" | "league" | "cup">("all");
+  const [competition, setCompetition] = useState<"all" | "league" | "cup" | "ucl">("all");
   const [league, setLeague] = useState<LeagueId | "all">("all");
   const [cupCountry, setCupCountry] = useState<string>("all");
 
@@ -74,6 +78,8 @@ function ScorersPage() {
 
   const scorers   = useMemo(() => save && ready ? selectTopScorers(leagueArg, 30, competition, cupCountryArg) : [], [save, ready, competition, league, cupCountry]);
   const assisters = useMemo(() => save && ready ? selectTopAssisters(leagueArg, 30, competition, cupCountryArg) : [], [save, ready, competition, league, cupCountry]);
+  const cleansheets = useMemo(() => save && ready ? selectTopCleanSheets(leagueArg, 30, competition) : [], [save, ready, competition, league]);
+  const motm      = useMemo(() => save && ready ? selectTopMotm(leagueArg, 30, competition) : [], [save, ready, competition, league]);
   const yellows   = useMemo(() => save && ready ? selectTopYellowCards(league !== "all" ? (league as LeagueId) : undefined, 30) : [], [save, ready, league]);
   const reds      = useMemo(() => save && ready ? selectTopRedCards(league !== "all" ? (league as LeagueId) : undefined, 30) : [], [save, ready, league]);
 
@@ -110,7 +116,7 @@ function ScorersPage() {
       <div className="flex flex-wrap gap-3">
         {/* Competition filter — only for scorers/assisters */}
         {!isCardTab && (
-          <Select value={competition} onValueChange={(v) => { setCompetition(v as "all"|"league"|"cup"); setLeague("all"); setCupCountry("all"); }}>
+          <Select value={competition} onValueChange={(v) => { setCompetition(v as "all"|"league"|"cup"|"ucl"); setLeague("all"); setCupCountry("all"); }}>
             <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Competición" />
             </SelectTrigger>
@@ -118,6 +124,7 @@ function ScorersPage() {
               <SelectItem value="all">Todas las competiciones</SelectItem>
               <SelectItem value="league">Liga</SelectItem>
               <SelectItem value="cup">Copa nacional</SelectItem>
+              <SelectItem value="ucl">Champions League</SelectItem>
             </SelectContent>
           </Select>
         )}
@@ -166,6 +173,8 @@ function ScorersPage() {
       {/* Lists */}
       {tab === "scorers" && <ScorerList players={scorers} emptyMsg="Aún no hay goles registrados." />}
       {tab === "assisters" && <AssisterList players={assisters} emptyMsg="Aún no hay asistencias registradas." />}
+      {tab === "cleansheets" && <SimpleList players={cleansheets} valueKey="cleanSheets" label="porterías a 0" color="text-emerald-400" emptyMsg="Aún no hay porterías a 0 registradas." />}
+      {tab === "motm" && <SimpleList players={motm} valueKey="motm" label="MVP" color="text-primary" emptyMsg="Aún no hay MVPs registrados." />}
       {tab === "yellows" && <CardList players={yellows} mainKey="yellowCards" secondaryKey="redCards" mainLabel="Amarillas" secondaryLabel="Rojas" color="text-yellow-400" emptyMsg="Aún no hay tarjetas amarillas registradas." />}
       {tab === "reds" && <CardList players={reds} mainKey="redCards" secondaryKey="yellowCards" mainLabel="Rojas" secondaryLabel="Amarillas" color="text-red-500" emptyMsg="Aún no hay tarjetas rojas registradas." />}
     </div>
@@ -242,6 +251,31 @@ function CardList({ players, mainKey, secondaryKey, mainLabel, secondaryLabel, c
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
             <div className={`text-2xl font-black scoreline ${color} w-10 text-right`}>{p[mainKey]}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SimpleList({ players, valueKey, label, color, emptyMsg }: {
+  players: any[]; valueKey: string; label: string; color: string; emptyMsg: string;
+}) {
+  if (players.length === 0) return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
+  return (
+    <div className="panel divide-y divide-border/40">
+      {players.map((p, i) => {
+        const team = teamById(p.teamId);
+        return (
+          <div key={p.id} className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3">
+            <span className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>{i + 1}</span>
+            <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
+            <div className="min-w-0">
+              <div className="font-bold truncate">{p.name}</div>
+              <div className="text-xs text-muted-foreground">{team.name} · {label}</div>
+            </div>
+            <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
+            <div className={`text-2xl font-black scoreline ${color} w-10 text-right`}>{p[valueKey]}</div>
           </div>
         );
       })}

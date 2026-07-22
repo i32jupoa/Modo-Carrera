@@ -349,46 +349,33 @@ export function assignmentsToFixtures(
     return result.length === 18 ? result : null;
   }
   
-  const rounds: { homeId: string; awayId: string }[][] = [];
-  let remainingPairs = [...allPairs];
-  
-  for (let round = 0; round < 8; round++) {
-    let matching: { homeId: string; awayId: string }[] | null = null;
-    
-    // Try multiple shuffles to find a perfect matching
-    for (let attempt = 0; attempt < 50; attempt++) {
-      // Shuffle remaining pairs
-      remainingPairs = shuffle([...remainingPairs]);
-      matching = findPerfectMatching(remainingPairs);
-      if (matching) break;
-    }
-    
-    if (!matching) {
-      console.warn(`[assignmentsToFixtures] Could not find perfect matching for round ${round}`);
-      // Fallback to greedy
-      matching = [];
-      const usedTeams = new Set<string>();
-      for (const p of remainingPairs) {
-        if (!usedTeams.has(p.homeId) && !usedTeams.has(p.awayId)) {
-          matching.push(p);
-          usedTeams.add(p.homeId);
-          usedTeams.add(p.awayId);
-        }
+  // Try to partition the 8-regular graph into 8 perfect matchings.
+  // If any round fails to reach 18 matches, restart the partition with a fresh shuffle.
+  let rounds: { homeId: string; awayId: string }[][] | null = null;
+  for (let outer = 0; outer < 40 && !rounds; outer++) {
+    const tryRounds: { homeId: string; awayId: string }[][] = [];
+    let remainingPairs = shuffle([...allPairs]);
+    let ok = true;
+    for (let round = 0; round < 8; round++) {
+      let matching: { homeId: string; awayId: string }[] | null = null;
+      for (let attempt = 0; attempt < 80; attempt++) {
+        remainingPairs = shuffle([...remainingPairs]);
+        matching = findPerfectMatching(remainingPairs);
+        if (matching && matching.length === 18) break;
+        matching = null;
       }
+      if (!matching) { ok = false; break; }
+      const usedKeys = new Set(matching.map(m => `${m.homeId}__${m.awayId}`));
+      remainingPairs = remainingPairs.filter(p => !usedKeys.has(`${p.homeId}__${p.awayId}`));
+      tryRounds.push(matching);
     }
-    
-    // Remove used pairs
-    const usedKeys = new Set(matching.map(m => `${m.homeId}__${m.awayId}`));
-    remainingPairs = remainingPairs.filter(p => !usedKeys.has(`${p.homeId}__${p.awayId}`));
-    
-    rounds.push(matching);
-    console.log(`[assignmentsToFixtures] Round ${round}: ${matching.length} matches, ${remainingPairs.length} remaining`);
+    if (ok && tryRounds.length === 8 && tryRounds.every(r => r.length === 18)) {
+      rounds = tryRounds;
+    }
   }
-  
-  // Log distribution
-  const roundCounts = rounds.map(r => r.length);
-  console.log(`[assignmentsToFixtures] Round distribution:`, roundCounts);
-  console.log(`[assignmentsToFixtures] Total assigned: ${roundCounts.reduce((a, b) => a + b, 0)} / ${allPairs.length}`);
+  if (!rounds) {
+    throw new Error("[assignmentsToFixtures] Failed to partition into 8 perfect matchings");
+  }
 
   // Step 3: Emit fixtures
   const fixtures: Fixture[] = [];
