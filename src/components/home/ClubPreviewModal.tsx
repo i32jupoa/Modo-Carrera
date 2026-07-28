@@ -4,7 +4,7 @@ import {
   DialogContent,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getAllTeams, overall, LEAGUES } from "@/data/teams";
+import { getAllTeams, findTeamByName, overall, LEAGUES } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { getTeamCategory, getTeamDifficulty, getTeamObjectives, estimateTeamFinancials, CATEGORY_COLORS, DIFFICULTY_COLORS } from "@/lib/utils";
@@ -43,14 +43,11 @@ export default function ClubPreviewModal({
   // Build full squad from players JSON, deterministic order by OVR
   const squad = React.useMemo(() => {
     const data: any[] = Array.isArray(playersData) ? (playersData as any[]) : [];
-    const norm = (s: string) =>
-      s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
-    const tn = norm(team.name);
-    const matches = data.filter((p) => p?.Team && norm(p.Team) === tn);
+    const matches = data.filter((p) => p?.Team && findTeamByName(p.Team)?.id === team.id);
     return matches
       .sort((a, b) => (b.OVR || 0) - (a.OVR || 0))
       .slice(0, 50);
-  }, [team.name]);
+  }, [team.id]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

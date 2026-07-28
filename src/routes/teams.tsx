@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
-import { teamsByLeague, teamById, overall, type LeagueId, type Team, getAllTeams, LEAGUES_BY_COUNTRY, LEAGUES } from "@/data/teams";
+import { teamsByLeague, teamById, teamKeyFromName, overall, type LeagueId, type Team, getAllTeams, LEAGUES_BY_COUNTRY, LEAGUES } from "@/data/teams";
 import { usePlayersStore, ensureStatsForLeague, type PlayerStats } from "@/store/playersStore";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
@@ -20,8 +20,9 @@ const RAW_PLAYERS = usePlayersStore.getState().getRawPlayers?.() || [];
 
 // Build player mapping for scouting (doesn't affect userTeam)
 for (const p of RAW_PLAYERS) {
-  if (!PLAYERS_BY_TEAM[p.Team]) PLAYERS_BY_TEAM[p.Team] = [];
-  PLAYERS_BY_TEAM[p.Team].push(p);
+  const teamKey = teamKeyFromName(p.Team);
+  if (!PLAYERS_BY_TEAM[teamKey]) PLAYERS_BY_TEAM[teamKey] = [];
+  PLAYERS_BY_TEAM[teamKey].push(p);
 }
 
 // Helper to get player stats from store
@@ -80,7 +81,7 @@ function TeamsPage() {
   // Get full squad for selected team (from raw data, not user state)
   const teamSquad = useMemo(() => {
     if (!selectedTeam) return [];
-    return PLAYERS_BY_TEAM[selectedTeam.name] || [];
+    return PLAYERS_BY_TEAM[selectedTeam.id] || [];
   }, [selectedTeam]);
 
   if (!save) return null;

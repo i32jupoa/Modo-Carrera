@@ -363,6 +363,91 @@ function getTeamsMap(): Map<string, Team> {
   return _allTeamsMap;
 }
 
+export function normalizeTeamLookup(value: string): string {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+const TEAM_NAME_ALIASES: Record<string, string> = {
+  manutd: "Man Utd",
+  manchesterunited: "Man Utd",
+  tottenham: "Spurs",
+  tottenhamhotspur: "Spurs",
+  newcastleunited: "Newcastle Utd",
+  nottinghamforest: "Nott'm Forest",
+  nottmforest: "Nott'm Forest",
+  inter: "Lombardia FC",
+  intermilan: "Lombardia FC",
+  acmilan: "Milano FC",
+  milan: "Milano FC",
+  lazio: "Latium",
+  atalanta: "Bergamo Calcio",
+  alaves: "D. Alavés",
+  deportivoalaves: "D. Alavés",
+  elche: "Elche CF",
+  realoviedo: "R. Oviedo",
+  sportinggijon: "R. Sporting",
+  racingsantander: "R. Racing Club",
+  realvalladolid: "R. Valladolid CF",
+  parisstgermain: "Paris SG",
+  psg: "Paris SG",
+  marseille: "OM",
+  lyon: "OL",
+  stadebrest: "Stade Brestois 29",
+  lehavre: "Havre AC",
+  rennes: "Stade Rennais FC",
+};
+
+let _teamLookupMap: Map<string, Team> | null = null;
+function getTeamLookupMap(): Map<string, Team> {
+  if (!_teamLookupMap) {
+    _teamLookupMap = new Map();
+    for (const team of getAllTeams()) {
+      _teamLookupMap.set(normalizeTeamLookup(team.id), team);
+      _teamLookupMap.set(normalizeTeamLookup(team.name), team);
+    }
+  }
+  return _teamLookupMap;
+}
+
+export function findTeamByName(name: string): Team | null {
+  const normalized = normalizeTeamLookup(name);
+  if (!normalized) return null;
+
+  const lookup = getTeamLookupMap();
+  const direct = lookup.get(normalized);
+  if (direct) return direct;
+
+  const aliasTarget = TEAM_NAME_ALIASES[normalized];
+  if (aliasTarget) {
+    const aliased = lookup.get(normalizeTeamLookup(aliasTarget));
+    if (aliased) return aliased;
+  }
+
+  const all = getAllTeams();
+  return (
+    all.find((team) => {
+      const teamName = normalizeTeamLookup(team.name);
+      const teamId = normalizeTeamLookup(team.id);
+      return (
+        normalized === teamName ||
+        normalized === teamId ||
+        normalized.includes(teamName) ||
+        teamName.includes(normalized) ||
+        normalized.includes(teamId) ||
+        teamId.includes(normalized)
+      );
+    }) ?? null
+  );
+}
+
+export function teamKeyFromName(name: string): string {
+  return findTeamByName(name)?.id ?? normalizeTeamLookup(name);
+}
+
 // 3. SÚPER RED DE SEGURIDAD: Esta función JAMÁS lanzará un "Team not found"
 export function teamById(id: string): Team {
   if (!id) {

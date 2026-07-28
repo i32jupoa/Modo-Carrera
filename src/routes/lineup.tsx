@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSave, SaveGame, saveSave, setLineup, setFormation } from "@/lib/store";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
-import { Position } from "@/data/players";
+import { defaultLineup, Position } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { usePlayersStore } from "@/store/playersStore";
 import { FootballPitch, PlayerNode } from "@/components/FootballPitch";
@@ -143,6 +143,15 @@ function LineupPage() {
     [save, ready, getSimSquad],
   );
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
+
+  useEffect(() => {
+    if (!save || !ready || squad.length === 0) return;
+    if (startingXI.length > 0 || bench.length > 0) return;
+
+    const fallbackXI = defaultLineup(squad);
+    setStartingXI(fallbackXI);
+    setBench(squad.filter((player) => !fallbackXI.includes(player.id)).map((player) => player.id));
+  }, [save, ready, squad, startingXI.length, bench.length]);
 
   // Automated injury detection and handling
   useEffect(() => {

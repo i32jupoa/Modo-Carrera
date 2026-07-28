@@ -1,4 +1,4 @@
-import { Team, TEAMS, teamById } from "./teams";
+import { Team, TEAMS, teamById, teamKeyFromName } from "./teams";
 import playersData from "./playersData";
 
 export type Position = "GK" | "DEF" | "MID" | "FWD";
@@ -318,18 +318,9 @@ function mapPosition(pos: string): Position {
 // Vincula de manera inteligente el string del JSON con los IDs compatibles de teams.ts
 function findTeamIdForPlayer(jsonTeamName: string): string {
   if (!jsonTeamName) return "free_agent";
-  const normalizedJson = jsonTeamName.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  // Comparamos con los 96 equipos estáticos principales primero
-  const match = TEAMS.find(t => {
-    const cleanTeamName = t.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return normalizedJson === cleanTeamName || normalizedJson.includes(cleanTeamName) || cleanTeamName.includes(normalizedJson);
-  });
-
-  if (match) return match.id;
-
-  // Si es un equipo nuevo del JSON, devolvemos su ID formateado de forma segura
-  return jsonTeamName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const teamKey = teamKeyFromName(jsonTeamName);
+  if (TEAMS.some((team) => team.id === teamKey)) return teamKey;
+  return teamKey || jsonTeamName.toLowerCase().replace(/[^a-z0-9]/g, '_');
 }
 
 let cachedSquads: Record<string, Player[]> | null = null;

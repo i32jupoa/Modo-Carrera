@@ -111,7 +111,7 @@ import playersData from "@/data/playersData";
 
 
 
-import { TEAMS, teamById, leagueIdFromName, type LeagueId, teamsByLeague } from "@/data/teams";
+import { TEAMS, getAllTeams, teamById, teamKeyFromName, leagueIdFromName, type LeagueId, teamsByLeague } from "@/data/teams";
 
 
 
@@ -1902,7 +1902,9 @@ for (const p of RAW_PLAYERS) {
 
 
 
-  if (!PLAYERS_BY_TEAM[p.Team]) PLAYERS_BY_TEAM[p.Team] = [];
+  const teamKey = teamKeyFromName(p.Team);
+
+  if (!PLAYERS_BY_TEAM[teamKey]) PLAYERS_BY_TEAM[teamKey] = [];
 
 
 
@@ -1918,7 +1920,7 @@ for (const p of RAW_PLAYERS) {
 
 
 
-  PLAYERS_BY_TEAM[p.Team].push(p);
+  PLAYERS_BY_TEAM[teamKey].push(p);
 
 
 
@@ -9070,7 +9072,7 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-        const defaultSquad = PLAYERS_BY_TEAM[team.name] ?? [];
+        const defaultSquad = PLAYERS_BY_TEAM[team.id] ?? [];
 
 
 
@@ -9422,7 +9424,7 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-          const defaultSquad = PLAYERS_BY_TEAM[team.name] ?? [];
+          const defaultSquad = PLAYERS_BY_TEAM[team.id] ?? [];
 
 
 
@@ -11534,7 +11536,7 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-        const squad = PLAYERS_BY_TEAM[team.name];
+        const squad = PLAYERS_BY_TEAM[team.id];
 
 
 
@@ -14993,7 +14995,7 @@ export function buildDefaultLineups(): Record<string, string[]> {
 
 
 
-  for (const t of TEAMS) {
+  for (const t of getAllTeams()) {
 
 
 
@@ -15074,8 +15076,6 @@ export function buildDefaultLineups(): Record<string, string[]> {
 
 
 }
-
-
 
 
 
