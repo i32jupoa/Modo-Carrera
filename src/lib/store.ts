@@ -151,6 +151,8 @@ import { addDaysToIso } from "@/lib/transferWindows";
 
 
 import { simulateMatch, simulateMatchFast, simulateCupMatch, SimResult, MatchEvent, InjuryEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout } from "@/lib/simulation";
+import { loadTactics } from "@/lib/teamTactics";
+
 
 
 
@@ -5031,7 +5033,11 @@ function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false, i
 
 
 
-      : simulateMatch(home, away, homeXI, awayXI);
+      : simulateMatch(home, away, homeXI, awayXI, {
+          homeTactics: loadTactics(fixture.homeId),
+          awayTactics: loadTactics(fixture.awayId),
+        });
+
 
 
 
@@ -7443,7 +7449,10 @@ export async function simulateRemainingCupMatches(save: SaveGame, currentRound: 
 
 
 
-          result = simulateMatch(home, away, homeXI, awayXI);
+          result = simulateMatch(home, away, homeXI, awayXI, {
+            homeTactics: loadTactics(fixture.homeId),
+            awayTactics: loadTactics(fixture.awayId),
+          });
 
 
 
@@ -12243,7 +12252,10 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
         } else {
 
-          result = simulateMatch(home, away, homeXI, awayXI);
+          result = simulateMatch(home, away, homeXI, awayXI, {
+            homeTactics: loadTactics(fixture.homeId),
+            awayTactics: loadTactics(fixture.awayId),
+          });
 
           next = applyMatchToStats(next, { ...fixture, result });
 

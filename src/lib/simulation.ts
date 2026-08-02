@@ -6,10 +6,19 @@ import {
   type MatchStats,
   type PlayerRating,
 } from "@/lib/matchStats";
+import { tacticsModifiers, type TeamTactics } from "@/lib/teamTactics";
 
 export type { MatchStats, PlayerRating };
 
+/**
+ * Tactics as configured by the manager in "Editar alineación / Tácticas".
+ * The engine honours both the play style (which changes how many chances the
+ * team creates and concedes) and the designated set-piece takers / captain.
+ */
+export type SimTactics = Partial<TeamTactics>;
+
 function rand(): number { return Math.random(); }
+
 
 // Weighted scorer pick considering position and OVR for fast simulation
 function fastPickScorerWeighted(xi: Player[]): Player {
@@ -111,13 +120,24 @@ function teamMomentum(xi: Player[]): number {
   return 0.85 + (avg / 100) * 0.3; // 0.85..1.15
 }
 
-export function expectedGoals(home: Team, away: Team, homeXI: Player[] = [], awayXI: Player[] = []): { lh: number; la: number } {
+export function expectedGoals(
+  home: Team,
+  away: Team,
+  homeXI: Player[] = [],
+  awayXI: Player[] = [],
+  homeTactics?: SimTactics | null,
+  awayTactics?: SimTactics | null,
+): { lh: number; la: number } {
+  // Tactics (play style / pressure / defensive line) chosen by the manager.
+  const hMod = tacticsModifiers(homeTactics ?? null);
+  const aMod = tacticsModifiers(awayTactics ?? null);
+
   // Use dynamic attack/defense strength from actual XI instead of static team ratings
   // Apply 5% home advantage buff to home team's attack strength
-  const homeAtt = (calculateAttackStrength(homeXI) || 65) * 1.05;
-  const homeDef = calculateDefenseStrength(homeXI) || 65;
-  const awayAtt = calculateAttackStrength(awayXI) || 65;
-  const awayDef = calculateDefenseStrength(awayXI) || 65;
+  const homeAtt = (calculateAttackStrength(homeXI) || 65) * 1.05 * hMod.attack;
+  const homeDef = (calculateDefenseStrength(homeXI) || 65) * hMod.defense;
+  const awayAtt = (calculateAttackStrength(awayXI) || 65) * aMod.attack;
+  const awayDef = (calculateDefenseStrength(awayXI) || 65) * aMod.defense;
   
   const homeDiff = homeAtt - awayDef;
   const awayDiff = awayAtt - homeDef;
@@ -144,22 +164,30 @@ export function expectedGoals(home: Team, away: Team, homeXI: Player[] = [], awa
   return { lh, la };
 }
 
+
 export type MatchEvent = {
   minute: number;
   team: "home" | "away";
   /**
    * `goal`          -> regular goal, credited to scorerId
    * `penalty_goal`  -> goal from the penalty spot, credited to scorerId
+   * `free_kick_goal`-> direct free kick, credited to scorerId
    * `own_goal`      -> counts for `team` but scorerId belongs to the OTHER team
    *                    and must NOT be credited in the scorers table
    * `penalty`       -> shootout entry (playback only)
    */
-  type: "goal" | "penalty_goal" | "own_goal" | "penalty";
+  type: "goal" | "penalty_goal" | "free_kick_goal" | "own_goal" | "penalty";
   scorerId: string;
   scorerName: string;
   assistId?: string;
   assistName?: string;
+  /**
+   * Extra context shown in the chronicle, e.g. which rival player conceded the
+   * penalty. Lets a penalty produce a SINGLE chronicle line instead of two.
+   */
+  detail?: string;
 };
+
 
 /** Non-scoring highlights: saves, woodwork, VAR, missed penalties, forced subs. */
 export type HighlightType =
@@ -361,10 +389,31 @@ export function simulateMatchFast(
 // NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatch(
   home: Team, away: Team, homeXI: Player[], awayXI: Player[],
-  opts: { homeBench?: Player[]; awayBench?: Player[] } = {},
+  opts: {
+    homeBench?: Player[];
+    awayBench?: Player[];
+    homeTactics?: SimTactics | null;
+    awayTactics?: SimTactics | null;
+  } = {},
 ): SimResult {
   const homeBench = opts.homeBench ?? [];
   const awayBench = opts.awayBench ?? [];
+  const homeTactics = opts.homeTactics ?? null;
+  const awayTactics = opts.awayTactics ?? null;
+  const homeMods = tacticsModifiers(homeTactics);
+  const awayMods = tacticsModifiers(awayTactics);
+
+  /** Designated taker from the tactics screen, if he is on the pitch. */
+  const designated = (
+    xi: Player[],
+    tactics: SimTactics | null,
+    role: "penaltyTakerId" | "freekickTakerId" | "cornerTakerId",
+  ): Player | null => {
+    const id = tactics?.[role];
+    if (!id) return null;
+    return xi.find((p) => p.id === id) ?? null;
+  };
+
 
   // -------------------------------------------------------------------------
   // 1. Cards. Rates are per-player and per-match, calibrated so a typical game
@@ -384,12 +433,15 @@ export function simulateMatch(
 
   function simulateTeamCards(xi: Player[], team: "home" | "away"): number {
     let reds = 0;
+    // A high press produces more fouls, a low block fewer.
+    const aggression = team === "home" ? homeMods.aggression : awayMods.aggression;
     for (const player of xi) {
       // Defenders and defensive midfielders commit more fouls than keepers.
       const base =
-        player.position === "GK" ? 0.02 :
+        (player.position === "GK" ? 0.02 :
         player.position === "DEF" ? 0.115 :
-        player.position === "MID" ? 0.095 : 0.055;
+        player.position === "MID" ? 0.095 : 0.055) * aggression;
+
 
       // Direct red card: rare (~0.35% per player => ~4% per team per match).
       if (rand() < 0.0035) {
@@ -456,15 +508,25 @@ export function simulateMatch(
     });
   }
 
-  const adjustedHomeXI = timeWeightedXI(homeXI, homeRedCardedPlayers);
-  const adjustedAwayXI = timeWeightedXI(awayXI, awayRedCardedPlayers);
+  /** The designated captain lifts the side slightly while he is on the pitch. */
+  function withCaptainBoost(xi: Player[], tactics: SimTactics | null): Player[] {
+    const captainId = tactics?.captainId;
+    if (!captainId || !xi.some((p) => p.id === captainId)) return xi;
+    return xi.map((p) => ({ ...p, rating: p.rating * (p.id === captainId ? 1.03 : 1.008) }));
+  }
+
+  const adjustedHomeXI = withCaptainBoost(timeWeightedXI(homeXI, homeRedCardedPlayers), homeTactics);
+  const adjustedAwayXI = withCaptainBoost(timeWeightedXI(awayXI, awayRedCardedPlayers), awayTactics);
+
 
   // -------------------------------------------------------------------------
   // 2. Goals. `expectedGoals` already carries its own variance, so we sample a
   //    plain Poisson here instead of multiplying the lambda a second time
   //    (which used to flatten every result towards a random draw).
   // -------------------------------------------------------------------------
-  const { lh, la } = expectedGoals(home, away, adjustedHomeXI, adjustedAwayXI);
+  const { lh, la } = expectedGoals(
+    home, away, adjustedHomeXI, adjustedAwayXI, homeTactics, awayTactics,
+  );
 
   const homeGoalsRaw = poisson(lh);
   const awayGoalsRaw = poisson(la);
@@ -485,6 +547,10 @@ export function simulateMatch(
   const finalAwayGoalMinutes: number[] = [];
   const penaltiesMissed: Array<{ playerId: string }> = [];
 
+  const FOUL_REASONS = [
+    "derriba", "hace falta sobre", "agarra a", "pisa a", "comete mano ante",
+  ];
+
   function buildGoal(
     minute: number,
     team: "home" | "away",
@@ -492,7 +558,7 @@ export function simulateMatch(
     defendXI: Player[],
   ): boolean {
     if (attackXI.length === 0) return false;
-    const opponent: "home" | "away" = team === "home" ? "away" : "home";
+    const tactics = team === "home" ? homeTactics : awayTactics;
 
     // 6% of goals are actually own goals by a defender of the other team.
     if (defendXI.length > 0 && rand() < 0.06) {
@@ -506,21 +572,33 @@ export function simulateMatch(
       return true;
     }
 
-    // 9% of goals come from the penalty spot; the taker can also miss it.
+    // 9% of chances come from the penalty spot. The taker is ALWAYS the one
+    // designated in the tactics screen when he is on the pitch. A penalty
+    // produces exactly ONE chronicle entry (scored or missed), never a
+    // separate "penalty awarded" line.
     if (rand() < 0.09) {
       const takers = attackXI.filter((p) => p.position !== "GK");
-      const taker = takers.length > 0
-        ? takers.slice().sort((a, b) => b.rating - a.rating)[Math.floor(rand() * Math.min(3, takers.length))]
-        : attackXI[0];
-      highlights.push({
-        minute, team, type: "penalty_awarded",
-        playerId: taker.id, playerName: taker.name,
-        detail: "Penalti señalado",
-      });
+      const taker =
+        designated(attackXI, tactics, "penaltyTakerId") ??
+        (takers.length > 0
+          ? takers.slice().sort((a, b) => b.rating - a.rating)[Math.floor(rand() * Math.min(3, takers.length))]
+          : attackXI[0]);
+
+      // Which rival player gave the penalty away.
+      const foulPool = defendXI.filter((p) => p.position !== "GK");
+      const offender = (foulPool.length > 0 ? foulPool : defendXI)[
+        Math.floor(rand() * Math.max(1, (foulPool.length > 0 ? foulPool : defendXI).length))
+      ];
+      const foulVerb = FOUL_REASONS[Math.floor(rand() * FOUL_REASONS.length)];
+      const conceded = offender
+        ? `Penalti: ${offender.name} ${foulVerb} ${taker.name}`
+        : "Penalti señalado";
+
       if (rand() < 0.78) {
         events.push({
           minute, team, type: "penalty_goal",
           scorerId: taker.id, scorerName: taker.name,
+          detail: conceded,
         });
         return true;
       }
@@ -529,31 +607,52 @@ export function simulateMatch(
       highlights.push({
         minute, team, type: "penalty_missed",
         playerId: taker.id, playerName: taker.name,
-        detail: keeper ? `Se lo para ${keeper.name}` : "Penalti fallado",
+        detail: keeper
+          ? `${conceded} — lo falla, para ${keeper.name}`
+          : `${conceded} — lo falla`,
       });
       return false;
     }
 
-    // 7% of would-be goals get chalked off by VAR.
+    // 7% of would-be goals get chalked off by VAR: only the disallowed-goal
+    // line is shown, never the goal itself.
     if (rand() < 0.07) {
       const scorer = pickScorer(attackXI);
       highlights.push({
         minute, team, type: "var_disallowed",
         playerId: scorer.id, playerName: scorer.name,
-        detail: rand() < 0.6 ? "Anulado por fuera de juego (VAR)" : "Anulado por falta previa (VAR)",
+        detail: rand() < 0.6 ? "Gol anulado por fuera de juego (VAR)" : "Gol anulado por falta previa (VAR)",
       });
       return false;
     }
 
+    // 6% direct free kicks, taken by the designated free-kick specialist.
+    const fkTaker = designated(attackXI, tactics, "freekickTakerId");
+    if (rand() < 0.06) {
+      const shooter = fkTaker ?? pickScorer(attackXI);
+      events.push({
+        minute, team, type: "free_kick_goal",
+        scorerId: shooter.id, scorerName: shooter.name,
+        detail: "Falta directa",
+      });
+      return true;
+    }
+
     const scorer = pickScorer(attackXI);
-    const assister = pickAssister(attackXI, scorer.id);
+    // Roughly a fifth of open-play goals come from a corner / dead ball, and
+    // those are delivered by the designated corner taker.
+    const cornerTaker = designated(attackXI, tactics, "cornerTakerId");
+    const fromCorner = !!cornerTaker && cornerTaker.id !== scorer.id && rand() < 0.22;
+    const assister = fromCorner ? cornerTaker : pickAssister(attackXI, scorer.id);
     events.push({
       minute, team, type: "goal",
       scorerId: scorer.id, scorerName: scorer.name,
       assistId: assister?.id, assistName: assister?.name,
+      detail: fromCorner ? "A la salida de un córner" : undefined,
     });
     return true;
   }
+
 
   for (const minute of homeGoalMinutes) {
     const attack = activeAt(homeXI, homeRedCardedPlayers, minute);

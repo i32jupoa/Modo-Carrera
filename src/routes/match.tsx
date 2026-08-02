@@ -25,7 +25,7 @@ import {
   type LiveMatchState,
   type LivePhase,
 } from "@/lib/liveMatch";
-import { loadTactics } from "@/lib/teamTactics";
+import { loadTactics, tacticsModifiers } from "@/lib/teamTactics";
 import { SubstitutionPanel } from "@/components/match/SubstitutionPanel";
 import { StaminaPanel } from "@/components/match/StaminaPanel";
 import { btnPrimary, btnSecondary, btnGhost, infoChip, segmentBase, segmentItem } from "@/components/match/matchUi";
@@ -1055,15 +1055,18 @@ function MatchPage() {
   function drainStamina() {
     const tactics = myTeamIdRef.current ? loadTactics(myTeamIdRef.current) : null;
     const pressure = (tactics?.pressure ?? "medium") as "low" | "medium" | "high";
+    // Play style / defensive line also decide how hard the team runs.
+    const staminaMult = tacticsModifiers(tactics).stamina;
     const next = { ...staminaRef.current };
     for (const id of myXIRef.current) {
       const p = playerById(id);
       if (!p) continue;
-      next[id] = Math.max(0, (next[id] ?? STAMINA_START) - drainPerMinute(p.position, pressure));
+      next[id] = Math.max(0, (next[id] ?? STAMINA_START) - drainPerMinute(p.position, pressure, staminaMult));
     }
     staminaRef.current = next;
     setStamina(next);
   }
+
 
   /** Injury of one of my players at this exact minute → forced substitution. */
   function checkInjuriesAt(m: number) {
@@ -1261,14 +1264,81 @@ function MatchPage() {
     schedule(startMinute === 0 ? MATCH_START_DELAY_MS : tickMs());
   }
 
+  /**
+   * Automatic substitution for MY team while the match is being fast-forwarded.
+   * The manager can't intervene, so the assistant takes the most tired outfield
+   * players off, mirroring what the CPU does for the rival.
+   */
+  function autoSubMyTeamAt(m: number): any[] {
+    const check = canSubstitute(
+      { subsUsed: subsUsedRef.current, windowsUsed: windowsUsedRef.current, isExtraTime: isExtraTimeRef.current, phase: "playing" },
+      1,
+    );
+    if (!check.ok) return [];
+    if (myBenchRef.current.length === 0) return [];
+
+    // Take off the most tired outfield player if he is genuinely gassed.
+    const candidates = myXIRef.current
+      .map((id) => ({ id, p: playerById(id), st: staminaRef.current[id] ?? STAMINA_START }))
+      .filter((c) => c.p && c.p.position !== "GK" && c.p.position !== "POR")
+      .sort((a, b) => a.st - b.st);
+    const worst = candidates[0];
+    if (!worst || worst.st > 62) return [];
+
+    const inId = myBenchRef.current.find((id) => {
+      const bp = playerById(id);
+      return bp && bp.position !== "GK" && bp.position !== "POR";
+    }) ?? myBenchRef.current[0];
+    if (!inId) return [];
+
+    const xi = [...myXIRef.current];
+    xi[xi.indexOf(worst.id)] = inId;
+    myXIRef.current = xi; setMyXI(xi);
+    myBenchRef.current = myBenchRef.current.filter((id) => id !== inId);
+    setMyBench(myBenchRef.current);
+    staminaRef.current = { ...staminaRef.current, [inId]: STAMINA_START };
+    setStamina(staminaRef.current);
+    subsUsedRef.current += 1; setSubsUsed(subsUsedRef.current);
+    windowsUsedRef.current += 1; setWindowsUsed(windowsUsedRef.current);
+
+    const entry = {
+      minute: m,
+      outId: worst.id,
+      outName: playerById(worst.id)?.name ?? worst.id,
+      inId,
+      inName: playerById(inId)?.name ?? inId,
+    };
+    subsRef.current = [...subsRef.current, entry]; setSubsMade(subsRef.current);
+    const mySide = fixtureRef.current?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
+    return [{ minute: m, team: mySide, inName: entry.inName, outName: entry.outName }];
+  }
+
   function skipToEnd() {
     // Clear the running clock timeout immediately
     if (clockTimeoutRef.current !== null) {
       window.clearTimeout(clockTimeoutRef.current);
       clockTimeoutRef.current = null;
     }
-    
+
     if (!fixtureRef.current?.result) return;
+
+    // Fast-forward the remaining minutes so stamina keeps draining and BOTH
+    // benches keep being used — the manager can't make changes while skipping,
+    // so the assistant does it and every change is reported in the chronicle.
+    const madeWhileSkipping: any[] = [];
+    for (let m = minuteRef.current + 1; m <= 90; m++) {
+      drainStamina();
+      const before = oppPlanRef.current.filter((s) => s.minute === m);
+      if (before.length > 0) applyOpponentSubsAt(m);
+      // My team considers a change roughly every 10 minutes of the second half.
+      if (m >= 55 && m % 10 === 0) {
+        madeWhileSkipping.push(...autoSubMyTeamAt(m));
+      }
+    }
+    if (madeWhileSkipping.length > 0) {
+      setSubFeed((prev) => [...madeWhileSkipping.reverse(), ...prev]);
+    }
+
     setHomeScore(fixtureRef.current.result.homeGoals);
     setAwayScore(fixtureRef.current.result.awayGoals);
     setFeed(allEventsRef.current.slice().reverse());
@@ -1280,6 +1350,7 @@ function MatchPage() {
     clearMatchSnapshot();
     clearLive();
   }
+
   
   function skipPenaltyShootoutToEnd() {
     // Clear the running clock timeout immediately
@@ -1743,7 +1814,9 @@ function MatchPage() {
               const KEEP: Record<string, { icon: string; label: string }> = {
                 woodwork: { icon: "🥅", label: "Al palo" },
                 penalty_missed: { icon: "❌", label: "Penalti fallado" },
-                penalty_awarded: { icon: "⚪", label: "Penalti señalado" },
+                // "penalty_awarded" is intentionally NOT kept: a penalty is
+                // reported with a single line (scored or missed).
+
                 var_disallowed: { icon: "📺", label: "Gol anulado (VAR)" },
                 injury: { icon: "🚑", label: "Lesión" },
                 forced_sub: { icon: "🔁", label: "Cambio forzado" },
@@ -1822,6 +1895,7 @@ function MatchPage() {
                 const e = item.data;
                 const scoringTeam = teamOf(e.team);
                 const isPenalty = e.type === 'penalty' || e.type === 'penalty_goal';
+                const isFreeKick = e.type === 'free_kick_goal';
                 const isOwnGoal = e.type === 'own_goal';
                 return (
                   <div key={`goal-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
@@ -1833,16 +1907,24 @@ function MatchPage() {
                     <div className="text-sm min-w-0">
                       <span className="font-bold">{e.scorerName}</span>
                       {isOwnGoal && <span className="text-muted-foreground"> · en propia puerta</span>}
-                      {isPenalty && e.assistName && (
-                        <span className="text-muted-foreground"> · {e.assistName}</span>
+                      {/* A penalty shows one single line including who conceded it. */}
+                      {isPenalty && e.detail && (
+                        <span className="text-muted-foreground"> · {e.detail}</span>
                       )}
-                      {!isPenalty && !isOwnGoal && e.assistName && (
+                      {isFreeKick && (
+                        <span className="text-muted-foreground"> · {e.detail || "falta directa"}</span>
+                      )}
+                      {!isPenalty && !isFreeKick && !isOwnGoal && e.assistName && (
                         <span className="text-muted-foreground"> · asist. {e.assistName}</span>
+                      )}
+                      {!isPenalty && !isFreeKick && !isOwnGoal && e.detail && (
+                        <span className="text-muted-foreground"> · {e.detail}</span>
                       )}
                       <span className="text-muted-foreground"> ({scoringTeam.short})</span>
                     </div>
                   </div>
                 );
+
               });
             })()}
           </div>

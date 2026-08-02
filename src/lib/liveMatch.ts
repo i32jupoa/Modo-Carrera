@@ -114,17 +114,28 @@ export const STAMINA_START = 100;
 
 function baseDrain(position: string): number {
   const p = (position || "").toUpperCase();
-  if (["GK", "POR"].includes(p)) return 0.18;
-  if (["CB", "DFC", "RB", "LB", "LD", "LI", "DEF"].includes(p)) return 0.55;
-  if (["CDM", "MCD", "CM", "MC", "CAM", "MCO", "RM", "LM", "MD", "MI", "MID"].includes(p)) return 0.78;
-  return 0.66;
+  // Calibrated so a full 90' at medium pressure costs roughly 25-35 energy
+  // instead of draining a player almost completely.
+  if (["GK", "POR"].includes(p)) return 0.08;
+  if (["CB", "DFC", "RB", "LB", "LD", "LI", "DEF"].includes(p)) return 0.27;
+  if (["CDM", "MCD", "CM", "MC", "CAM", "MCO", "RM", "LM", "MD", "MI", "MID"].includes(p)) return 0.38;
+  return 0.32;
 }
 
-/** Energy lost in one minute, modulated by the team pressure setting. */
-export function drainPerMinute(position: string, pressure: "low" | "medium" | "high"): number {
-  const mult = pressure === "high" ? 1.2 : pressure === "low" ? 0.85 : 1;
-  return baseDrain(position) * mult;
+/**
+ * Energy lost in one minute. `staminaMult` comes from `tacticsModifiers()` so
+ * the play style / pressure / defensive line chosen in the tactics screen has
+ * a direct impact on how quickly the team tires.
+ */
+export function drainPerMinute(
+  position: string,
+  pressure: "low" | "medium" | "high",
+  staminaMult = 1,
+): number {
+  const mult = pressure === "high" ? 1.12 : pressure === "low" ? 0.9 : 1;
+  return baseDrain(position) * mult * staminaMult;
 }
+
 
 /** Effective rating penalty caused by fatigue (0 when fresh). */
 export function fatiguePenalty(stamina: number): number {
