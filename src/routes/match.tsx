@@ -8,7 +8,28 @@ import { Fixture } from "@/lib/season";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
-import { MatchEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout } from "@/lib/simulation";
+import { MatchEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout, type HighlightEvent } from "@/lib/simulation";
+import { accumulateStats, type MatchStats } from "@/lib/matchStats";
+import { MatchStatsPanel } from "@/components/match/MatchStatsPanel";
+import { PlayerRatingsPanel } from "@/components/match/PlayerRatingsPanel";
+import { MATCH_TICK_MS, MATCH_START_DELAY_MS, EXTRA_TIME_TICK_MS, saveMatchSnapshot, loadMatchSnapshot, clearMatchSnapshot } from "@/lib/matchPlayback";
+import {
+  saveLive,
+  loadLive,
+  clearLive,
+  subLimits,
+  isFreeWindow,
+  canSubstitute,
+  drainPerMinute,
+  STAMINA_START,
+  type LiveMatchState,
+  type LivePhase,
+} from "@/lib/liveMatch";
+import { loadTactics } from "@/lib/teamTactics";
+import { SubstitutionPanel } from "@/components/match/SubstitutionPanel";
+import { StaminaPanel } from "@/components/match/StaminaPanel";
+import { btnPrimary, btnSecondary, btnGhost, infoChip, segmentBase, segmentItem } from "@/components/match/matchUi";
+import { Pause, Play, FastForward, Users, ClipboardList } from "lucide-react";
 import { usePlayersStore } from "@/store/playersStore";
 import { MiniPitch } from "@/components/MiniPitch";
 import { CountryFlag } from "@/components/CountryFlag";
@@ -56,6 +77,41 @@ function MatchPage() {
   const [returningFromLineupEdit, setReturningFromLineupEdit] = useState(false);
   const [penaltyShootoutIndex, setPenaltyShootoutIndex] = useState(0);
   const [penaltyShootoutData, setPenaltyShootoutData] = useState<any[]>([]);
+  const [highlightFeed, setHighlightFeed] = useState<HighlightEvent[]>([]);
+  const allHighlightsRef = useRef<HighlightEvent[]>([]);
+  const [isPaused, setIsPaused] = useState(false);
+  const minuteRef = useRef(0);
+
+  // ---- live match control (pause / subs / stamina) ----
+  const pausedRef = useRef(false);
+  const scheduleRef = useRef<null | (() => void)>(null);
+  const [pauseReason, setPauseReason] = useState<null | "manual" | "halftime" | "injury" | "et_break" | "et_halftime">(null);
+  const [speed, setSpeed] = useState(1);
+  const speedRef = useRef(1);
+  const [subsUsed, setSubsUsed] = useState(0);
+  const [windowsUsed, setWindowsUsed] = useState(0);
+  const [subsMade, setSubsMade] = useState<any[]>([]);
+  const [stamina, setStamina] = useState<Record<string, number>>({});
+  const staminaRef = useRef<Record<string, number>>({});
+  const [myXI, setMyXI] = useState<string[]>([]);
+  const myXIRef = useRef<string[]>([]);
+  const [myBench, setMyBench] = useState<string[]>([]);
+  const myBenchRef = useRef<string[]>([]);
+  const [goneIds, setGoneIds] = useState<string[]>([]);
+  const goneRef = useRef<string[]>([]);
+  const [showSubs, setShowSubs] = useState(false);
+  const [forcedOutId, setForcedOutId] = useState<string | null>(null);
+  const handledInjuriesRef = useRef<string[]>([]);
+  const isExtraTimeRef = useRef(false);
+  const halftimeDoneRef = useRef(false);
+  const etHalftimeDoneRef = useRef(false);
+  const [liveFormation, setLiveFormation] = useState<string | null>(null);
+  const restoredRef = useRef(false);
+  const myTeamIdRef = useRef<string>("");
+  const subsUsedRef = useRef(0);
+  const windowsUsedRef = useRef(0);
+  const subsRef = useRef<any[]>([]);
+  const resumeLive = (location.state as any)?.resumeLive === true;
 
   // Extract temporary lineup from router state (if passed from lineup page)
   const routerState = location.state as any;
@@ -63,6 +119,63 @@ function MatchPage() {
   const matchFormation = routerState?.matchFormation as string | undefined;
   const returningFromLineup = routerState?.returningFromLineupEdit === true;
   const fixtureId = routerState?.fixtureId as string | undefined;
+
+  // Resume a paused match after editing the lineup / tactics: same minute, same
+  // score, same feed, same substitutions and same energy levels.
+  useEffect(() => {
+    if (!resumeLive || restoredRef.current) return;
+    const st = loadLive(fixtureId);
+    if (!st) return;
+    const s = loadSave();
+    if (!s) return;
+    let fx: any = s.fixtures[s.myLeague]?.find((f: any) => f.id === st.fixtureId);
+    if (!fx) {
+      for (const lg of Object.keys(s.cupFixtures || {})) {
+        fx = (s.cupFixtures as any)[lg]?.find((f: any) => f.id === st.fixtureId);
+        if (fx) break;
+      }
+    }
+    if (!fx) fx = (s.uclFixtures || []).find((f: any) => f.id === st.fixtureId);
+    if (!fx) return;
+    restoredRef.current = true;
+
+    fixtureRef.current = { ...fx, result: st.result };
+    setSave(s);
+    myTeamIdRef.current = s.myTeamId;
+    allEventsRef.current = st.result?.events ?? [];
+    allCardsRef.current = st.result?.cards ?? [];
+    allHighlightsRef.current = st.result?.highlights ?? [];
+
+    const m = st.minute;
+    setFeed(allEventsRef.current.filter((e: any) => e.minute <= m).slice().reverse());
+    setCardFeed(allCardsRef.current.filter((c: any) => c.minute <= m).slice().reverse());
+    setHighlightFeed(allHighlightsRef.current.filter((h: any) => h.minute <= m).slice().reverse());
+    setHomeScore(st.homeScore);
+    setAwayScore(st.awayScore);
+    setMinute(m);
+    minuteRef.current = m;
+
+    myXIRef.current = st.lineup; setMyXI(st.lineup);
+    myBenchRef.current = st.bench; setMyBench(st.bench);
+    staminaRef.current = st.stamina || {}; setStamina(st.stamina || {});
+    goneRef.current = st.gone || []; setGoneIds(st.gone || []);
+    subsUsedRef.current = st.subsUsed; setSubsUsed(st.subsUsed);
+    windowsUsedRef.current = st.windowsUsed; setWindowsUsed(st.windowsUsed);
+    subsRef.current = st.subs || []; setSubsMade(st.subs || []);
+    handledInjuriesRef.current = st.handledInjuries || [];
+    halftimeDoneRef.current = m >= 45;
+    isExtraTimeRef.current = st.isExtraTime;
+    setMatchType(st.matchType);
+    setCupRound(st.cupRound);
+    setLiveFormation(st.formation);
+    setIsCupMatch(st.matchType === "CUP");
+
+    setPhase("playing");
+    pausedRef.current = false;
+    setIsPaused(false);
+    setPauseReason(null);
+    runClock(m);
+  }, [resumeLive, fixtureId]);
 
   // Show injury/red card notifications when match ends
   useEffect(() => {
@@ -184,6 +297,11 @@ function MatchPage() {
     
     // Reset minute to 90 for extra time playback
     setMinute(90);
+    minuteRef.current = 90;
+    isExtraTimeRef.current = true;
+    pausedRef.current = false;
+    setIsPaused(false);
+    setPauseReason(null);
     setPhase("extra_time");
     
     // Start the clock for extra time (90-120)
@@ -192,9 +310,14 @@ function MatchPage() {
   
   function runExtraTimeClock() {
     let m = 90;
+    const scheduleEt = (delay?: number) => {
+      clockTimeoutRef.current = window.setTimeout(tick, delay ?? Math.max(40, Math.round(EXTRA_TIME_TICK_MS / speedRef.current)));
+    };
     const tick = () => {
+      if (pausedRef.current) return;
       m += 1;
       setMinute(m);
+      minuteRef.current = m;
       
       // Check for events at this minute
       const eventsAtMinute = extraTimeEventsRef.current.filter(e => e.minute === m);
@@ -219,7 +342,15 @@ function MatchPage() {
       }
       
       if (m < 120) {
-        clockTimeoutRef.current = window.setTimeout(tick, 100);
+        if (m === 105 && !etHalftimeDoneRef.current) {
+          etHalftimeDoneRef.current = true;
+          pausedRef.current = true;
+          setIsPaused(true);
+          setPauseReason("et_halftime");
+          if (clockTimeoutRef.current !== null) { window.clearTimeout(clockTimeoutRef.current); clockTimeoutRef.current = null; }
+          return;
+        }
+        scheduleEt();
       } else {
         // Extra time finished - clear timeout
         if (clockTimeoutRef.current !== null) {
@@ -231,8 +362,9 @@ function MatchPage() {
         handleExtraTimeFinished();
       }
     };
-    
-    clockTimeoutRef.current = window.setTimeout(tick, 100);
+
+    scheduleRef.current = () => scheduleEt();
+    scheduleEt();
   }
   
   function handleExtraTimeFinished() {
@@ -637,7 +769,8 @@ function MatchPage() {
   useEffect(() => {
     const s = loadSave();
     if (!s) { navigate({ to: "/" }); return; }
-    
+    if (resumeLive) return; // handled by the live-resume effect
+
     // Check if this is a cup match from pendingUserMatch
     const isCup = pendingUserMatch?.competition === "cup";
     setIsCupMatch(!!isCup);
@@ -750,6 +883,7 @@ function MatchPage() {
     if (!fixture || !fixture.result) return;
     allEventsRef.current = fixture.result.events;
     allCardsRef.current = fixture.result.cards || [];
+    allHighlightsRef.current = fixture.result.highlights || [];
     fixtureRef.current = fixture;
     
     // For cup matches that end in a draw, don't save the result yet
@@ -797,17 +931,229 @@ function MatchPage() {
       setIsCupMatch(true);
     }
     
+    initLiveMatch();
     setPhase("playing");
     runClock();
   }
 
-  function runClock() {
-    let m = 0;
+  // ------------------------------------------------------------------ live
+
+  function tickMs() {
+    return Math.max(40, Math.round(MATCH_TICK_MS / speedRef.current));
+  }
+
+  function mySquad() {
+    const id = myTeamIdRef.current || save?.myTeamId;
+    return id ? getSimSquad(id) : [];
+  }
+
+  function playerById(id: string) {
+    return mySquad().find((p) => p.id === id);
+  }
+
+  function initLiveMatch() {
+    const s = loadSave();
+    if (!s) return;
+    myTeamIdRef.current = s.myTeamId;
+    const squad = getSimSquad(s.myTeamId);
+    const ids = (matchLineup || s.lineups[s.myTeamId] || []).filter(Boolean);
+    const benchIds = squad.filter((p) => !ids.includes(p.id)).slice(0, 12).map((p) => p.id);
+    const st: Record<string, number> = {};
+    squad.forEach((p) => { st[p.id] = STAMINA_START; });
+    myXIRef.current = ids; setMyXI(ids);
+    myBenchRef.current = benchIds; setMyBench(benchIds);
+    staminaRef.current = st; setStamina(st);
+    goneRef.current = []; setGoneIds([]);
+    subsUsedRef.current = 0; setSubsUsed(0);
+    windowsUsedRef.current = 0; setWindowsUsed(0);
+    subsRef.current = []; setSubsMade([]);
+    handledInjuriesRef.current = [];
+    halftimeDoneRef.current = false;
+    etHalftimeDoneRef.current = false;
+    pausedRef.current = false;
+    setIsPaused(false);
+    setPauseReason(null);
+    setLiveFormation(matchFormation || s.formations[s.myTeamId] || null);
+  }
+
+  function currentLivePhase(): LivePhase {
+    if (pauseReason === "halftime") return "halftime";
+    if (pauseReason === "et_break") return "et_break";
+    if (pauseReason === "et_halftime") return "et_halftime";
+    return isExtraTimeRef.current ? "et_playing" : "playing";
+  }
+
+  function persistLive() {
+    const fx = fixtureRef.current;
+    if (!fx?.result) return;
+    saveLive({
+      v: 3,
+      fixtureId: fx.id,
+      minute: minuteRef.current,
+      phase: currentLivePhase(),
+      homeScore,
+      awayScore,
+      result: fx.result,
+      feed: [],
+      cardFeed: [],
+      highlightFeed: [],
+      lineup: myXIRef.current,
+      bench: myBenchRef.current,
+      formation: liveFormation || "Táctica 4-4-2",
+      gone: goneRef.current,
+      subsUsed: subsUsedRef.current,
+      windowsUsed: windowsUsedRef.current,
+      subs: subsRef.current,
+      stamina: staminaRef.current,
+      isExtraTime: isExtraTimeRef.current,
+      matchType,
+      cupRound,
+      handledInjuries: handledInjuriesRef.current,
+    });
+  }
+
+  function pauseMatch(reason: "manual" | "halftime" | "injury" | "et_break" | "et_halftime") {
+    pausedRef.current = true;
+    setIsPaused(true);
+    setPauseReason(reason);
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+    persistLive();
+  }
+
+  function resumeMatch() {
+    if (!pausedRef.current) return;
+    pausedRef.current = false;
+    setIsPaused(false);
+    setPauseReason(null);
+    setShowSubs(false);
+    setForcedOutId(null);
+    if (scheduleRef.current) scheduleRef.current();
+    else runClock(minuteRef.current);
+  }
+
+  /** Drain energy of the players currently on the pitch. */
+  function drainStamina() {
+    const tactics = myTeamIdRef.current ? loadTactics(myTeamIdRef.current) : null;
+    const pressure = (tactics?.pressure ?? "medium") as "low" | "medium" | "high";
+    const next = { ...staminaRef.current };
+    for (const id of myXIRef.current) {
+      const p = playerById(id);
+      if (!p) continue;
+      next[id] = Math.max(0, (next[id] ?? STAMINA_START) - drainPerMinute(p.position, pressure));
+    }
+    staminaRef.current = next;
+    setStamina(next);
+  }
+
+  /** Injury of one of my players at this exact minute → forced substitution. */
+  function checkInjuriesAt(m: number) {
+    const fx = fixtureRef.current;
+    if (!fx?.result) return false;
+    const mySide = fx.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
+    const inj = (fx.result.injuries ?? []).find(
+      (i: any) => i.team === mySide && (i.minute ?? 60) === m && !handledInjuriesRef.current.includes(i.playerId),
+    );
+    if (!inj) return false;
+    handledInjuriesRef.current = [...handledInjuriesRef.current, inj.playerId];
+    if (!myXIRef.current.includes(inj.playerId)) return false;
+
+    const check = canSubstitute(
+      { subsUsed: subsUsedRef.current, windowsUsed: windowsUsedRef.current, isExtraTime: isExtraTimeRef.current, phase: "playing" },
+      1,
+    );
+    const benchAvailable = myBenchRef.current.length > 0;
+    if (!check.ok || !benchAvailable) {
+      playWithOneLess(inj.playerId, inj.playerName);
+      toast.error(`${inj.playerName} se lesiona en el ${m}' y no quedan cambios: juegas con uno menos.`);
+      return false;
+    }
+    pauseMatch("injury");
+    setForcedOutId(inj.playerId);
+    setShowSubs(true);
+    toast.warning(`${inj.playerName} se lesiona en el ${m}'. Cambio obligatorio.`);
+    return true;
+  }
+
+  function playWithOneLess(playerId: string, playerName?: string) {
+    myXIRef.current = myXIRef.current.filter((id) => id !== playerId);
+    setMyXI(myXIRef.current);
+    goneRef.current = [...goneRef.current, playerId];
+    setGoneIds(goneRef.current);
+    setForcedOutId(null);
+    setShowSubs(false);
+    persistLive();
+    if (playerName) toast.info(`${playerName} abandona el campo. Te quedas con ${myXIRef.current.length}.`);
+  }
+
+  function applySubstitutions(pairs: { outId: string; inId: string }[]) {
+    if (pairs.length === 0) return;
+    const free = isFreeWindow(currentLivePhase());
+    const check = canSubstitute(
+      { subsUsed: subsUsedRef.current, windowsUsed: windowsUsedRef.current, isExtraTime: isExtraTimeRef.current, phase: currentLivePhase() },
+      pairs.length,
+    );
+    if (!check.ok) { toast.error(check.reason!); return; }
+
+    let xi = [...myXIRef.current];
+    let bench = [...myBenchRef.current];
+    const madeNow: any[] = [];
+    for (const { outId, inId } of pairs) {
+      const idx = xi.indexOf(outId);
+      if (idx === -1) continue;
+      xi[idx] = inId;
+      bench = bench.filter((id) => id !== inId);
+      staminaRef.current = { ...staminaRef.current, [inId]: STAMINA_START };
+      madeNow.push({
+        minute: minuteRef.current,
+        outId,
+        outName: playerById(outId)?.name ?? outId,
+        inId,
+        inName: playerById(inId)?.name ?? inId,
+      });
+    }
+    myXIRef.current = xi; setMyXI(xi);
+    myBenchRef.current = bench; setMyBench(bench);
+    setStamina(staminaRef.current);
+    subsUsedRef.current += madeNow.length; setSubsUsed(subsUsedRef.current);
+    if (!free) { windowsUsedRef.current += 1; setWindowsUsed(windowsUsedRef.current); }
+    subsRef.current = [...subsRef.current, ...madeNow]; setSubsMade(subsRef.current);
+    setShowSubs(false);
+    setForcedOutId(null);
+    persistLive();
+    toast.success(
+      madeNow.length === 1
+        ? `${madeNow[0].minute}' Cambio: entra ${madeNow[0].inName} por ${madeNow[0].outName}`
+        : `${madeNow.length} cambios realizados`,
+    );
+  }
+
+  function goEditLineupLive() {
+    if (!pausedRef.current) pauseMatch("manual");
+    else persistLive();
+    navigate({
+      to: "/lineup",
+      state: { fromMatch: true, liveMatch: true, matchType, cupRound, fixtureId: fixtureRef.current?.id } as any,
+    });
+  }
+
+  function runClock(startMinute = 0) {
+    let m = startMinute;
+    const schedule = (delay?: number) => {
+      clockTimeoutRef.current = window.setTimeout(tick, delay ?? tickMs());
+    };
+    scheduleRef.current = () => schedule();
     const tick = () => {
+      if (pausedRef.current) return;
       m += 1;
       setMinute(m);
+      minuteRef.current = m;
       const events = allEventsRef.current.filter((e) => e.minute === m);
       const cards = allCardsRef.current.filter((c) => c.minute === m);
+      const hls = allHighlightsRef.current.filter((h) => h.minute === m);
+      if (hls.length > 0) setHighlightFeed((prev) => [...hls, ...prev]);
       if (events.length > 0) {
         setFeed((prev) => [...events, ...prev]);
         for (const ev of events) {
@@ -817,11 +1163,26 @@ function MatchPage() {
       }
       if (cards.length > 0) {
         setCardFeed((prev) => [...cards, ...prev]);
+        // A red card of my team leaves us one man down for the rest of the match.
+        const mySide = fixtureRef.current?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
+        for (const c of cards) {
+          if (c.team === mySide && (c.cardType === "red" || c.isSecondYellow) && myXIRef.current.includes(c.playerId)) {
+            playWithOneLess(c.playerId, c.playerName);
+          }
+        }
       }
-      if (m >= 90) { setPhase("done"); return; }
-      clockTimeoutRef.current = window.setTimeout(tick, 50);
+      drainStamina();
+      if (m >= 90) { setPhase("done"); clearMatchSnapshot(); clearLive(); return; }
+      if (checkInjuriesAt(m)) return;
+      if (m === 45 && !halftimeDoneRef.current) {
+        halftimeDoneRef.current = true;
+        pauseMatch("halftime");
+        return;
+      }
+      persistLive();
+      schedule();
     };
-    clockTimeoutRef.current = window.setTimeout(tick, 300);
+    schedule(startMinute === 0 ? MATCH_START_DELAY_MS : tickMs());
   }
 
   function skipToEnd() {
@@ -836,8 +1197,12 @@ function MatchPage() {
     setAwayScore(fixtureRef.current.result.awayGoals);
     setFeed(allEventsRef.current.slice().reverse());
     setCardFeed(allCardsRef.current.slice().reverse());
+    setHighlightFeed(allHighlightsRef.current.slice().reverse());
     setMinute(90);
+    minuteRef.current = 90;
     setPhase("done");
+    clearMatchSnapshot();
+    clearLive();
   }
   
   function skipPenaltyShootoutToEnd() {
@@ -940,9 +1305,10 @@ function MatchPage() {
   
   if (isMe(fixture.homeId)) {
     // User's team - use temporary lineup if available, otherwise use global
-    const homeLineupIds = matchLineup || save.lineups[fixture.homeId] || [];
+    const liveIds = phase !== "preview" && myXI.length > 0 ? myXI : null;
+    const homeLineupIds = liveIds || matchLineup || save.lineups[fixture.homeId] || [];
     homeLineup = homeLineupIds.map(id => homeSquad.find(p => p.id === id)).filter(Boolean);
-    homeFormation = matchFormation || save.formations[fixture.homeId] || "Táctica 4-4-2";
+    homeFormation = (phase !== "preview" && liveFormation) || matchFormation || save.formations[fixture.homeId] || "Táctica 4-4-2";
   } else {
     // CPU team - use getStartersWithFormation to get both XI and the formation used
     const { players: homePlayers, formation: homeFmt } = getStartersWithFormation(save, fixture.homeId, { randomFormation: true });
@@ -956,9 +1322,10 @@ function MatchPage() {
   
   if (isMe(fixture.awayId)) {
     // User's team - use temporary lineup if available, otherwise use global
-    const awayLineupIds = matchLineup || save.lineups[fixture.awayId] || [];
+    const liveIdsAway = phase !== "preview" && myXI.length > 0 ? myXI : null;
+    const awayLineupIds = liveIdsAway || matchLineup || save.lineups[fixture.awayId] || [];
     awayLineup = awayLineupIds.map(id => awaySquad.find(p => p.id === id)).filter(Boolean);
-    awayFormation = matchFormation || save.formations[fixture.awayId] || "Táctica 4-4-2";
+    awayFormation = (phase !== "preview" && liveFormation) || matchFormation || save.formations[fixture.awayId] || "Táctica 4-4-2";
   } else {
     // CPU team - use getStartersWithFormation to get both XI and the formation used
     const { players: awayPlayers, formation: awayFmt } = getStartersWithFormation(save, fixture.awayId, { randomFormation: true });
@@ -1041,7 +1408,7 @@ function MatchPage() {
           </div>
         )}
 
-        <div className="mt-6 flex gap-3 justify-center flex-wrap">
+        <div className="mt-6 flex gap-2 justify-center flex-wrap items-center">
           {phase === "preview" && (
             <>
               <button
@@ -1054,32 +1421,110 @@ function MatchPage() {
                     fixtureId: fixture.id
                   } as any 
                 })}
-                className="px-8 py-3 rounded-lg bg-card border border-border font-semibold hover:border-accent transition"
+                className={btnSecondary}
               >
-                Editar Alineación
+                <ClipboardList className="h-4 w-4" /> Editar alineación
               </button>
               <button 
                 onClick={startMatch} 
                 disabled={!isUserLineupComplete}
-                className={`px-8 py-3 rounded-lg font-black ${isUserLineupComplete ? "bg-primary text-primary-foreground glow-neon hover:brightness-110 transition" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}
+                className={isUserLineupComplete ? btnPrimary : `${btnSecondary} opacity-40 pointer-events-none`}
               >
                 {isUserLineupComplete ? "INICIAR PARTIDO" : "ALINEACIÓN INCOMPLETA"}
               </button>
             </>
           )}
           {phase === "playing" && (
-            <button onClick={skipToEnd} className="px-6 py-2.5 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition">
-              Saltar al final
-            </button>
+            <div className="w-full space-y-3">
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <span className={infoChip}>Cambios {subsUsed}/{subLimits(isExtraTimeRef.current).maxSubs}</span>
+                <span className={infoChip}>Ventanas {windowsUsed}/{subLimits(isExtraTimeRef.current).maxWindows}</span>
+                <span className={infoChip}>En campo {myXI.length}</span>
+                {isPaused && (
+                  <span className={infoChip}>
+                    {pauseReason === "halftime" ? "Descanso" : pauseReason === "injury" ? "Lesión" : "Pausado"}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  onClick={() => (isPaused ? resumeMatch() : pauseMatch("manual"))}
+                  className={isPaused ? btnPrimary : btnSecondary}
+                  disabled={pauseReason === "injury"}
+                >
+                  {isPaused ? <><Play className="h-4 w-4" /> Reanudar</> : <><Pause className="h-4 w-4" /> Pausar</>}
+                </button>
+                <button onClick={goEditLineupLive} className={btnSecondary}>
+                  <ClipboardList className="h-4 w-4" /> Alineación y táctica
+                </button>
+                <button
+                  onClick={() => { if (!isPaused) pauseMatch("manual"); setShowSubs(true); }}
+                  className={btnSecondary}
+                >
+                  <Users className="h-4 w-4" /> Cambios
+                </button>
+                <div className={segmentBase}>
+                  {[0.5, 1, 2, 4].map((sp) => (
+                    <button
+                      key={sp}
+                      type="button"
+                      className={segmentItem(speed === sp)}
+                      onClick={() => { setSpeed(sp); speedRef.current = sp; }}
+                    >
+                      {sp}x
+                    </button>
+                  ))}
+                </div>
+                <button onClick={skipToEnd} className={btnGhost}>
+                  <FastForward className="h-3.5 w-3.5" /> Saltar al final
+                </button>
+              </div>
+              {isPaused && pauseReason === "halftime" && (
+                <p className="text-center text-xs text-muted-foreground">
+                  Descanso · los cambios que hagas ahora no gastan ventana.
+                </p>
+              )}
+            </div>
           )}
           {phase === "extra_time" && (
-            <button onClick={skipExtraTimeToEnd} className="px-6 py-2.5 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition">
-              Saltar al final
-            </button>
+            <div className="w-full flex flex-wrap items-center justify-center gap-2">
+              <span className={infoChip}>Prórroga · cambios {subsUsed}/{subLimits(true).maxSubs}</span>
+              <button
+                onClick={() => (isPaused ? resumeMatch() : pauseMatch("manual"))}
+                className={isPaused ? btnPrimary : btnSecondary}
+              >
+                {isPaused ? <><Play className="h-4 w-4" /> Reanudar</> : <><Pause className="h-4 w-4" /> Pausar</>}
+              </button>
+              <button
+                onClick={() => { if (!isPaused) pauseMatch("manual"); setShowSubs(true); }}
+                className={btnSecondary}
+              >
+                <Users className="h-4 w-4" /> Cambios
+              </button>
+              <button onClick={skipExtraTimeToEnd} className={btnGhost}>
+                <FastForward className="h-3.5 w-3.5" /> Saltar al final
+              </button>
+            </div>
           )}
+          {(phase === "playing" || phase === "done") && fixture?.result?.stats && (() => {
+            const acc = accumulateStats(fixture.result.stats, phase === "done" ? 90 : minute);
+            return (
+              <div className="mt-4 space-y-4">
+                <MatchStatsPanel home={acc.home} away={acc.away} />
+                {phase === "done" && (
+                  <PlayerRatingsPanel
+                    ratings={fixture.result.ratings ?? []}
+                    mvp={fixture.result.mvp}
+                    homeName={fixture.homeTeam?.name ?? "Local"}
+                    awayName={fixture.awayTeam?.name ?? "Visitante"}
+                  />
+                )}
+              </div>
+            );
+          })()}
           {phase === "penalties" && (
-            <button onClick={skipPenaltyShootoutToEnd} className="px-6 py-2.5 rounded-lg bg-card border border-border text-sm font-semibold hover:border-accent transition">
-              Saltar al final
+            <button onClick={skipPenaltyShootoutToEnd} className={btnSecondary}>
+              <FastForward className="h-4 w-4" /> Saltar al final
             </button>
           )}
           {phase === "done" && (
@@ -1144,7 +1589,7 @@ function MatchPage() {
                   </div>
                 ) : (
                   // Normal match or cup match with winner/resolved - show return to season button
-                  <button onClick={handleReturnToSeason} disabled={isSimulating} className="px-8 py-3 rounded-lg bg-primary text-primary-foreground font-black glow-neon hover:brightness-110 transition disabled:opacity-50">
+                   <button onClick={handleReturnToSeason} disabled={isSimulating} className={btnPrimary}>
                     {isSimulating ? 'Simulando...' : 'Volver a la temporada →'}
                   </button>
                 );
@@ -1153,6 +1598,53 @@ function MatchPage() {
           )}
         </div>
       </div>
+
+      {(phase === "playing" || phase === "extra_time") && showSubs && (() => {
+        const onPitch = myXI.map((id) => mySquad().find((p: any) => p.id === id)).filter(Boolean) as any[];
+        const benchPlayers = myBench.map((id) => mySquad().find((p: any) => p.id === id)).filter(Boolean) as any[];
+        const limits = subLimits(isExtraTimeRef.current);
+        return (
+          <SubstitutionPanel
+            onPitch={onPitch}
+            bench={benchPlayers}
+            stamina={stamina}
+            subsUsed={subsUsed}
+            maxSubs={limits.maxSubs}
+            windowsUsed={windowsUsed}
+            maxWindows={limits.maxWindows}
+            freeWindow={isFreeWindow(currentLivePhase())}
+            forcedOutId={forcedOutId}
+            onConfirm={applySubstitutions}
+            onClose={() => { if (!forcedOutId) setShowSubs(false); }}
+            onPlayShort={() => forcedOutId && playWithOneLess(forcedOutId, playerById(forcedOutId)?.name)}
+          />
+        );
+      })()}
+
+      {(phase === "playing" || phase === "extra_time") && (
+        <div className="mt-6">
+          <StaminaPanel
+            players={myXI.map((id) => mySquad().find((p: any) => p.id === id)).filter(Boolean) as any[]}
+            stamina={stamina}
+          />
+          {subsMade.length > 0 && (
+            <div className="panel p-4 mt-4">
+              <h3 className="font-bold text-sm mb-2">Cambios realizados</h3>
+              <ul className="space-y-1 text-xs">
+                {subsMade.map((s, i) => (
+                  <li key={i} className="flex items-center gap-2">
+                    <span className="scoreline text-primary font-bold w-9">{s.minute}'</span>
+                    <span className="truncate">
+                      <span className="text-primary font-semibold">{s.inName}</span> por{" "}
+                      <span className="text-destructive">{s.outName}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="panel mt-6 p-5">
         <h3 className="font-bold mb-3">Crónica del partido</h3>

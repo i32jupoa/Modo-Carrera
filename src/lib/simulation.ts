@@ -1,5 +1,13 @@
 import { Team } from "@/data/teams";
 import { Player } from "@/data/players";
+import {
+  buildMatchStats,
+  computePlayerRatings,
+  type MatchStats,
+  type PlayerRating,
+} from "@/lib/matchStats";
+
+export type { MatchStats, PlayerRating };
 
 function rand(): number { return Math.random(); }
 
@@ -139,11 +147,38 @@ export function expectedGoals(home: Team, away: Team, homeXI: Player[] = [], awa
 export type MatchEvent = {
   minute: number;
   team: "home" | "away";
-  type: "goal";
+  /**
+   * `goal`          -> regular goal, credited to scorerId
+   * `penalty_goal`  -> goal from the penalty spot, credited to scorerId
+   * `own_goal`      -> counts for `team` but scorerId belongs to the OTHER team
+   *                    and must NOT be credited in the scorers table
+   * `penalty`       -> shootout entry (playback only)
+   */
+  type: "goal" | "penalty_goal" | "own_goal" | "penalty";
   scorerId: string;
   scorerName: string;
   assistId?: string;
   assistName?: string;
+};
+
+/** Non-scoring highlights: saves, woodwork, VAR, missed penalties, forced subs. */
+export type HighlightType =
+  | "save"
+  | "woodwork"
+  | "var_disallowed"
+  | "penalty_missed"
+  | "penalty_awarded"
+  | "big_chance"
+  | "injury"
+  | "forced_sub";
+
+export type HighlightEvent = {
+  minute: number;
+  team: "home" | "away";
+  type: HighlightType;
+  playerId: string;
+  playerName: string;
+  detail?: string;
 };
 
 export type CardEvent = {
@@ -153,6 +188,7 @@ export type CardEvent = {
   playerName: string;
   cardType: "yellow" | "red";
   isSecondYellow: boolean; // true if red card is due to second yellow
+  reason?: string;
 };
 
 export type InjuryEvent = {
@@ -161,6 +197,12 @@ export type InjuryEvent = {
   playerName: string;
   weeks: number;
   reason: string;
+  /** Exact minute of the injury. */
+  minute?: number;
+  /** Player who came on for the injured one, when a sub was available. */
+  replacementId?: string;
+  replacementName?: string;
+  forcedSub?: boolean;
 };
 
 export type SimResult = {
@@ -171,10 +213,15 @@ export type SimResult = {
   injuries: InjuryEvent[];
   xgHome: number;
   xgAway: number;
+  highlights?: HighlightEvent[];
+  stats?: MatchStats;
+  ratings?: PlayerRating[];
+  mvp?: PlayerRating | null;
   extraTime?: {
     homeGoals: number;
     awayGoals: number;
     events: MatchEvent[];
+    highlights?: HighlightEvent[];
   };
   penalties?: {
     homeGoals: number;
@@ -220,42 +267,48 @@ const INJURY_REASONS = [
   "fractura", "rotura fibrilar", "sobrecarga", "golpe en el partido",
 ];
 
-function maybeInjury(xi: Player[], team: "home" | "away"): InjuryEvent | null {
+function maybeInjury(
+  xi: Player[],
+  team: "home" | "away",
+  bench: Player[] = [],
+): InjuryEvent | null {
   if (rand() > 0.06) return null;
   const victim = xi[Math.floor(rand() * xi.length)];
+  if (!victim) return null;
   const weeks = 1 + Math.floor(rand() * 5);
+  const minute = 5 + Math.floor(rand() * 80);
+
+  // A forced substitution happens whenever a bench player of a compatible
+  // profile is available and the injury happens before the 88th minute.
+  const candidates = bench.filter((p) => p.id !== victim.id);
+  const samePos = candidates.filter((p) => p.position === victim.position);
+  const replacement = (samePos.length > 0 ? samePos : candidates)
+    .slice()
+    .sort((a, b) => b.rating - a.rating)[0];
+
   return {
-    team, playerId: victim.id, playerName: victim.name, weeks,
+    team,
+    playerId: victim.id,
+    playerName: victim.name,
+    weeks,
+    minute,
     reason: INJURY_REASONS[Math.floor(rand() * INJURY_REASONS.length)],
+    forcedSub: !!replacement && minute < 88,
+    replacementId: replacement && minute < 88 ? replacement.id : undefined,
+    replacementName: replacement && minute < 88 ? replacement.name : undefined,
   };
 }
 
-// Cache for team strength calculations
-const teamStrengthCache = new Map<string, number>();
-
-function getTeamStrength(xi: Player[]): number {
-  if (xi.length === 0) return 70;
-  const key = xi.map(p => p.id).sort().join(',');
-  if (teamStrengthCache.has(key)) return teamStrengthCache.get(key)!;
-  
-  const avg = xi.reduce((s, p) => s + p.rating, 0) / xi.length;
-  teamStrengthCache.set(key, avg);
-  return avg;
-}
-
-// Fast scorer pick without weighted calculations
-function fastPickScorer(xi: Player[]): Player {
-  const candidates = xi.filter((p) => p.position !== "GK");
-  if (candidates.length === 0) return xi[0];
-  // Simple random pick with slight bias toward forwards
-  const weights = candidates.map((p) => p.position === "FWD" ? 3 : p.position === "MID" ? 2 : 1);
-  const total = weights.reduce((a, b) => a + b, 0);
-  let r = rand() * total;
-  for (let i = 0; i < candidates.length; i++) {
-    r -= weights[i];
-    if (r <= 0) return candidates[i];
-  }
-  return candidates[candidates.length - 1];
+/**
+ * Goals are not uniformly distributed across a match: there are more goals in
+ * the second half and a clear spike in the closing minutes.
+ */
+function goalMinute(from = 1, to = 90): number {
+  const span = to - from + 1;
+  const r = rand();
+  // Skew towards the end of the match (quadratic-ish bias).
+  const skewed = 1 - Math.pow(1 - r, 1.35);
+  return from + Math.min(span - 1, Math.floor(skewed * span));
 }
 
 // Ultra-fast simulation for bulk matchdays (no detailed events, just results)
@@ -264,17 +317,12 @@ export function simulateMatchFast(
   home: Team, away: Team, homeXI: Player[], awayXI: Player[]
 ): SimResult {
   const { lh, la } = expectedGoals(home, away, homeXI, awayXI);
-  
-  // Use normal distribution approximation for speed (faster than poisson)
-  // Significantly increased variance to make draws much more likely in cup matches
-  let homeGoals = Math.max(0, Math.round(lh + (rand() - 0.5) * Math.sqrt(lh) * 4));
-  let awayGoals = Math.max(0, Math.round(la + (rand() - 0.5) * Math.sqrt(la) * 4));
-  
-  // Force draw for cup matches (temporary for testing)
-  const drawScore = Math.max(homeGoals, awayGoals);
-  homeGoals = drawScore;
-  awayGoals = drawScore;
-  
+
+  // Poisson keeps the goal distribution realistic and, unlike the previous
+  // implementation, does NOT force every fast-simulated match to end in a draw.
+  const homeGoals = poisson(lh);
+  const awayGoals = poisson(la);
+
   // Minimal events - with weighted scorer selection and assists
   // Stats are recorded later by applyMatchToStats to avoid duplicates
   const events: MatchEvent[] = [];
@@ -285,7 +333,7 @@ export function simulateMatchFast(
     const assister = fastPickAssister(homeXI, scorer.id);
     
     events.push({
-      minute: Math.floor(rand() * 90) + 1, team: "home", type: "goal",
+      minute: goalMinute(), team: "home", type: "goal",
       scorerId: scorer.id, scorerName: scorer.name,
       assistId: assister?.id, assistName: assister?.name,
     });
@@ -297,12 +345,14 @@ export function simulateMatchFast(
     const assister = fastPickAssister(awayXI, scorer.id);
     
     events.push({
-      minute: Math.floor(rand() * 90) + 1, team: "away", type: "goal",
+      minute: goalMinute(), team: "away", type: "goal",
       scorerId: scorer.id, scorerName: scorer.name,
       assistId: assister?.id, assistName: assister?.name,
     });
   }
-  
+
+  events.sort((a, b) => a.minute - b.minute);
+
   // No injuries or cards in fast mode
   return { homeGoals, awayGoals, events, cards: [], injuries: [], xgHome: lh, xgAway: la };
 }
@@ -310,107 +360,82 @@ export function simulateMatchFast(
 // Detailed simulation with events and injuries
 // NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatch(
-  home: Team, away: Team, homeXI: Player[], awayXI: Player[]
+  home: Team, away: Team, homeXI: Player[], awayXI: Player[],
+  opts: { homeBench?: Player[]; awayBench?: Player[] } = {},
 ): SimResult {
-  // Simulate cards first to determine if there are red cards that affect team strength
+  const homeBench = opts.homeBench ?? [];
+  const awayBench = opts.awayBench ?? [];
+
+  // -------------------------------------------------------------------------
+  // 1. Cards. Rates are per-player and per-match, calibrated so a typical game
+  //    ends with ~2-4 yellows in total and a red card only now and then.
+  // -------------------------------------------------------------------------
   const cards: CardEvent[] = [];
-  const homeYellowCards = new Map<string, number>(); // playerId -> yellow card count
-  const awayYellowCards = new Map<string, number>();
   let homeRedCards = 0;
   let awayRedCards = 0;
 
-  // Home team cards
-  for (const player of homeXI) {
-    // Goalkeepers have 5% chance for yellow card, others have 10%
-    const yellowChance = player.position === "GK" ? 0.05 : 0.10;
-    if (rand() < yellowChance) {
-      const yellowCount = (homeYellowCards.get(player.id) || 0) + 1;
-      homeYellowCards.set(player.id, yellowCount);
-      
-      if (yellowCount === 2) {
-        // Second yellow = red card
-        homeRedCards++;
+  const CARD_REASONS = [
+    "entrada dura", "juego peligroso", "protestar", "cortar un contragolpe",
+    "agarrón", "perder tiempo", "falta táctica",
+  ];
+  const RED_REASONS = [
+    "entrada muy dura", "mano en el área", "última falta", "conducta violenta",
+  ];
+
+  function simulateTeamCards(xi: Player[], team: "home" | "away"): number {
+    let reds = 0;
+    for (const player of xi) {
+      // Defenders and defensive midfielders commit more fouls than keepers.
+      const base =
+        player.position === "GK" ? 0.02 :
+        player.position === "DEF" ? 0.115 :
+        player.position === "MID" ? 0.095 : 0.055;
+
+      // Direct red card: rare (~0.35% per player => ~4% per team per match).
+      if (rand() < 0.0035) {
+        reds++;
         cards.push({
-          minute: Math.floor(rand() * 90) + 1,
-          team: "home",
-          playerId: player.id,
-          playerName: player.name,
-          cardType: "red",
-          isSecondYellow: true
+          minute: 15 + Math.floor(rand() * 75),
+          team, playerId: player.id, playerName: player.name,
+          cardType: "red", isSecondYellow: false,
+          reason: RED_REASONS[Math.floor(rand() * RED_REASONS.length)],
         });
-      } else {
+        continue;
+      }
+
+      if (rand() >= base) continue;
+
+      const firstMinute = 8 + Math.floor(rand() * 75);
+      cards.push({
+        minute: firstMinute,
+        team, playerId: player.id, playerName: player.name,
+        cardType: "yellow", isSecondYellow: false,
+        reason: CARD_REASONS[Math.floor(rand() * CARD_REASONS.length)],
+      });
+
+      // Contextual second yellow: only booked players can get one, it becomes
+      // more likely the earlier the first yellow arrived and for defenders.
+      const timeLeft = Math.max(0, 90 - firstMinute) / 90;
+      const secondYellowChance = 0.10 * timeLeft * (player.position === "DEF" ? 1.4 : 1);
+      if (rand() < secondYellowChance) {
+        reds++;
         cards.push({
-          minute: Math.floor(rand() * 90) + 1,
-          team: "home",
-          playerId: player.id,
-          playerName: player.name,
-          cardType: "yellow",
-          isSecondYellow: false
+          minute: Math.min(90, firstMinute + 5 + Math.floor(rand() * (90 - firstMinute))),
+          team, playerId: player.id, playerName: player.name,
+          cardType: "red", isSecondYellow: true,
+          reason: "doble amarilla",
         });
       }
     }
-    // 2% chance for direct red card (same for all players)
-    else if (rand() < 0.02) {
-      homeRedCards++;
-      cards.push({
-        minute: Math.floor(rand() * 90) + 1,
-        team: "home",
-        playerId: player.id,
-        playerName: player.name,
-        cardType: "red",
-        isSecondYellow: false
-      });
-    }
+    return reds;
   }
 
-  // Away team cards
-  for (const player of awayXI) {
-    // Goalkeepers have 5% chance for yellow card, others have 10%
-    const yellowChance = player.position === "GK" ? 0.05 : 0.10;
-    if (rand() < yellowChance) {
-      const yellowCount = (awayYellowCards.get(player.id) || 0) + 1;
-      awayYellowCards.set(player.id, yellowCount);
-      
-      if (yellowCount === 2) {
-        // Second yellow = red card
-        awayRedCards++;
-        cards.push({
-          minute: Math.floor(rand() * 90) + 1,
-          team: "away",
-          playerId: player.id,
-          playerName: player.name,
-          cardType: "red",
-          isSecondYellow: true
-        });
-      } else {
-        cards.push({
-          minute: Math.floor(rand() * 90) + 1,
-          team: "away",
-          playerId: player.id,
-          playerName: player.name,
-          cardType: "yellow",
-          isSecondYellow: false
-        });
-      }
-    }
-    // 2% chance for direct red card (same for all players)
-    else if (rand() < 0.02) {
-      awayRedCards++;
-      cards.push({
-        minute: Math.floor(rand() * 90) + 1,
-        team: "away",
-        playerId: player.id,
-        playerName: player.name,
-        cardType: "red",
-        isSecondYellow: false
-      });
-    }
-  }
-
+  homeRedCards = simulateTeamCards(homeXI, "home");
+  awayRedCards = simulateTeamCards(awayXI, "away");
   cards.sort((a, b) => a.minute - b.minute);
 
-  // Build sets of red-carded player IDs per team, with their expulsion minute
-  const homeRedCardedPlayers = new Map<string, number>(); // playerId -> minute
+  // Map of red-carded players -> expulsion minute.
+  const homeRedCardedPlayers = new Map<string, number>();
   const awayRedCardedPlayers = new Map<string, number>();
   for (const card of cards) {
     if (card.cardType === "red") {
@@ -419,13 +444,12 @@ export function simulateMatch(
     }
   }
 
-  // Time-weighted team strength: expelled players contribute rating * (minute/90) instead of full rating
-  // This accurately reduces team average proportional to when the expulsion happened
+  // Time-weighted strength: an expelled player only contributes the fraction of
+  // the match he actually played.
   function timeWeightedXI(xi: Player[], redCarded: Map<string, number>): Player[] {
-    return xi.map(p => {
+    return xi.map((p) => {
       const expulsionMinute = redCarded.get(p.id);
       if (expulsionMinute !== undefined) {
-        // Player only contributed for (expulsionMinute/90) of the match
         return { ...p, rating: p.rating * (expulsionMinute / 90) };
       }
       return p;
@@ -435,63 +459,235 @@ export function simulateMatch(
   const adjustedHomeXI = timeWeightedXI(homeXI, homeRedCardedPlayers);
   const adjustedAwayXI = timeWeightedXI(awayXI, awayRedCardedPlayers);
 
-  // Calculate expected goals with time-weighted team strength
+  // -------------------------------------------------------------------------
+  // 2. Goals. `expectedGoals` already carries its own variance, so we sample a
+  //    plain Poisson here instead of multiplying the lambda a second time
+  //    (which used to flatten every result towards a random draw).
+  // -------------------------------------------------------------------------
   const { lh, la } = expectedGoals(home, away, adjustedHomeXI, adjustedAwayXI);
-  
-  // Add significant randomness to make draws much more likely in cup matches
-  // Use a wider range (0.5 to 1.5) to dramatically increase draw probability
-  let homeGoals = poisson(lh * (0.5 + rand()));
-  let awayGoals = poisson(la * (0.5 + rand()));
-  
-  // Stats are recorded later by applyMatchToStats to avoid duplicates
-  const events: MatchEvent[] = [];
 
-  // Players available to score/assist: only those NOT red-carded (or carded after a goal's minute)
-  // We assign goal minutes first, then pick scorers only from players still on the pitch
-  const homeGoalMinutes = Array.from({ length: homeGoals }, () => Math.floor(rand() * 90) + 1).sort((a, b) => a - b);
-  const awayGoalMinutes = Array.from({ length: awayGoals }, () => Math.floor(rand() * 90) + 1).sort((a, b) => a - b);
+  const homeGoalsRaw = poisson(lh);
+  const awayGoalsRaw = poisson(la);
+
+  const events: MatchEvent[] = [];
+  const highlights: HighlightEvent[] = [];
+
+  const activeAt = (xi: Player[], reds: Map<string, number>, minute: number) =>
+    xi.filter((p) => {
+      const expMin = reds.get(p.id);
+      return expMin === undefined || expMin > minute;
+    });
+
+  const homeGoalMinutes = Array.from({ length: homeGoalsRaw }, () => goalMinute()).sort((a, b) => a - b);
+  const awayGoalMinutes = Array.from({ length: awayGoalsRaw }, () => goalMinute()).sort((a, b) => a - b);
+
+  const finalHomeGoalMinutes: number[] = [];
+  const finalAwayGoalMinutes: number[] = [];
+  const penaltiesMissed: Array<{ playerId: string }> = [];
+
+  function buildGoal(
+    minute: number,
+    team: "home" | "away",
+    attackXI: Player[],
+    defendXI: Player[],
+  ): boolean {
+    if (attackXI.length === 0) return false;
+    const opponent: "home" | "away" = team === "home" ? "away" : "home";
+
+    // 6% of goals are actually own goals by a defender of the other team.
+    if (defendXI.length > 0 && rand() < 0.06) {
+      const defenders = defendXI.filter((p) => p.position === "DEF" || p.position === "GK");
+      const pool = defenders.length > 0 ? defenders : defendXI;
+      const unlucky = pool[Math.floor(rand() * pool.length)];
+      events.push({
+        minute, team, type: "own_goal",
+        scorerId: unlucky.id, scorerName: unlucky.name,
+      });
+      return true;
+    }
+
+    // 9% of goals come from the penalty spot; the taker can also miss it.
+    if (rand() < 0.09) {
+      const takers = attackXI.filter((p) => p.position !== "GK");
+      const taker = takers.length > 0
+        ? takers.slice().sort((a, b) => b.rating - a.rating)[Math.floor(rand() * Math.min(3, takers.length))]
+        : attackXI[0];
+      highlights.push({
+        minute, team, type: "penalty_awarded",
+        playerId: taker.id, playerName: taker.name,
+        detail: "Penalti señalado",
+      });
+      if (rand() < 0.78) {
+        events.push({
+          minute, team, type: "penalty_goal",
+          scorerId: taker.id, scorerName: taker.name,
+        });
+        return true;
+      }
+      penaltiesMissed.push({ playerId: taker.id });
+      const keeper = defendXI.find((p) => p.position === "GK");
+      highlights.push({
+        minute, team, type: "penalty_missed",
+        playerId: taker.id, playerName: taker.name,
+        detail: keeper ? `Se lo para ${keeper.name}` : "Penalti fallado",
+      });
+      return false;
+    }
+
+    // 7% of would-be goals get chalked off by VAR.
+    if (rand() < 0.07) {
+      const scorer = pickScorer(attackXI);
+      highlights.push({
+        minute, team, type: "var_disallowed",
+        playerId: scorer.id, playerName: scorer.name,
+        detail: rand() < 0.6 ? "Anulado por fuera de juego (VAR)" : "Anulado por falta previa (VAR)",
+      });
+      return false;
+    }
+
+    const scorer = pickScorer(attackXI);
+    const assister = pickAssister(attackXI, scorer.id);
+    events.push({
+      minute, team, type: "goal",
+      scorerId: scorer.id, scorerName: scorer.name,
+      assistId: assister?.id, assistName: assister?.name,
+    });
+    return true;
+  }
 
   for (const minute of homeGoalMinutes) {
-    // Only players still on pitch at this minute can score/assist
-    const activeXI = homeXI.filter(p => {
-      const expMin = homeRedCardedPlayers.get(p.id);
-      return expMin === undefined || expMin > minute;
-    });
-    if (activeXI.length === 0) continue;
-    const scorer = pickScorer(activeXI);
-    const assister = pickAssister(activeXI, scorer.id);
-    events.push({
-      minute, team: "home", type: "goal",
-      scorerId: scorer.id, scorerName: scorer.name,
-      assistId: assister?.id, assistName: assister?.name,
-    });
+    const attack = activeAt(homeXI, homeRedCardedPlayers, minute);
+    const defend = activeAt(awayXI, awayRedCardedPlayers, minute);
+    if (buildGoal(minute, "home", attack, defend)) finalHomeGoalMinutes.push(minute);
   }
   for (const minute of awayGoalMinutes) {
-    const activeXI = awayXI.filter(p => {
-      const expMin = awayRedCardedPlayers.get(p.id);
-      return expMin === undefined || expMin > minute;
-    });
-    if (activeXI.length === 0) continue;
-    const scorer = pickScorer(activeXI);
-    const assister = pickAssister(activeXI, scorer.id);
-    events.push({
-      minute, team: "away", type: "goal",
-      scorerId: scorer.id, scorerName: scorer.name,
-      assistId: assister?.id, assistName: assister?.name,
-    });
+    const attack = activeAt(awayXI, awayRedCardedPlayers, minute);
+    const defend = activeAt(homeXI, homeRedCardedPlayers, minute);
+    if (buildGoal(minute, "away", attack, defend)) finalAwayGoalMinutes.push(minute);
   }
+
+  const homeGoals = finalHomeGoalMinutes.length;
+  const awayGoals = finalAwayGoalMinutes.length;
   events.sort((a, b) => a.minute - b.minute);
 
+  // -------------------------------------------------------------------------
+  // 3. Injuries with exact minute + forced substitution.
+  // -------------------------------------------------------------------------
   const injuries: InjuryEvent[] = [];
-  // Only players not red-carded can get injured
-  const homeAvailableForInjury = homeXI.filter(p => !homeRedCardedPlayers.has(p.id));
-  const awayAvailableForInjury = awayXI.filter(p => !awayRedCardedPlayers.has(p.id));
-  const homeInj = maybeInjury(homeAvailableForInjury.length > 0 ? homeAvailableForInjury : homeXI, "home");
+  const homeAvailableForInjury = homeXI.filter((p) => !homeRedCardedPlayers.has(p.id));
+  const awayAvailableForInjury = awayXI.filter((p) => !awayRedCardedPlayers.has(p.id));
+  const homeInj = maybeInjury(
+    homeAvailableForInjury.length > 0 ? homeAvailableForInjury : homeXI, "home", homeBench);
   if (homeInj) injuries.push(homeInj);
-  const awayInj = maybeInjury(awayAvailableForInjury.length > 0 ? awayAvailableForInjury : awayXI, "away");
+  const awayInj = maybeInjury(
+    awayAvailableForInjury.length > 0 ? awayAvailableForInjury : awayXI, "away", awayBench);
   if (awayInj) injuries.push(awayInj);
 
-  return { homeGoals, awayGoals, events, cards, injuries, xgHome: lh, xgAway: la };
+  for (const inj of injuries) {
+    highlights.push({
+      minute: inj.minute ?? 60,
+      team: inj.team,
+      type: "injury",
+      playerId: inj.playerId,
+      playerName: inj.playerName,
+      detail: inj.reason,
+    });
+    if (inj.forcedSub && inj.replacementName) {
+      highlights.push({
+        minute: inj.minute ?? 60,
+        team: inj.team,
+        type: "forced_sub",
+        playerId: inj.replacementId!,
+        playerName: inj.replacementName,
+        detail: `Entra por ${inj.playerName} (cambio forzado)`,
+      });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 4. Match statistics (possession, shots, corners, fouls, passes, live xG).
+  // -------------------------------------------------------------------------
+  const homeStrength = calculateActiveOVR(homeXI);
+  const awayStrength = calculateActiveOVR(awayXI);
+  const stats = buildMatchStats({
+    xgHome: lh, xgAway: la,
+    homeGoals, awayGoals,
+    homeGoalMinutes: finalHomeGoalMinutes,
+    awayGoalMinutes: finalAwayGoalMinutes,
+    homeStrength, awayStrength,
+  });
+
+  // -------------------------------------------------------------------------
+  // 5. Extra highlights: saves and woodwork, tied to the generated stats.
+  // -------------------------------------------------------------------------
+  const homeGK = homeXI.find((p) => p.position === "GK");
+  const awayGK = awayXI.find((p) => p.position === "GK");
+
+  const addSaves = (gk: Player | undefined, team: "home" | "away", count: number) => {
+    if (!gk) return;
+    const shown = Math.min(count, 4);
+    for (let i = 0; i < shown; i++) {
+      highlights.push({
+        minute: 3 + Math.floor(rand() * 85),
+        team, type: "save",
+        playerId: gk.id, playerName: gk.name,
+        detail: rand() < 0.35 ? "¡Paradón!" : "Buena intervención",
+      });
+    }
+  };
+  addSaves(homeGK, "home", stats.home.saves);
+  addSaves(awayGK, "away", stats.away.saves);
+
+  const addWoodwork = (xi: Player[], team: "home" | "away") => {
+    if (rand() > 0.18) return;
+    const candidates = xi.filter((p) => p.position !== "GK");
+    if (candidates.length === 0) return;
+    const p = candidates[Math.floor(rand() * candidates.length)];
+    highlights.push({
+      minute: 3 + Math.floor(rand() * 85),
+      team, type: "woodwork",
+      playerId: p.id, playerName: p.name,
+      detail: rand() < 0.5 ? "¡Al palo!" : "¡Al travesaño!",
+    });
+  };
+  addWoodwork(homeXI, "home");
+  addWoodwork(awayXI, "away");
+
+  highlights.sort((a, b) => a.minute - b.minute);
+
+  // -------------------------------------------------------------------------
+  // 6. Player ratings (1-10) and MVP.
+  // -------------------------------------------------------------------------
+  const minutesPlayed: Record<string, number> = {};
+  for (const p of [...homeXI, ...awayXI]) minutesPlayed[p.id] = 90;
+  for (const [id, min] of homeRedCardedPlayers) minutesPlayed[id] = min;
+  for (const [id, min] of awayRedCardedPlayers) minutesPlayed[id] = min;
+  for (const inj of injuries) {
+    if (inj.forcedSub && inj.minute !== undefined) minutesPlayed[inj.playerId] = inj.minute;
+  }
+
+  const { ratings, mvp } = computePlayerRatings({
+    homeXI, awayXI, homeGoals, awayGoals,
+    goals: events.map((e) => ({
+      team: e.team,
+      scorerId: e.scorerId,
+      assistId: e.assistId,
+      ownGoal: e.type === "own_goal",
+    })),
+    cards: cards.map((c) => ({
+      team: c.team, playerId: c.playerId, cardType: c.cardType, minute: c.minute,
+    })),
+    minutesPlayed,
+    homeSaves: stats.home.saves,
+    awaySaves: stats.away.saves,
+    penaltiesMissed,
+  });
+
+  return {
+    homeGoals, awayGoals, events, cards, injuries,
+    xgHome: lh, xgAway: la,
+    highlights, stats, ratings, mvp,
+  };
 }
 
 // Simulate extra time (90-120 minutes) - lower intensity than regular time

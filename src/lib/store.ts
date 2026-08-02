@@ -3990,6 +3990,8 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
 
   for (const ev of r.events) {
+    // Own goals must never be credited to the scorer in the stats tables.
+    if (ev.type === "own_goal") continue;
 
 
 
@@ -4046,6 +4048,7 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
 
     for (const ev of r.extraTime.events) {
+      if (ev.type === "own_goal") continue;
 
 
 
@@ -4803,13 +4806,24 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
     }
     // MOTM: top scorer of the match (or a random starter of winner if 0-0)
     const scorerCounts: Record<string, number> = {};
-    for (const ev of r.events ?? []) scorerCounts[ev.scorerId] = (scorerCounts[ev.scorerId] ?? 0) + 1;
-    for (const ev of r.extraTime?.events ?? []) scorerCounts[ev.scorerId] = (scorerCounts[ev.scorerId] ?? 0) + 1;
+    for (const ev of r.events ?? []) {
+      if (ev.type === "own_goal") continue;
+      scorerCounts[ev.scorerId] = (scorerCounts[ev.scorerId] ?? 0) + 1;
+    }
+    for (const ev of r.extraTime?.events ?? []) {
+      if (ev.type === "own_goal") continue;
+      scorerCounts[ev.scorerId] = (scorerCounts[ev.scorerId] ?? 0) + 1;
+    }
     let motmId: string | undefined;
     let best = 0;
     for (const [pid, n] of Object.entries(scorerCounts)) {
       if (n > best) { best = n; motmId = pid; }
     }
+    // The simulation now produces per-player ratings: the MVP is the best rated
+    // player of the match, which is far more accurate than "top scorer".
+    if (r.mvp?.playerId) motmId = r.mvp.playerId;
+    // Match ratings feed each player's form history.
+    for (const pr of r.ratings ?? []) store.recordMatchRating(pr.playerId, pr.rating);
     if (!motmId) {
       const winnerXI = homeGoals > awayGoals ? homeXI : awayGoals > homeGoals ? awayXI : (Math.random() < 0.5 ? homeXI : awayXI);
       motmId = winnerXI[Math.floor(Math.random() * winnerXI.length)]?.id;

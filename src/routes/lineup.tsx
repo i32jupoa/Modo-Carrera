@@ -24,6 +24,14 @@ import {
   type DefenseLine,
 } from "@/lib/teamTactics";
 import { Shield, Swords, Scale, ChevronsDown, ChevronsUp, Minus, Crown, Goal, Flag, CornerDownRight, CalendarClock } from "lucide-react";
+import {
+  loadLive,
+  saveLive,
+  subLimits,
+  isFreeWindow,
+  type LiveMatchState,
+} from "@/lib/liveMatch";
+import { btnPrimary, btnSecondary, infoChip } from "@/components/match/matchUi";
 
 // Friendly label for an empty slot, derived from formation position key.
 function emptySlotLabel(posKey: string): string {
@@ -118,11 +126,27 @@ function LineupPage() {
   const cupRound = routerState?.cupRound as string | undefined;
   const fixtureId = routerState?.fixtureId as string | undefined;
   const returningFromLineupEdit = routerState?.returningFromLineupEdit === true;
+  // Live mode: the match is paused and we must come back to the exact minute.
+  const liveMode = routerState?.liveMatch === true;
+  const [live, setLive] = useState<LiveMatchState | null>(null);
+  const liveBaseXIRef = useRef<string[]>([]);
 
   useEffect(() => {
     const s = loadSave();
     if (!s) { navigate({ to: "/" }); return; }
     setSave(s);
+
+    if (liveMode) {
+      const st = loadLive(fixtureId);
+      if (st) {
+        setLive(st);
+        liveBaseXIRef.current = st.lineup;
+        setStartingXI(st.lineup);
+        setBench(st.bench);
+        setSelectedFormation((st.formation || "Táctica 4-3-3") as FormationName);
+        return;
+      }
+    }
     
     // Initialize lineup from save
     const savedLineup = s.lineups[s.myTeamId] ?? [];
@@ -136,7 +160,7 @@ function LineupPage() {
     // Initialize formation from save
     const savedFormation = s.formations[s.myTeamId] ?? "Táctica 4-3-3";
     setSelectedFormation(savedFormation as FormationName);
-  }, [navigate, getSimSquad]);
+  }, [navigate, getSimSquad, liveMode, fixtureId]);
 
   const squad = useMemo(
     () => (save && ready ? getSimSquad(save.myTeamId) : []),
@@ -145,6 +169,7 @@ function LineupPage() {
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
 
   useEffect(() => {
+    if (liveMode) return;
     if (!save || !ready || squad.length === 0) return;
     if (startingXI.length > 0 || bench.length > 0) return;
 
@@ -155,6 +180,7 @@ function LineupPage() {
 
   // Automated injury detection and handling
   useEffect(() => {
+    if (liveMode) return; // during a live match the XI is controlled by the match screen
     if (!save || startingXI.length === 0) return;
     if (processedForMdRef.current === leagueMd) return;
 
@@ -204,6 +230,7 @@ function LineupPage() {
 
   // Automated suspension detection and handling
   useEffect(() => {
+    if (liveMode) return;
     if (!save || startingXI.length === 0) return;
     if (suspensionProcessedForMdRef.current === leagueMd) return;
 
@@ -995,7 +1022,81 @@ function LineupPage() {
         xiPlayers={xiPlayers as any}
       />
 
-      {(fromSeason || fromMatch) && (
+      {liveMode && live && (() => {
+        const limits = subLimits(live.isExtraTime);
+        const outIds = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
+        const inIds = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
+        const changes = Math.min(outIds.length, inIds.length);
+        const free = isFreeWindow(live.phase);
+        const overSubs = live.subsUsed + changes > limits.maxSubs;
+        const overWindows = changes > 0 && !free && live.windowsUsed >= limits.maxWindows;
+        const blocked = overSubs || overWindows || !isLineupComplete;
+        return (
+          <div className="panel mt-8 p-5">
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <span className={infoChip}>Partido en pausa · {live.minute}'</span>
+              <span className={infoChip}>Cambios {live.subsUsed + changes}/{limits.maxSubs}</span>
+              <span className={infoChip}>
+                Ventanas {live.windowsUsed + (changes > 0 && !free ? 1 : 0)}/{limits.maxWindows}
+              </span>
+              {free && <span className={infoChip}>Descanso · no gasta ventana</span>}
+            </div>
+            <p className="text-xs text-muted-foreground mb-4">
+              Cambia la táctica libremente. Si mueves jugadores del banquillo al once se contarán como
+              sustituciones. Al volver, el partido sigue exactamente en el minuto {live.minute}.
+            </p>
+            {overSubs && (
+              <p className="text-xs text-destructive mb-3">
+                Has superado el límite de sustituciones permitidas.
+              </p>
+            )}
+            {overWindows && (
+              <p className="text-xs text-destructive mb-3">
+                No te quedan ventanas de cambio: solo puedes ajustar la táctica.
+              </p>
+            )}
+            <div className="flex justify-end">
+              <button
+                disabled={blocked}
+                className={btnPrimary}
+                onClick={() => {
+                  const nextBench = bench.filter((id) => !startingXI.includes(id));
+                  const stamina = { ...(live.stamina || {}) };
+                  const subs = [...(live.subs || [])];
+                  for (let i = 0; i < changes; i++) {
+                    stamina[inIds[i]] = 100;
+                    subs.push({
+                      minute: live.minute,
+                      outId: outIds[i],
+                      outName: squad.find((p) => p.id === outIds[i])?.name ?? outIds[i],
+                      inId: inIds[i],
+                      inName: squad.find((p) => p.id === inIds[i])?.name ?? inIds[i],
+                    });
+                  }
+                  saveLive({
+                    ...live,
+                    lineup: startingXI,
+                    bench: nextBench,
+                    formation: selectedFormation,
+                    stamina,
+                    subs,
+                    subsUsed: live.subsUsed + changes,
+                    windowsUsed: live.windowsUsed + (changes > 0 && !free ? 1 : 0),
+                  });
+                  navigate({
+                    to: "/match",
+                    state: { resumeLive: true, fixtureId: live.fixtureId } as any,
+                  });
+                }}
+              >
+                Volver al partido ({live.minute}') →
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {!liveMode && (fromSeason || fromMatch) && (
         <div className="mt-8 flex justify-end">
           <button
             onClick={() => {
@@ -1026,7 +1127,7 @@ function LineupPage() {
               });
             }}
             disabled={!isLineupComplete}
-            className={`px-6 py-3 rounded-lg font-black ${isLineupComplete ? "bg-primary text-primary-foreground glow-neon" : "bg-secondary text-muted-foreground pointer-events-none opacity-40"}`}
+            className={isLineupComplete ? btnPrimary : `${btnSecondary} opacity-40 pointer-events-none`}
           >
             Iniciar Partido →
           </button>

@@ -4824,6 +4824,7 @@ type PlayersState = {
   recordAssist: (playerId: string, competition?: string) => void;
   recordCleanSheet: (playerId: string, competition?: string) => void;
   recordMotm: (playerId: string, competition?: string) => void;
+  recordMatchRating: (playerId: string, rating: number) => void;
 
 
 
@@ -12636,6 +12637,13 @@ export const usePlayersStore = create<PlayersState>()(
           uclCleanSheets: (s.uclCleanSheets ?? 0) + (isUcl ? 1 : 0),
         };
         set({ stats: next });
+      },
+      recordMatchRating: (playerId, rating) => {
+        // Feeds the 1-10 match rating into the player's form history (last 6).
+        mutatePlayerStat(get, set, playerId, (s) => {
+          const history = [...(s.formHistory ?? []), Math.max(1, Math.min(10, rating))];
+          return { ...s, formHistory: history.slice(-6) };
+        });
       },
       recordMotm: (playerId, competition) => {
         mutatePlayerStat(get, set, playerId, (s) => {
