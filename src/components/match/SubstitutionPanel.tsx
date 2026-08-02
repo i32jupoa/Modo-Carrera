@@ -38,7 +38,9 @@ export function SubstitutionPanel({
   const usedOut = new Set(pairs.map((p) => p.outId));
   const usedIn = new Set(pairs.map((p) => p.inId));
   const remaining = maxSubs - subsUsed - pairs.length;
-  const canAddMore = remaining > 0;
+  const windowAvailable = freeWindow || pairs.length > 0 || windowsUsed < maxWindows;
+  const canAddMore = remaining > 0 && windowAvailable;
+
 
   function pickIn(inId: string) {
     if (!pendingOut || !canAddMore) return;
@@ -101,8 +103,10 @@ export function SubstitutionPanel({
           <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-2">En el campo</div>
           <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
             {onPitch.map((p) => {
-              const disabled = usedOut.has(p.id) || (!!forcedOutId && p.id !== forcedOutId);
+              const disabled =
+                usedOut.has(p.id) || (!!forcedOutId && p.id !== forcedOutId) || !canAddMore;
               const active = pendingOut === p.id;
+
               return (
                 <button
                   key={p.id}
@@ -129,10 +133,18 @@ export function SubstitutionPanel({
 
         <div>
           <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-2">Banquillo</div>
+          {!canAddMore && (
+            <p className="text-xs text-destructive mb-2">
+              {remaining <= 0
+                ? "Sin cambios disponibles: el banquillo está bloqueado."
+                : "Sin ventanas de cambio: el banquillo está bloqueado."}
+            </p>
+          )}
           <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
             {bench.length === 0 && (
               <p className="text-xs text-muted-foreground">No quedan suplentes disponibles.</p>
             )}
+
             {bench.map((p) => (
               <button
                 key={p.id}

@@ -1,5 +1,5 @@
-import { useRef } from "react";
 import { Player } from "@/data/players";
+
 import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName, type PositionRole } from "@/lib/formations";
 import { teamById } from "@/data/teams";
 import { CardEvent } from "@/lib/simulation";
@@ -48,22 +48,17 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
   const formationPositions = FORMATION_COORDINATES[formation];
   const positionKeys = Object.keys(formationPositions);
   const team = teamById(teamId);
-  const frozenLineupRef = useRef<Player[]>([]);
-
-  const frozenStartingXI = frozenLineupRef.current.length > 0 ? frozenLineupRef.current : startingXI;
-  if (frozenLineupRef.current.length === 0 && startingXI.length > 0) {
-    frozenLineupRef.current = startingXI;
-  }
 
   // Map players to positions (simple mapping by index)
   const playerPositions: Record<string, Player | null> = {};
   positionKeys.forEach((posKey, index) => {
-    if (index < frozenStartingXI.length && frozenStartingXI[index]) {
-      playerPositions[posKey] = frozenStartingXI[index];
+    if (index < startingXI.length && startingXI[index]) {
+      playerPositions[posKey] = startingXI[index];
     } else {
       playerPositions[posKey] = null;
     }
   });
+
 
   // Create a map of player IDs to their cards
   const playerCards: Record<string, CardEvent[]> = {};

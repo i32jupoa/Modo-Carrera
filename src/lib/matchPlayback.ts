@@ -1,9 +1,9 @@
 import type { MatchEvent, CardEvent, HighlightEvent } from "@/lib/simulation";
 
-// Playback speed: 4x slower than the original pace.
-export const MATCH_TICK_MS = 200;
-export const MATCH_START_DELAY_MS = 1200;
-export const EXTRA_TIME_TICK_MS = 400;
+// Playback speed: 16x slower than the original pace (2x slower than before).
+export const MATCH_TICK_MS = 800;
+export const MATCH_START_DELAY_MS = 4000;
+export const EXTRA_TIME_TICK_MS = 1600;
 
 const KEY = "mc:match-snapshot";
 

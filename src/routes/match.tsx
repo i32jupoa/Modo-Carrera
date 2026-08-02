@@ -111,7 +111,15 @@ function MatchPage() {
   const subsUsedRef = useRef(0);
   const windowsUsedRef = useRef(0);
   const subsRef = useRef<any[]>([]);
+  // Substitutions (mine and the rival's) shown inside the match chronicle.
+  const [subFeed, setSubFeed] = useState<any[]>([]);
+  // Rival (CPU) live lineup + planned substitutions.
+  const oppCacheRef = useRef<{ key: string; formation: any } | null>(null);
+  const oppXIRef = useRef<any[]>([]);
+  const oppBenchRef = useRef<any[]>([]);
+  const oppPlanRef = useRef<{ minute: number; outId: string; inId: string }[]>([]);
   const resumeLive = (location.state as any)?.resumeLive === true;
+
 
   // Extract temporary lineup from router state (if passed from lineup page)
   const routerState = location.state as any;
@@ -162,6 +170,15 @@ function MatchPage() {
     subsUsedRef.current = st.subsUsed; setSubsUsed(st.subsUsed);
     windowsUsedRef.current = st.windowsUsed; setWindowsUsed(st.windowsUsed);
     subsRef.current = st.subs || []; setSubsMade(st.subs || []);
+    {
+      const mySide = fx.homeId === s.myTeamId ? "home" : "away";
+      setSubFeed(
+        (st.subs || [])
+          .map((sb: any) => ({ minute: sb.minute, team: mySide, inName: sb.inName, outName: sb.outName }))
+          .reverse(),
+      );
+    }
+
     handledInjuriesRef.current = st.handledInjuries || [];
     halftimeDoneRef.current = m >= 45;
     isExtraTimeRef.current = st.isExtraTime;
@@ -1120,6 +1137,11 @@ function MatchPage() {
     subsUsedRef.current += madeNow.length; setSubsUsed(subsUsedRef.current);
     if (!free) { windowsUsedRef.current += 1; setWindowsUsed(windowsUsedRef.current); }
     subsRef.current = [...subsRef.current, ...madeNow]; setSubsMade(subsRef.current);
+    const mySide = fixtureRef.current?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
+    setSubFeed((prev) => [
+      ...madeNow.map((s) => ({ minute: s.minute, team: mySide, inName: s.inName, outName: s.outName })).reverse(),
+      ...prev,
+    ]);
     setShowSubs(false);
     setForcedOutId(null);
     persistLive();
@@ -1129,6 +1151,58 @@ function MatchPage() {
         : `${madeNow.length} cambios realizados`,
     );
   }
+
+  // ------------------------------------------------- rival (CPU) substitutions
+
+  /** Plan 2-3 substitutions for the CPU side, spread across the second half. */
+  function planOpponentSubs() {
+    const xi = oppXIRef.current;
+    const bench = oppBenchRef.current;
+    if (xi.length === 0 || bench.length === 0) { oppPlanRef.current = []; return; }
+    const count = Math.min(2 + Math.floor(Math.random() * 2), bench.length, xi.length - 1);
+    const outPool = xi.filter((p: any) => p.position !== "GK" && p.position !== "POR");
+    const plan: { minute: number; outId: string; inId: string }[] = [];
+    const usedOut = new Set<string>();
+    const usedIn = new Set<string>();
+    const baseMinutes = [58, 68, 79];
+    for (let i = 0; i < count; i++) {
+      const out = outPool.find((p: any) => !usedOut.has(p.id));
+      const inn = bench.find((p: any) => !usedIn.has(p.id));
+      if (!out || !inn) break;
+      usedOut.add(out.id);
+      usedIn.add(inn.id);
+      plan.push({
+        minute: baseMinutes[i] + Math.floor(Math.random() * 5),
+        outId: out.id,
+        inId: inn.id,
+      });
+    }
+    oppPlanRef.current = plan;
+  }
+
+  function applyOpponentSubsAt(m: number) {
+    const due = oppPlanRef.current.filter((s) => s.minute === m);
+    if (due.length === 0) return;
+    const fx = fixtureRef.current;
+    if (!fx) return;
+    const myId = myTeamIdRef.current || save?.myTeamId;
+    const oppSide = fx.homeId === myId ? "away" : "home";
+    let xi = [...oppXIRef.current];
+    const made: any[] = [];
+    for (const s of due) {
+      const idx = xi.findIndex((p: any) => p.id === s.outId);
+      const inn = oppBenchRef.current.find((p: any) => p.id === s.inId);
+      if (idx === -1 || !inn) continue;
+      const out = xi[idx];
+      xi[idx] = inn;
+      oppBenchRef.current = oppBenchRef.current.filter((p: any) => p.id !== inn.id);
+      made.push({ minute: m, team: oppSide, inName: inn.name, outName: out.name });
+    }
+    if (made.length === 0) return;
+    oppXIRef.current = xi;
+    setSubFeed((prev) => [...made.reverse(), ...prev]);
+  }
+
 
   function goEditLineupLive() {
     if (!pausedRef.current) pauseMatch("manual");
@@ -1172,6 +1246,8 @@ function MatchPage() {
         }
       }
       drainStamina();
+      applyOpponentSubsAt(m);
+
       if (m >= 90) { setPhase("done"); clearMatchSnapshot(); clearLive(); return; }
       if (checkInjuriesAt(m)) return;
       if (m === 45 && !halftimeDoneRef.current) {
@@ -1298,11 +1374,28 @@ function MatchPage() {
   // Get lineups for both teams
   const homeSquad = getSimSquad(fixture.homeId);
   const awaySquad = getSimSquad(fixture.awayId);
-  
+
+  // Rival lineup is computed only once per fixture (and then mutated by the CPU
+  // substitutions), so the mini pitch always shows who is actually on the pitch.
+  const oppId = isMe(fixture.homeId) ? fixture.awayId : fixture.homeId;
+  if (!oppCacheRef.current || oppCacheRef.current.key !== `${fixture.id}:${oppId}`) {
+    const { players: oppPlayers, formation: oppFmt } = getStartersWithFormation(save, oppId, { randomFormation: true });
+    oppXIRef.current = oppPlayers;
+    const oppSquad = getSimSquad(oppId);
+    const onPitchIds = new Set(oppPlayers.map((p: any) => p.id));
+    oppBenchRef.current = oppSquad
+      .filter((p: any) => !onPitchIds.has(p.id) && (p.injuredUntil ?? 0) <= 0)
+      .sort((a: any, b: any) => b.rating - a.rating)
+      .slice(0, 7);
+    oppCacheRef.current = { key: `${fixture.id}:${oppId}`, formation: oppFmt };
+    planOpponentSubs();
+  }
+  const oppFormation = oppCacheRef.current.formation;
+
   // Determine home team lineup and formation
   let homeLineup: any[] = [];
   let homeFormation: any = "Táctica 4-4-2";
-  
+
   if (isMe(fixture.homeId)) {
     // User's team - use temporary lineup if available, otherwise use global
     const liveIds = phase !== "preview" && myXI.length > 0 ? myXI : null;
@@ -1310,16 +1403,14 @@ function MatchPage() {
     homeLineup = homeLineupIds.map(id => homeSquad.find(p => p.id === id)).filter(Boolean);
     homeFormation = (phase !== "preview" && liveFormation) || matchFormation || save.formations[fixture.homeId] || "Táctica 4-4-2";
   } else {
-    // CPU team - use getStartersWithFormation to get both XI and the formation used
-    const { players: homePlayers, formation: homeFmt } = getStartersWithFormation(save, fixture.homeId, { randomFormation: true });
-    homeLineup = homePlayers;
-    homeFormation = homeFmt;
+    homeLineup = oppXIRef.current;
+    homeFormation = oppFormation;
   }
-  
+
   // Determine away team lineup and formation
   let awayLineup: any[] = [];
   let awayFormation: any = "Táctica 4-4-2";
-  
+
   if (isMe(fixture.awayId)) {
     // User's team - use temporary lineup if available, otherwise use global
     const liveIdsAway = phase !== "preview" && myXI.length > 0 ? myXI : null;
@@ -1327,11 +1418,10 @@ function MatchPage() {
     awayLineup = awayLineupIds.map(id => awaySquad.find(p => p.id === id)).filter(Boolean);
     awayFormation = (phase !== "preview" && liveFormation) || matchFormation || save.formations[fixture.awayId] || "Táctica 4-4-2";
   } else {
-    // CPU team - use getStartersWithFormation to get both XI and the formation used
-    const { players: awayPlayers, formation: awayFmt } = getStartersWithFormation(save, fixture.awayId, { randomFormation: true });
-    awayLineup = awayPlayers;
-    awayFormation = awayFmt;
+    awayLineup = oppXIRef.current;
+    awayFormation = oppFormation;
   }
+
   
   // Check if user's lineup is complete (11 players)
   const userLineup = isMe(fixture.homeId) ? homeLineup : awayLineup;
@@ -1354,15 +1444,43 @@ function MatchPage() {
     ? `Champions League · Jornada ${fixture.matchday}`
     : `Liga · Jornada ${fixture.matchday}`;
 
+  const liveMinuteLabel =
+    phase === "preview"
+      ? "00'"
+      : phase === "penalties"
+        ? "PEN"
+        : phase === "done"
+          ? "FINAL"
+          : `${minute}'`;
+
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto">
-      <div className="panel-glow p-6 md:p-8">
+    <div className="p-3 md:p-4 max-w-[1700px] mx-auto">
+      {/* Always-visible match clock */}
+      <div className="sticky top-0 z-30 -mx-3 md:-mx-4 mb-3 px-3 md:px-4 py-2 bg-background/85 backdrop-blur border-b border-border/60">
+        <div className="flex items-center justify-between gap-3">
+          <span className="chip truncate">{headerText}</span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-bold truncate max-w-[8rem] text-right">{home.short}</span>
+            <span className="scoreline text-lg font-black tabular-nums">
+              {phase === "preview" ? "– : –" : `${homeScore + extraTimeHomeScore} : ${awayScore + extraTimeAwayScore}`}
+            </span>
+            <span className="text-sm font-bold truncate max-w-[8rem]">{away.short}</span>
+            <span className="scoreline text-lg font-black text-primary tabular-nums w-16 text-right">
+              {liveMinuteLabel}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] items-start">
+      <div className="min-w-0">
+      <div className="panel-glow p-4 md:p-6">
         <div className="flex items-center justify-between mb-6">
           <span className="chip">{headerText}</span>
           <div className="text-sm scoreline font-bold text-primary">
-            {phase === "preview" ? "00'" : `${minute}'`}
+            {liveMinuteLabel}
           </div>
         </div>
+
 
         <div className="grid grid-cols-[1fr_auto_1fr] gap-4 md:gap-6 items-center text-center">
           <div className="flex flex-col items-center gap-2 md:gap-3">
@@ -1457,24 +1575,6 @@ function MatchPage() {
                 <button onClick={goEditLineupLive} className={btnSecondary}>
                   <ClipboardList className="h-4 w-4" /> Alineación y táctica
                 </button>
-                <button
-                  onClick={() => { if (!isPaused) pauseMatch("manual"); setShowSubs(true); }}
-                  className={btnSecondary}
-                >
-                  <Users className="h-4 w-4" /> Cambios
-                </button>
-                <div className={segmentBase}>
-                  {[0.5, 1, 2, 4].map((sp) => (
-                    <button
-                      key={sp}
-                      type="button"
-                      className={segmentItem(speed === sp)}
-                      onClick={() => { setSpeed(sp); speedRef.current = sp; }}
-                    >
-                      {sp}x
-                    </button>
-                  ))}
-                </div>
                 <button onClick={skipToEnd} className={btnGhost}>
                   <FastForward className="h-3.5 w-3.5" /> Saltar al final
                 </button>
@@ -1495,33 +1595,11 @@ function MatchPage() {
               >
                 {isPaused ? <><Play className="h-4 w-4" /> Reanudar</> : <><Pause className="h-4 w-4" /> Pausar</>}
               </button>
-              <button
-                onClick={() => { if (!isPaused) pauseMatch("manual"); setShowSubs(true); }}
-                className={btnSecondary}
-              >
-                <Users className="h-4 w-4" /> Cambios
-              </button>
               <button onClick={skipExtraTimeToEnd} className={btnGhost}>
                 <FastForward className="h-3.5 w-3.5" /> Saltar al final
               </button>
             </div>
           )}
-          {(phase === "playing" || phase === "done") && fixture?.result?.stats && (() => {
-            const acc = accumulateStats(fixture.result.stats, phase === "done" ? 90 : minute);
-            return (
-              <div className="mt-4 space-y-4">
-                <MatchStatsPanel home={acc.home} away={acc.away} />
-                {phase === "done" && (
-                  <PlayerRatingsPanel
-                    ratings={fixture.result.ratings ?? []}
-                    mvp={fixture.result.mvp}
-                    homeName={fixture.homeTeam?.name ?? "Local"}
-                    awayName={fixture.awayTeam?.name ?? "Visitante"}
-                  />
-                )}
-              </div>
-            );
-          })()}
           {phase === "penalties" && (
             <button onClick={skipPenaltyShootoutToEnd} className={btnSecondary}>
               <FastForward className="h-4 w-4" /> Saltar al final
@@ -1621,48 +1699,78 @@ function MatchPage() {
         );
       })()}
 
-      {(phase === "playing" || phase === "extra_time") && (
-        <div className="mt-6">
-          <StaminaPanel
-            players={myXI.map((id) => mySquad().find((p: any) => p.id === id)).filter(Boolean) as any[]}
-            stamina={stamina}
-          />
-          {subsMade.length > 0 && (
-            <div className="panel p-4 mt-4">
-              <h3 className="font-bold text-sm mb-2">Cambios realizados</h3>
-              <ul className="space-y-1 text-xs">
-                {subsMade.map((s, i) => (
-                  <li key={i} className="flex items-center gap-2">
-                    <span className="scoreline text-primary font-bold w-9">{s.minute}'</span>
-                    <span className="truncate">
-                      <span className="text-primary font-semibold">{s.inName}</span> por{" "}
-                      <span className="text-destructive">{s.outName}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+      {(phase === "playing" || phase === "extra_time" || phase === "done") && (
+        <div className="mt-4 grid gap-4 lg:grid-cols-2 items-start">
+          {fixture?.result?.stats && (() => {
+            const acc = accumulateStats(fixture.result.stats, phase === "done" ? 90 : minute);
+            return <MatchStatsPanel home={acc.home} away={acc.away} />;
+          })()}
+          {(phase === "playing" || phase === "extra_time") && (
+            <StaminaPanel
+              players={myXI.map((id) => mySquad().find((p: any) => p.id === id)).filter(Boolean) as any[]}
+              stamina={stamina}
+            />
+          )}
+          {phase === "done" && fixture?.result && (
+            <PlayerRatingsPanel
+              ratings={fixture.result.ratings ?? []}
+              mvp={fixture.result.mvp}
+              homeName={fixture.homeTeam?.name ?? "Local"}
+              awayName={fixture.awayTeam?.name ?? "Visitante"}
+            />
           )}
         </div>
       )}
+      </div>
 
-      <div className="panel mt-6 p-5">
-        <h3 className="font-bold mb-3">Crónica del partido</h3>
+
+      <div className="min-w-0">
+      <div className="panel p-5 xl:sticky xl:top-16">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold">Crónica del partido</h3>
+          <span className="scoreline text-sm font-black text-primary tabular-nums">{liveMinuteLabel}</span>
+        </div>
         {phase === "preview" ? (
           <p className="text-sm text-muted-foreground">
             {home.name} recibe a {away.name}. Pulsa "Iniciar partido" para comenzar.
           </p>
-        ) : feed.length === 0 && cardFeed.length === 0 ? (
+        ) : feed.length === 0 && cardFeed.length === 0 && highlightFeed.length === 0 && subFeed.length === 0 ? (
           <p className="text-sm text-muted-foreground">Sin eventos aún... el partido está disputado.</p>
         ) : (
-          <div className="space-y-2">
-            {[...cardFeed, ...feed]
-              .sort((a, b) => b.minute - a.minute)
-              .map((e, i) => {
-                if ('cardType' in e) {
-                  // Card event
-                  const card = e as CardEvent;
-                  const cardTeam = card.team === "home" ? home : away;
+          <div className="space-y-1 max-h-[calc(100vh-14rem)] overflow-y-auto pr-1">
+            {(() => {
+              // Only the highlights that add colour to the chronicle without flooding it.
+              const KEEP: Record<string, { icon: string; label: string }> = {
+                woodwork: { icon: "🥅", label: "Al palo" },
+                penalty_missed: { icon: "❌", label: "Penalti fallado" },
+                penalty_awarded: { icon: "⚪", label: "Penalti señalado" },
+                var_disallowed: { icon: "📺", label: "Gol anulado (VAR)" },
+                injury: { icon: "🚑", label: "Lesión" },
+                forced_sub: { icon: "🔁", label: "Cambio forzado" },
+                save: { icon: "🧤", label: "Parada" },
+              };
+              const usedSaves: number[] = [];
+              const hls = highlightFeed.filter((h: any) => {
+                if (!KEEP[h.type]) return false;
+                if (h.type === "save") {
+                  // Keep only the outstanding saves, max 3, to avoid overload.
+                  if (h.detail !== "¡Paradón!" || usedSaves.length >= 3) return false;
+                  usedSaves.push(h.minute);
+                }
+                return true;
+              });
+              const items = [
+                ...cardFeed.map((c: any) => ({ kind: "card", minute: c.minute, data: c })),
+                ...feed.map((e: any) => ({ kind: "goal", minute: e.minute, data: e })),
+                ...hls.map((h: any) => ({ kind: "highlight", minute: h.minute, data: h })),
+                ...subFeed.map((s: any) => ({ kind: "sub", minute: s.minute, data: s })),
+              ].sort((a, b) => b.minute - a.minute);
+
+              return items.map((item, i) => {
+                const teamOf = (t: string) => (t === "home" ? home : away);
+                if (item.kind === "card") {
+                  const card = item.data as CardEvent;
+                  const cardTeam = teamOf(card.team);
                   const cardText = card.isSecondYellow ? "2ª amarilla → roja" : card.cardType === "yellow" ? "Tarjeta amarilla" : "Tarjeta roja";
                   return (
                     <div key={`card-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
@@ -1676,33 +1784,70 @@ function MatchPage() {
                       </div>
                     </div>
                   );
-                } else {
-                  // Goal event
-                  const scoringTeam = e.team === "home" ? home : away;
-                  const isPenalty = e.type === 'penalty';
+                }
+                if (item.kind === "sub") {
+                  const s = item.data;
+                  const subTeam = teamOf(s.team);
                   return (
-                    <div key={`goal-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
-                      <span className="scoreline text-sm text-primary font-bold w-10">{e.minute}'</span>
-                      <span className="text-lg">
-                        {isPenalty ? <span className="px-1.5 py-0.5 text-[0.8rem] font-bold rounded bg-white/6">P</span> : <span className="w-3 h-3 inline-block rounded-full bg-white/80" />}
-                      </span>
-                      <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
-                      <div className="text-sm min-w-0">
-                        <span className="font-bold">{e.scorerName}</span>
-                        {isPenalty && e.assistName && (
-                          <span className="text-muted-foreground"> · {e.assistName}</span>
-                        )}
-                        {!isPenalty && e.assistName && (
-                          <span className="text-muted-foreground"> · asist. {e.assistName}</span>
-                        )}
-                        <span className="text-muted-foreground"> ({scoringTeam.short})</span>
+                    <div key={`sub-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
+                      <span className="scoreline text-sm text-primary font-bold w-10">{s.minute}'</span>
+                      <span className="text-base w-5 text-center shrink-0">🔄</span>
+                      <TeamLogo teamName={subTeam.name} leagueName={getLeagueName(subTeam.league)} size={22} />
+                      <div className="text-sm min-w-0 truncate">
+                        <span className="text-primary font-bold">{s.inName}</span>
+                        <span className="text-muted-foreground"> por </span>
+                        <span className="text-destructive">{s.outName}</span>
+                        <span className="text-muted-foreground"> ({subTeam.short})</span>
                       </div>
                     </div>
                   );
                 }
-              })}
+                if (item.kind === "highlight") {
+                  const h = item.data;
+                  const hTeam = teamOf(h.team);
+                  const meta = KEEP[h.type];
+                  return (
+                    <div key={`hl-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
+                      <span className="scoreline text-sm text-muted-foreground font-bold w-10">{h.minute}'</span>
+                      <span className="text-base w-5 text-center shrink-0">{meta.icon}</span>
+                      <TeamLogo teamName={hTeam.name} leagueName={getLeagueName(hTeam.league)} size={22} />
+                      <div className="text-sm min-w-0 truncate">
+                        <span className="font-semibold">{h.playerName}</span>
+                        <span className="text-muted-foreground"> · {h.detail || meta.label}</span>
+                        <span className="text-muted-foreground"> ({hTeam.short})</span>
+                      </div>
+                    </div>
+                  );
+                }
+                const e = item.data;
+                const scoringTeam = teamOf(e.team);
+                const isPenalty = e.type === 'penalty' || e.type === 'penalty_goal';
+                const isOwnGoal = e.type === 'own_goal';
+                return (
+                  <div key={`goal-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
+                    <span className="scoreline text-sm text-primary font-bold w-10">{e.minute}'</span>
+                    <span className="text-lg">
+                      {isPenalty ? <span className="px-1.5 py-0.5 text-[0.8rem] font-bold rounded bg-white/6">P</span> : <span className="w-3 h-3 inline-block rounded-full bg-white/80" />}
+                    </span>
+                    <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
+                    <div className="text-sm min-w-0">
+                      <span className="font-bold">{e.scorerName}</span>
+                      {isOwnGoal && <span className="text-muted-foreground"> · en propia puerta</span>}
+                      {isPenalty && e.assistName && (
+                        <span className="text-muted-foreground"> · {e.assistName}</span>
+                      )}
+                      {!isPenalty && !isOwnGoal && e.assistName && (
+                        <span className="text-muted-foreground"> · asist. {e.assistName}</span>
+                      )}
+                      <span className="text-muted-foreground"> ({scoringTeam.short})</span>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
         )}
+
         {phase === "done" && fixture.result && (
           <>
                 {injuries.length > 0 && (
@@ -1726,6 +1871,8 @@ function MatchPage() {
           </>
         )}
       </div>
+      </div>
+    </div>
     </div>
   );
 }

@@ -514,11 +514,39 @@ function LineupPage() {
     }
   }
 
+  /**
+   * In live mode the number of substitutions (and windows) is limited: block any
+   * bench -> XI move once there are no changes/windows left.
+   */
+  function liveSubBlocked(benchPlayerId: string): boolean {
+    if (!liveMode || !live) return false;
+    // Bringing back a player that started the match does not consume a new sub.
+    if (liveBaseXIRef.current.includes(benchPlayerId)) return false;
+    const limits = subLimits(live.isExtraTime);
+    const free = isFreeWindow(live.phase);
+    const inIds = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
+    const outIds = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
+    const changes = Math.min(outIds.length, inIds.length);
+    if (live.subsUsed + changes + 1 > limits.maxSubs) {
+      toast.error(`No te quedan cambios disponibles (${live.subsUsed + changes}/${limits.maxSubs}).`);
+      setSelectedPlayer(null);
+      return true;
+    }
+    if (!free && changes === 0 && live.windowsUsed >= limits.maxWindows) {
+      toast.error(`No te quedan ventanas de cambio (${live.windowsUsed}/${limits.maxWindows}).`);
+      setSelectedPlayer(null);
+      return true;
+    }
+    return false;
+  }
+
   function handlePitchToBenchSwap(pitchPlayerId: string, benchPlayerId: string) {
     const pitchPlayer = squad.find(p => p.id === pitchPlayerId);
     const benchPlayer = squad.find(p => p.id === benchPlayerId);
 
     if (!pitchPlayer || !benchPlayer) return;
+    if (liveSubBlocked(benchPlayerId)) return;
+
 
     // Check if bench player is injured
     if (benchPlayer.injuredUntil > leagueMd) {
@@ -628,6 +656,8 @@ function LineupPage() {
   function handleBenchToPitchSwap(benchPlayerId: string, pitchTarget: string) {
     const benchPlayer = squad.find(p => p.id === benchPlayerId);
     if (!benchPlayer) return;
+    if (liveSubBlocked(benchPlayerId)) return;
+
 
     // Check if player is injured
     if (benchPlayer.injuredUntil > leagueMd) {
