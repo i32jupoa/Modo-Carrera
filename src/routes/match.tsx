@@ -883,7 +883,7 @@ function MatchPage() {
     }
   }, [navigate, matchLineup, matchFormation, pendingUserMatch, returningFromLineup]);
 
-  async function startMatch() {
+  async function startMatch(shouldSkipToEnd = false) {
     if (!save) return;
     
     if (!fixtureRef.current) return;
@@ -951,6 +951,9 @@ function MatchPage() {
     initLiveMatch();
     setPhase("playing");
     runClock();
+    if (shouldSkipToEnd) {
+      skipToEnd(false);
+    }
   }
 
   // ------------------------------------------------------------------ live
@@ -1313,7 +1316,7 @@ function MatchPage() {
     return [{ minute: m, team: mySide, inName: entry.inName, outName: entry.outName }];
   }
 
-  function skipToEnd() {
+  function skipToEnd(includeOpponentSubs = true) {
     // Clear the running clock timeout immediately
     if (clockTimeoutRef.current !== null) {
       window.clearTimeout(clockTimeoutRef.current);
@@ -1322,14 +1325,16 @@ function MatchPage() {
 
     if (!fixtureRef.current?.result) return;
 
-    // Fast-forward the remaining minutes so stamina keeps draining and BOTH
-    // benches keep being used — the manager can't make changes while skipping,
-    // so the assistant does it and every change is reported in the chronicle.
+    // Fast-forward the remaining minutes so stamina keeps draining and our team
+    // can make automatic substitutions. When this is triggered from the preview
+    // skip button, the opponent does not perform planned subs.
     const madeWhileSkipping: any[] = [];
     for (let m = minuteRef.current + 1; m <= 90; m++) {
       drainStamina();
-      const before = oppPlanRef.current.filter((s) => s.minute === m);
-      if (before.length > 0) applyOpponentSubsAt(m);
+      if (includeOpponentSubs) {
+        const before = oppPlanRef.current.filter((s) => s.minute === m);
+        if (before.length > 0) applyOpponentSubsAt(m);
+      }
       // My team considers a change roughly every 10 minutes of the second half.
       if (m >= 55 && m % 10 === 0) {
         madeWhileSkipping.push(...autoSubMyTeamAt(m));
@@ -1615,11 +1620,18 @@ function MatchPage() {
                 <ClipboardList className="h-4 w-4" /> Editar alineación
               </button>
               <button 
-                onClick={startMatch} 
+                onClick={() => startMatch(false)} 
                 disabled={!isUserLineupComplete}
                 className={isUserLineupComplete ? btnPrimary : `${btnSecondary} opacity-40 pointer-events-none`}
               >
                 {isUserLineupComplete ? "INICIAR PARTIDO" : "ALINEACIÓN INCOMPLETA"}
+              </button>
+              <button
+                onClick={() => startMatch(true)}
+                disabled={!isUserLineupComplete}
+                className={isUserLineupComplete ? btnSecondary : `${btnSecondary} opacity-40 pointer-events-none`}
+              >
+                <FastForward className="h-4 w-4" /> SALTAR AL FINAL
               </button>
             </>
           )}
