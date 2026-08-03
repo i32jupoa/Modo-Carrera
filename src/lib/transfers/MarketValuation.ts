@@ -15,6 +15,12 @@ import {
   SQUAD_LIMITS,
 } from "./constants";
 import type { MarketValuation } from "./types";
+import { getClubProfile } from "./ClubStrategy";
+import { needsToSell } from "./BudgetManager";
+import { getPlayer } from "./PlayerIndex";
+import { getSquadReport } from "./SquadAnalyzer";
+import { clamp } from "./random";
+
 
 export interface ValuationContext {
   playerId?: string;
@@ -142,4 +148,118 @@ export function rateOffer(
   if (amount < valuation.expectedPrice) return "acceptable";
   if (amount < valuation.idealPrice) return "good";
   return "excellent";
+}
+
+// ============================================================================
+// VALORACIÓN CONECTADA AL ÍNDICE REAL
+// ============================================================================
+
+
+export interface PlayerValuationOptions {
+  /** Clubes interesados además del comprador. */
+  competition?: number;
+  /** Últimos días de la ventana. */
+  deadlineDay?: boolean;
+  /** Clave de caché de informes de plantilla (normalmente la fecha). */
+  cacheKey?: string;
+}
+
+/**
+ * ¿Es un jugador clave para su club?
+ * Lo es si está claramente por encima de la media del once o si es de los
+ * mejores de su demarcación en una posición sin recambio.
+ */
+export function isKeyPlayer(playerId: string, cacheKey = "static"): boolean {
+  const player = getPlayer(playerId);
+  if (!player || !player.clubId) return false;
+  if (player.transferListed) return false;
+  const report = getSquadReport(player.clubId, cacheKey);
+  const aboveSquad = player.ovr >= report.startingRating + 1;
+  const scarce = report.countByGroup[player.group] <= 2;
+  return aboveSquad || (scarce && player.ovr >= report.startingRating - 1);
+}
+
+/**
+ * Valoración completa de un jugador real del índice: usa su contrato, su
+ * estatus en la plantilla, la dureza negociadora de su club y la situación
+ * económica del vendedor. La cláusula de rescisión, si existe, marca el techo.
+ */
+export function valuePlayer(playerId: string, options: PlayerValuationOptions = {}): MarketValuation {
+  const player = getPlayer(playerId);
+  if (!player) {
+    return calculateMarketValuation({ playerId, marketValue: 0, age: 26, ovr: 70 });
+  }
+
+  const cacheKey = options.cacheKey ?? "static";
+  const keyPlayer = isKeyPlayer(playerId, cacheKey);
+  const sellerNeedsCash = player.clubId ? needsToSell(player.clubId) : false;
+
+  const valuation = calculateMarketValuation({
+    playerId: player.id,
+    marketValue: player.value,
+    age: player.age,
+    ovr: player.ovr,
+    pot: player.potential,
+    competition: options.competition ?? 0,
+    contractYearsLeft: player.contract.yearsLeft,
+    keyPlayer,
+    transferListed: player.transferListed,
+    needsToSell: sellerNeedsCash,
+    deadlineDay: options.deadlineDay,
+  });
+
+  // Dureza negociadora del club vendedor.
+  const toughness = player.clubId
+    ? clamp(getClubProfile(player.clubId).sellingToughness, 0.7, 1.6)
+    : 0.8;
+  const scale = (n: number) => Math.max(50_000, Math.round((n * toughness) / 50_000) * 50_000);
+
+  const scaled: MarketValuation = {
+    ...valuation,
+    minimumPrice: scale(valuation.minimumPrice),
+    expectedPrice: scale(valuation.expectedPrice),
+    idealPrice: scale(valuation.idealPrice),
+    maximumPrice: scale(valuation.maximumPrice),
+    listPrice: scale(valuation.listPrice),
+  };
+
+  // La cláusula de rescisión siempre cierra el trato.
+  const clause = player.contract.releaseClause;
+  if (clause > 0 && scaled.maximumPrice > clause) {
+    // Se comprimen todos los escalones de forma proporcional para que el techo
+    // sea la cláusula sin aplanar la horquilla de negociación.
+    const ratio = clause / scaled.maximumPrice;
+    const squeeze = (n: number) => Math.max(50_000, Math.round((n * ratio) / 50_000) * 50_000);
+    scaled.minimumPrice = squeeze(scaled.minimumPrice);
+    scaled.expectedPrice = squeeze(scaled.expectedPrice);
+    scaled.idealPrice = squeeze(scaled.idealPrice);
+    scaled.listPrice = squeeze(scaled.listPrice);
+    scaled.maximumPrice = clause;
+  }
+
+  // Agente libre: sin traspaso.
+  if (!player.clubId) {
+    scaled.minimumPrice = 0;
+    scaled.expectedPrice = 0;
+    scaled.idealPrice = 0;
+    scaled.maximumPrice = 0;
+    scaled.listPrice = 0;
+  }
+
+  return scaled;
+}
+
+/** Precio de salida publicado para un jugador del índice. */
+export function askingPrice(playerId: string, options: PlayerValuationOptions = {}): number {
+  return valuePlayer(playerId, options).listPrice;
+}
+
+/** ¿Está el jugador disponible en el mercado a algún precio? */
+export function isAvailable(playerId: string, cacheKey = "static"): boolean {
+  const player = getPlayer(playerId);
+  if (!player) return false;
+  if (!player.clubId) return true;
+  if (player.transferListed) return true;
+  if (player.contract.yearsLeft <= 1) return true;
+  return !isKeyPlayer(playerId, cacheKey);
 }

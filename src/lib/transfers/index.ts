@@ -11,7 +11,12 @@ import type { MarketDayResult, MarketSimulationState, MarketWindow } from "./typ
 export * from "./types";
 export * from "./constants";
 export * from "./random";
+export * from "./PlayerIndex";
+export * from "./ClubStrategy";
+export * from "./SquadAnalyzer";
+export * from "./BudgetManager";
 export * from "./MarketValuation";
+export * from "./PlayerDecision";
 export * from "./NegotiationEngine";
 
 // ============================================================================

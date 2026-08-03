@@ -327,3 +327,29 @@ export interface TransferResult {
   success: boolean;
   message: string;
 }
+
+// ============================================================================
+// DECISIÓN DEL JUGADOR
+// ============================================================================
+
+/** Resultado de la decisión de un jugador ante una oferta. */
+export type PlayerDecisionVerdict =
+  | "accepted"
+  | "negotiating"
+  | "rejected-wage"
+  | "rejected-project";
+
+/** Respuesta del jugador a una propuesta de traspaso o cesión. */
+export interface PlayerDecision {
+  playerId: string;
+  verdict: PlayerDecisionVerdict;
+  /** Puntuación global de la propuesta 0..1. */
+  score: number;
+  /** Atractivo del club de destino 0..1. */
+  appeal: number;
+  /** Salario anual que pide para firmar. */
+  wageRequested: number;
+  /** Minutos esperados en el nuevo club 0..1. */
+  playingTime: number;
+  message: string;
+}
