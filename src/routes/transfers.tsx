@@ -27,6 +27,21 @@ import { toast } from "sonner";
 import { Search, Wallet, UserPlus, Filter, X } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
+import {
+  initializeTransferSystem,
+  simulateMarketForDate,
+  isTransferSystemInitialized,
+} from "@/lib/transfers";
+import {
+  createTransferOffer,
+  processCounterOffer,
+  acceptOffer,
+  rejectOffer,
+} from "@/lib/transfers";
+import {
+  calculateMarketValuation,
+  generateCounterOffer,
+} from "@/lib/transfers";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -256,6 +271,24 @@ function TransfersPage() {
   const [search, setSearch] = useState("");
   const [showFilters, setShowFilters] = useState(false);
 
+  // Estado para el modal de negociación
+  const [showNegotiationModal, setShowNegotiationModal] = useState(false);
+  const [selectedPlayer, setSelectedPlayer] = useState<FcPlayer | null>(null);
+  const [negotiationAmount, setNegotiationAmount] = useState(0);
+  const [negotiationStep, setNegotiationStep] = useState<'initial' | 'counter' | 'accepted' | 'rejected'>('initial');
+  const [counterOffer, setCounterOffer] = useState(0);
+
+  // Inicializar sistema de transferencias solo en el cliente
+  useEffect(() => {
+    if (typeof window !== "undefined" && ready) {
+      const currentDate = usePlayersStore.getState().currentDate || '2025-07-01';
+      if (!isTransferSystemInitialized()) {
+        initializeTransferSystem(currentDate);
+        console.log('[Transfers] Sistema de transferencias inicializado');
+      }
+    }
+  }, [ready]);
+
   // Calculate team averages for proper discount application
   const teamAverages = useMemo(() => {
     const ratings: Record<string, number[]> = {};
@@ -374,13 +407,90 @@ function TransfersPage() {
   };
 
   function handleBuy(playerId: string, name: string, cost: number) {
-    const result = buyPlayer(playerId, cost);
+    const player = rawPlayers.find(p => String(p.ID) === playerId);
+    if (!player) {
+      return;
+    }
+    
+    setSelectedPlayer(player);
+    setNegotiationAmount(cost);
+    setCounterOffer(0);
+    setNegotiationStep('initial');
+    setShowNegotiationModal(true);
+  }
+
+  function handleNegotiationOffer() {
+    if (!selectedPlayer || !myTeamId) return;
+    
+    // Usar el sistema de transferencias para valoración
+    const marketValuation = calculateMarketValuation(
+      negotiationAmount,
+      selectedPlayer.Age,
+      selectedPlayer.OVR,
+      selectedPlayer.POT || selectedPlayer.OVR,
+      selectedPlayer.OVR >= 88,
+      0
+    );
+    const baseValue = marketValuation?.listPrice || negotiationAmount;
+    
+    // Crear oferta usando el módulo de negociación
+    const offer = createTransferOffer({
+      playerId: String(selectedPlayer.ID),
+      playerName: selectedPlayer.Name,
+      fromClubId: myTeamId,
+      toClubId: selectedPlayer.Team,
+      amount: negotiationAmount,
+      type: 'permanent',
+    });
+    
+    // Evaluar si la oferta es aceptable
+    if (negotiationAmount >= baseValue) {
+      // Oferta aceptable - intentar fichar
+      const result = buyPlayer(String(selectedPlayer.ID), negotiationAmount);
+      if (result.ok) {
+        setNegotiationStep('accepted');
+        toast.success(`${selectedPlayer.Name} fichado`, {
+          description: `Coste: ${formatEuro(negotiationAmount)}`,
+        });
+      } else {
+        setNegotiationStep('rejected');
+        toast.error('Oferta rechazada', {
+          description: result.reason || 'No se pudo completar el fichaje',
+        });
+      }
+    } else {
+      // Oferta baja - generar contraoferta inteligente
+      const counter = generateCounterOffer(
+        negotiationAmount,
+        marketValuation,
+        0
+      );
+      setCounterOffer(counter || Math.round(baseValue * 1.1));
+      setNegotiationStep('counter');
+      toast.error('Oferta rechazada', {
+        description: 'El club ha hecho una contraoferta',
+      });
+    }
+  }
+
+  function handleAcceptCounter() {
+    if (!selectedPlayer || !myTeamId) return;
+    
+    setNegotiationAmount(counterOffer);
+    
+    // Procesar la contraoferta usando el módulo de negociación
+    const result = buyPlayer(String(selectedPlayer.ID), counterOffer);
+    
     if (result.ok) {
-      toast.success(`${name} fichado`, {
-        description: `Coste: ${formatEuro(cost)} · Saldo: ${formatEuro(usePlayersStore.getState().budget)}`,
+      setNegotiationStep('accepted');
+      toast.success(`${selectedPlayer.Name} fichado`, {
+        description: `Coste: ${formatEuro(counterOffer)}`,
       });
     } else {
-      toast.error("No se pudo fichar", { description: result.reason });
+      setNegotiationStep('rejected');
+      toast.error('Fichaje fallido', {
+        description: 'No se pudo completar el fichaje',
+      });
     }
   }
 
@@ -758,6 +868,126 @@ function TransfersPage() {
               </article>
             );
           })}
+        </div>
+      )}
+
+      {/* Negotiation Modal */}
+      {showNegotiationModal && selectedPlayer && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="panel max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              {selectedPlayer.card && (
+                <img src={selectedPlayer.card} alt="" className="w-16 h-20 object-cover rounded" />
+              )}
+              <div>
+                <h3 className="font-bold text-lg">{selectedPlayer.Name}</h3>
+                <p className="text-sm text-muted-foreground">
+                  {selectedPlayer.OVR} OVR · {selectedPlayer.Age} años
+                </p>
+              </div>
+            </div>
+
+            {negotiationStep === 'initial' && (
+              <div className="space-y-4">
+                <div className="panel p-4">
+                  <p className="text-sm text-muted-foreground mb-2">Tu oferta:</p>
+                  <input
+                    type="number"
+                    value={negotiationAmount}
+                    onChange={(e) => setNegotiationAmount(Number(e.target.value))}
+                    className="w-full bg-secondary border border-border rounded px-3 py-2 text-lg font-bold"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Valor estimado: {formatEuro(marketValueEuros(selectedPlayer, "", "", teamAverages[selectedPlayer.Team] || 75))}
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleNegotiationOffer}
+                    className="flex-1 bg-primary text-primary-foreground py-2 rounded font-bold"
+                  >
+                    Enviar oferta
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowNegotiationModal(false)}
+                    className="flex-1 bg-secondary py-2 rounded font-bold"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {negotiationStep === 'counter' && (
+              <div className="space-y-4">
+                <div className="panel p-4 bg-yellow-500/10 border-yellow-500/30">
+                  <p className="text-sm font-bold text-yellow-500">Contraoferta recibida</p>
+                  <p className="text-lg font-bold mt-2">{formatEuro(counterOffer)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    El club pide más por el jugador
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAcceptCounter}
+                    className="flex-1 bg-primary text-primary-foreground py-2 rounded font-bold"
+                  >
+                    Aceptar contraoferta
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowNegotiationModal(false)}
+                    className="flex-1 bg-secondary py-2 rounded font-bold"
+                  >
+                    Rechazar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {negotiationStep === 'accepted' && (
+              <div className="space-y-4">
+                <div className="panel p-4 bg-green-500/10 border-green-500/30">
+                  <p className="text-sm font-bold text-green-500">¡Oferta aceptada!</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    El jugador se unirá a tu equipo
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowNegotiationModal(false)}
+                  className="w-full bg-primary text-primary-foreground py-2 rounded font-bold"
+                >
+                  Continuar
+                </button>
+              </div>
+            )}
+
+            {negotiationStep === 'rejected' && (
+              <div className="space-y-4">
+                <div className="panel p-4 bg-red-500/10 border-red-500/30">
+                  <p className="text-sm font-bold text-red-500">Oferta rechazada</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    El club no aceptó tu oferta
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowNegotiationModal(false)}
+                  className="w-full bg-primary text-primary-foreground py-2 rounded font-bold"
+                >
+                  Cerrar
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
