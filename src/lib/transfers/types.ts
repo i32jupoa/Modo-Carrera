@@ -1,462 +1,329 @@
 /**
- * Tipos TypeScript compartidos para el sistema de mercado de fichajes
- * Sistema modular de transferencias inspirado en EA FC + Football Manager
+ * Tipos del sistema de mercado de fichajes.
+ *
+ * Todo el dominio del mercado se modela aquí con tipos fuertes; ningún módulo
+ * del motor debe usar `any`.
  */
 
-import type { Position } from "@/data/players";
-
 // ============================================================================
-// ESTRATEGIA DE CLUB
+// POSICIONES
 // ============================================================================
 
-/**
- * Personalidad y estrategia de transferencia de un club
- * Valores de 0-100 para todos los atributos
- */
-export interface ClubStrategy {
-  /** Poder económico del club (0-100) */
-  economicPower: number;
-  /** Reputación global del club (0-100) */
-  reputation: number;
-  /** Paciencia en negociaciones (0-100) */
-  negotiationPatience: number;
-  /** Agresividad en fichajes (0-100) */
-  transferAggressiveness: number;
-  /** Preferencia por jugadores jóvenes (0-100) */
-  youthPreference: number;
-  /** Preferencia por jugadores veteranos (0-100) */
-  veteranPreference: number;
-  /** Preferencia por jugadores nacionales (0-100) */
-  nationalPreference: number;
-  /** Preferencia por jugadores de su liga (0-100) */
-  leaguePreference: number;
-  /** Importancia de la cantera (0-100) */
-  academyImportance: number;
-  /** Nivel de ambición deportiva (0-100) */
-  ambitionLevel: number;
-}
+/** Grupos de posición usados por el análisis de plantilla. */
+export type PositionGroup = "GK" | "CB" | "FB" | "CM" | "WING" | "ST";
+
+export const POSITION_GROUPS: readonly PositionGroup[] = ["GK", "CB", "FB", "CM", "WING", "ST"];
 
 // ============================================================================
-// CONTRATOS
+// JUGADORES
 // ============================================================================
 
-/**
- * Contrato de un jugador
- */
+/** Contrato de un jugador con su club. */
 export interface Contract {
-  /** ID del jugador */
-  playerId: string;
-  /** ID del club */
-  clubId: string;
-  /** Fecha de inicio (ISO date) */
-  startDate: string;
-  /** Fecha de fin (ISO date) */
-  endDate: string;
-  /** Salario semanal en euros */
-  weeklyWage: number;
-  /** Cláusula de rescisión en euros (opcional) */
-  releaseClause?: number;
-  /** Prima de fichaje en euros (opcional) */
-  signingBonus?: number;
-  /** Bonus por rendimiento en euros (opcional) */
-  performanceBonus?: number;
+  /** Temporadas completas restantes (0 = acaba este verano). */
+  yearsLeft: number;
+  /** Salario bruto anual en euros. */
+  wage: number;
+  /** Cláusula de rescisión en euros (0 = sin cláusula). */
+  releaseClause: number;
+  /** Prima de fichaje pactada en euros. */
+  signingBonus: number;
 }
 
-/**
- * Estado de un contrato
- */
-export type ContractStatus = 'active' | 'expiring_soon' | 'expired' | 'terminated';
-
-// ============================================================================
-// PERSONALIDAD DE JUGADOR
-// ============================================================================
-
-/**
- * Personalidad y preferencias de un jugador
- */
+/** Rasgos de personalidad que guían las decisiones del jugador (0..1). */
 export interface PlayerPersonality {
-  /** Ambición del jugador (0-100) */
+  /** Cuánto le importa competir por títulos y jugar en un club grande. */
   ambition: number;
-  /** Lealtad al club actual (0-100) */
+  /** Apego a su club actual. */
   loyalty: number;
-  /** Motivación por dinero (0-100) */
-  moneyMotivated: number;
-  /** Importancia de jugar minutos (0-100) */
-  playingTimeImportance: number;
-  /** Motivación por ganar títulos (0-100) */
-  trophyMotivated: number;
-  /** Edad del jugador */
+  /** Peso del dinero en su decisión. */
+  greed: number;
+  /** Necesidad de minutos. */
+  playingTimeDesire: number;
+  /** Disposición a cambiar de país o de liga. */
+  adventure: number;
+}
+
+/** Motivo por el que un club pone a un jugador en la lista de transferibles. */
+export type TransferListReason =
+  | "surplus"
+  | "no-minutes"
+  | "contract-ending"
+  | "too-old"
+  | "needs-cash"
+  | "user";
+
+/** Jugador tal y como lo entiende el mercado. */
+export interface MarketPlayer {
+  id: string;
+  name: string;
   age: number;
-  /** Tipo de personalidad */
-  personalityType: PersonalityType;
-}
-
-/**
- * Tipos de personalidad de jugador
- */
-export type PersonalityType = 
-  | 'professional'      // Equilibrado, profesional
-  | 'leader'           // Liderazgo, influencia
-  | 'mercurial'        // Volátil, impredecible
-  | 'resilient'        // Resistente, trabajador
-  | 'ambitious'        // Muy ambicioso
-  | 'loyal'            // Muy leal
-  | 'money_driven';    // Motivado por dinero
-
-// ============================================================================
-// VALORACIÓN DE MERCADO
-// ============================================================================
-
-/**
- * Valoración de mercado de un jugador
- */
-export interface MarketValuation {
-  /** Valor base del jugador */
-  baseValue: number;
-  /** Precio mínimo aceptable */
-  minAcceptable: number;
-  /** Precio esperado */
-  expectedValue: number;
-  /** Precio ideal para el vendedor */
-  idealValue: number;
-  /** Precio máximo que pagarían */
-  maxValue: number;
-  /** Multiplicador por competencia */
-  competitionMultiplier: number;
+  /** Media actual. */
+  ovr: number;
+  /** Potencial estimado. */
+  potential: number;
+  position: string;
+  group: PositionGroup;
+  nation: string;
+  /** Club actual (id de `TEAMS`) o null si es agente libre. */
+  clubId: string | null;
+  leagueId: string;
+  /** Valor de mercado base en euros. */
+  value: number;
+  contract: Contract;
+  personality: PlayerPersonality;
+  /** Está en la lista de transferibles. */
+  transferListed: boolean;
+  listReason: TransferListReason | null;
+  /** Está disponible para cesión. */
+  loanListed: boolean;
+  /** Club al que está cedido, si procede. */
+  loanClubId: string | null;
+  /** Minutos acumulados en la temporada (aproximación para decisiones). */
+  minutesShare: number;
 }
 
 // ============================================================================
-// OFERTAS DE TRANSFERENCIA
+// CLUBES
 // ============================================================================
 
-/**
- * Estado de una oferta de transferencia
- */
-export type OfferStatus = 
-  | 'pending'      // Pendiente de respuesta
-  | 'accepted'     // Aceptada
-  | 'rejected'     // Rechazada
-  | 'countered'    // Contraoferta realizada
-  | 'withdrawn'    // Retirada por el oferente
-  | 'expired';     // Expirada por tiempo
-
-/**
- * Tipo de oferta de transferencia
- */
-export type OfferType = 
-  | 'permanent'              // Traspaso definitivo
-  | 'loan'                   // Cesión simple
-  | 'loan_with_option'       // Cesión con opción de compra
-  | 'loan_with_obligation';  // Cesión con obligación de compra
-
-/**
- * Oferta de transferencia
- */
-export interface TransferOffer {
-  /** ID único de la oferta */
-  id: string;
-  /** ID del jugador */
-  playerId: string;
-  /** ID del club oferente */
-  fromClubId: string;
-  /** ID del club vendedor */
-  toClubId: string;
-  /** Cantidad ofrecida en euros */
-  amount: number;
-  /** Estado de la oferta */
-  status: OfferStatus;
-  /** Tipo de oferta */
-  offerType: OfferType;
-  /** Detalles del contrato (opcional) */
-  contractDetails?: Contract;
-  /** Detalles de la cesión (opcional) */
-  loanDetails?: LoanDetails;
-  /** Contraoferta relacionada (opcional) */
-  counterOffer?: TransferOffer;
-  /** Fecha de creación (ISO date) */
-  createdAt: string;
-  /** Fecha de expiración (ISO date, opcional) */
-  expiresAt?: string;
+/** Personalidad y estrategia de mercado de un club. */
+export interface ClubProfile {
+  clubId: string;
+  leagueId: string;
+  /** Poder económico relativo 0..1. */
+  financialPower: number;
+  /** Reputación deportiva 0..1. */
+  reputation: number;
+  /** Paciencia negociando 0..1 (más paciencia = menos sube su oferta). */
+  patience: number;
+  /** Agresividad fichando 0..1. */
+  aggression: number;
+  /** Preferencia por jóvenes 0..1. */
+  youthPreference: number;
+  /** Preferencia por veteranos 0..1. */
+  veteranPreference: number;
+  /** Preferencia por jugadores del país del club 0..1. */
+  nationalPreference: number;
+  /** Preferencia por jugadores de su propia liga 0..1. */
+  leaguePreference: number;
+  /** Importancia de la cantera 0..1. */
+  academyFocus: number;
+  /** Ambición general 0..1. */
+  ambition: number;
+  /** Multiplicador aplicado al precio que exige al vender. */
+  sellingToughness: number;
+  /** Multiplicador aplicado al precio que está dispuesto a pagar. */
+  buyingWillingness: number;
+  /** País del club (derivado de su liga). */
+  country: string;
 }
 
-// ============================================================================
-// CESIONES
-// ============================================================================
-
-/**
- * Detalles de una cesión
- */
-export interface LoanDetails {
-  /** Duración en meses */
-  duration: number;
-  /** Porcentaje del salario pagado por el club cedente (0-100) */
-  wageContribution: number;
-  /** Opción de compra en euros (opcional) */
-  optionToBuy?: number;
-  /** Obligación de compra en euros (opcional) */
-  obligationToBuy?: number;
-  /** Disparador de la cláusula de compra */
-  buyClauseTrigger?: 'automatic' | 'negotiated' | 'conditions_met';
+/** Situación económica de un club. */
+export interface ClubFinances {
+  clubId: string;
+  /** Presupuesto de fichajes disponible en euros. */
+  budget: number;
+  /** Presupuesto inicial de la ventana (para métricas). */
+  initialBudget: number;
+  /** Límite de masa salarial anual en euros. */
+  wageBudget: number;
+  /** Masa salarial comprometida en euros. */
+  wageBill: number;
+  /** Gasto acumulado en la ventana. */
+  spent: number;
+  /** Ingresos por ventas en la ventana. */
+  earned: number;
 }
 
-/**
- * Estado de una cesión
- */
-export type LoanStatus = 
-  | 'active'       // Cesión activa
-  | 'returned'     // Jugador devuelto
-  | 'bought'       // Ejercida opción/obligación de compra
-  | 'terminated';  // Cesión terminada anticipadamente
-
-// ============================================================================
-// NECESIDADES DE PLANTILLA
-// ============================================================================
-
-/**
- * Prioridad de una necesidad
- */
-export type NeedPriority = 'critical' | 'high' | 'medium' | 'low';
-
-/**
- * Necesidad de plantilla detectada
- */
+/** Necesidad detectada en una posición. */
 export interface SquadNeed {
-  /** Posición requerida */
-  position: Position;
-  /** Prioridad de la necesidad */
-  priority: NeedPriority;
-  /** Rango de edad objetivo */
-  targetAge: { min: number; max: number };
-  /** Rango de valoración objetivo */
-  targetRating: { min: number; max: number };
-  /** Presupuesto máximo */
-  maxBudget: number;
-  /** Número actual de jugadores en esa posición */
-  currentCount: number;
-  /** Número ideal de jugadores en esa posición */
-  idealCount: number;
-  /** Razón de la necesidad */
-  reason: string;
+  group: PositionGroup;
+  /** 0..1, cuanto mayor más urgente. */
+  urgency: number;
+  /** Número de jugadores en esa demarcación. */
+  count: number;
+  /** Media de los titulares de esa demarcación. */
+  quality: number;
+  priority: "critical" | "high" | "medium" | "low";
 }
 
-/**
- * Análisis completo de la plantilla
- */
-export interface SquadAnalysis {
-  /** ID del club */
+/** Informe completo de una plantilla. */
+export interface SquadReport {
   clubId: string;
-  /** Necesidades detectadas */
-  needs: SquadNeed[];
-  /** Edad media de la plantilla */
+  size: number;
   averageAge: number;
-  /** Edad media del once titular */
-  startingElevenAge: number;
-  /** Edad media de los suplentes */
-  substitutesAge: number;
-  /** Valoración media de la plantilla */
-  averageRating: number;
-  /** Jugadores en lista de transferencia */
-  transferList: string[];
-  /** Jugadores disponibles para cesión */
-  loanList: string[];
+  /** Media del once ideal. */
+  startingRating: number;
+  /** Media de los suplentes. */
+  benchRating: number;
+  /** Conteo por demarcación. */
+  countByGroup: Record<PositionGroup, number>;
+  /** Media por demarcación. */
+  ratingByGroup: Record<PositionGroup, number>;
+  needs: SquadNeed[];
+  /** Demarcaciones con exceso de jugadores. */
+  surplus: PositionGroup[];
+  /** Jugadores candidatos a salir. */
+  transferables: string[];
+  /** Jóvenes candidatos a cesión. */
+  loanables: string[];
 }
 
 // ============================================================================
-// RUMORES
+// VALORACIÓN
 // ============================================================================
 
-/**
- * Tipo de rumor
- */
-export type RumorType = 
-  | 'club_following'        // Club sigue a un jugador
-  | 'player_wants_out'      // Jugador quiere salir
-  | 'club_seeking'          // Club busca jugador en una posición
-  | 'negotiation_started'  // Negociación iniciada
-  | 'medical_scheduled';    // Médico programado
-
-/**
- * Rumor de transferencia
- */
-export interface TransferRumor {
-  /** ID único del rumor */
-  id: string;
-  /** Tipo de rumor */
-  type: RumorType;
-  /** ID del jugador (opcional) */
-  playerId?: string;
-  /** ID del club interesado (opcional) */
-  fromClubId?: string;
-  /** ID del club del jugador (opcional) */
-  toClubId?: string;
-  /** Posición buscada (opcional) */
-  position?: Position;
-  /** Credibilidad del rumor (0-100) */
-  credibility: number;
-  /** Fecha de creación (ISO date) */
-  createdAt: string;
-  /** Fecha de expiración (ISO date) */
-  expiresAt: string;
-  /** Fuente del rumor */
-  source: 'reliable' | 'speculative' | 'unconfirmed';
-}
-
-// ============================================================================
-// HISTORIAL DE TRANSFERENCIAS
-// ============================================================================
-
-/**
- * Tipo de transferencia en el historial
- */
-export type TransferType = 
-  | 'purchase'     // Compra
-  | 'sale'         // Venta
-  | 'loan_out'     // Cesión saliente
-  | 'loan_in'      // Cesión entrante
-  | 'free_transfer'; // Fichaje libre
-
-/**
- * Registro de transferencia en el historial
- */
-export interface TransferRecord {
-  /** ID único del registro */
-  id: string;
-  /** Tipo de transferencia */
-  type: TransferType;
-  /** ID del jugador */
+/** Escalones de precio de un jugador. */
+export interface MarketValuation {
   playerId: string;
-  /** Nombre del jugador */
+  /** Valor de mercado mostrado. */
+  marketValue: number;
+  /** Mínimo que el club vendedor aceptaría. */
+  minimumPrice: number;
+  /** Precio que espera obtener. */
+  expectedPrice: number;
+  /** Precio con el que estaría encantado. */
+  idealPrice: number;
+  /** Techo que nadie superará. */
+  maximumPrice: number;
+  /** Precio de salida publicado. */
+  listPrice: number;
+  isStar: boolean;
+  /** Número de clubes interesados considerados en la valoración. */
+  competition: number;
+}
+
+// ============================================================================
+// NEGOCIACIONES
+// ============================================================================
+
+export type TransferType = "permanent" | "loan" | "loan-option" | "loan-obligation" | "free";
+
+export type NegotiationStatus =
+  | "pending"
+  | "accepted"
+  | "rejected"
+  | "counter"
+  | "final-rejection"
+  | "withdrawn"
+  | "expired";
+
+/** Cláusulas adicionales de una oferta. */
+export interface OfferClauses {
+  /** Porcentaje de futura venta (0..1). */
+  sellOnPercent: number;
+  /** Variables en euros condicionadas al rendimiento. */
+  addOns: number;
+  /** Porcentaje del salario que asume el club receptor en cesiones (0..1). */
+  wageShare: number;
+  /** Coste de la opción/obligación de compra en cesiones. */
+  optionFee: number;
+  /** Jugadores incluidos en el trato. */
+  playerSwapIds: string[];
+}
+
+/** Oferta concreta por un jugador. */
+export interface TransferOffer {
+  id: string;
+  playerId: string;
   playerName: string;
-  /** ID del club origen */
+  /** Club que ofrece. */
   fromClubId: string;
-  /** Nombre del club origen */
-  fromClubName: string;
-  /** ID del club destino */
+  /** Club propietario del jugador. */
   toClubId: string;
-  /** Nombre del club destino */
-  toClubName: string;
-  /** Cantidad de la transferencia en euros */
   amount: number;
-  /** Fecha de la transferencia (ISO date) */
+  wageOffer: number;
+  type: TransferType;
+  clauses: OfferClauses;
+  status: NegotiationStatus;
+  /** Fecha ISO de creación. */
   date: string;
-  /** Ventana de mercado */
-  window: 'summer' | 'winter';
-  /** Temporada */
-  season: string;
+  /** Número de rondas ya negociadas. */
+  round: number;
 }
 
-// ============================================================================
-// PRESUPUESTO
-// ============================================================================
-
-/**
- * Estado del presupuesto de un club
- */
-export interface BudgetState {
-  /** ID del club */
-  clubId: string;
-  /** Presupuesto actual disponible */
-  currentBudget: number;
-  /** Presupuesto total de la ventana */
-  totalWindowBudget: number;
-  /** Gastos de la ventana actual */
-  windowSpending: number;
-  /** Ingresos de la ventana actual */
-  windowIncome: number;
-  /** Masa salarial semanal total */
-  weeklyWageBill: number;
-  /** Masa salarial máxima permitida */
-  maxWageBill: number;
-  /** Última actualización (ISO date) */
-  lastUpdated: string;
-}
-
-// ============================================================================
-// SIMULACIÓN DE MERCADO
-// ============================================================================
-
-/**
- * Estado de la simulación del mercado
- */
-export interface MarketSimulationState {
-  /** Día actual de la simulación */
-  currentDay: number;
-  /** Ventana de mercado actual */
-  currentWindow: 'summer' | 'winter' | 'closed';
-  /** Ofertas activas */
-  activeOffers: TransferOffer[];
-  /** Rumores activos */
-  activeRumors: TransferRumor[];
-  /** Clubes que ya han actuado hoy */
-  clubsActedToday: Set<string>;
-  /** Última simulación (ISO date) */
-  lastSimulationDate: string;
-}
-
-// ============================================================================
-// RESULTADOS DE OPERACIONES
-// ============================================================================
-
-/**
- * Resultado de una operación de transferencia
- */
-export interface TransferResult {
-  /** Si la operación fue exitosa */
-  success: boolean;
-  /** Mensaje de éxito o error */
+/** Respuesta del club vendedor a una oferta. */
+export interface NegotiationResponse {
+  status: NegotiationStatus;
+  /** Importe pedido si hay contraoferta. */
+  counterAmount: number;
+  /** Peticiones adicionales del vendedor. */
+  demands: OfferClauses | null;
   message: string;
-  /** Datos adicionales (opcional) */
-  data?: any;
 }
 
-/**
- * Resultado de una evaluación de oferta
- */
-export interface OfferEvaluation {
-  /** Si la oferta debe ser aceptada */
-  shouldAccept: boolean;
-  /** Puntuación de la oferta (0-100) */
-  score: number;
-  /** Razón de la decisión */
-  reason: string;
-  /** Contraoferta sugerida (opcional) */
-  counterOffer?: number;
+/** Negociación viva entre dos clubes. */
+export interface Negotiation {
+  offer: TransferOffer;
+  valuation: MarketValuation;
+  /** Fecha ISO del último movimiento. */
+  lastUpdate: string;
+  rounds: number;
 }
 
 // ============================================================================
-// UTILIDADES
+// HISTORIAL Y RUMORES
 // ============================================================================
 
-/**
- * Rango de valores
- */
-export interface Range {
-  min: number;
-  max: number;
-}
-
-/**
- * Puntuación de candidato para fichaje
- */
-export interface CandidateScore {
-  /** ID del jugador */
+/** Traspaso completado. */
+export interface TransferRecord {
+  id: string;
+  date: string;
   playerId: string;
-  /** Puntuación total */
-  totalScore: number;
-  /** Puntuación por necesidad */
-  needScore: number;
-  /** Puntuación por edad */
-  ageScore: number;
-  /** Puntuación por potencial */
-  potentialScore: number;
-  /** Puntuación por precio */
-  priceScore: number;
-  /** Puntuación por salario */
-  wageScore: number;
-  /** Puntuación por nacionalidad */
-  nationalityScore: number;
-  /** Puntuación por liga */
-  leagueScore: number;
-  /** Puntuación por prestigio */
-  prestigeScore: number;
+  playerName: string;
+  fromClubId: string | null;
+  toClubId: string;
+  fee: number;
+  wage: number;
+  type: TransferType;
+  clauses: OfferClauses;
+}
+
+export type RumorKind = "interest" | "wants-out" | "searching" | "bid-war" | "renewal";
+
+/** Rumor de mercado mostrado al usuario. */
+export interface Rumor {
+  id: string;
+  date: string;
+  kind: RumorKind;
+  clubId: string;
+  playerId: string | null;
+  text: string;
+  /** Fiabilidad 0..1. */
+  reliability: number;
+}
+
+// ============================================================================
+// SIMULACIÓN
+// ============================================================================
+
+export type MarketWindow = "summer" | "winter" | "closed";
+
+/** Estado de la simulación diaria. */
+export interface MarketSimulationState {
+  lastSimulatedDate: string;
+  window: MarketWindow;
+  /** Día de la ventana actual (1 = primer día). */
+  windowDay: number;
+  /** Intensidad de la ventana 0..1 (algunas temporadas son tranquilas). */
+  intensity: number;
+  deadlineDay: boolean;
+}
+
+/** Resultado de un día simulado. */
+export interface MarketDayResult {
+  date: string;
+  transfers: TransferRecord[];
+  rumors: Rumor[];
+  offersMade: number;
+  negotiationsOpen: number;
+  renewals: number;
+  loans: number;
+}
+
+/** Resultado genérico de una operación del motor. */
+export interface TransferResult {
+  success: boolean;
+  message: string;
 }
