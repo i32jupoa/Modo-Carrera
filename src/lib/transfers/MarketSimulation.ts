@@ -17,6 +17,7 @@ import { BALANCE, MARKET_TIMING } from "./constants";
 import { getMarketIndex } from "./PlayerIndex";
 import { getClubProfile } from "./ClubStrategy";
 import { needsToSell, refillForNewWindow } from "./BudgetManager";
+import { isSummerTransferWindow, isWinterTransferWindow, parseDateOnly } from "../transferWindows";
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
 import { clubWantsToActToday, priorityNeeds, runClubTransferCycle } from "./TransferEngine";
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
@@ -41,9 +42,9 @@ function parseDate(date: string): { year: number; month: number; day: number } {
 
 /** Ventana de mercado abierta en una fecha. */
 export function windowForDate(date: string): MarketWindow {
-  const { month } = parseDate(date);
-  if (month >= 7 && month <= 8) return "summer";
-  if (month === 1) return "winter";
+  const day = parseDateOnly(date);
+  if (isSummerTransferWindow(day)) return "summer";
+  if (isWinterTransferWindow(day)) return "winter";
   return "closed";
 }
 

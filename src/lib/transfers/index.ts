@@ -15,6 +15,7 @@ import { resetMarketIndex } from "./PlayerIndex";
 import { resetTransferHistory } from "./TransferHistory";
 import { resetRumors } from "./RumorEngine";
 import { resetUserDeals } from "./UserNegotiation";
+import { detachWorldBridge } from "./WorldSync";
 import {
   getSimulationState,
   initializeSimulation,
@@ -22,7 +23,7 @@ import {
   resetSimulation,
   simulateUntil,
 } from "./MarketSimulation";
-import { applyTransferSnapshot, loadTransferSave, saveTransferSystem } from "./Persistence";
+import { applyTransferSnapshot, clearTransferSave, loadTransferSave, saveTransferSystem } from "./Persistence";
 import type { MarketDayResult, MarketSimulationState } from "./types";
 
 export * from "./types";
@@ -57,6 +58,7 @@ export function initializeTransferSystem(date: string): MarketSimulationState {
 
 /** Reinicia el sistema completo (útil al cargar otra partida). */
 export function resetTransferSystem(): void {
+  detachWorldBridge();
   resetSimulation();
   resetUserDeals();
   resetRumors();
@@ -68,6 +70,7 @@ export function resetTransferSystem(): void {
   resetFinances();
   resetClubProfiles();
   resetMarketIndex();
+  clearTransferSave();
 }
 
 /**
