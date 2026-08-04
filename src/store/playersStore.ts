@@ -2002,6 +2002,72 @@ const FC_BY_ID = new Map<string, FcPlayer>(
 
 );
 
+// ============================================================================
+// REGISTRO CENTRAL DE PLANTILLAS
+// ----------------------------------------------------------------------------
+// `PLAYERS_BY_TEAM` refleja los datos base del JSON. Los traspasos (de la IA o
+// del usuario) se guardan como "overrides" jugador -> club, de modo que toda la
+// aplicación vea siempre la plantilla real y no la del arranque de la partida.
+// Un club vacío ("") significa agente libre.
+// ============================================================================
+
+/** Overrides vivos: id de jugador -> id de club ("" = agente libre). */
+let CLUB_OVERRIDES: Record<string, string> = {};
+/** Caché de plantillas ya calculadas; se invalida al cambiar los overrides. */
+let SQUAD_CACHE = new Map<string, FcPlayer[]>();
+
+/** Sustituye por completo el mapa de overrides (carga de partida). */
+export function setClubOverrides(next: Record<string, string>): void {
+  CLUB_OVERRIDES = { ...next };
+  SQUAD_CACHE = new Map();
+}
+
+/** Overrides actuales (para guardar con la partida). */
+export function getClubOverrides(): Record<string, string> {
+  return CLUB_OVERRIDES;
+}
+
+/** Aplica un traspaso al registro central. `toClubId` null = agente libre. */
+export function setPlayerClub(playerId: string, toClubId: string | null): void {
+  CLUB_OVERRIDES[playerId] = toClubId ?? "";
+  SQUAD_CACHE = new Map();
+}
+
+/** Club real de un jugador hoy (override si existe, si no el del JSON). */
+export function clubOfPlayer(playerId: string): string | null {
+  const override = CLUB_OVERRIDES[playerId];
+  if (override !== undefined) return override === "" ? null : override;
+  const raw = FC_BY_ID.get(playerId);
+  return raw ? teamKeyFromName(raw.Team) : null;
+}
+
+/** Plantilla real de un club, con todos los traspasos ya aplicados. */
+export function squadForTeam(teamId: string): FcPlayer[] {
+  const cached = SQUAD_CACHE.get(teamId);
+  if (cached) return cached;
+  const base = PLAYERS_BY_TEAM[teamId] ?? [];
+  const overrideIds = Object.keys(CLUB_OVERRIDES);
+  if (overrideIds.length === 0) {
+    SQUAD_CACHE.set(teamId, base);
+    return base;
+  }
+  // Salen los que se han ido; entran los fichados desde otros clubes.
+  const squad = base.filter((p) => {
+    const override = CLUB_OVERRIDES[String(p.ID)];
+    return override === undefined || override === teamId;
+  });
+  for (const playerId of overrideIds) {
+    if (CLUB_OVERRIDES[playerId] !== teamId) continue;
+    const raw = FC_BY_ID.get(playerId);
+    if (!raw) continue;
+    if (teamKeyFromName(raw.Team) === teamId) continue; // ya estaba en `base`
+    squad.push(raw);
+  }
+  SQUAD_CACHE.set(teamId, squad);
+  return squad;
+}
+
+
 
 
 
@@ -4018,6 +4084,9 @@ type PlayersState = {
 
 
   rosterIds: string[];
+  /** Traspasos aplicados al mundo: id de jugador -> id de club ("" = libre). */
+  clubOverrides: Record<string, string>;
+
 
 
 
@@ -4550,6 +4619,12 @@ type PlayersState = {
 
 
   buyPlayer: (playerId: string, cost: number) => TransferResult;
+  /**
+   * Aplica al mundo los traspasos cerrados por el motor de mercado.
+   * Es el único punto por el que la IA modifica plantillas ajenas.
+   */
+  applyMarketMoves: (moves: { playerId: string; toClubId: string | null }[]) => void;
+
 
 
 
@@ -5099,6 +5174,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       rosterIds: [],
+      clubOverrides: {},
+
 
 
 
@@ -9073,7 +9150,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-        const defaultSquad = PLAYERS_BY_TEAM[team.id] ?? [];
+        const defaultSquad = squadForTeam(team.id);
+
 
 
 
@@ -9425,7 +9503,7 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-          const defaultSquad = PLAYERS_BY_TEAM[team.id] ?? [];
+          const defaultSquad = squadForTeam(team.id);
 
 
 
@@ -9602,6 +9680,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
           rosterIds: [],
+          clubOverrides: {},
+
 
 
 
@@ -10210,6 +10290,9 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         const rosterIds = [...state.rosterIds, playerId];
+        // El mundo tiene que enterarse: el jugador deja su club y pasa al tuyo.
+        setPlayerClub(playerId, state.myTeamId);
+
 
 
 
@@ -10226,6 +10309,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         set({
+          clubOverrides: { ...getClubOverrides() },
+
 
 
 
@@ -10353,7 +10438,14 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+      applyMarketMoves: (moves) => {
+        if (!moves.length) return;
+        for (const move of moves) setPlayerClub(move.playerId, move.toClubId);
+        set({ clubOverrides: { ...getClubOverrides() } });
+      },
+
       sellPlayer: (playerId, price) => {
+
 
 
 
@@ -10674,6 +10766,10 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         const rosterIds = state.rosterIds.filter((id) => id !== playerId);
+        // Si el motor de mercado ya ha colocado al jugador en su nuevo club se
+        // respeta; si la venta se hace fuera del mercado, queda sin equipo.
+        if (clubOfPlayer(playerId) === state.myTeamId) setPlayerClub(playerId, null);
+
 
 
 
@@ -10690,6 +10786,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         set({
+          clubOverrides: { ...getClubOverrides() },
+
 
 
 
@@ -11537,7 +11635,7 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-        const squad = PLAYERS_BY_TEAM[team.id];
+        const squad = squadForTeam(team.id);
 
 
 
@@ -13358,7 +13456,12 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-      merge: (persisted, current) => ({
+      merge: (persisted, current) => {
+        // El registro central de plantillas vive fuera de React: hay que
+        // rehidratarlo antes de que nadie pida una plantilla.
+        setClubOverrides((persisted as Partial<PlayersState>)?.clubOverrides ?? {});
+        return {
+
 
 
 
@@ -13454,7 +13557,9 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-      }),
+        };
+      },
+
 
 
 
@@ -13473,6 +13578,8 @@ export const usePlayersStore = create<PlayersState>()(
       partialize: (s) => statsBatchDepth > 0 ? ({
         myTeamId: s.myTeamId,
         rosterIds: s.rosterIds,
+        clubOverrides: s.clubOverrides,
+
         budget: s.budget,
         currentDate: s.currentDate,
         dismissedMatchIds: s.dismissedMatchIds,
@@ -13525,6 +13632,8 @@ export const usePlayersStore = create<PlayersState>()(
 
 
         rosterIds: s.rosterIds,
+        clubOverrides: s.clubOverrides,
+
 
 
 

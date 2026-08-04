@@ -15,7 +15,7 @@ import { getAllTeams, teamKeyFromName, type Team } from "@/data/teams";
 import { marketValueFor } from "@/data/players";
 import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { clamp, seededRange, seededUnit } from "./random";
-import { POSITION_GROUPS, type Contract, type MarketPlayer, type PlayerPersonality, type PositionGroup } from "./types";
+import { POSITION_GROUPS, type Contract, type MarketPlayer, type PlayerPersonality, type PositionGroup, type TransferListReason } from "./types";
 
 /** Ficha bruta del JSON de jugadores (sólo los campos que usa el mercado). */
 interface RawPlayerRecord {
@@ -213,6 +213,7 @@ export function getMarketIndex(): MarketIndex {
 /** Fuerza la reconstrucción (al cargar otra partida). */
 export function resetMarketIndex(): void {
   cached = null;
+  touched.clear();
 }
 
 // ============================================================================
@@ -304,6 +305,18 @@ export function findCandidates(query: CandidateQuery): MarketPlayer[] {
 // ACTUALIZACIÓN INCREMENTAL
 // ============================================================================
 
+/**
+ * Observador de cambios de club. Lo usa `WorldSync` para replicar en el estado
+ * del juego cualquier traspaso que cierre el motor (también los de la IA).
+ */
+type ClubMoveListener = (playerId: string, clubId: string | null) => void;
+let clubMoveListener: ClubMoveListener | null = null;
+
+/** Registra (o quita, con `null`) el observador de cambios de club. */
+export function setClubMoveListener(listener: ClubMoveListener | null): void {
+  clubMoveListener = listener;
+}
+
 /** Mueve a un jugador de club manteniendo los índices coherentes. */
 export function reassignPlayerClub(playerId: string, clubId: string | null, leagueId?: string): void {
   const index = getMarketIndex();
@@ -323,7 +336,11 @@ export function reassignPlayerClub(playerId: string, clubId: string | null, leag
   if (clubId) addTo(index.byClub, clubId, playerId);
   else index.freeAgents.add(playerId);
   addTo(index.byLeague, player.leagueId, playerId);
+  touched.add(playerId);
+
+  clubMoveListener?.(playerId, clubId);
 }
+
 
 /** Aplica cambios puntuales a un jugador reindexando lo que haga falta. */
 export function updatePlayer(playerId: string, patch: Partial<MarketPlayer>): MarketPlayer | undefined {
@@ -340,8 +357,78 @@ export function updatePlayer(playerId: string, patch: Partial<MarketPlayer>): Ma
     addTo(index.byGroup, patch.group, playerId);
   }
   Object.assign(player, patch);
+  touched.add(playerId);
   return player;
 }
 
 /** Demarcaciones disponibles (reexportado por comodidad del motor). */
 export const ALL_POSITION_GROUPS = POSITION_GROUPS;
+
+// ============================================================================
+// PERSISTENCIA
+// ============================================================================
+
+/** Ids de jugadores cuyo estado ha cambiado respecto a los datos base. */
+const touched = new Set<string>();
+
+/** Campos mutables de un jugador que hay que guardar en la partida. */
+export interface PlayerDelta {
+  id: string;
+  clubId: string | null;
+  leagueId: string;
+  contract: Contract;
+  transferListed: boolean;
+  listReason: TransferListReason | null;
+  loanListed: boolean;
+  loanClubId: string | null;
+  minutesShare: number;
+}
+
+function deltaOf(player: MarketPlayer): PlayerDelta {
+  return {
+    id: player.id,
+    clubId: player.clubId,
+    leagueId: player.leagueId,
+    contract: { ...player.contract },
+    transferListed: player.transferListed,
+    listReason: player.listReason,
+    loanListed: player.loanListed,
+    loanClubId: player.loanClubId,
+    minutesShare: player.minutesShare,
+  };
+}
+
+/** Marca a un jugador como modificado (uso interno del motor). */
+export function markPlayerDirty(playerId: string): void {
+  touched.add(playerId);
+}
+
+/** Instantánea de todos los jugadores modificados. */
+export function snapshotPlayerDeltas(): PlayerDelta[] {
+  const index = getMarketIndex();
+  const out: PlayerDelta[] = [];
+  for (const id of touched) {
+    const player = index.byId.get(id);
+    if (player) out.push(deltaOf(player));
+  }
+  return out;
+}
+
+/** Reaplica los cambios guardados sobre el índice recién construido. */
+export function restorePlayerDeltas(deltas: readonly PlayerDelta[]): void {
+  for (const delta of deltas) {
+    const player = getPlayer(delta.id);
+    if (!player) continue;
+    if (player.clubId !== delta.clubId || player.leagueId !== delta.leagueId) {
+      reassignPlayerClub(delta.id, delta.clubId, delta.leagueId);
+    }
+    updatePlayer(delta.id, {
+      contract: { ...delta.contract },
+      transferListed: delta.transferListed,
+      listReason: delta.listReason,
+      loanListed: delta.loanListed,
+      loanClubId: delta.loanClubId,
+      minutesShare: delta.minutesShare,
+    });
+  }
+}

@@ -43,6 +43,32 @@ function createFinances(clubId: string): ClubFinances {
 
 const finances = new Map<string, ClubFinances>();
 
+// ============================================================================
+// PRESUPUESTO DEL CLUB DEL USUARIO
+// ----------------------------------------------------------------------------
+// El usuario tiene un único presupuesto: el de la partida. El motor no guarda
+// una copia propia (eso provocaba dobles descuentos y cifras contradictorias),
+// sino que lee y escribe en el estado del juego a través de este puente.
+// ============================================================================
+
+interface UserClubBridge {
+  clubId: string;
+  getBudget: () => number;
+  setBudget: (value: number) => void;
+}
+
+let userBridge: UserClubBridge | null = null;
+
+/** Conecta el presupuesto del club del usuario con el estado de la partida. */
+export function setUserClubBridge(bridge: UserClubBridge | null): void {
+  userBridge = bridge;
+}
+
+/** ¿Este club es el del usuario y tiene puente activo? */
+function bridgeFor(clubId: string): UserClubBridge | null {
+  return userBridge && userBridge.clubId === clubId ? userBridge : null;
+}
+
 /** Finanzas de un club (se crean bajo demanda). */
 export function getFinances(clubId: string): ClubFinances {
   let entry = finances.get(clubId);
@@ -50,6 +76,9 @@ export function getFinances(clubId: string): ClubFinances {
     entry = createFinances(clubId);
     finances.set(clubId, entry);
   }
+  // El club del usuario siempre refleja el presupuesto real de la partida.
+  const bridge = bridgeFor(clubId);
+  if (bridge) entry.budget = bridge.getBudget();
   return entry;
 }
 
@@ -57,6 +86,7 @@ export function getFinances(clubId: string): ClubFinances {
 export function setFinances(entry: ClubFinances): void {
   finances.set(entry.clubId, entry);
 }
+
 
 /** Instantánea de todas las finanzas conocidas (para persistir). */
 export function snapshotFinances(): ClubFinances[] {
@@ -94,15 +124,20 @@ export function registerSigning(clubId: string, fee: number, wage: number): void
   entry.budget = Math.max(0, entry.budget - fee);
   entry.spent += fee;
   entry.wageBill += wage;
+  bridgeFor(clubId)?.setBudget(entry.budget);
 }
 
 /** Registra una venta: parte del ingreso vuelve al presupuesto. */
 export function registerSale(clubId: string, fee: number, wage: number): void {
   const entry = getFinances(clubId);
-  entry.budget += Math.round(fee * BUDGET_RULES.saleReinvestment);
+  const bridge = bridgeFor(clubId);
+  // El usuario cobra el 100% de sus ventas; la IA reinvierte solo una parte.
+  entry.budget += bridge ? fee : Math.round(fee * BUDGET_RULES.saleReinvestment);
   entry.earned += fee;
   entry.wageBill = Math.max(0, entry.wageBill - wage);
+  bridge?.setBudget(entry.budget);
 }
+
 
 /** Registra el ahorro salarial de una cesión con reparto de sueldo. */
 export function registerLoanOut(clubId: string, wage: number, wageShareCovered: number): void {
@@ -119,6 +154,14 @@ export function needsToSell(clubId: string): boolean {
 /** Reinicia la ventana: ingresos por premios y nuevo colchón. */
 export function refillForNewWindow(clubId: string): void {
   const entry = getFinances(clubId);
+  // El presupuesto del usuario lo gestiona la partida (temporadas, premios).
+  if (bridgeFor(clubId)) {
+    entry.spent = 0;
+    entry.earned = 0;
+    entry.wageBill = currentWageBill(clubId);
+    return;
+  }
+
   entry.budget = Math.max(
     BUDGET_RULES.floor,
     Math.round(entry.budget + entry.initialBudget * BUDGET_RULES.windowRefill),
@@ -126,4 +169,10 @@ export function refillForNewWindow(clubId: string): void {
   entry.spent = 0;
   entry.earned = 0;
   entry.wageBill = currentWageBill(clubId);
+}
+
+/** Restaura las finanzas guardadas en una partida. */
+export function restoreFinances(entries: readonly ClubFinances[]): void {
+  finances.clear();
+  for (const entry of entries) finances.set(entry.clubId, { ...entry });
 }

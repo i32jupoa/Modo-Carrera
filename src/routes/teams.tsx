@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
 import { teamsByLeague, teamById, teamKeyFromName, overall, type LeagueId, type Team, getAllTeams, LEAGUES_BY_COUNTRY, LEAGUES } from "@/data/teams";
-import { usePlayersStore, ensureStatsForLeague, type PlayerStats } from "@/store/playersStore";
+import { usePlayersStore, ensureStatsForLeague, squadForTeam, type PlayerStats } from "@/store/playersStore";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import { CountryFlag } from "@/components/CountryFlag";
@@ -14,16 +14,8 @@ function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
 
-// Map team names to players - same logic as playersStore but without affecting global state
-const PLAYERS_BY_TEAM: Record<string, FcPlayer[]> = {};
-const RAW_PLAYERS = usePlayersStore.getState().getRawPlayers?.() || [];
-
-// Build player mapping for scouting (doesn't affect userTeam)
-for (const p of RAW_PLAYERS) {
-  const teamKey = teamKeyFromName(p.Team);
-  if (!PLAYERS_BY_TEAM[teamKey]) PLAYERS_BY_TEAM[teamKey] = [];
-  PLAYERS_BY_TEAM[teamKey].push(p);
-}
+// Las plantillas salen del registro central del store, que ya tiene aplicados
+// todos los traspasos (los del usuario y los de la IA).
 
 // Helper to get player stats from store
 function getPlayerStats(playerId: string): PlayerStats {
@@ -78,11 +70,12 @@ function TeamsPage() {
     return teamsByLeague(selectedLeague).slice().sort((a, b) => overall(b) - overall(a));
   }, [selectedLeague]);
 
-  // Get full squad for selected team (from raw data, not user state)
+  // Plantilla real del equipo seleccionado (con traspasos ya aplicados).
+  const clubOverrides = usePlayersStore((s) => s.clubOverrides);
   const teamSquad = useMemo(() => {
     if (!selectedTeam) return [];
-    return PLAYERS_BY_TEAM[selectedTeam.id] || [];
-  }, [selectedTeam]);
+    return squadForTeam(selectedTeam.id);
+  }, [selectedTeam, clubOverrides]);
 
   if (!save) return null;
 

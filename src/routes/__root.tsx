@@ -15,6 +15,7 @@ import { GameDayBar } from "@/components/GameDayBar";
 import { MatchDayModal } from "@/components/MatchDayModal";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { Toaster } from "@/components/ui/sonner";
+import { MarketClock } from "@/hooks/useMarketClock";
 
 function NotFoundComponent() {
   return (
@@ -120,6 +121,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppShell />
+      <MarketClock />
       <Toaster richColors position="top-center" />
       <MatchDayModal />
     </QueryClientProvider>

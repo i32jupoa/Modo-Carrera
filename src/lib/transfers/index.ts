@@ -1,11 +1,10 @@
 /**
  * Punto de entrada del sistema de mercado.
  *
- * Mantiene la API que consume la UI (`src/routes/transfers.tsx`) mientras se
- * reconstruye el motor por fases.
+ * Mantiene la API que consume la UI (`src/routes/transfers.tsx`) y expone la
+ * simulación diaria, el historial de traspasos y los rumores.
  */
 
-import { BALANCE, MARKET_TIMING } from "./constants";
 import { resetBidWars } from "./BidWar";
 import { resetNegotiations } from "./NegotiationEngine";
 import { resetTransferEngine } from "./TransferEngine";
@@ -13,7 +12,18 @@ import { resetSquadReports } from "./SquadAnalyzer";
 import { resetFinances } from "./BudgetManager";
 import { resetClubProfiles } from "./ClubStrategy";
 import { resetMarketIndex } from "./PlayerIndex";
-import type { MarketDayResult, MarketSimulationState, MarketWindow } from "./types";
+import { resetTransferHistory } from "./TransferHistory";
+import { resetRumors } from "./RumorEngine";
+import { resetUserDeals } from "./UserNegotiation";
+import {
+  getSimulationState,
+  initializeSimulation,
+  mergeDayResults,
+  resetSimulation,
+  simulateUntil,
+} from "./MarketSimulation";
+import { applyTransferSnapshot, loadTransferSave, saveTransferSystem } from "./Persistence";
+import type { MarketDayResult, MarketSimulationState } from "./types";
 
 export * from "./types";
 export * from "./constants";
@@ -27,49 +37,30 @@ export * from "./PlayerDecision";
 export * from "./NegotiationEngine";
 export * from "./BidWar";
 export * from "./TransferEngine";
-
-// ============================================================================
-// ESTADO DEL SISTEMA
-// ============================================================================
-
-let simulation: MarketSimulationState | null = null;
-
-function windowForDate(date: string): MarketWindow {
-  const month = Number(date.slice(5, 7));
-  if (month >= 7 && month <= 8) return "summer";
-  if (month === 1) return "winter";
-  return "closed";
-}
+export * from "./ContractEngine";
+export * from "./LoanEngine";
+export * from "./TransferHistory";
+export * from "./RumorEngine";
+export * from "./MarketSimulation";
+export * from "./Persistence";
+export * from "./UserNegotiation";
 
 /** ¿Está el sistema de mercado inicializado? */
 export function isTransferSystemInitialized(): boolean {
-  return simulation !== null;
+  return getSimulationState() !== null;
 }
 
 /** Inicializa el sistema de mercado para una fecha dada. */
 export function initializeTransferSystem(date: string): MarketSimulationState {
-  const window = windowForDate(date);
-  simulation = {
-    lastSimulatedDate: date,
-    window,
-    windowDay: 1,
-    intensity:
-      window === "winter"
-        ? BALANCE.minIntensity + BALANCE.winterFactor * 0.3
-        : (BALANCE.minIntensity + BALANCE.maxIntensity) / 2,
-    deadlineDay: false,
-  };
-  return simulation;
+  return initializeSimulation(date);
 }
 
-/** Estado actual de la simulación (null si no está inicializado). */
-export function getSimulationState(): MarketSimulationState | null {
-  return simulation;
-}
-
-/** Reinicia el sistema (útil al cargar otra partida). */
+/** Reinicia el sistema completo (útil al cargar otra partida). */
 export function resetTransferSystem(): void {
-  simulation = null;
+  resetSimulation();
+  resetUserDeals();
+  resetRumors();
+  resetTransferHistory();
   resetNegotiations();
   resetBidWars();
   resetTransferEngine();
@@ -80,35 +71,34 @@ export function resetTransferSystem(): void {
 }
 
 /**
- * Avanza la simulación hasta la fecha indicada.
- *
- * Por ahora sólo actualiza el estado de la ventana; la IA diaria de clubes
- * llega en la fase de simulación.
+ * Avanza la simulación hasta la fecha indicada y devuelve el resumen agregado
+ * de todos los días simulados.
  */
 export function simulateMarketForDate(date: string): MarketDayResult {
-  if (!simulation) initializeTransferSystem(date);
-  const state = simulation!;
+  return mergeDayResults(simulateUntil(date));
+}
 
-  const nextWindow = windowForDate(date);
-  if (nextWindow !== state.window) {
-    state.window = nextWindow;
-    state.windowDay = 1;
-  } else if (date !== state.lastSimulatedDate) {
-    state.windowDay += 1;
+/**
+ * Carga la partida de mercado guardada si existe; si no, arranca una nueva.
+ * Devuelve `true` cuando se ha restaurado una partida previa.
+ */
+export function loadOrInitTransferSystem(date: string): { restored: boolean; state: MarketSimulationState } {
+  const saved = loadTransferSave();
+  if (saved && applyTransferSnapshot(saved)) {
+    const state = getSimulationState() ?? initializeSimulation(date);
+    return { restored: true, state };
   }
+  return { restored: false, state: initializeSimulation(date) };
+}
 
-  state.lastSimulatedDate = date;
-  state.deadlineDay =
-    state.window !== "closed" &&
-    Number(date.slice(8, 10)) > 31 - MARKET_TIMING.deadlineDays;
-
-  return {
-    date,
-    transfers: [],
-    rumors: [],
-    offersMade: 0,
-    negotiationsOpen: 0,
-    renewals: 0,
-    loans: 0,
-  };
+/**
+ * Sincroniza el mercado con la fecha del juego: simula los días pendientes y
+ * guarda el resultado. Si la fecha ya está simulada no hace nada.
+ */
+export function syncMarketWithGameDate(date: string): MarketDayResult | null {
+  const state = getSimulationState();
+  if (state && state.lastSimulatedDate === date) return null;
+  const result = simulateMarketForDate(date);
+  saveTransferSystem();
+  return result;
 }

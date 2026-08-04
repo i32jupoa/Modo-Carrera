@@ -163,7 +163,11 @@ function verdictFor(score: number, wageRatio: number): PlayerDecisionVerdict {
 /** Decide si el jugador acepta el traspaso y en qué condiciones. */
 export function decideOnMove(input: MoveDecisionInput): PlayerDecision {
   const player = getPlayer(input.playerId);
-  const required = wageDemand(input.playerId, input.toClubId);
+  // En una cesión el jugador conserva su contrato: no exige subida, sólo que
+  // se le respete la ficha que ya tiene.
+  const required = input.loan
+    ? Math.max(WAGE_RULES.minimumWage, getPlayer(input.playerId)?.contract.wage ?? WAGE_RULES.minimumWage)
+    : wageDemand(input.playerId, input.toClubId);
 
   if (!player) {
     return {
@@ -190,9 +194,14 @@ export function decideOnMove(input: MoveDecisionInput): PlayerDecision {
     moneyScore * (0.28 + p.greed * 0.22) +
     leave * 0.22;
 
-  if (input.loan) score += p.playingTimeDesire * 0.12 - p.loyalty * 0.05;
+  if (input.loan) {
+    // Una cesión no es dejar el club: lo que pesa son los minutos, y bajar de
+    // nivel deportivo importa mucho menos.
+    score += playingTime * (0.18 + p.playingTimeDesire * 0.22);
+    score += (1 - appeal) * 0.12;
+  }
   if (input.deadlineDay) score += 0.05;
-  score -= p.loyalty * 0.12 * (player.clubId ? 1 : 0);
+  if (!input.loan) score -= p.loyalty * 0.12 * (player.clubId ? 1 : 0);
   score = clamp(score, 0, 1);
 
   const verdict = verdictFor(score, wageRatio);
