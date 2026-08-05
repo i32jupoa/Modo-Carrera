@@ -59,13 +59,11 @@ export function NegotiationModal({
 
         {report && (
           <div className="grid grid-cols-2 gap-2 text-xs">
+            <Info label="Valor de mercado" value={formatEuro(report.valuation.marketValue)} />
             <Info label="Precio de salida" value={formatEuro(report.askingPrice)} />
             <Info label="Horquilla del club" value={`${formatEuro(report.valuation.minimumPrice)} – ${formatEuro(report.valuation.idealPrice)}`} />
+            <Info label="Techo estimado" value={formatEuro(report.valuation.maximumPrice)} />
             <Info label="Ficha que pide" value={`${formatEuro(report.wageDemand)}/año`} />
-            <Info
-              label="Cláusula"
-              value={report.releaseClause > 0 ? formatEuro(report.releaseClause) : "Sin cláusula"}
-            />
             <Info label="Contrato" value={`${report.contractYearsLeft} temporada(s)`} />
             <Info
               label="Competencia"

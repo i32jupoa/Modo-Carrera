@@ -20,6 +20,7 @@ import { needsToSell } from "./BudgetManager";
 import { getPlayer } from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
 import { clamp } from "./random";
+import { GLOBAL_MAX_VALUE_M } from "@/data/players";
 
 
 export interface ValuationContext {
@@ -43,25 +44,43 @@ export interface ValuationContext {
   deadlineDay?: boolean;
 }
 
-/** Ajuste por edad: los jóvenes con recorrido cuestan más de lo que valen. */
-function ageFactor(age: number, ovr: number, pot: number): number {
-  const upside = Math.max(0, pot - ovr);
-  if (age <= 20) return 1.25 + upside * 0.02;
-  if (age <= SQUAD_LIMITS.youngAge) return 1.15 + upside * 0.015;
-  if (age <= 26) return 1.05 + upside * 0.01;
-  if (age <= 29) return 1;
-  if (age <= SQUAD_LIMITS.veteranAge) return 0.9;
-  if (age <= 34) return 0.75;
-  return 0.6;
-}
+/**
+ * Presión de negociación: en vez de encadenar multiplicadores (edad × contrato
+ * × competencia × estrella × dureza del club...) —que en la práctica podían
+ * multiplicarse entre sí hasta cuadruplicar el valor mostrado en la interfaz—
+ * cada factor aporta una puntuación acotada a una "intensidad" de 0 a 1. Esa
+ * intensidad decide en qué punto de una horquilla FIJA (anclada siempre al
+ * valor de mercado que ve el usuario) cae cada escalón de precio. Así el
+ * precio de negociación nunca se dispara muy por encima del valor mostrado en
+ * el buscador, por muchos factores que se acumulen a la vez.
+ */
+function negotiationIntensity(ctx: ValuationContext, isStar: boolean, isWorldClass: boolean): number {
+  let score = 0;
 
-/** Ajuste por años de contrato restantes. */
-function contractFactor(yearsLeft: number): number {
-  if (yearsLeft <= 0) return 0.15;
-  if (yearsLeft <= 1) return PRICE_MULTIPLIERS.lastYearDiscount;
-  if (yearsLeft <= 2) return 0.9;
-  if (yearsLeft >= 4) return 1.12;
-  return 1;
+  // Proyección/edad: los jóvenes con recorrido tensan algo la negociación,
+  // pero de forma mucho más suave que antes (el valor base ya incorpora una
+  // buena parte de la prima de juventud).
+  const upside = Math.max(0, (ctx.pot ?? ctx.ovr) - ctx.ovr);
+  if (ctx.age <= SQUAD_LIMITS.youngAge) score += 0.12 + Math.min(upside, 12) * 0.01;
+  else if (ctx.age <= 26) score += 0.05;
+
+  // Contrato: cuanto más le queda, más fuerte negocia el vendedor.
+  const yearsLeft = ctx.contractYearsLeft ?? 3;
+  if (yearsLeft >= 4) score += 0.18;
+  else if (yearsLeft >= 3) score += 0.08;
+
+  // Competencia entre clubes: cada rival adicional presiona el precio al
+  // alza, con rendimientos decrecientes.
+  const rivals = Math.max(0, ctx.competition ?? 0);
+  score += Math.min(rivals, 6) * 0.07;
+
+  // Estatus del jugador.
+  if (isStar) score += 0.22;
+  else if (isWorldClass) score += 0.1;
+
+  if (ctx.keyPlayer) score += 0.15;
+
+  return clamp(score, 0, 1);
 }
 
 /**
@@ -91,34 +110,54 @@ export function calculateMarketValuation(
 
   const marketValue = Math.max(50_000, Math.round(ctx.marketValue || 0));
   const playerOvr = ctx.ovr || 70;
-  const playerPot = Math.max(ctx.pot ?? playerOvr, playerOvr);
   const rivals = Math.max(0, ctx.competition ?? 0);
   const yearsLeft = ctx.contractYearsLeft ?? 3;
 
   const isStar = playerOvr >= STAR_THRESHOLD;
   const isWorldClass = playerOvr >= WORLD_CLASS_THRESHOLD;
 
-  let factor = ageFactor(ctx.age ?? 26, playerOvr, playerPot);
-  factor *= contractFactor(yearsLeft);
-  factor *= 1 + Math.min(rivals, 6) * PRICE_MULTIPLIERS.perCompetitor;
+  const intensity = negotiationIntensity(ctx, isStar, isWorldClass);
 
-  if (isStar) factor *= 1 + PRICE_MULTIPLIERS.starPremium;
-  else if (isWorldClass) factor *= 1 + PRICE_MULTIPLIERS.starPremium * 0.4;
+  // Horquilla FIJA sobre el valor de mercado, deliberadamente estrecha: el
+  // objetivo es que el precio de negociación nunca se aleje demasiado del
+  // "Valor de mercado" que el usuario ve en el buscador. Ni en el escenario
+  // más extremo (jugador estrella, varios clubes pujando, contrato largo)
+  // el techo debe acercarse al doble del valor mostrado.
+  let minimumMult = 0.9 + intensity * 0.1; // 0.90x – 1.00x
+  let expectedMult = 1.0 + intensity * 0.12; // 1.00x – 1.12x
+  let idealMult = 1.08 + intensity * 0.17; // 1.08x – 1.25x
+  let maximumMult = 1.15 + intensity * 0.25; // 1.15x – 1.40x
 
-  if (ctx.keyPlayer) factor *= 1 + PRICE_MULTIPLIERS.keyPlayerPremium;
-  if (ctx.transferListed) factor *= 0.85;
-  if (ctx.needsToSell) factor *= 0.9;
+  // Descuentos que sí deben notarse: contrato a punto de expirar, jugador
+  // transferible o club que necesita liquidez. Se aplican sobre la propia
+  // horquilla (no sobre un factor compuesto aparte) para que el resultado
+  // siga siendo predecible y nunca negativo.
+  let discount = 1;
+  if (yearsLeft <= 0) discount *= 0.3;
+  else if (yearsLeft <= 1) discount *= PRICE_MULTIPLIERS.lastYearDiscount;
+  else if (yearsLeft <= 2) discount *= 0.92;
+
+  if (ctx.transferListed) discount *= 0.85;
+  if (ctx.needsToSell) discount *= 0.9;
   if (ctx.deadlineDay && (ctx.needsToSell || ctx.transferListed)) {
-    factor *= PRICE_MULTIPLIERS.deadlineDiscount;
+    discount *= PRICE_MULTIPLIERS.deadlineDiscount;
   }
+  discount = clamp(discount, 0.22, 1);
 
-  const base = marketValue * factor;
+  minimumMult *= discount;
+  expectedMult *= discount;
+  idealMult *= discount;
+  maximumMult *= discount;
+
   const round = (n: number) => Math.max(50_000, Math.round(n / 50_000) * 50_000);
+  // Techo absoluto en euros: ni el jugador más codiciado del juego puede
+  // pedirse por encima del fichaje más caro de la historia real.
+  const hardCeiling = GLOBAL_MAX_VALUE_M * 1_000_000;
 
-  const minimumPrice = round(base * PRICE_MULTIPLIERS.minimum);
-  const expectedPrice = round(base * PRICE_MULTIPLIERS.expected);
-  const idealPrice = round(base * PRICE_MULTIPLIERS.ideal);
-  const maximumPrice = round(base * PRICE_MULTIPLIERS.maximum);
+  const minimumPrice = Math.min(round(marketValue * minimumMult), hardCeiling);
+  const expectedPrice = Math.min(round(marketValue * expectedMult), hardCeiling);
+  const idealPrice = Math.min(round(marketValue * idealMult), hardCeiling);
+  const maximumPrice = Math.min(round(marketValue * maximumMult), hardCeiling);
 
   return {
     playerId: ctx.playerId ?? "",
@@ -208,18 +247,24 @@ export function valuePlayer(playerId: string, options: PlayerValuationOptions = 
     deadlineDay: options.deadlineDay,
   });
 
-  // Dureza negociadora del club vendedor.
-  const toughness = player.clubId
-    ? clamp(getClubProfile(player.clubId).sellingToughness, 0.7, 1.6)
-    : 0.8;
-  const scale = (n: number) => Math.max(50_000, Math.round((n * toughness) / 50_000) * 50_000);
+  // Dureza negociadora del club vendedor: mueve el precio dentro de la
+  // horquilla, no la multiplica sin límite. Se comprime mucho la desviación
+  // respecto a 1 para que un club "duro" presione el precio al alza sin
+  // que la interfaz muestre un salto brusco respecto al valor de mercado.
+  const rawToughness = player.clubId ? getClubProfile(player.clubId).sellingToughness : 0.9;
+  const toughness = clamp(1 + (clamp(rawToughness, 0.7, 1.6) - 1) * 0.15, 0.95, 1.09);
+  const hardCeiling = GLOBAL_MAX_VALUE_M * 1_000_000;
+  const scale = (n: number) => Math.min(Math.max(50_000, Math.round((n * toughness) / 50_000) * 50_000), hardCeiling);
 
   const scaled: MarketValuation = {
     ...valuation,
     minimumPrice: scale(valuation.minimumPrice),
     expectedPrice: scale(valuation.expectedPrice),
     idealPrice: scale(valuation.idealPrice),
-    maximumPrice: scale(valuation.maximumPrice),
+    // Techo absoluto: como mucho 1.5x el valor de mercado mostrado (y nunca
+    // por encima del techo global del juego), pase lo que pase con la
+    // competencia, la dureza del club o el estatus del jugador.
+    maximumPrice: Math.min(scale(valuation.maximumPrice), Math.round(player.value * 1.5), hardCeiling),
     listPrice: scale(valuation.listPrice),
   };
 

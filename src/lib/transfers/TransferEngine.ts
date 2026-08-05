@@ -27,6 +27,7 @@ import {
 import { getClubProfile } from "./ClubStrategy";
 import {
   canAfford,
+  getUserClubId,
   maxSpend,
   maxWageOffer,
   needsToSell,
@@ -360,12 +361,19 @@ export function buildShortlist(
     clamp(report.startingRating + 6 + profile.reputation * 4, minOvr + 2, 99),
   );
 
+  // Los jugadores del club del usuario nunca entran en la lista corta de la
+  // IA: un fichaje del usuario sólo puede salir de una oferta explícita que
+  // el usuario acepte (ver `UserNegotiation`), nunca de esta búsqueda
+  // automática club-contra-club.
+  const userClubId = getUserClubId();
+  const excludeClubIds = userClubId && userClubId !== clubId ? [clubId, userClubId] : [clubId];
+
   const candidates = findCandidates({
     group: need.group,
     minOvr,
     maxOvr,
     maxValue: spendCeiling,
-    excludeClubIds: [clubId],
+    excludeClubIds,
     leagueIds: options.leagueIds,
     limit: SEARCH_LIMITS.candidatesPerNeed,
   });
@@ -461,6 +469,14 @@ export function pursueTarget(
 
   if (!player) return fail("unavailable", "El jugador no existe.", null);
   if (player.clubId === clubId) return fail("unavailable", "Ya pertenece al club.", null);
+  // Cinturón y tirantes: aunque `buildShortlist` ya nunca debería proponer a
+  // un jugador del usuario, esta comprobación cierra la puerta por completo.
+  // Ningún club rival puede llevarse a un jugador del usuario sin pasar por
+  // una oferta que el usuario acepte explícitamente.
+  const userClubId = getUserClubId();
+  if (userClubId && player.clubId === userClubId && clubId !== userClubId) {
+    return fail("unavailable", `${player.name} pertenece a tu club: no se puede fichar sin tu acuerdo.`, null);
+  }
   if (!isAvailable(playerId, cacheKey)) {
     return fail("unavailable", `${player.name} no está en el mercado.`, null);
   }

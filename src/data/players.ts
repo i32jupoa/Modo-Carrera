@@ -22,141 +22,102 @@ export type Player = {
   cardImage?: string;
 };
 
-// ==================== PERCENTAGE-BASED MARKET VALUATION SYSTEM ====================
-// Based on specification:
-// 1. Media (50%) - Base value from rating
-// 2. Edad (20%) - Age multiplier  
-// 3. Posición (15%) - Position adjustment
-// 4. Nivel del equipo (15%) - Team prestige
-// Max value: €220M
+// ==================== REALISTIC MARKET VALUATION SYSTEM ====================
+// Modelo único basado en una curva suave (sin descuentos apilados) para que
+// el "valor de mercado" que ve el usuario en el buscador sea la MISMA base
+// que usa el motor de negociación (ver src/lib/transfers/MarketValuation.ts).
+// Antes existían decenas de multiplicadores y descuentos porcentuales
+// aplicados en cadena (edad, posición, liga, media del equipo, umbrales de
+// rating...) que hacían que casi cualquier jugador de 90+ de un equipo top
+// terminara exactamente en el mismo techo de 220M, sin diferenciar a un
+// Mbappé de un Haaland de un canterano de 90 en un equipo pequeño. Esta
+// versión usa una curva continua por posición, con techos realistas
+// (inspirados en las valoraciones más altas del mercado real) y sin saltos
+// bruscos entre rating 85 y 86 o entre liga "top" y "media".
 
-const MAX_GLOBAL_VALUE = 220; // €165M maximum (220 * 0.75 after 25% global discount)
-const GLOBAL_DISCOUNT = 0.75; // 25% cheaper for all players
+type PositionGroupKey = "GK" | "DEF" | "MID" | "FWD";
 
-// Base value table per rating - maps OVR to realistic market value
-// This represents 50% of the final calculation
-const RATING_BASE_VALUES: Record<number, number> = {
-  94: 180, 93: 165, 92: 150, 91: 135, 90: 120,  // Elite world class
-  89: 105, 88: 90, 87: 78, 86: 68, 85: 60,      // Top players
-  84: 52, 83: 45, 82: 40, 81: 35, 80: 30,       // Very good
-  79: 25, 78: 20, 77: 16, 76: 13, 75: 10,       // Good
-  74: 8, 73: 6.5, 72: 5, 71: 4, 70: 3,          // Solid
-  69: 2.2, 68: 1.6, 67: 1.2, 66: 0.9, 65: 0.7,  // Average
-  64: 0.5, 63: 0.4, 62: 0.3, 61: 0.25, 60: 0.2, // Squad player
-  59: 0.15, 58: 0.12, 57: 0.1, 56: 0.08, 55: 0.06, // Backup
-  54: 0.05, 53: 0.04, 52: 0.03, 51: 0.02, 50: 0.01
+/** Techo de valor por grupo de posición (en millones de €). Techo global
+ *  absoluto añadido más abajo (GLOBAL_MAX_VALUE_M) para que ni el mejor
+ *  jugador del juego supere el fichaje más caro de la historia real
+ *  (≈220M, Mbappé al PSG). */
+const POSITION_VALUE_CAP: Record<PositionGroupKey, number> = {
+  GK: 75,
+  DEF: 130,
+  MID: 165,
+  FWD: 200,
 };
 
-// 1. MEDIA (50%) - Base value lookup
-function getBaseValueFromRating(rating: number): number {
-  const floorRating = Math.floor(rating);
-  // Interpolate between ratings
-  const lower = RATING_BASE_VALUES[floorRating] || 0.01;
-  const upper = RATING_BASE_VALUES[floorRating + 1] || lower;
-  const fraction = rating - floorRating;
-  return lower + (upper - lower) * fraction;
+/** Techo absoluto en millones de € para CUALQUIER valor o precio del juego
+ *  (valor de mercado, precio de negociación, cláusula...). Ni el mejor
+ *  jugador del mundo en las mejores condiciones puede superarlo. */
+export const GLOBAL_MAX_VALUE_M = 220;
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
 }
 
-// 2. EDAD - Detailed age multiplier table as specified
-// Applied AFTER 25% global discount
-function ageMultiplier(age: number, pos: string): number {
-  // Special case: Midfielders 23 or younger get +25% extra (kept from previous)
-  const isYoungMidfielder = age <= 23 && (pos === "CM" || pos === "MC" || pos === "MID" || pos === "CAM" || pos === "MCO" || pos === "CDM" || pos === "MCD");
-  
-  // Age table as specified:
-  // 16-17: +5% (x1.05) - Young talents
-  // 18-19: +14% (x1.14) - Emerging talent
-  // 20-21: +16% (x1.16) - High projection
-  // 22-23: +20% (x1.20) - Start of optimal age
-  // 24-26: +23% (x1.23) - Maximum optimal age
-  // 27-29: +16% (x1.16) - Still high, good experience
-  // 30-31: +7% (x1.07) - Depreciation begins
-  // 32-33: 0% (x1.00) - Base price, veteran
-  // 34-35: -10% (x0.90) - Clear depreciation
-  // 36+: -20% (x0.80) - Very veteran
-  let ageMult: number;
-  if (age <= 17) ageMult = 1.1;
-  else if (age <= 19) ageMult = 1.5;
-  else if (age <= 21) ageMult = 1.6;
-  else if (age <= 23) ageMult = 1.6;
-  else if (age <= 26) ageMult = 1.64;  // Peak: 24-26
-  else if (age <= 29) ageMult = 1.45;
-  else if (age <= 31) ageMult = 1.15;
-  else if (age <= 33) ageMult = 1.00;
-  else if (age <= 35) ageMult = 0.7;
-  else ageMult = 0.4;  // 36+
-  
-  // Young midfielders (≤23): +25% extra (kept from previous request)
-  if (isYoungMidfielder) {
-    return ageMult * 1.4;
-  }
-  
-  return ageMult;
+function positionGroupKey(pos: string): PositionGroupKey {
+  const up = String(pos || "MID").toUpperCase();
+  if (up === "GK" || up === "POR") return "GK";
+  if (["CB", "DFC", "DEF", "LB", "RB", "LWB", "RWB"].includes(up)) return "DEF";
+  if (["CDM", "MCD", "CM", "MC", "MID", "CAM", "MCO", "LM", "RM", "MD", "MI"].includes(up)) return "MID";
+  return "FWD"; // ST, CF, DC, LW, RW, FWD, Ei, Ed...
 }
 
-// 3. POSICIÓN (15%) - Position adjustment as specified + custom modifiers
-// Attacking positions: +5% base + 25% extra for forwards = +30% total (x1.30)
-// Defensive/GK: -5% base - 40% extra for keepers = -45% total (x0.55)
-// Ei, Ed, Md, Mi: +30% extra (as requested)
-// Midfield: 0% base
-function positionMultiplier(pos: string, age: number): number {
-  const forwardPositions = new Set(["ST", "CF", "DC", "FWD"]);
-  const wingerPositions = new Set(["LW", "RW", "LM", "RM", "CAM", "MCO"]);
-  const defensivePositions = new Set(["CB", "DFC", "DEF", "LB", "RB", "LWB", "RWB", "CDM", "MCD"]);
-  const keeperPositions = new Set(["GK", "POR"]);
-  const midfieldPositions = new Set(["CM", "MC", "MID"]);
-  
-  // Base multipliers
-  let baseMult = 1.0;
-  if (forwardPositions.has(pos)) baseMult = 1.05;  // +5% base for forwards
-  else if (wingerPositions.has(pos)) baseMult = 1.05;  // +5% base for wingers/attacking mids
-  else if (defensivePositions.has(pos)) baseMult = 0.95;  // -5% for defenders
-  else if (keeperPositions.has(pos)) baseMult = 0.95;  // -5% base for keepers
-  else if (midfieldPositions.has(pos)) baseMult = 1.0;  // 0% for central midfielders
-  
-  // Additional modifiers:
-  // Goalkeepers: 40% cheaper (additional x0.60 on top of base)
-  if (keeperPositions.has(pos)) {
-    return baseMult * 0.60;  // Keepers 40% cheaper total
-  }
-  
-  // Forwards: 25% more expensive (additional x1.25 on top of base +5%)
-  if (forwardPositions.has(pos)) {
-    return baseMult * 1.25;  // Forwards 25% extra = 1.05 * 1.25 = 1.3125 (~+31%)
-  }
-  
-  // Ei (Extremo Izquierdo/LW), Ed (Extremo Derecho/RW), 
-  // Mi (Medio Izquierdo/LM), Md (Medio Derecho/RM) +30% extra
-  const expensiveWingers = new Set(["LW", "RW", "LM", "RM"]);
-  if (expensiveWingers.has(pos)) {
-    return baseMult * 1.30;  // +30% extra for Ei, Ed, Mi, Md
-  }
-  
-  // Mediocentro Defensivo (MD/CDM/MCD) also gets +30%
-  if (pos === "CDM" || pos === "MCD") {
-    return baseMult * 1.30;  // +30% extra for Md (Mediocentro Defensivo)
-  }
-  
-  return baseMult;
+/** Matiz dentro de cada grupo: dos jugadores con el mismo rating no valen
+ *  exactamente igual si uno es un extremo desequilibrante y el otro un
+ *  pivote defensivo, aunque ambos entren en el grupo "MID". */
+function positionRoleModifier(pos: string): number {
+  const up = String(pos || "").toUpperCase();
+  if (["LW", "RW", "CAM", "MCO", "LM", "RM", "MD", "MI"].includes(up)) return 1.08;
+  if (["CDM", "MCD"].includes(up)) return 0.92;
+  if (["ST", "CF", "DC"].includes(up)) return 1.05;
+  if (["CB", "DFC", "DEF"].includes(up)) return 0.95;
+  return 1.0; // laterales, mediocentros puros, GK, etc.
 }
 
-// 4. NIVEL DEL EQUIPO (15%) - Team/Club multiplier as specified
-// Equipo top (media >80 o grandes ligas): +15% (x1.15)
-// Equipo medio (media 70–80): +10% (x1.10)
-// Equipo bajo (media <70): 0% (x1.0)
+/** Curva de rating: continua y muy progresiva (exponente alto). Un jugador
+ *  de 91 (el máximo real del juego) se acerca al techo de su posición; un
+ *  jugador de 80 se queda en una fracción pequeña de ese techo, como ocurre
+ *  en el mercado real, donde la diferencia de precio entre un 91 y un 85 es
+ *  enorme y entre un 70 y un 65 es casi simbólica. */
+function ratingCurve(rating: number): number {
+  const normalized = clamp((rating - 35) / 59, 0, 1.02);
+  return Math.pow(normalized, 7);
+}
+
+/** Curva de edad: pico entre 24 y 27, prima moderada a la proyección joven
+ *  y caída progresiva (sin escalones) a partir de los 30. */
+function ageCurveMultiplier(age: number): number {
+  if (age <= 17) return 1.0;
+  if (age <= 19) return 1.1;
+  if (age <= 21) return 1.12;
+  if (age <= 23) return 1.15;
+  if (age <= 27) return 1.2;
+  if (age <= 29) return 1.0;
+  if (age <= 31) return 0.78;
+  if (age <= 33) return 0.56;
+  if (age <= 35) return 0.36;
+  return 0.22;
+}
 
 const TOP_LEAGUES = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
-const MID_LEAGUES = new Set(["laliga2", "championship", "serieb", "bundesliga2", "ligue2", "ligaportugal", "eredivisie"]);
+const MID_LEAGUES = new Set(["laliga2", "championship", "serieb", "bundesliga2", "ligue2", "ligaportugal", "eredivisie", "roshnsaudileague"]);
 
-function teamMultiplier(teamAvgRating: number, leagueId: string): number {
-  // Check league tier first
-  if (TOP_LEAGUES.has(leagueId)) return 1.15;
-  if (MID_LEAGUES.has(leagueId)) return 1.10;
-  
-  // Check team rating for non-standard leagues
-  if (teamAvgRating > 80) return 1.15;
-  if (teamAvgRating >= 70) return 1.10;
-  return 1.0;
+/** Peso económico de la liga: las cinco grandes europeas no sufren
+ *  penalización; las ligas "medias" pierden algo de valor; el resto, más. */
+function leagueValueMultiplier(leagueId: string): number {
+  if (TOP_LEAGUES.has(leagueId)) return 1.0;
+  if (MID_LEAGUES.has(leagueId)) return 0.82;
+  return 0.65;
+}
+
+/** Nivel del equipo: jugar en un equipo mejor sube ligeramente el valor
+ *  (visibilidad, competición, calidad de juego alrededor), en un rango
+ *  moderado para que no descompense el peso del rating y la edad. */
+function teamValueMultiplier(teamAvgRating: number): number {
+  return clamp(0.9 + (teamAvgRating - 65) / 130, 0.85, 1.1);
 }
 
 // Generate transfermarkt-style value string
@@ -167,15 +128,15 @@ export function formatMarketValue(valueM: number): string {
   return `€${Math.round(valueM * 1000)}K`;
 }
 
-// Main valuation function - PERCENTAGE-BASED as specified
-// 1. Media (50%) - Base value from rating
-// 2. Edad (20%) - Age multiplier  
-// 3. Posición (15%) - Position adjustment
-// 4. Nivel del equipo (15%) - Team prestige
+// Main valuation function — curva continua por posición, edad, liga y equipo.
+// Este es el ÚNICO valor de mercado del juego: tanto la interfaz de
+// scouting como el motor de negociación (MarketValuation.ts) parten de este
+// número, así que el precio que se negocia nunca se dispara muy por encima
+// del valor que el usuario ve en la lista.
 export function marketValueFor(
-  rating: number, 
-  age: number, 
-  pos = "MID", 
+  rating: number,
+  age: number,
+  pos = "MID",
   teamId = "",
   leagueId = "",
   goals = 0,
@@ -184,120 +145,51 @@ export function marketValueFor(
   isStar = false,
   teamAvgRating = 75
 ): { value: number; explanation: string } {
-  
+
   if (rating < 55) return { value: 0.05, explanation: "Jugador amateur sin valor de mercado" };
-  
-  // 1. MEDIA (50%) - Base value from rating table
-  const baseValue = getBaseValueFromRating(rating);
-  
-  // 2. EDAD (20%) - Age multiplier (with position for young midfielder bonus)
-  const ageMult = ageMultiplier(age, pos);
-  
-  // 3. POSICIÓN (15%) - Position adjustment (with age for calculations)
-  const posMult = positionMultiplier(pos, age);
-  
-  // 4. NIVEL DEL EQUIPO (15%) - Team/club multiplier
-  const teamMult = teamMultiplier(teamAvgRating, leagueId);
-  
-  // Calculate final value with all multipliers + 25% global discount
-  let finalValue = baseValue * ageMult * posMult * teamMult * GLOBAL_DISCOUNT;
-  
-  // Progressive discounts based on rating (OVR)
-  // ≤82: -40%, ≤80: -20% adicional, ≤75: -20% adicional, ≤70: -20% adicional
-  if (rating <= 85) {
-    finalValue *= 0.75;  // -20%
-  }
-  if (rating <= 82) {
-    finalValue *= 0.65;  // -35%
-  }
-  if (rating <= 80) {
-    finalValue *= 0.60;  // -20% adicional
-  }
-  if (rating <= 75) {
-    finalValue *= 0.60;  // -20% adicional
-  }
-  if (rating <= 70) {
-    finalValue *= 0.60;  // -20% adicional
-  }
-  
-  // Special rule: Players with <=85 OVR and 28+ years get -40% (except goalkeepers)
-  const isGoalkeeper = pos === "GK" || pos === "POR";
-  if (rating <= 85 && age >= 28 && !isGoalkeeper) {
-    finalValue *= 0.60;  // 40% discount
-  }
-  
-  // 40% discount for players NOT in top 5 leagues (laliga, premier, seriea, bundesliga, ligue1)
-  const top5Leagues = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
-  if (!top5Leagues.has(leagueId)) {
-    finalValue *= 0.85;  // -40% for non-top-5 leagues
-  }
-  
-  // 25% discount for players in top 5 leagues with team average <= 80
-  if (top5Leagues.has(leagueId) && teamAvgRating <= 80) {
-    finalValue *= 0.85;  // -15% for weaker teams in top leagues
-    console.log(`DISCOUNT APPLIED: ${pos} player in ${leagueId}, teamAvg: ${teamAvgRating}`);
-  }
-  
-  // Cap at global maximum (already reduced by 25%)
-  finalValue = Math.min(finalValue, MAX_GLOBAL_VALUE);
-  
-  // Minimum value floor
+
+  const group = positionGroupKey(pos);
+  const cap = POSITION_VALUE_CAP[group];
+
+  const curve = ratingCurve(rating);
+  const ageMult = ageCurveMultiplier(age);
+  const roleMult = positionRoleModifier(pos);
+  const leagueMult = leagueValueMultiplier(leagueId);
+  const teamMult = teamValueMultiplier(teamAvgRating);
+
+  let finalValue = cap * curve * ageMult * roleMult * leagueMult * teamMult;
+
+  // Techo absoluto global: ni el mejor jugador del juego en las mejores
+  // condiciones puede superar el fichaje más caro de la historia real.
+  finalValue = Math.min(finalValue, GLOBAL_MAX_VALUE_M);
   finalValue = Math.max(0.08, finalValue);
-  
-  // Round to 2 decimals
   finalValue = Math.round(finalValue * 100) / 100;
-  
-  // Generate explanation
+
+  // Explicación legible para la ficha del jugador.
   const reasons: string[] = [];
-  
   if (rating >= 90) reasons.push("jugador de clase mundial");
   else if (rating >= 87) reasons.push("jugador de élite");
   else if (rating >= 84) reasons.push("muy buen nivel");
   else if (rating >= 80) reasons.push("buen nivel");
-  
-  if (age < 22) reasons.push("jóven proyección");
+  else if (rating >= 75) reasons.push("nivel sólido");
+  else reasons.push("jugador de rol");
+
+  if (age <= 21) reasons.push("gran proyección");
   else if (age <= 29) reasons.push("edad óptima");
   else reasons.push("veterano");
-  
-  const attackingPositions = new Set(["ST", "CF", "DC", "LW", "RW", "CAM", "MCO", "FWD", "LM", "RM"]);
-  const defensivePositions = new Set(["CB", "DFC", "DEF", "GK", "POR", "LB", "RB", "LWB", "RWB", "CDM", "MCD"]);
-  if (attackingPositions.has(pos)) reasons.push("posición ofensiva");
-  if (defensivePositions.has(pos)) reasons.push("posición defensiva");
-  
+
+  if (group === "FWD" || group === "MID") reasons.push("posición ofensiva");
+  else if (group === "DEF") reasons.push("posición defensiva");
+  else reasons.push("portero");
+
   if (TOP_LEAGUES.has(leagueId)) reasons.push("liga top");
   else if (MID_LEAGUES.has(leagueId)) reasons.push("liga media");
   else reasons.push("liga menor");
-  
-  // Add explanation for rating discounts
-  if (rating <= 70) {
-    reasons.push("media baja ≤70 (descuento máximo)");
-  } else if (rating <= 75) {
-    reasons.push("media baja ≤75 (descuento alto)");
-  } else if (rating <= 80) {
-    reasons.push("media ≤80 (descuento medio)");
-  } else if (rating <= 82) {
-    reasons.push("media ≤82 (descuento 40%)");
-  }
-  
-  // Add explanation for 40% discount on veterans
-  if (rating <= 85 && age >= 28 && !isGoalkeeper) {
-    reasons.push("jugador veterano con media baja (descuento adicional)");
-  }
-  
-  // Add explanation for non-top-5 league discount
-  if (!top5Leagues.has(leagueId)) {
-    reasons.push("liga fuera top 5 (descuento 40%)");
-  }
-  
-  // Add explanation for weak top-5 team discount
-  if (top5Leagues.has(leagueId) && teamAvgRating <= 80) {
-    reasons.push("equipo débil en top 5 (descuento 25%)");
-  }
-  
-  const explanation = reasons.length > 0 
-    ? `Valorado en ${formatMarketValue(finalValue)}: ${reasons.join(", ")}.`
-    : `Valor estándar de mercado para jugador ${pos} de ${age} años y media ${rating}.`;
-  
+
+  if (teamAvgRating >= 80) reasons.push("equipo de primer nivel");
+
+  const explanation = `Valorado en ${formatMarketValue(finalValue)}: ${reasons.join(", ")}.`;
+
   return { value: finalValue, explanation };
 }
 

@@ -139,24 +139,10 @@ export const SEARCH_LIMITS = {
 // ============================================================================
 
 export const PRICE_MULTIPLIERS = {
-  /** Precio mínimo aceptable respecto al valor de mercado. */
-  minimum: 1.15,
-  /** Precio esperado. */
-  expected: 1.4,
-  /** Precio ideal. */
-  ideal: 1.75,
-  /** Techo absoluto. */
-  maximum: 2.4,
-  /** Recargo por cada club competidor adicional. */
-  perCompetitor: 0.12,
-  /** Recargo extra si el jugador es estrella. */
-  starPremium: 0.35,
   /** Descuento si al jugador le queda un año de contrato. */
   lastYearDiscount: 0.7,
   /** Descuento en deadline day para clubes que necesitan vender. */
   deadlineDiscount: 0.85,
-  /** Recargo si el jugador es intransferible por proyecto deportivo. */
-  keyPlayerPremium: 0.5,
 } as const;
 
 export const STAR_THRESHOLD = 88;
@@ -208,8 +194,10 @@ export const CONTRACT_RULES = {
     { maxAge: 34, years: 2 },
     { maxAge: 99, years: 1 },
   ],
-  /** Cláusula de rescisión como múltiplo del valor. */
-  releaseClauseFactor: 2.5,
+  /** Cláusula de rescisión como múltiplo del valor: se paga para cerrar un
+   *  fichaje al instante sin negociar. Con el valor de mercado ya realista
+   *  (techo global 220M), 1.6x es una prima disuasoria pero no fantasiosa. */
+  releaseClauseFactor: 1.6,
   /** Prima de fichaje como fracción del salario anual. */
   signingBonusShare: 0.25,
   /** Edad máxima para renovar salvo excepción (leyenda del club). */

@@ -28,9 +28,28 @@ export function createRng(seed: number | string): () => number {
   };
 }
 
+// ============================================================================
+// SEMILLA POR PARTIDA
+// ----------------------------------------------------------------------------
+// Sin esto, dos partidas nuevas distintas producían exactamente el mismo
+// mercado: mismo club puja por el mismo jugador en la misma fecha siempre,
+// porque la semilla sólo dependía de los ids y la fecha. Se añade aquí un
+// "salt" estable por partida (el id de la partida guardada) que se mezcla en
+// todas las claves, así que dos partidas siguen siendo reproducibles al
+// recargarlas, pero ya no son la misma partida disfrazada.
+// ============================================================================
+
+let marketSeedSalt = "";
+
+/** Fija el salt de partida (normalmente el id de la partida guardada). */
+export function setMarketSeedSalt(salt: string | null | undefined): void {
+  marketSeedSalt = salt ?? "";
+}
+
 /** Valor determinista en [0, 1) para una clave concreta. */
 export function seededUnit(...parts: Array<string | number>): number {
-  return createRng(parts.join("|"))();
+  const key = marketSeedSalt ? `${marketSeedSalt}|${parts.join("|")}` : parts.join("|");
+  return createRng(key)();
 }
 
 /** Valor determinista dentro de un rango. */

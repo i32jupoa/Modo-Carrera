@@ -1,6 +1,7 @@
-import { teamById } from "@/data/teams";
+import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { formatEuro } from "@/store/playersStore";
 import { describeTransfer, type Rumor, type TransferRecord, type TransferSummary } from "@/lib/transfers";
+import { TeamLogo } from "@/components/TeamLogo";
 
 interface Props {
   rumors: Rumor[];
@@ -17,6 +18,24 @@ function clubName(clubId: string | null): string {
   }
 }
 
+function getLeagueName(leagueId: string | undefined): string {
+  if (!leagueId) return "";
+  return LEAGUES[leagueId as LeagueId]?.name ?? leagueId;
+}
+
+/** Escudo de un club a partir de su id (null = agente libre: sin escudo). */
+function ClubBadge({ clubId, size = 20 }: { clubId: string | null; size?: number }) {
+  if (!clubId) return null;
+  let team: ReturnType<typeof teamById> | null = null;
+  try {
+    team = teamById(clubId);
+  } catch {
+    team = null;
+  }
+  if (!team) return null;
+  return <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={size} className="shrink-0" />;
+}
+
 /** Rumores del día y últimas operaciones cerradas por toda la liga. */
 export function MarketFeed({ rumors, history, summary }: Props) {
   return (
@@ -28,11 +47,14 @@ export function MarketFeed({ rumors, history, summary }: Props) {
         ) : (
           <ul className="space-y-2">
             {rumors.map((rumor) => (
-              <li key={rumor.id} className="text-sm border-b border-border/40 pb-2 last:border-0">
-                <p>{rumor.text}</p>
-                <p className="text-[0.65rem] text-muted-foreground">
-                  {rumor.date} · fiabilidad {Math.round(rumor.reliability * 100)}%
-                </p>
+              <li key={rumor.id} className="flex items-start gap-2 text-sm border-b border-border/40 pb-2 last:border-0">
+                <ClubBadge clubId={rumor.clubId} />
+                <div>
+                  <p>{rumor.text}</p>
+                  <p className="text-[0.65rem] text-muted-foreground">
+                    {rumor.date} · fiabilidad {Math.round(rumor.reliability * 100)}%
+                  </p>
+                </div>
               </li>
             ))}
           </ul>
@@ -65,12 +87,19 @@ export function MarketFeed({ rumors, history, summary }: Props) {
               .slice()
               .reverse()
               .map((record) => (
-                <li key={record.id} className="text-sm border-b border-border/40 pb-2 last:border-0">
-                  <p className="font-bold truncate">{record.playerName}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {clubName(record.fromClubId)} → {clubName(record.toClubId)} ·{" "}
-                    {record.fee > 0 ? formatEuro(record.fee) : describeTransfer(record)} · {record.date}
-                  </p>
+                <li key={record.id} className="flex items-start gap-2 text-sm border-b border-border/40 pb-2 last:border-0">
+                  <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                    <ClubBadge clubId={record.fromClubId} size={18} />
+                    <span className="text-muted-foreground text-xs">→</span>
+                    <ClubBadge clubId={record.toClubId} size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold truncate">{record.playerName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {clubName(record.fromClubId)} → {clubName(record.toClubId)} ·{" "}
+                      {record.fee > 0 ? formatEuro(record.fee) : describeTransfer(record)} · {record.date}
+                    </p>
+                  </div>
                 </li>
               ))}
           </ul>

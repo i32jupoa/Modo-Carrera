@@ -36,7 +36,7 @@ function getLeagueName(leagueId: string): string {
 }
 
 // Filter option types
-type PriceBracket = "all" | "0-5" | "5-15" | "15-40" | "40-80" | "80+";
+type PriceBracket = "all" | "0-1" | "1-5" | "5-15" | "15-40" | "40-80" | "80-150" | "150+";
 type AgeBracket = "all" | "16-20" | "21-25" | "26-30" | "31-35" | "36+";
 type RatingBracket = "all" | "<70" | "70-75" | "75-80" | "80-85" | "85-90" | "90+";
 type SortField = "ovr" | "age" | "price";
@@ -69,11 +69,13 @@ const POSITION_OPTIONS: FilterOption<Position | "all">[] = [
 
 const PRICE_OPTIONS: FilterOption<PriceBracket>[] = [
   { value: "all", label: "Precio: Todos" },
-  { value: "0-5", label: "0 - 5M" },
+  { value: "0-1", label: "Menos de 1M" },
+  { value: "1-5", label: "1M - 5M" },
   { value: "5-15", label: "5M - 15M" },
   { value: "15-40", label: "15M - 40M" },
   { value: "40-80", label: "40M - 80M" },
-  { value: "80+", label: "80M+" },
+  { value: "80-150", label: "80M - 150M" },
+  { value: "150+", label: "150M+" },
 ];
 
 const AGE_OPTIONS: FilterOption<AgeBracket>[] = [
@@ -155,8 +157,11 @@ function applyFilters(
       const cost = marketValueEuros(p, "", "", teamAvg);
       const costM = cost / 1_000_000;
       switch (filters.price) {
-        case "0-5":
-          if (costM > 5) return false;
+        case "0-1":
+          if (costM > 1) return false;
+          break;
+        case "1-5":
+          if (costM < 1 || costM > 5) return false;
           break;
         case "5-15":
           if (costM < 5 || costM > 15) return false;
@@ -167,8 +172,11 @@ function applyFilters(
         case "40-80":
           if (costM < 40 || costM > 80) return false;
           break;
-        case "80+":
-          if (costM < 80) return false;
+        case "80-150":
+          if (costM < 80 || costM > 150) return false;
+          break;
+        case "150+":
+          if (costM < 150) return false;
           break;
       }
     }
@@ -646,7 +654,7 @@ function TransfersPage() {
                     </div>
                     <div className="flex items-center justify-between gap-2 p-3 mt-auto">
                       <div>
-                        <p className="text-[0.6rem] uppercase text-muted-foreground">Valor</p>
+                        <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
                         <p className="font-black scoreline text-primary">{formatEuro(cost)}</p>
                       </div>
                       <button

@@ -17,12 +17,13 @@ import type { ClubFinances, ClubProfile } from "./types";
  * Multiplicador de "identidad económica" de la liga: el mismo para todo el
  * mercado (equipo del usuario y clubes IA por igual), para que un Real Madrid
  * llevado por la IA y uno llevado por el usuario partan del mismo dinero.
- *  - Liga saudí: +450% (dinero estatal fuera de escala deportiva).
+ *  - Liga saudí: +220% (dinero estatal fuera de escala deportiva, pero sin
+ *    llegar a superar sistemáticamente a los grandes de Europa).
  *  - Fuera del top 5 (salvo Portugal/Bélgica/Turquía/Países Bajos): -20%.
  *  - Resto: sin ajuste.
  */
 function leagueBudgetMultiplier(leagueId: string): number {
-  if (leagueId === SAUDI_LEAGUE_ID) return 5.5; // +450%
+  if (leagueId === SAUDI_LEAGUE_ID) return 3.2; // +220%
   if (leagueId && !TOP5_LEAGUES.has(leagueId) && !NO_DISCOUNT_LEAGUES.has(leagueId)) return 0.8; // -20%
   return 1;
 }
@@ -33,14 +34,18 @@ function leagueBudgetMultiplier(leagueId: string): number {
  * los clubes controlados por la IA (`createFinances`) como el equipo elegido
  * por el usuario (`playersStore.teamInitialBudget`), así que ambos comparten
  * fórmula y escala en vez de tener dos economías que no se hablan entre sí.
+ *
+ * Los números están calibrados para que un club "0.98 de poder" en el top 5
+ * (un Real Madrid o un City) arranque sobre los 230-250M — comparable a lo
+ * que un club así mueve en un mercado real contando ventas e ingresos— en
+ * vez de las cifras infladas de antes (+40% de "identidad de mercado" plano
+ * que no representaba nada concreto).
  */
 export function initialBudget(profile: ClubProfile): number {
   const power = clamp(profile.financialPower, 0, 1);
   // Escala exponencial: los grandes manejan cifras de otro orden.
   const base = 2_000_000 + Math.pow(power, 3.2) * 260_000_000;
-  // +40% de identidad de mercado global, aplicado a todos los clubes por igual.
-  const withGlobalUplift = base * 1.4;
-  const budget = withGlobalUplift * leagueBudgetMultiplier(profile.leagueId);
+  const budget = base * leagueBudgetMultiplier(profile.leagueId);
   return Math.max(BUDGET_RULES.floor, Math.round(budget));
 }
 
@@ -85,6 +90,17 @@ let userBridge: UserClubBridge | null = null;
 /** Conecta el presupuesto del club del usuario con el estado de la partida. */
 export function setUserClubBridge(bridge: UserClubBridge | null): void {
   userBridge = bridge;
+}
+
+/**
+ * Id del club del usuario, si hay un puente activo. Lo usa `TransferEngine`
+ * para que ningún club rival pueda fichar directamente a un jugador del
+ * usuario: esas operaciones tienen que pasar siempre por `UserNegotiation`
+ * (oferta -> aceptar/rechazar), nunca resolverse solas en la simulación
+ * diaria de club contra club.
+ */
+export function getUserClubId(): string | null {
+  return userBridge?.clubId ?? null;
 }
 
 /** ¿Este club es el del usuario y tiene puente activo? */

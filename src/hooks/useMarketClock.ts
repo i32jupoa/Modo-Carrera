@@ -6,6 +6,7 @@ import {
   loadOrInitTransferSystem,
   resetTransferSystem,
   saveTransferSystem,
+  setMarketSeedSalt,
   setUserClubBridge,
   syncMarketWithGameDate,
 } from "@/lib/transfers";
@@ -63,6 +64,10 @@ export function useMarketClock(): void {
     if (bootedForSave.current !== saveId) {
       detachWorldBridge();
       resetTransferSystem();
+      // Cada partida tiene su propia semilla: dos partidas nuevas ya no
+      // reproducen exactamente el mismo mercado (mismos fichajes, mismas
+      // fechas, mismos rivales) sólo por compartir fecha de inicio.
+      setMarketSeedSalt(saveId);
       loadOrInitTransferSystem(currentDate);
       // El mercado arranca desde el mundo real de la partida, no desde el JSON.
       attachWorldBridge();
