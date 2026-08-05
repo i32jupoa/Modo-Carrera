@@ -14,11 +14,14 @@
 import { teamById } from "@/data/teams";
 import {
   CONTRACT_RULES,
+  DECISION_ACCURACY,
   IDEAL_SQUAD_SHAPE,
   MARKET_TIMING,
+  POSITION_AGE_CURVE,
   SCORE_WEIGHTS,
   SEARCH_LIMITS,
   SQUAD_LIMITS,
+  STAR_THRESHOLD,
   WAGE_RULES,
 } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
@@ -34,6 +37,7 @@ import {
   findCandidates,
   getClubPlayers,
   getPlayer,
+  onSquadChanged,
   reassignPlayerClub,
   updatePlayer,
 } from "./PlayerIndex";
@@ -84,6 +88,15 @@ function normalize(value: number, min: number, max: number): number {
 
 const dominantNations = new Map<string, string>();
 
+// La nacionalidad dominante depende de la plantilla actual. Si no se
+// invalida cuando entra o sale un jugador, un club que fiche a varios
+// brasileños seguiría "reconociendo como de casa" a la nacionalidad antigua
+// durante el resto de la partida. Se limpia sólo la entrada del club
+// afectado, no todo el caché.
+onSquadChanged((clubIds) => {
+  for (const clubId of clubIds) dominantNations.delete(clubId);
+});
+
 /** Nacionalidad predominante de la plantilla: define el "jugador de casa". */
 export function clubDominantNation(clubId: string): string {
   const cached = dominantNations.get(clubId);
@@ -116,6 +129,8 @@ export interface ScoreBreakdown {
   nationality: number;
   league: number;
   prestige: number;
+  /** Encaje con la identidad táctica de reclutamiento del club. */
+  style: number;
 }
 
 /** Candidato puntuado. */
@@ -130,13 +145,41 @@ export interface ScoredCandidate {
   wageDemand: number;
 }
 
-/** Preferencia por la edad según el perfil del club. */
+/**
+ * Preferencia por la edad según el perfil del club y la posición.
+ * Un portero de 33 años está en su mejor momento; un extremo de 33, no: cada
+ * demarcación tiene su propio tramo de rendimiento óptimo (`POSITION_AGE_CURVE`).
+ */
 function ageScore(player: MarketPlayer, profile: ClubProfile): number {
-  if (player.age <= SQUAD_LIMITS.youngAge) return clamp(0.35 + profile.youthPreference * 0.65, 0, 1);
-  if (player.age <= 26) return 0.8;
-  if (player.age <= 29) return 0.65;
-  if (player.age < SQUAD_LIMITS.veteranAge) return clamp(0.45 + profile.veteranPreference * 0.3, 0, 1);
+  if (player.age <= SQUAD_LIMITS.youngAge)
+    return clamp(0.35 + profile.youthPreference * 0.65, 0, 1);
+
+  const curve = POSITION_AGE_CURVE[player.group];
+  if (player.age <= curve.peakStart) return 0.8;
+  if (player.age <= curve.peakEnd) return 0.85;
+  if (player.age <= curve.declineEnd) return clamp(0.45 + profile.veteranPreference * 0.3, 0, 1);
   return clamp(profile.veteranPreference * 0.6, 0, 1);
+}
+
+/**
+ * Encaje con la identidad táctica del club: media de los atributos del
+ * jugador ponderada por lo que ese club valora (posesión pesa `passing`,
+ * pressing/contragolpe pesa `pace`, un bloque físico pesa `physical`...).
+ * Así un mismo delantero encaja de forma distinta en el Manchester City que
+ * en el Atlético, en vez de que todos los clubes busquen exactamente lo mismo.
+ */
+function styleFitScore(
+  attributes: MarketPlayer["attributes"],
+  style: ClubProfile["style"],
+): number {
+  const totalWeight = style.pace + style.passing + style.physical + style.defending;
+  if (totalWeight <= 0) return 0.5;
+  const weighted =
+    (attributes.pace / 99) * style.pace +
+    (attributes.passing / 99) * style.passing +
+    (attributes.physical / 99) * style.physical +
+    (attributes.defending / 99) * style.defending;
+  return clamp(weighted / totalWeight, 0, 1);
 }
 
 /** Puntúa a un candidato para un club y una necesidad concretas. */
@@ -160,7 +203,8 @@ export function scoreCandidate(input: {
   const breakdown: ScoreBreakdown = {
     need: need.urgency,
     quality: normalize(player.ovr - report.startingRating, -6, 6),
-    potential: normalize(player.potential - player.ovr, 0, 10) * (0.4 + profile.youthPreference * 0.6),
+    potential:
+      normalize(player.potential - player.ovr, 0, 10) * (0.4 + profile.youthPreference * 0.6),
     age: ageScore(player, profile),
     price: 1 - normalize(valuation.listPrice, 0, Math.max(1, input.spendCeiling)),
     wage: 1 - normalize(wage, 0, Math.max(1, input.wageCeiling)),
@@ -173,6 +217,7 @@ export function scoreCandidate(input: {
         ? profile.leaguePreference
         : 1 - profile.leaguePreference * 0.5,
     prestige: 1 - Math.abs(normalize(player.ovr, 60, 92) - profile.reputation),
+    style: styleFitScore(player.attributes, profile.style),
   };
 
   const score =
@@ -184,16 +229,100 @@ export function scoreCandidate(input: {
     breakdown.wage * SCORE_WEIGHTS.wage +
     breakdown.nationality * SCORE_WEIGHTS.nationality +
     breakdown.league * SCORE_WEIGHTS.league +
-    breakdown.prestige * SCORE_WEIGHTS.prestige;
+    breakdown.prestige * SCORE_WEIGHTS.prestige +
+    breakdown.style * SCORE_WEIGHTS.style;
+
+  // Ningún director deportivo es perfectamente racional: a veces un club se
+  // encandila con un nombre conocido más allá de si encaja de verdad.
+  const starstruck =
+    player.ovr >= STAR_THRESHOLD - 4 &&
+    seededUnit(input.clubId, player.id, cacheKey, "starstruck") <
+      DECISION_ACCURACY.starstruckChance;
+  const finalScore = starstruck ? score + DECISION_ACCURACY.starstruckBonus : score;
 
   return {
     player,
     group: player.group,
-    score: Math.round(clamp(score, 0, 1) * 1000) / 1000,
+    score: Math.round(clamp(finalScore, 0, 1) * 1000) / 1000,
     breakdown,
     askingPrice: valuation.listPrice,
     wageDemand: wage,
   };
+}
+
+// ============================================================================
+// MEMORIA DE INTENTOS
+// ----------------------------------------------------------------------------
+// Sin esto, un club evalúa la lista corta cada día sin recordar los intentos
+// fallidos: si un jugador puntúa muy alto, puede recibir una oferta idéntica
+// a diario aunque la rechazara ayer. Se guarda el último desenlace negativo
+// por pareja club-jugador y se respeta un periodo de enfriamiento antes de
+// volver a intentarlo; el periodo depende de por qué se rompió el intento.
+// ============================================================================
+
+/** Motivos de fracaso que activan un enfriamiento (no aplica a "unavailable"). */
+type CooldownOutcome = "rejected-by-club" | "rejected-by-player" | "too-expensive";
+
+const PURSUIT_COOLDOWN_DAYS: Record<CooldownOutcome, number> = {
+  "rejected-by-club": 21,
+  "rejected-by-player": 30,
+  "too-expensive": 14,
+};
+
+/** Último intento fallido de un club por un jugador. */
+export interface PursuitMemoryEntry {
+  clubId: string;
+  playerId: string;
+  date: string;
+  outcome: CooldownOutcome;
+}
+
+/** `clubId:playerId` -> último intento fallido. */
+const pursuitMemory = new Map<string, PursuitMemoryEntry>();
+
+function pursuitKey(clubId: string, playerId: string): string {
+  return `${clubId}:${playerId}`;
+}
+
+function daysBetween(from: string, to: string): number {
+  return Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000);
+}
+
+function isCooldownOutcome(outcome: PursuitOutcome): outcome is CooldownOutcome {
+  return (
+    outcome === "rejected-by-club" ||
+    outcome === "rejected-by-player" ||
+    outcome === "too-expensive"
+  );
+}
+
+/** ¿Sigue el club en periodo de espera tras un rechazo reciente de este jugador? */
+export function isPursuitOnCooldown(clubId: string, playerId: string, date: string): boolean {
+  const entry = pursuitMemory.get(pursuitKey(clubId, playerId));
+  if (!entry) return false;
+  return daysBetween(entry.date, date) < PURSUIT_COOLDOWN_DAYS[entry.outcome];
+}
+
+function rememberPursuit(
+  clubId: string,
+  playerId: string,
+  date: string,
+  outcome: PursuitOutcome,
+): void {
+  if (!isCooldownOutcome(outcome)) return;
+  pursuitMemory.set(pursuitKey(clubId, playerId), { clubId, playerId, date, outcome });
+}
+
+/** Instantánea de la memoria de intentos (para persistir entre partidas). */
+export function snapshotPursuitMemory(): PursuitMemoryEntry[] {
+  return Array.from(pursuitMemory.values());
+}
+
+/** Restaura la memoria de intentos de una partida guardada. */
+export function restorePursuitMemory(entries: readonly PursuitMemoryEntry[]): void {
+  pursuitMemory.clear();
+  for (const entry of entries)
+    pursuitMemory.set(pursuitKey(entry.clubId, entry.playerId), { ...entry });
 }
 
 // ============================================================================
@@ -227,7 +356,9 @@ export function buildShortlist(
   // Rango de calidad: nadie busca por debajo de su banquillo ni muy por encima
   // de lo que su reputación le permite atraer.
   const minOvr = Math.round(Math.max(58, report.startingRating - 4));
-  const maxOvr = Math.round(clamp(report.startingRating + 6 + profile.reputation * 4, minOvr + 2, 99));
+  const maxOvr = Math.round(
+    clamp(report.startingRating + 6 + profile.reputation * 4, minOvr + 2, 99),
+  );
 
   const candidates = findCandidates({
     group: need.group,
@@ -242,6 +373,7 @@ export function buildShortlist(
   const scored: ScoredCandidate[] = [];
   for (const player of candidates) {
     if (!isAvailable(player.id, options.cacheKey)) continue;
+    if (isPursuitOnCooldown(clubId, player.id, options.cacheKey)) continue;
     if (!playerImprovesSquad(report, player)) continue;
     if (player.contract.wage > wageCeiling * 1.4) continue;
     const entry = scoreCandidate({
@@ -317,15 +449,15 @@ export function pursueTarget(
   const player = getPlayer(playerId);
   const cacheKey = options.date;
 
-  const fail = (outcome: PursuitOutcome, message: string, offer: TransferOffer | null, rounds = 0): PursuitResult => ({
-    outcome,
-    playerId,
-    clubId,
-    record: null,
-    offer,
-    rounds,
-    message,
-  });
+  const fail = (
+    outcome: PursuitOutcome,
+    message: string,
+    offer: TransferOffer | null,
+    rounds = 0,
+  ): PursuitResult => {
+    rememberPursuit(clubId, playerId, options.date, outcome);
+    return { outcome, playerId, clubId, record: null, offer, rounds, message };
+  };
 
   if (!player) return fail("unavailable", "El jugador no existe.", null);
   if (player.clubId === clubId) return fail("unavailable", "Ya pertenece al club.", null);
@@ -349,11 +481,17 @@ export function pursueTarget(
   });
 
   // Oferta de salida: por debajo de lo esperado, pero nunca insultante, y
-  // siempre por encima de las pujas rivales si hay competencia.
+  // siempre por encima de las pujas rivales si hay competencia. Algunos días
+  // un club negocia peor de lo habitual y sale a pagar de más en vez de
+  // abrir bajo y regatear (errores de juicio reales, no un club infalible).
+  const generousMood =
+    seededUnit(clubId, playerId, cacheKey, "generous-mood") < DECISION_ACCURACY.generousMoodChance;
+  const openingMultiplier =
+    0.8 + profile.aggression * 0.15 + (generousMood ? DECISION_ACCURACY.generousMoodBoost : 0);
   const opening = escalatedPrice(
     playerId,
     clubId,
-    Math.max(valuation.minimumPrice, valuation.expectedPrice * (0.8 + profile.aggression * 0.15)),
+    Math.max(valuation.minimumPrice, valuation.expectedPrice * openingMultiplier),
   );
 
   if (opening > spendCeiling || !canAfford(clubId, opening, wageAsked)) {
@@ -363,7 +501,12 @@ export function pursueTarget(
   const clauses =
     options.type && options.type !== "permanent" && options.type !== "free"
       ? emptyClauses()
-      : proposeClauses(clubId, valuation, Math.max(0, valuation.expectedPrice - opening), `${clubId}-${playerId}`);
+      : proposeClauses(
+          clubId,
+          valuation,
+          Math.max(0, valuation.expectedPrice - opening),
+          `${clubId}-${playerId}`,
+        );
 
   const offer = createTransferOffer({
     playerId,
@@ -374,7 +517,10 @@ export function pursueTarget(
     // El comprador endulza la ficha desde el principio si puede permitírselo:
     // es más barato convencer al jugador con salario que subir el traspaso.
     wageOffer: Math.round(
-      Math.min(wageCeiling, wageAsked * (WAGE_RULES.moveRaise + (profile.buyingWillingness - 1) * 0.15)),
+      Math.min(
+        wageCeiling,
+        wageAsked * (WAGE_RULES.moveRaise + (profile.buyingWillingness - 1) * 0.15),
+      ),
     ),
     type: options.type ?? (player.clubId ? "permanent" : "free"),
     clauses,
@@ -484,12 +630,16 @@ function closeWithPlayerDecision(
     deadlineDay: options.deadlineDay,
   });
 
-  if (decision.verdict === "negotiating" && decision.wageRequested <= maxWageOffer(offer.fromClubId)) {
+  if (
+    decision.verdict === "negotiating" &&
+    decision.wageRequested <= maxWageOffer(offer.fromClubId)
+  ) {
     // El club sube la ficha para cerrar: es más barato que subir el traspaso.
     offer.wageOffer = Math.round(decision.wageRequested * WAGE_RULES.moveRaise);
   } else if (decision.verdict !== "accepted") {
     withdrawOffer(offer);
     dropInterest(offer.playerId, offer.fromClubId);
+    rememberPursuit(offer.fromClubId, offer.playerId, options.date, "rejected-by-player");
     return {
       outcome: "rejected-by-player",
       playerId: offer.playerId,
@@ -537,7 +687,8 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
   const buyerId = offer.fromClubId;
   const sellerId = player.clubId;
   const buyerLeague = teamById(buyerId).league;
-  const isLoan = offer.type === "loan" || offer.type === "loan-option" || offer.type === "loan-obligation";
+  const isLoan =
+    offer.type === "loan" || offer.type === "loan-option" || offer.type === "loan-obligation";
 
   const record: TransferRecord = {
     id: `tr-${offer.id}`,
@@ -672,4 +823,5 @@ export function clubWantsToActToday(clubId: string, date: string, share: number)
 /** Limpia las cachés propias del motor (al cargar otra partida). */
 export function resetTransferEngine(): void {
   dominantNations.clear();
+  pursuitMemory.clear();
 }

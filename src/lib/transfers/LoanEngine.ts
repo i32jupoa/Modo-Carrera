@@ -13,15 +13,23 @@
  */
 
 import { teamById } from "@/data/teams";
-import { LOAN_RULES, MARKET_TIMING, SQUAD_LIMITS, WAGE_RULES } from "./constants";
+import { CONTRACT_RULES, LOAN_RULES, MARKET_TIMING, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
-import { maxWageOffer, registerLoanOut } from "./BudgetManager";
-import { getClubPlayers, getMarketIndex, getPlayer, updatePlayer } from "./PlayerIndex";
+import { maxWageOffer, registerLoanOut, registerSale, registerSigning } from "./BudgetManager";
+import {
+  getClubPlayers,
+  getMarketIndex,
+  getPlayer,
+  reassignPlayerClub,
+  updatePlayer,
+} from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
 import { isKeyPlayer } from "./MarketValuation";
 import { decideOnMove } from "./PlayerDecision";
-import { buildLoanTerms, createTransferOffer } from "./NegotiationEngine";
+import { buildLoanTerms, createTransferOffer, emptyClauses } from "./NegotiationEngine";
 import { completeTransfer } from "./TransferEngine";
+import { contractYearsForAge } from "./ContractEngine";
+import { recordTransfer, transfersForPlayer } from "./TransferHistory";
 import { clamp, seededUnit } from "./random";
 import type { MarketPlayer, TransferRecord, TransferType } from "./types";
 
@@ -120,11 +128,7 @@ export function wantsToLoanIn(
 }
 
 /** Busca destinos plausibles para un cedido: clubes con hueco en su puesto. */
-export function findLoanDestinations(
-  playerId: string,
-  cacheKey: string,
-  limit = 5,
-): string[] {
+export function findLoanDestinations(playerId: string, cacheKey: string, limit = 5): string[] {
   const player = getPlayer(playerId);
   if (!player) return [];
   const owner = player.clubId;
@@ -254,7 +258,11 @@ export function runClubLoanCycle(
   for (const player of loanCandidates(clubId, cacheKey)) {
     if (closed >= maxLoans) break;
     updatePlayer(player.id, { loanListed: true });
-    for (const destination of findLoanDestinations(player.id, cacheKey, MARKET_TIMING.maxNegotiationsPerClub)) {
+    for (const destination of findLoanDestinations(
+      player.id,
+      cacheKey,
+      MARKET_TIMING.maxNegotiationsPerClub,
+    )) {
       const attempt = arrangeLoan(player.id, destination, {
         date: options.date,
         deadlineDay: options.deadlineDay,
@@ -274,28 +282,103 @@ export function runClubLoanCycle(
 // FIN DE TEMPORADA
 // ============================================================================
 
-/** Cedido que vuelve a su club. */
+/** Cedido que vuelve a su club, o cuya cesión se convierte en traspaso firme. */
 export interface LoanReturn {
   playerId: string;
   playerName: string;
   ownerClubId: string;
+  /** Si la cesión tenía obligación de compra, el traspaso resultante. */
+  purchase: TransferRecord | null;
   message: string;
+}
+
+/** Convierte una cesión con obligación de compra en un traspaso permanente. */
+function executeLoanObligation(
+  player: MarketPlayer,
+  ownerClubId: string,
+  borrowerClubId: string,
+  loanRecord: TransferRecord,
+  date: string,
+): TransferRecord {
+  const wageShare = clamp(loanRecord.clauses.wageShare, 0, 1);
+  const fee = Math.max(0, loanRecord.clauses.optionFee);
+  const wage = player.contract.wage;
+
+  reassignPlayerClub(player.id, borrowerClubId, teamById(borrowerClubId).league);
+  updatePlayer(player.id, {
+    loanClubId: null,
+    loanListed: false,
+    minutesShare: 0,
+    contract: {
+      yearsLeft: contractYearsForAge(player.age),
+      wage,
+      releaseClause: Math.round(Math.max(player.value, fee) * CONTRACT_RULES.releaseClauseFactor),
+      signingBonus: Math.round(wage * CONTRACT_RULES.signingBonusShare),
+    },
+  });
+
+  // El receptor ya pagaba su parte del sueldo durante la cesión; sólo se le
+  // añade la parte que aún cubría el dueño. El dueño se quita de encima el
+  // resto de la ficha, que es lo único que le quedaba por cubrir.
+  registerSigning(borrowerClubId, fee, Math.max(0, wage - wage * wageShare));
+  registerSale(ownerClubId, fee, wage * (1 - wageShare));
+
+  const record: TransferRecord = {
+    id: `tr-obligation-${player.id}-${date}`,
+    date,
+    playerId: player.id,
+    playerName: player.name,
+    fromClubId: ownerClubId,
+    toClubId: borrowerClubId,
+    fee,
+    wage,
+    type: "permanent",
+    clauses: emptyClauses(),
+  };
+  recordTransfer(record);
+  return record;
 }
 
 /**
  * Devuelve a todos los cedidos a su club de origen al acabar la temporada.
- * Las obligaciones de compra se ejecutan antes de la vuelta.
+ * Las cesiones con obligación de compra se ejecutan antes de la vuelta: el
+ * jugador pasa en firme al club receptor por la cifra pactada al cerrar la
+ * cesión, en lugar de volver con su dueño original (antes esto no ocurría:
+ * toda cesión volvía a su sitio sin más, aunque tuviera obligación de compra).
  */
 export function resolveLoansEndOfSeason(date: string): LoanReturn[] {
   const returns: LoanReturn[] = [];
   for (const player of getMarketIndex().byId.values()) {
     if (!player.loanClubId || !player.clubId) continue;
+    const borrowerClubId = player.loanClubId;
+    const ownerClubId = player.clubId;
+
+    const loanRecord = transfersForPlayer(player.id).find(
+      (r) =>
+        r.toClubId === borrowerClubId &&
+        r.fromClubId === ownerClubId &&
+        (r.type === "loan" || r.type === "loan-option" || r.type === "loan-obligation"),
+    );
+
+    if (loanRecord?.type === "loan-obligation") {
+      const purchase = executeLoanObligation(player, ownerClubId, borrowerClubId, loanRecord, date);
+      returns.push({
+        playerId: player.id,
+        playerName: player.name,
+        ownerClubId,
+        purchase,
+        message: `${teamById(borrowerClubId).name} ejecuta la obligación de compra de ${player.name}.`,
+      });
+      continue;
+    }
+
     updatePlayer(player.id, { loanClubId: null, loanListed: false, minutesShare: 0 });
     returns.push({
       playerId: player.id,
       playerName: player.name,
-      ownerClubId: player.clubId,
-      message: `${player.name} vuelve de su cesión a ${teamById(player.clubId).name} (${date}).`,
+      ownerClubId,
+      purchase: null,
+      message: `${player.name} vuelve de su cesión a ${teamById(ownerClubId).name} (${date}).`,
     });
   }
   return returns;

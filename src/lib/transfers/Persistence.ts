@@ -9,23 +9,23 @@
  */
 
 import { restoreFinances, snapshotFinances } from "./BudgetManager";
-import {
-  restorePlayerDeltas,
-  snapshotPlayerDeltas,
-  type PlayerDelta,
-} from "./PlayerIndex";
-import {
-  restoreSimulation,
-  snapshotSimulation,
-  type SimulationSnapshot,
-} from "./MarketSimulation";
+import { restorePlayerDeltas, snapshotPlayerDeltas, type PlayerDelta } from "./PlayerIndex";
+import { restoreSimulation, snapshotSimulation, type SimulationSnapshot } from "./MarketSimulation";
 import { restoreTransferHistory, snapshotTransferHistory } from "./TransferHistory";
 import { restoreRumors, snapshotRumors } from "./RumorEngine";
 import { restoreUserDeals, snapshotUserDeals, type UserDeal } from "./UserNegotiation";
+import {
+  restorePursuitMemory,
+  snapshotPursuitMemory,
+  type PursuitMemoryEntry,
+} from "./TransferEngine";
 import type { ClubFinances, Rumor, TransferRecord } from "./types";
 
 const STORAGE_KEY = "fcsim:market:v1";
-const VERSION = 2;
+// v3 añade `pursuits`: la memoria de rechazos recientes por club-jugador.
+// Sin ella, cargar una partida "olvidaba" a quién había rechazado ya un
+// club y el mercado volvía a ofertar por los mismos jugadores al instante.
+const VERSION = 3;
 
 /** Partida de mercado serializada. */
 export interface TransferSaveData {
@@ -38,6 +38,8 @@ export interface TransferSaveData {
   rumors: Rumor[];
   /** Negociaciones abiertas del usuario. */
   userDeals: UserDeal[];
+  /** Últimos rechazos por pareja club-jugador (evita ofertas repetidas). */
+  pursuits: PursuitMemoryEntry[];
 }
 
 /** Construye la instantánea completa del sistema de mercado. */
@@ -51,6 +53,7 @@ export function snapshotTransferSystem(): TransferSaveData {
     history: snapshotTransferHistory(),
     rumors: snapshotRumors(),
     userDeals: snapshotUserDeals(),
+    pursuits: snapshotPursuitMemory(),
   };
 }
 
@@ -62,6 +65,7 @@ export function applyTransferSnapshot(data: TransferSaveData): boolean {
   restoreTransferHistory(data.history ?? []);
   restoreRumors(data.rumors ?? []);
   restoreUserDeals(data.userDeals ?? []);
+  restorePursuitMemory(data.pursuits ?? []);
   if (data.simulation) restoreSimulation(data.simulation);
   return true;
 }

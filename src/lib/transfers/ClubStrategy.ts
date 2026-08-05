@@ -36,21 +36,123 @@ const LEAGUE_COUNTRY: Record<string, string> = {
 };
 
 /** Ajustes manuales de identidad de mercado por club. */
-const CLUB_OVERRIDES: Record<string, Partial<ClubProfile>> = {
-  rma: { financialPower: 0.98, reputation: 1, ambition: 0.98, youthPreference: 0.55, aggression: 0.85, patience: 0.7, sellingToughness: 1.5 },
-  fcb: { financialPower: 0.72, reputation: 0.97, ambition: 0.95, academyFocus: 0.9, youthPreference: 0.75, sellingToughness: 1.35 },
-  mci: { financialPower: 0.97, reputation: 0.95, ambition: 0.95, aggression: 0.8, patience: 0.75 },
-  psg: { financialPower: 0.99, reputation: 0.9, ambition: 0.97, aggression: 0.9, patience: 0.4, youthPreference: 0.7 },
-  che: { financialPower: 0.93, reputation: 0.85, aggression: 0.9, youthPreference: 0.9, patience: 0.35 },
-  liv: { financialPower: 0.88, reputation: 0.92, patience: 0.85, aggression: 0.55, youthPreference: 0.65 },
-  ars: { financialPower: 0.86, reputation: 0.9, youthPreference: 0.8, patience: 0.7 },
-  bri: { financialPower: 0.5, reputation: 0.62, youthPreference: 0.98, academyFocus: 0.85, patience: 0.9, sellingToughness: 1.45, buyingWillingness: 0.8 },
-  sev: { financialPower: 0.42, reputation: 0.68, youthPreference: 0.6, patience: 0.5, sellingToughness: 1.3, buyingWillingness: 0.75 },
-  atm: { financialPower: 0.7, reputation: 0.85, veteranPreference: 0.6, patience: 0.7 },
-  bay: { financialPower: 0.9, reputation: 0.95, leaguePreference: 0.7, nationalPreference: 0.7, patience: 0.8 },
-  bvb: { financialPower: 0.62, reputation: 0.8, youthPreference: 0.95, sellingToughness: 1.3 },
-  juv: { financialPower: 0.68, reputation: 0.85, veteranPreference: 0.55, patience: 0.6 },
-  ath: { nationalPreference: 1, academyFocus: 1, youthPreference: 0.8 },
+const CLUB_OVERRIDES: Record<
+  string,
+  Partial<Omit<ClubProfile, "style">> & { style?: Partial<ClubProfile["style"]> }
+> = {
+  rma: {
+    financialPower: 0.98,
+    reputation: 1,
+    ambition: 0.98,
+    youthPreference: 0.55,
+    aggression: 0.85,
+    patience: 0.7,
+    sellingToughness: 1.5,
+    style: { pace: 0.75, passing: 0.55 },
+  },
+  bar: {
+    financialPower: 0.72,
+    reputation: 0.97,
+    ambition: 0.95,
+    academyFocus: 0.9,
+    youthPreference: 0.75,
+    sellingToughness: 1.35,
+    style: { passing: 0.9, physical: 0.35 },
+  },
+  mci: {
+    financialPower: 0.97,
+    reputation: 0.95,
+    ambition: 0.95,
+    aggression: 0.8,
+    patience: 0.75,
+    style: { passing: 0.92, physical: 0.4 },
+  },
+  psg: {
+    financialPower: 0.99,
+    reputation: 0.9,
+    ambition: 0.97,
+    aggression: 0.9,
+    patience: 0.4,
+    youthPreference: 0.7,
+    style: { pace: 0.85 },
+  },
+  che: {
+    financialPower: 0.93,
+    reputation: 0.85,
+    aggression: 0.9,
+    youthPreference: 0.9,
+    patience: 0.35,
+    style: { pace: 0.75, physical: 0.6 },
+  },
+  liv: {
+    financialPower: 0.88,
+    reputation: 0.92,
+    patience: 0.85,
+    aggression: 0.55,
+    youthPreference: 0.65,
+    style: { pace: 0.85, physical: 0.65 },
+  },
+  ars: {
+    financialPower: 0.86,
+    reputation: 0.9,
+    youthPreference: 0.8,
+    patience: 0.7,
+    style: { passing: 0.8 },
+  },
+  bri: {
+    financialPower: 0.5,
+    reputation: 0.62,
+    youthPreference: 0.98,
+    academyFocus: 0.85,
+    patience: 0.9,
+    sellingToughness: 1.45,
+    buyingWillingness: 0.8,
+    style: { passing: 0.8 },
+  },
+  sev: {
+    financialPower: 0.42,
+    reputation: 0.68,
+    youthPreference: 0.6,
+    patience: 0.5,
+    sellingToughness: 1.3,
+    buyingWillingness: 0.75,
+    style: { defending: 0.65 },
+  },
+  atm: {
+    financialPower: 0.7,
+    reputation: 0.85,
+    veteranPreference: 0.6,
+    patience: 0.7,
+    style: { physical: 0.8, defending: 0.8, pace: 0.35 },
+  },
+  bay: {
+    financialPower: 0.9,
+    reputation: 0.95,
+    leaguePreference: 0.7,
+    nationalPreference: 0.7,
+    patience: 0.8,
+    style: { passing: 0.85, pace: 0.65 },
+  },
+  bvb: {
+    financialPower: 0.62,
+    reputation: 0.8,
+    youthPreference: 0.95,
+    sellingToughness: 1.3,
+    style: { pace: 0.85 },
+  },
+  juv: {
+    financialPower: 0.68,
+    reputation: 0.85,
+    veteranPreference: 0.55,
+    patience: 0.6,
+    style: { defending: 0.75, physical: 0.55 },
+  },
+  ath: {
+    nationalPreference: 1,
+    academyFocus: 1,
+    youthPreference: 0.8,
+    style: { physical: 0.75, pace: 0.55 },
+  },
 };
 
 /** Poder económico base a partir de la calidad deportiva y la liga. */
@@ -64,7 +166,29 @@ function baseReputation(team: Team): number {
   const quality = (team.att + team.mid + team.def) / 3;
   const leagueWeight = TOP_LEAGUES[team.league] ?? 0.3;
   const category = team.category === "Gigante" ? 0.2 : team.category === "Aspirante" ? 0.1 : 0;
-  return clamp((quality - 60) / 30 * 0.6 + leagueWeight * 0.3 + category, 0, 1);
+  return clamp(((quality - 60) / 30) * 0.6 + leagueWeight * 0.3 + category, 0, 1);
+}
+
+/**
+ * Identidad táctica de reclutamiento por defecto, para los clubes que no
+ * tienen un ajuste manual en `CLUB_OVERRIDES`. Se deriva de la forma del
+ * equipo (¿pesa más el medio que el ataque y la defensa juntos? ¿la defensa
+ * sobre el ataque?) y de una variación determinista por club, para que no
+ * todos los equipos sin ficha propia recluten exactamente igual.
+ */
+function baseStyle(team: Team, seed: string): ClubProfile["style"] {
+  const midSpread = team.mid - (team.att + team.def) / 2;
+  const defSpread = team.def - team.att;
+  return {
+    pace: clamp(seededRange(0.3, 0.7, seed, "style-pace") + (team.att > team.mid ? 0.1 : 0), 0, 1),
+    passing: clamp(0.45 + midSpread / 30 + seededRange(-0.15, 0.15, seed, "style-passing"), 0, 1),
+    physical: clamp(
+      seededRange(0.3, 0.7, seed, "style-physical") + (team.def > team.mid ? 0.1 : 0),
+      0,
+      1,
+    ),
+    defending: clamp(0.4 + defSpread / 30 + seededRange(-0.1, 0.15, seed, "style-defending"), 0, 1),
+  };
 }
 
 function buildProfile(team: Team): ClubProfile {
@@ -85,13 +209,27 @@ function buildProfile(team: Team): ClubProfile {
     leaguePreference: clamp(seededRange(0.2, 0.8, seed, "league"), 0, 1),
     academyFocus: clamp(seededRange(0.2, 0.9, seed, "academy"), 0, 1),
     ambition: clamp(seededRange(0.3, 0.9, seed, "ambition") + reputation * 0.2, 0, 1),
-    sellingToughness: clamp(0.85 + reputation * 0.5 + seededRange(-0.1, 0.15, seed, "sell"), 0.7, 1.6),
-    buyingWillingness: clamp(0.75 + financialPower * 0.5 + seededRange(-0.1, 0.15, seed, "buy"), 0.6, 1.4),
+    sellingToughness: clamp(
+      0.85 + reputation * 0.5 + seededRange(-0.1, 0.15, seed, "sell"),
+      0.7,
+      1.6,
+    ),
+    buyingWillingness: clamp(
+      0.75 + financialPower * 0.5 + seededRange(-0.1, 0.15, seed, "buy"),
+      0.6,
+      1.4,
+    ),
     country: LEAGUE_COUNTRY[team.league] ?? "",
+    style: baseStyle(team, seed),
   };
 
   const override = CLUB_OVERRIDES[team.id];
-  return override ? { ...profile, ...override } : profile;
+  if (!override) return profile;
+  return {
+    ...profile,
+    ...override,
+    style: { ...profile.style, ...override.style },
+  };
 }
 
 let cache: Map<string, ClubProfile> | null = null;
@@ -124,6 +262,10 @@ export function resetClubProfiles(): void {
 }
 
 /** ¿Es un club capaz de pelear por un fichaje de este calibre? */
-export function canClubAffordProfileWise(profile: ClubProfile, fee: number, maxSpend: number): boolean {
+export function canClubAffordProfileWise(
+  profile: ClubProfile,
+  fee: number,
+  maxSpend: number,
+): boolean {
   return fee <= maxSpend * profile.buyingWillingness;
 }

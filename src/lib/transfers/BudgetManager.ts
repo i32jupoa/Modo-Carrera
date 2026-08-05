@@ -87,7 +87,6 @@ export function setFinances(entry: ClubFinances): void {
   finances.set(entry.clubId, entry);
 }
 
-
 /** Instantánea de todas las finanzas conocidas (para persistir). */
 export function snapshotFinances(): ClubFinances[] {
   return Array.from(finances.values()).map((entry) => ({ ...entry }));
@@ -96,6 +95,7 @@ export function snapshotFinances(): ClubFinances[] {
 /** Reinicia las finanzas de todos los clubes. */
 export function resetFinances(): void {
   finances.clear();
+  userBridge = null;
 }
 
 /** Dinero que un club está dispuesto a gastar en un solo fichaje. */
@@ -137,7 +137,6 @@ export function registerSale(clubId: string, fee: number, wage: number): void {
   entry.wageBill = Math.max(0, entry.wageBill - wage);
   bridge?.setBudget(entry.budget);
 }
-
 
 /** Registra el ahorro salarial de una cesión con reparto de sueldo. */
 export function registerLoanOut(clubId: string, wage: number, wageShareCovered: number): void {

@@ -15,7 +15,14 @@ import { getAllTeams, teamKeyFromName, type Team } from "@/data/teams";
 import { marketValueFor } from "@/data/players";
 import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { clamp, seededRange, seededUnit } from "./random";
-import { POSITION_GROUPS, type Contract, type MarketPlayer, type PlayerPersonality, type PositionGroup, type TransferListReason } from "./types";
+import {
+  POSITION_GROUPS,
+  type Contract,
+  type MarketPlayer,
+  type PlayerPersonality,
+  type PositionGroup,
+  type TransferListReason,
+} from "./types";
 
 /** Ficha bruta del JSON de jugadores (sólo los campos que usa el mercado). */
 interface RawPlayerRecord {
@@ -27,6 +34,10 @@ interface RawPlayerRecord {
   Nation?: string;
   Team?: string;
   League?: string;
+  PAC?: number;
+  PAS?: number;
+  PHY?: number;
+  DEF?: number;
 }
 
 /** Traduce la posición del JSON a la demarcación que usa el mercado. */
@@ -167,7 +178,18 @@ function buildIndex(): MarketIndex {
     const position = raw.Position ?? "CM";
     const stats = clubId ? ratingSum.get(clubId) : undefined;
     const clubAverage = stats && stats.count > 0 ? stats.sum / stats.count : 72;
-    const valueM = marketValueFor(ovr, age, position, clubId, leagueId, 0, 0, 0, false, clubAverage).value;
+    const valueM = marketValueFor(
+      ovr,
+      age,
+      position,
+      clubId,
+      leagueId,
+      0,
+      0,
+      0,
+      false,
+      clubAverage,
+    ).value;
     const value = Math.round(valueM * 1_000_000);
 
     const player: MarketPlayer = {
@@ -189,6 +211,12 @@ function buildIndex(): MarketIndex {
       loanListed: false,
       loanClubId: null,
       minutesShare: 0,
+      attributes: {
+        pace: raw.PAC ?? 50,
+        passing: raw.PAS ?? 50,
+        physical: raw.PHY ?? 50,
+        defending: raw.DEF ?? 50,
+      },
     };
 
     index.byId.set(id, player);
@@ -317,11 +345,37 @@ export function setClubMoveListener(listener: ClubMoveListener | null): void {
   clubMoveListener = listener;
 }
 
+/**
+ * Suscriptores internos que necesitan invalidar sus propias cachés cuando
+ * cambia una plantilla (p. ej. la nacionalidad dominante de `TransferEngine`
+ * o los informes de plantilla de `SquadAnalyzer`). A diferencia de
+ * `clubMoveListener` (un único observador externo para `WorldSync`), aquí
+ * puede haber varios suscriptores y sólo les interesa qué clubes cambiaron.
+ */
+const squadChangeListeners: Array<(clubIds: readonly string[]) => void> = [];
+
+/** Se llama cuando uno o más clubes cambian de plantilla (ficha entra/sale). */
+export function onSquadChanged(listener: (clubIds: readonly string[]) => void): void {
+  squadChangeListeners.push(listener);
+}
+
+function notifySquadChanged(clubIds: ReadonlyArray<string | null | undefined>): void {
+  const ids = Array.from(new Set(clubIds.filter((id): id is string => !!id)));
+  if (ids.length === 0) return;
+  for (const listener of squadChangeListeners) listener(ids);
+}
+
 /** Mueve a un jugador de club manteniendo los índices coherentes. */
-export function reassignPlayerClub(playerId: string, clubId: string | null, leagueId?: string): void {
+export function reassignPlayerClub(
+  playerId: string,
+  clubId: string | null,
+  leagueId?: string,
+): void {
   const index = getMarketIndex();
   const player = index.byId.get(playerId);
   if (!player) return;
+
+  const previousClubId = player.clubId;
 
   if (player.clubId) removeFrom(index.byClub, player.clubId, playerId);
   else index.freeAgents.delete(playerId);
@@ -339,11 +393,16 @@ export function reassignPlayerClub(playerId: string, clubId: string | null, leag
   touched.add(playerId);
 
   clubMoveListener?.(playerId, clubId);
+  // El club que pierde el jugador y el que lo gana ven afectada su
+  // nacionalidad dominante, su informe de plantilla, etc.
+  notifySquadChanged([previousClubId, clubId]);
 }
 
-
 /** Aplica cambios puntuales a un jugador reindexando lo que haga falta. */
-export function updatePlayer(playerId: string, patch: Partial<MarketPlayer>): MarketPlayer | undefined {
+export function updatePlayer(
+  playerId: string,
+  patch: Partial<MarketPlayer>,
+): MarketPlayer | undefined {
   const index = getMarketIndex();
   const player = index.byId.get(playerId);
   if (!player) return undefined;

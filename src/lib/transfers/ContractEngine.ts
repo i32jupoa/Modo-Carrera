@@ -13,7 +13,7 @@
  */
 
 import { teamById } from "@/data/teams";
-import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
+import { CONTRACT_RULES, POSITION_AGE_CURVE, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
 import { maxWageOffer, needsToSell } from "./BudgetManager";
 import {
@@ -48,7 +48,11 @@ export interface RenewalOutcome {
 /** Años de contrato que un club ofrece según la edad del jugador. */
 export function contractYearsForAge(age: number): number {
   const entry = CONTRACT_RULES.yearsByAge.find((row) => age <= row.maxAge);
-  return clamp(entry ? entry.years : CONTRACT_RULES.minYears, CONTRACT_RULES.minYears, CONTRACT_RULES.maxYears);
+  return clamp(
+    entry ? entry.years : CONTRACT_RULES.minYears,
+    CONTRACT_RULES.minYears,
+    CONTRACT_RULES.maxYears,
+  );
 }
 
 /** Nuevo contrato tras una renovación. */
@@ -75,7 +79,9 @@ export function clubWantsToRenew(clubId: string, playerId: string, cacheKey: str
   const report = getSquadReport(clubId, cacheKey);
   const profile = getClubProfile(clubId);
 
-  if (player.age > CONTRACT_RULES.maxRenewalAge && player.ovr < report.startingRating) return false;
+  // Un portero de 34 sigue en su prime; un lateral de 34, normalmente no.
+  const renewalCurve = POSITION_AGE_CURVE[player.group];
+  if (player.age > renewalCurve.declineEnd && player.ovr < report.startingRating) return false;
 
   const isYoungProspect =
     player.age <= SQUAD_LIMITS.youngAge && player.potential >= report.startingRating - 1;
@@ -107,7 +113,10 @@ export function attemptRenewal(clubId: string, playerId: string, cacheKey: strin
 
   const ceiling = maxWageOffer(clubId);
   const ask = decideOnRenewal(playerId, cacheKey);
-  let offeredWage = Math.min(ceiling, Math.round(player.contract.wage * CONTRACT_RULES.renewalRaise));
+  let offeredWage = Math.min(
+    ceiling,
+    Math.round(player.contract.wage * CONTRACT_RULES.renewalRaise),
+  );
   let decision = decideOnRenewal(playerId, cacheKey, offeredWage);
 
   if (!decision.accepted && ask.wageRequested <= ceiling) {
@@ -168,7 +177,11 @@ export function saleReasonFor(
 ): TransferListReason | null {
   if (isKeyPlayer(player.id, cacheKey)) return null;
   if (player.contract.yearsLeft <= CONTRACT_RULES.minYears - 1) return "contract-ending";
-  if (player.age >= SQUAD_LIMITS.veteranAge && player.ovr < report.startingRating) return "too-old";
+  if (
+    player.age >= POSITION_AGE_CURVE[player.group].declineEnd &&
+    player.ovr < report.startingRating
+  )
+    return "too-old";
   if (report.surplus.includes(player.group) && player.ovr < report.startingRating) return "surplus";
   if (player.ovr <= report.startingRating - SQUAD_LIMITS.benchGapForSale) return "no-minutes";
   if (wantsOut(player.id, cacheKey) && player.ovr < report.startingRating) return "no-minutes";

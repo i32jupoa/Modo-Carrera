@@ -17,7 +17,6 @@ import { BALANCE, MARKET_TIMING } from "./constants";
 import { getMarketIndex } from "./PlayerIndex";
 import { getClubProfile } from "./ClubStrategy";
 import { needsToSell, refillForNewWindow } from "./BudgetManager";
-import { isSummerTransferWindow, isWinterTransferWindow, parseDateOnly } from "../transferWindows";
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
 import { clubWantsToActToday, priorityNeeds, runClubTransferCycle } from "./TransferEngine";
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
@@ -42,9 +41,9 @@ function parseDate(date: string): { year: number; month: number; day: number } {
 
 /** Ventana de mercado abierta en una fecha. */
 export function windowForDate(date: string): MarketWindow {
-  const day = parseDateOnly(date);
-  if (isSummerTransferWindow(day)) return "summer";
-  if (isWinterTransferWindow(day)) return "winter";
+  const { month } = parseDate(date);
+  if (month >= 7 && month <= 8) return "summer";
+  if (month === 1) return "winter";
   return "closed";
 }
 
@@ -188,7 +187,12 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
 // ============================================================================
 
 /** Acciones que puede tomar un club en su turno diario. */
-function runClubDay(clubId: string, date: string, state: MarketSimulationState, result: MarketDayResult): void {
+function runClubDay(
+  clubId: string,
+  date: string,
+  state: MarketSimulationState,
+  result: MarketDayResult,
+): void {
   const window = clubWindowState(clubId);
   const profile = getClubProfile(clubId);
   const rumors: Array<Rumor | null> = [];
@@ -262,11 +266,13 @@ export function simulateDay(date: string): MarketDayResult {
   if (!internals) initializeSimulation(date);
   let sim = internals!;
 
-  // Cambio de temporada: contratos que caducan y cedidos que vuelven.
+  // Cambio de temporada: contratos que caducan y cedidos que vuelven (las
+  // cesiones con obligación de compra se convierten en traspaso firme aquí).
   const season = seasonOf(date);
+  let seasonLoanReturns: ReturnType<typeof resolveLoansEndOfSeason> = [];
   if (season > sim.lastSeasonRolled) {
     advanceSeason(date);
-    resolveLoansEndOfSeason(date);
+    seasonLoanReturns = resolveLoansEndOfSeason(date);
     sim.lastSeasonRolled = season;
   }
 
@@ -295,6 +301,12 @@ export function simulateDay(date: string): MarketDayResult {
     renewals: 0,
     loans: 0,
   };
+
+  // Las obligaciones de compra ejecutadas hoy son traspasos como cualquier
+  // otro: que aparezcan en el resumen del día es lo que antes faltaba.
+  for (const loanReturn of seasonLoanReturns) {
+    if (loanReturn.purchase) result.transfers.push(loanReturn.purchase);
+  }
 
   // Las negociaciones paradas caducan antes de que nadie abra otras nuevas.
   expireStaleNegotiations(date);

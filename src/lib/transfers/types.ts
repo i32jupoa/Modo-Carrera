@@ -81,6 +81,16 @@ export interface MarketPlayer {
   loanClubId: string | null;
   /** Minutos acumulados en la temporada (aproximación para decisiones). */
   minutesShare: number;
+  /**
+   * Atributos de estilo 0..99 (de los datos base de EA FC), usados sólo para
+   * el encaje táctico con la identidad de reclutamiento del club.
+   */
+  attributes: {
+    pace: number;
+    passing: number;
+    physical: number;
+    defending: number;
+  };
 }
 
 // ============================================================================
@@ -117,6 +127,18 @@ export interface ClubProfile {
   buyingWillingness: number;
   /** País del club (derivado de su liga). */
   country: string;
+  /**
+   * Identidad táctica de reclutamiento (0..1 cada una, no tienen que sumar 1).
+   * Un club de posesión pesa mucho `passing`; uno de presión/contragolpe,
+   * `pace`; uno físico, `physical`; uno disciplinado atrás, `defending`.
+   * Así el Manchester City y el Atlético no persiguen al mismo delantero.
+   */
+  style: {
+    pace: number;
+    passing: number;
+    physical: number;
+    defending: number;
+  };
 }
 
 /** Situación económica de un club. */

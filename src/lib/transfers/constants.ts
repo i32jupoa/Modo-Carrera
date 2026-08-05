@@ -35,14 +35,15 @@ export const MARKET_TIMING = {
 // ============================================================================
 
 /** Plantilla objetivo por demarcación. */
-export const IDEAL_SQUAD_SHAPE: Record<PositionGroup, { min: number; ideal: number; max: number }> = {
-  GK: { min: 2, ideal: 3, max: 4 },
-  CB: { min: 3, ideal: 4, max: 6 },
-  FB: { min: 3, ideal: 4, max: 6 },
-  CM: { min: 4, ideal: 6, max: 8 },
-  WING: { min: 3, ideal: 4, max: 6 },
-  ST: { min: 2, ideal: 3, max: 5 },
-};
+export const IDEAL_SQUAD_SHAPE: Record<PositionGroup, { min: number; ideal: number; max: number }> =
+  {
+    GK: { min: 2, ideal: 3, max: 4 },
+    CB: { min: 3, ideal: 4, max: 6 },
+    FB: { min: 3, ideal: 4, max: 6 },
+    CM: { min: 4, ideal: 6, max: 8 },
+    WING: { min: 3, ideal: 4, max: 6 },
+    ST: { min: 2, ideal: 3, max: 5 },
+  };
 
 export const SQUAD_LIMITS = {
   /** Tamaño mínimo de plantilla antes de bloquear ventas. */
@@ -60,20 +61,68 @@ export const SQUAD_LIMITS = {
 } as const;
 
 // ============================================================================
+// EDAD SEGÚN POSICIÓN
+// ----------------------------------------------------------------------------
+// Antes había una única curva de edad para todo el mundo: un portero de 34 y
+// un lateral de 34 se trataban igual de "viejos". No tiene sentido: un
+// portero suele rendir a gran nivel bien entrados los 30 y un extremo,
+// normalmente no. `peakStart`/`peakEnd` marcan el tramo de mejor rendimiento
+// y `declineEnd` el punto a partir del cual el club empieza a considerarlo
+// veterano de verdad (se usa en fichajes, renovaciones y ventas).
+// ============================================================================
+
+export const POSITION_AGE_CURVE: Record<
+  PositionGroup,
+  { peakStart: number; peakEnd: number; declineEnd: number }
+> = {
+  GK: { peakStart: 27, peakEnd: 34, declineEnd: 38 },
+  CB: { peakStart: 25, peakEnd: 31, declineEnd: 35 },
+  FB: { peakStart: 24, peakEnd: 29, declineEnd: 33 },
+  CM: { peakStart: 24, peakEnd: 30, declineEnd: 34 },
+  WING: { peakStart: 23, peakEnd: 28, declineEnd: 32 },
+  ST: { peakStart: 23, peakEnd: 29, declineEnd: 33 },
+};
+
+// ============================================================================
+// RACIONALIDAD DE LA IA
+// ----------------------------------------------------------------------------
+// Ningún director deportivo acierta siempre. Estos parámetros introducen
+// errores de juicio controlados y deterministas (mismo club + jugador + día
+// siempre produce el mismo resultado, para no romper la reproducibilidad),
+// de forma que el mercado deje de ser perfectamente racional en cada operación.
+// ============================================================================
+
+export const DECISION_ACCURACY = {
+  /** Probabilidad de que un club se "encandile" con un nombre conocido y
+   *  puntúe a un jugador estrella por encima de lo que le corresponde,
+   *  aunque encaje mal con la necesidad real del equipo. */
+  starstruckChance: 0.07,
+  /** Puntos extra (sobre la puntuación 0..1) que da ese encandilamiento. */
+  starstruckBonus: 0.18,
+  /** Probabilidad de que un club esté "generoso" en una negociación concreta
+   *  y abra más cerca de su techo de gasto de lo habitual (paga de más). */
+  generousMoodChance: 0.15,
+  /** Cuánto se acerca al techo de gasto un club generoso al abrir la oferta. */
+  generousMoodBoost: 0.12,
+} as const;
+
+// ============================================================================
 // PUNTUACIÓN DE CANDIDATOS
 // ============================================================================
 
 /** Pesos del sistema de puntuación de fichajes (suman 1). */
 export const SCORE_WEIGHTS = {
   need: 0.26,
-  quality: 0.2,
-  potential: 0.14,
+  quality: 0.16,
+  potential: 0.12,
   age: 0.1,
   price: 0.14,
   wage: 0.06,
   nationality: 0.04,
   league: 0.03,
-  prestige: 0.03,
+  prestige: 0.02,
+  /** Encaje con la identidad táctica del club (posesión, pace, físico...). */
+  style: 0.07,
 } as const;
 
 export const SEARCH_LIMITS = {
