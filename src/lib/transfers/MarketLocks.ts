@@ -50,6 +50,35 @@ export function isUserApprovedMove(): boolean {
   return userApprovedDepth > 0;
 }
 
+/**
+ * Club protegido: el del usuario. Nadie entra ni sale de esa plantilla si no
+ * es dentro de una operación que él haya cerrado. Se guarda aquí (y no sólo
+ * en el puente de presupuesto) porque este módulo no depende de ningún otro
+ * y sobrevive a los desmontajes de React.
+ */
+let protectedClubId: string | null = null;
+
+/** Fija el club del usuario protegido frente a la simulación. */
+export function setProtectedClubId(clubId: string | null): void {
+  if (clubId) protectedClubId = clubId;
+}
+
+/** Club del usuario protegido, si se conoce. */
+export function getProtectedClubId(): string | null {
+  return protectedClubId;
+}
+
+/**
+ * ¿Este movimiento toca la plantilla del usuario sin su aprobación?
+ * Cubre tanto salidas (venta, cesión, fin de contrato) como entradas.
+ */
+export function isBlockedUserMove(fromClubId: string | null, toClubId: string | null): boolean {
+  if (!protectedClubId) return false;
+  if (isUserApprovedMove()) return false;
+  const touchesUser = fromClubId === protectedClubId || toClubId === protectedClubId;
+  return touchesUser && fromClubId !== toClubId;
+}
+
 /** Fija la ventana activa. Al cambiar de ventana se liberan los cerrojos. */
 export function setLockWindow(key: string): void {
   if (key === activeWindowKey) return;

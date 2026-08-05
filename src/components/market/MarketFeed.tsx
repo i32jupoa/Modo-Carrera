@@ -10,6 +10,14 @@ import {
 } from "@/lib/transfers";
 import type { UserDeal } from "@/lib/transfers";
 import { TeamLogo } from "@/components/TeamLogo";
+import { LeagueLogo } from "@/components/LeagueLogo";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Props {
   rumors: Rumor[];
@@ -156,34 +164,45 @@ export function MarketFeed({ rumors, history, summary, userDeals = [], myTeamId 
       {/* Filtros del feed */}
       <div className="panel p-3 flex flex-wrap items-center gap-2">
         <span className="text-xs uppercase tracking-wider text-muted-foreground mr-1">Filtrar por</span>
-        <select
+        <Select
           value={scope}
-          onChange={(e) => {
-            setScope(e.target.value as Scope);
+          onValueChange={(value) => {
+            setScope(value as Scope);
             setTeamId("all");
           }}
-          className="bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
         >
-          <option value="all">Todas las ligas</option>
-          <option value="top5">5 grandes ligas</option>
-          {leagueOptions.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.flag} {l.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={teamId}
-          onChange={(e) => setTeamId(e.target.value)}
-          className="bg-secondary border border-border rounded-lg px-3 py-2 text-sm max-w-[16rem]"
-        >
-          <option value="all">Todos los equipos</option>
-          {teamOptions.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="w-[15rem] bg-secondary">
+            <SelectValue placeholder="Todas las ligas" />
+          </SelectTrigger>
+          <SelectContent className="max-h-80">
+            <SelectItem value="all">Todas las ligas</SelectItem>
+            <SelectItem value="top5">5 grandes ligas</SelectItem>
+            {leagueOptions.map((l) => (
+              <SelectItem key={l.id} value={l.id}>
+                <span className="flex items-center gap-2">
+                  <LeagueLogo league={l.name} size="sm" fallback={<span>{l.flag}</span>} />
+                  <span className="truncate">{l.name}</span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={teamId} onValueChange={setTeamId}>
+          <SelectTrigger className="w-[15rem] bg-secondary">
+            <SelectValue placeholder="Todos los equipos" />
+          </SelectTrigger>
+          <SelectContent className="max-h-80">
+            <SelectItem value="all">Todos los equipos</SelectItem>
+            {teamOptions.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                <span className="flex items-center gap-2">
+                  <ClubBadge clubId={t.id} size={18} />
+                  <span className="truncate">{t.name}</span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {(scope !== "all" || teamId !== "all") && (
           <button
             type="button"

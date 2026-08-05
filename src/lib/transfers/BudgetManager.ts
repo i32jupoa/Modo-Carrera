@@ -11,6 +11,7 @@ import { BUDGET_RULES, WAGE_RULES } from "./constants";
 import { getClubProfile, NO_DISCOUNT_LEAGUES, SAUDI_LEAGUE_ID, TOP5_LEAGUES } from "./ClubStrategy";
 import { getClubPlayers } from "./PlayerIndex";
 import { clamp } from "./random";
+import { getProtectedClubId, setProtectedClubId } from "./MarketLocks";
 import type { ClubFinances, ClubProfile } from "./types";
 
 /**
@@ -90,6 +91,10 @@ let userBridge: UserClubBridge | null = null;
 /** Conecta el presupuesto del club del usuario con el estado de la partida. */
 export function setUserClubBridge(bridge: UserClubBridge | null): void {
   userBridge = bridge;
+  // El club protegido se recuerda aunque el puente se desmonte (React puede
+  // desmontar y volver a montar el reloj del mercado): así la simulación
+  // nunca queda un instante sin la barrera del club del usuario.
+  if (bridge) setProtectedClubId(bridge.clubId);
 }
 
 /**
@@ -100,7 +105,7 @@ export function setUserClubBridge(bridge: UserClubBridge | null): void {
  * diaria de club contra club.
  */
 export function getUserClubId(): string | null {
-  return userBridge?.clubId ?? null;
+  return userBridge?.clubId ?? getProtectedClubId();
 }
 
 /** ¿Este club es el del usuario y tiene puente activo? */

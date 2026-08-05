@@ -562,18 +562,33 @@ function TransfersPage() {
                   <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
                     Equipo
                   </label>
-                  <select
+                  <Select
                     value={filters.team}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, team: e.target.value }))}
+                    onValueChange={(value) => setFilters((prev) => ({ ...prev, team: value }))}
                     disabled={filters.league === "all"}
-                    className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {teamOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Equipo: Todos" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-80">
+                      {teamOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.value === "all" ? (
+                            <span>{opt.label}</span>
+                          ) : (
+                            <span className="flex items-center gap-2">
+                              <TeamLogo
+                                teamName={opt.label}
+                                leagueName={LEAGUES[filters.league as LeagueId]?.name || ""}
+                                size={18}
+                              />
+                              <span className="truncate">{opt.label}</span>
+                            </span>
+                          )}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <SelectField

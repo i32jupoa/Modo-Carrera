@@ -15,6 +15,7 @@ import { getAllTeams, teamKeyFromName, type Team } from "@/data/teams";
 import { marketValueFor } from "@/data/players";
 import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { clamp, seededRange, seededUnit } from "./random";
+import { isBlockedUserMove } from "./MarketLocks";
 import {
   POSITION_GROUPS,
   type Contract,
@@ -370,12 +371,18 @@ export function reassignPlayerClub(
   playerId: string,
   clubId: string | null,
   leagueId?: string,
+  options?: { force?: boolean },
 ): void {
   const index = getMarketIndex();
   const player = index.byId.get(playerId);
   if (!player) return;
 
   const previousClubId = player.clubId;
+
+  // Barrera del club del usuario: nadie entra ni sale de su plantilla si no
+  // es dentro de una operación que él haya cerrado (o una sincronización
+  // explícita con el estado real de la partida, que pasa `force`).
+  if (!options?.force && isBlockedUserMove(previousClubId, clubId)) return;
 
   if (player.clubId) removeFrom(index.byClub, player.clubId, playerId);
   else index.freeAgents.delete(playerId);

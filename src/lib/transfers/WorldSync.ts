@@ -75,7 +75,9 @@ export function hydrateWorld(): void {
     if (!player) continue;
     const target = clubId === "" ? null : clubId;
     if (player.clubId === target) continue;
-    reassignPlayerClub(playerId, target, target ? teamById(target).league : "free");
+    reassignPlayerClub(playerId, target, target ? teamById(target).league : "free", {
+      force: true,
+    });
   }
 
   // 2) La plantilla del usuario manda sobre cualquier otra fuente.
@@ -87,18 +89,13 @@ export function hydrateWorld(): void {
   for (const playerId of roster) {
     const player = getPlayer(playerId);
     if (player && player.clubId !== myTeamId) {
-      reassignPlayerClub(playerId, myTeamId, league);
+      reassignPlayerClub(playerId, myTeamId, league, { force: true });
     }
   }
-
-  for (const player of index.byClub.get(myTeamId)
-    ? Array.from(index.byClub.get(myTeamId)!)
-    : []) {
-    if (roster.has(player)) continue;
-    // Estaba en tu equipo según los datos base pero ya no está en tu plantilla:
-    // lo vendiste antes de que existiera el mercado, queda sin club.
-    reassignPlayerClub(player, null, "free");
-  }
+  // Nota: los jugadores que el índice sitúa en tu club pero no aparecen en tu
+  // plantilla NO se liberan. Antes se les dejaba sin club y la IA los fichaba
+  // como agentes libres (el caso de Rodrygo al Aston Villa): cualquier hueco
+  // entre `rosterIds` y el índice se resolvía sacando gente de tu equipo.
 
   // La hidratación no debe reescribir el store con lo que acaba de leer.
   pending.clear();

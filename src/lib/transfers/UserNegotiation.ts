@@ -719,7 +719,11 @@ export interface IncomingResponseResult extends FinalizeResult {
   deal?: UserDeal;
 }
 
-/** El usuario acepta vender: comprueba antes que el jugador quiera irse. */
+/**
+ * El usuario acepta vender. La decisión es suya y sólo suya: si acepta la
+ * oferta, la venta se cierra. El jugador puede quejarse (mensaje), pero no
+ * puede vetar su salida del club del usuario.
+ */
 export function acceptIncomingOffer(dealId: string, date: string): IncomingResponseResult {
   const deal = deals.get(dealId);
   if (!deal || deal.direction !== "out" || deal.stage !== "incoming") {
@@ -732,12 +736,12 @@ export function acceptIncomingOffer(dealId: string, date: string): IncomingRespo
     cacheKey: cacheKeyFor(date),
     deadlineDay: deadlineToday(date),
   });
-  deal.playerMessage = decision.message;
-  if (decision.verdict === "rejected-project" || decision.verdict === "rejected-wage") {
-    deal.stage = "failed";
-    log(deal, date, decision.message);
-    return { ok: false, reason: decision.message, deal };
-  }
+  const reluctant =
+    decision.verdict === "rejected-project" || decision.verdict === "rejected-wage";
+  deal.playerMessage = reluctant
+    ? `${decision.message} Aun así, el club ha decidido su salida.`
+    : decision.message;
+  if (reluctant) log(deal, date, deal.playerMessage);
   deal.stage = "ready";
   log(deal, date, "Acuerdo total: la venta puede cerrarse.");
   const result = finalizeUserDeal(deal.id, date);
@@ -757,7 +761,8 @@ export function counterIncomingOffer(
   if (deal.rounds >= MARKET_TIMING.maxNegotiationRounds) {
     return { ok: false, reason: "El club no negociará más rondas." };
   }
-  deal.clubDemand = Math.max(deal.offer.amount, Math.round(demand));
+  // La cantidad la pone el usuario: se respeta exactamente lo que pide.
+  deal.clubDemand = Math.max(0, Math.round(demand));
   deal.stage = "waiting-club";
   deal.respondsOn = addDays(date, seededInt(1, 2, deal.id, deal.rounds));
   log(deal, date, `Has pedido ${fmt(deal.clubDemand)} para negociar la salida.`);

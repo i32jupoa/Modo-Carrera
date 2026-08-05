@@ -2062,6 +2062,84 @@ export function loadSave(): SaveGame | null {
 
 
 
+/**
+ * Aligera la partida antes de guardarla.
+ *
+ * Cada partido simulado guardaba narración, estadísticas y notas de los 22
+ * jugadores. Con todas las ligas, copas y Champions eso desbordaba la cuota de
+ * `localStorage` ("exceeded the quota") a mitad de temporada. Aquí se conserva
+ * el resultado, los goles y las tarjetas (lo que alimenta clasificaciones,
+ * pichichis y sanciones) y se descarta el detalle pesado, salvo en los últimos
+ * partidos de tu equipo, que son los que puedes volver a abrir.
+ */
+const DETAILED_MATCHES_KEPT = 6;
+
+function slimResult(result: any, keepDetail: boolean): any {
+  if (!result) return result;
+  if (keepDetail) return result;
+  const { highlights, stats, ratings, mvp, extraTime, ...rest } = result;
+  const slimExtra = extraTime
+    ? { homeGoals: extraTime.homeGoals, awayGoals: extraTime.awayGoals, events: extraTime.events ?? [] }
+    : undefined;
+  return slimExtra ? { ...rest, extraTime: slimExtra } : rest;
+}
+
+function slimFixtures(list: any[] | undefined, myTeamId: string, detailedIds: Set<string>): any[] {
+  if (!Array.isArray(list)) return list as any;
+  return list.map((f) => {
+    if (!f?.result) return f;
+    const mine = f.homeId === myTeamId || f.awayId === myTeamId;
+    return { ...f, result: slimResult(f.result, mine && detailedIds.has(f.id)) };
+  });
+}
+
+export function slimSave(s: SaveGame): SaveGame {
+  try {
+    const myTeamId = s.myTeamId;
+    // Los últimos partidos jugados por tu equipo mantienen todo el detalle.
+    const played: any[] = [];
+    const collect = (list: any) => {
+      if (!Array.isArray(list)) return;
+      for (const f of list) {
+        if (f?.result && (f.homeId === myTeamId || f.awayId === myTeamId)) played.push(f);
+      }
+    };
+    for (const lg of Object.keys(s.fixtures ?? {})) collect((s.fixtures as any)[lg]);
+    for (const lg of Object.keys(s.cupFixtures ?? {})) collect((s.cupFixtures as any)[lg]);
+    collect(s.uclFixtures);
+    const detailedIds = new Set<string>(
+      played.slice(-DETAILED_MATCHES_KEPT).map((f) => String(f.id)),
+    );
+
+    const fixtures: any = {};
+    for (const lg of Object.keys(s.fixtures ?? {})) {
+      fixtures[lg] = slimFixtures((s.fixtures as any)[lg], myTeamId, detailedIds);
+    }
+    const cupFixtures: any = {};
+    for (const lg of Object.keys(s.cupFixtures ?? {})) {
+      cupFixtures[lg] = slimFixtures((s.cupFixtures as any)[lg], myTeamId, detailedIds);
+    }
+    const ucl: any = s.ucl
+      ? {
+          ...s.ucl,
+          fixtures: Array.isArray((s.ucl as any).fixtures)
+            ? slimFixtures((s.ucl as any).fixtures, myTeamId, detailedIds)
+            : (s.ucl as any).fixtures,
+        }
+      : s.ucl;
+
+    return {
+      ...s,
+      fixtures,
+      cupFixtures,
+      uclFixtures: slimFixtures(s.uclFixtures, myTeamId, detailedIds),
+      ucl,
+    };
+  } catch {
+    return s;
+  }
+}
+
 export function saveSave(s: SaveGame) {
 
 
@@ -2078,8 +2156,13 @@ export function saveSave(s: SaveGame) {
 
 
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-  try { persistCurrentSave(s); } catch (e) { console.error("persistCurrentSave failed", e); }
+  const slim = slimSave(s);
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+  } catch (e) {
+    console.warn("saveSave: almacenamiento lleno", (e as Error)?.message);
+  }
+  try { persistCurrentSave(slim); } catch (e) { console.error("persistCurrentSave failed", e); }
 
 
 
