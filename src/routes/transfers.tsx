@@ -742,6 +742,7 @@ function TransfersPage() {
       {tab === "feed" && (
         <MarketFeed
           rumors={market.rumors}
+          windowRumors={market.windowRumors}
           history={market.history}
           summary={market.summary}
           userDeals={market.deals}

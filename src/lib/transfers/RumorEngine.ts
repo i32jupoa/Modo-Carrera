@@ -30,12 +30,27 @@ function alreadyPublished(id: string): boolean {
   return rumors.some((rumor) => rumor.id === id);
 }
 
+/** Rumores ya publicados por un club en una fecha concreta. */
+function publishedTodayBy(clubId: string, date: string): number {
+  let count = 0;
+  for (let i = rumors.length - 1; i >= 0; i -= 1) {
+    const rumor = rumors[i]!;
+    if (rumor.date !== date) break;
+    if (rumor.clubId === clubId) count += 1;
+  }
+  return count;
+}
+
 function publish(rumor: Rumor): Rumor | null {
   if (alreadyPublished(rumor.id)) return null;
+  // Un mismo club no puede acaparar el feed: como mucho, un par de noticias
+  // suyas al día. El resto simplemente no se publica.
+  if (publishedTodayBy(rumor.clubId, rumor.date) >= RUMOR_RULES.maxPerClubPerDay) return null;
   rumors.push(rumor);
   if (rumors.length > RUMOR_RULES.maxStored) rumors.splice(0, rumors.length - RUMOR_RULES.maxStored);
   return rumor;
 }
+
 
 // ============================================================================
 // GENERADORES
@@ -174,6 +189,19 @@ export function freshRumors(date: string, limit = 20): Rumor[] {
     .filter((rumor) => Number.isNaN(now) || now - Date.parse(rumor.date) <= window)
     .slice(0, limit);
 }
+
+/**
+ * Rumores publicados desde una fecha (incluida), de más reciente a más
+ * antiguo. Se usa para ver la ventana de mercado completa de un club.
+ */
+export function rumorsSince(since: string, limit = 1000): Rumor[] {
+  return [...rumors]
+    .reverse()
+    .filter((rumor) => rumor.date >= since)
+    .slice(0, limit);
+}
+
+
 
 /** Vacía los rumores (al cargar otra partida). */
 export function resetRumors(): void {

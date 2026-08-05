@@ -21,6 +21,8 @@ import {
 
 interface Props {
   rumors: Rumor[];
+  /** Rumores de toda la ventana de mercado, para los filtros por club. */
+  windowRumors?: Rumor[];
   history: TransferRecord[];
   summary: TransferSummary | null;
   /** Negociaciones del usuario, para el filtro "mi club". */
@@ -87,7 +89,14 @@ function ClubBadge({ clubId, size = 20 }: { clubId: string | null; size?: number
 }
 
 /** Rumores del día y últimas operaciones cerradas por toda la liga. */
-export function MarketFeed({ rumors, history, summary, userDeals = [], myTeamId = null }: Props) {
+export function MarketFeed({
+  rumors,
+  windowRumors,
+  history,
+  summary,
+  userDeals = [],
+  myTeamId = null,
+}: Props) {
   const [scope, setScope] = useState<Scope>("all");
   const [teamId, setTeamId] = useState<string>("all");
 
@@ -125,19 +134,36 @@ export function MarketFeed({ rumors, history, summary, userDeals = [], myTeamId 
   const noFilter = scope === "all" && teamId === "all";
 
   const filteredHistory = useMemo(() => {
-    const ordered = history.slice().reverse();
+    // `history` ya llega del motor de más reciente a más antiguo. Reordenamos
+    // por fecha descendente (estable) para que arriba salga siempre lo último.
+    const ordered = history
+      .map((record, index) => ({ record, index }))
+      .sort((a, b) =>
+        a.record.date === b.record.date
+          ? a.index - b.index
+          : a.record.date < b.record.date
+            ? 1
+            : -1,
+      )
+      .map((entry) => entry.record);
     if (noFilter) return ordered.slice(0, 60);
+    // Con un filtro activo se muestra el historial completo de esa liga o
+    // club en la ventana, no sólo las últimas operaciones.
     return ordered
       .filter((r) => clubInScope(r.fromClubId) || clubInScope(r.toClubId))
-      .slice(0, 60);
+      .slice(0, 400);
   }, [history, clubInScope, noFilter]);
+
 
   const filteredRumors = useMemo(() => {
     if (noFilter) return rumors;
-    return rumors.filter(
+    // Al filtrar se lee el histórico completo de la ventana (los rumores
+    // "frescos" son sólo de los últimos días).
+    const source = windowRumors && windowRumors.length > 0 ? windowRumors : rumors;
+    return source.filter(
       (rumor) => clubInScope(rumor.clubId) || clubInScope(playerClubOf(rumor.playerId)),
     );
-  }, [rumors, clubInScope, noFilter]);
+  }, [rumors, windowRumors, clubInScope, noFilter]);
 
   // Cuando el filtro apunta a tu club, tus negociaciones abiertas se leen
   // como rumores: las ofertas que haces y las que recibes.

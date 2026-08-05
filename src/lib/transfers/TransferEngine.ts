@@ -37,6 +37,7 @@ import {
 import {
   findCandidates,
   getClubPlayers,
+  getFreeAgents,
   getPlayer,
   onSquadChanged,
   reassignPlayerClub,
@@ -855,6 +856,62 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
 
   return result;
 }
+
+/**
+ * Último recurso de un club que se ha quedado sin hacer nada en la ventana:
+ * firmar a un agente libre que encaje en su necesidad principal. No hay club
+ * vendedor que pueda bloquear la operación, así que sirve para que ningún
+ * equipo termine el mercado completamente parado.
+ */
+export function signBestFreeAgent(clubId: string, date: string): TransferRecord | null {
+  const report = getSquadReport(clubId, date);
+  if (report.size >= SQUAD_LIMITS.maxSquadSize) return null;
+
+  const wageCeiling = maxWageOffer(clubId);
+  const needs = priorityNeeds(clubId, date, 3);
+  if (needs.length === 0) return null;
+
+  for (const need of needs) {
+    const shape = IDEAL_SQUAD_SHAPE[need.group];
+    if (need.count >= shape.max) continue;
+
+    // Nada de estrellas: se busca al mejor agente libre que encaje con el
+    // nivel real de la plantilla, que es el que puede decir que sí.
+    const ceilingOvr = report.startingRating + 1;
+    const options = getFreeAgents()
+      .filter((player) => player.group === need.group && player.ovr <= ceilingOvr)
+      .filter((player) => wageDemand(player.id, clubId) <= wageCeiling)
+      .sort((a, b) => b.ovr - a.ovr)
+      .slice(0, 12);
+
+    for (const player of options) {
+      const wageOffer = Math.round(wageDemand(player.id, clubId));
+      const decision = decideOnMove({
+        playerId: player.id,
+        toClubId: clubId,
+        wageOffer,
+        cacheKey: date,
+      });
+      if (decision.verdict !== "accepted") continue;
+
+      const offer = createTransferOffer({
+        playerId: player.id,
+        playerName: player.name,
+        fromClubId: clubId,
+        toClubId: clubId,
+        amount: 0,
+        wageOffer,
+        type: "free",
+        date,
+      });
+      const record = completeTransfer(offer, date);
+      if (record) return record;
+    }
+  }
+  return null;
+}
+
+
 
 /**
  * Decide de forma determinista si un club se plantea reforzarse hoy.

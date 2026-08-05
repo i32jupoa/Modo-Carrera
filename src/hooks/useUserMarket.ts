@@ -9,6 +9,9 @@ import {
   counterIncomingOffer,
   finalizeUserDeal,
   freshRumors,
+  currentWindowStart,
+  getFinances,
+  rumorsSince,
   getSimulationState,
   improvePlayerTerms,
   improveUserOffer,
@@ -45,6 +48,8 @@ export interface UserMarketApi {
   incoming: UserDeal[];
   outgoing: UserDeal[];
   rumors: Rumor[];
+  /** Rumores de toda la ventana de mercado (para filtrar por club). */
+  windowRumors: Rumor[];
   history: TransferRecord[];
   summary: ReturnType<typeof summarize> | null;
   window: string;
@@ -82,6 +87,9 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     if (!ready || !myTeamId) return;
     const events = advanceUserDeals(myTeamId, currentDate);
     flushWorldMoves();
+    // Con el mercado cerrado no queda nada abierto: las ofertas anuladas se
+    // borran del panel al momento para que no se puedan aceptar fuera de plazo.
+    if (getSimulationState()?.window === "closed") clearFinishedUserDeals();
     if (events.length > 0) {
       for (const event of events.slice(0, 4)) toast.info(event.text);
       saveTransferSystem();
@@ -95,6 +103,12 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const incoming = useMemo(() => deals.filter((d) => d.direction === "out"), [deals]);
   const outgoing = useMemo(() => deals.filter((d) => d.direction === "in"), [deals]);
   const rumors = useMemo(() => (ready ? freshRumors(currentDate, 200) : []), [ready, currentDate, tick]);
+  // Historial completo de la ventana en curso (o de la última cerrada): la UI
+  // lo usa al filtrar por un club concreto.
+  const windowRumors = useMemo(
+    () => (ready ? rumorsSince(currentWindowStart(currentDate), 3000) : []),
+    [ready, currentDate, tick],
+  );
   const history = useMemo(() => (ready ? listTransfers(600) : []), [ready, currentDate, tick]);
   const summary = useMemo(() => (ready ? summarize(listTransfers()) : null), [ready, currentDate, tick]);
 
@@ -107,6 +121,18 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     },
     [refresh],
   );
+
+  /**
+   * Refleja al instante en la partida el presupuesto que ha quedado en el
+   * motor tras un fichaje o una venta (el motor es la única caja del club).
+   */
+  const syncBudget = useCallback(() => {
+    if (!myTeamId) return;
+    const engineBudget = getFinances(myTeamId).budget;
+    if (usePlayersStore.getState().budget !== engineBudget) {
+      usePlayersStore.setState({ budget: Math.max(0, Math.round(engineBudget)) });
+    }
+  }, [myTeamId]);
 
   const scout = useCallback(
     (playerId: string) => (ready && myTeamId ? scoutPlayer(playerId, myTeamId, currentDate) : null),
@@ -196,9 +222,10 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         return;
       }
       flushWorldMoves();
+      syncBudget();
       commit(`Fichaje cerrado por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
     },
-    [currentDate, commit, myTeamId],
+    [currentDate, commit, myTeamId, syncBudget],
   );
 
   const abandonDeal = useCallback(
@@ -231,9 +258,10 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         return;
       }
       flushWorldMoves();
+      syncBudget();
       commit(`Venta cerrada por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
     },
-    [currentDate, commit],
+    [currentDate, commit, syncBudget],
   );
 
   const counterIncoming = useCallback(
@@ -272,6 +300,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     incoming,
     outgoing,
     rumors,
+    windowRumors,
     history,
     summary,
     window: state?.window ?? "closed",

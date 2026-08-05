@@ -18,7 +18,12 @@ import { getMarketIndex } from "./PlayerIndex";
 import { getClubProfile } from "./ClubStrategy";
 import { getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
-import { clubWantsToActToday, priorityNeeds, runClubTransferCycle } from "./TransferEngine";
+import {
+  clubWantsToActToday,
+  priorityNeeds,
+  runClubTransferCycle,
+  signBestFreeAgent,
+} from "./TransferEngine";
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
 import { runClubLoanCycle, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
@@ -62,6 +67,19 @@ export function isDeadlineDay(date: string): boolean {
   if (!last) return false;
   const { month, day } = parseDate(date);
   return month === last.month && day > last.day - MARKET_TIMING.deadlineDays;
+}
+
+/**
+ * Primer día de la ventana de mercado vigente o, si el mercado está cerrado,
+ * de la última ventana que se cerró. La UI lo usa para mostrar el historial
+ * completo de una ventana al filtrar por club.
+ */
+export function currentWindowStart(date: string): string {
+  const { year, month } = parseDate(date);
+  if (month >= 7) return `${year}-07-01`;
+  if (month === 1) return `${year}-01-01`;
+  // Febrero-junio: la última ventana fue el mercado de invierno de ese año.
+  return `${year}-01-01`;
 }
 
 /** Temporada deportiva a la que pertenece la fecha (agosto→junio). */
@@ -193,8 +211,19 @@ function activeShare(state: MarketSimulationState): number {
  */
 export function activeClubsForDate(date: string, state: MarketSimulationState): string[] {
   const share = activeShare(state);
-  return allClubIds().filter((clubId) => clubWantsToActToday(clubId, date, share));
+  // A medida que avanza la ventana, los clubes que todavía no han movido nada
+  // (ni entradas ni salidas) entran con más frecuencia en la rotación: en la
+  // vida real todos los equipos acaban haciendo algún movimiento.
+  const urgency = clamp((state.windowDay - 8) / 45, 0, 1);
+  return allClubIds().filter((clubId) => {
+    if (clubWantsToActToday(clubId, date, share)) return true;
+    if (urgency <= 0) return false;
+    const window = clubWindowState(clubId);
+    if (window.signings + window.sales + window.loans > 0) return false;
+    return seededUnit(clubId, date, "catch-up") < share + urgency * 0.5;
+  });
 }
+
 
 // ============================================================================
 // DÍA DE MERCADO
@@ -234,7 +263,7 @@ function runClubDay(
   if (
     window.loans < MARKET_TIMING.maxSalesPerWindow &&
     windowDeficit(clubId) < MARKET_TIMING.maxWindowDeficit &&
-    seededUnit(clubId, date, "loans") < 0.35
+    seededUnit(clubId, date, "loans") < 0.5
   ) {
     const loanCycle = runClubLoanCycle(clubId, { date, deadlineDay: state.deadlineDay });
     for (const loan of loanCycle.loans) {
@@ -255,13 +284,16 @@ function runClubDay(
   // Un club con saldo negativo en la ventana (más salidas que llegadas) sale
   // a reponer sí o sí: ni la caja ni la pasividad de la temporada le frenan.
   const deficit = windowDeficit(clubId);
+  const idleTooLong = window.signings === 0 && window.sales === 0 && state.windowDay > 20;
   const canBuy =
     window.signings < MARKET_TIMING.maxSigningsPerWindow &&
-    (deficit > 0 || (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)));
+    (deficit > 0 || idleTooLong || (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)));
   if (canBuy) {
-    for (const need of priorityNeeds(clubId, date, state.deadlineDay ? 3 : 2)) {
-      rumors.push(rumorSearching(clubId, need.group, date));
-    }
+    // Una sola nota de "busca refuerzos" al día: el resto de necesidades se
+    // trabajan igual, pero sin inundar el feed.
+    const [firstNeed] = priorityNeeds(clubId, date, state.deadlineDay ? 3 : 2);
+    if (firstNeed) rumors.push(rumorSearching(clubId, firstNeed.group, date));
+
     const maxSignings = Math.max(
       deficit > 0 ? Math.min(deficit, 3) : 1,
       state.deadlineDay && profile.aggression > 0.6 ? 2 : 1,
@@ -285,6 +317,24 @@ function runClubDay(
         if (!transfer.fromClubId) continue;
         clubWindowState(transfer.fromClubId).sales += 1;
       }
+    }
+  }
+
+  // 4. Red de seguridad: si la ventana va muy avanzada y el club sigue sin
+  // mover nada, cierra al menos una incorporación entre los agentes libres.
+  // En la vida real ningún club termina un mercado completamente parado.
+  if (
+    window.signings === 0 &&
+    window.sales === 0 &&
+    window.loans === 0 &&
+    (state.deadlineDay || state.windowDay > 30) &&
+    seededUnit(clubId, date, "free-agent-fallback") < 0.35
+  ) {
+    const record = signBestFreeAgent(clubId, date);
+    if (record) {
+      window.signings += 1;
+      recordTransfers([record]);
+      result.transfers.push(record);
     }
   }
 

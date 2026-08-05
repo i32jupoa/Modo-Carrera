@@ -13,7 +13,7 @@ import type { PositionGroup } from "./types";
 
 export const MARKET_TIMING = {
   /** Porcentaje de clubes que actúan cada día de mercado. */
-  dailyActiveClubShare: 0.16,
+  dailyActiveClubShare: 0.2,
   /** Porcentaje de clubes activos durante el deadline day. */
   deadlineActiveClubShare: 0.5,
   /** Días finales de ventana considerados deadline day. */
@@ -33,7 +33,7 @@ export const MARKET_TIMING = {
    * mercado con más de estas salidas por encima de sus llegadas. Sin este
    * tope, los clubes de la IA perdían seis jugadores y fichaban uno.
    */
-  maxWindowDeficit: 2,
+  maxWindowDeficit: 3,
 } as const;
 
 // ============================================================================
@@ -238,13 +238,23 @@ export const LOAN_RULES = {
 // ============================================================================
 
 export const RUMOR_RULES = {
-  /** Máximo de rumores almacenados. */
-  maxStored: 120,
+  /**
+   * Máximo de rumores almacenados. Alto a propósito: al filtrar por un club
+   * concreto se muestra su ventana de mercado completa, no sólo los últimos
+   * días, así que el histórico tiene que sobrevivir a toda la ventana.
+   */
+  maxStored: 4000,
   /** Probabilidad de publicar un rumor cuando nace un interés. */
-  publishChance: 0.35,
+  publishChance: 0.16,
+  /**
+   * Máximo de rumores que puede protagonizar un mismo club el mismo día.
+   * Evita que el feed se llene de diez noticias seguidas del mismo equipo.
+   */
+  maxPerClubPerDay: 2,
   /** Días que un rumor se considera reciente. */
   freshnessDays: 10,
 } as const;
+
 
 // ============================================================================
 // EQUILIBRIO GENERAL
@@ -265,7 +275,7 @@ export const BALANCE = {
    * daba la sensación de que "no todos los equipos fichan"; ahora solo se
    * abstienen de salir a comprar.
    */
-  dormantClubChance: 0.12,
+  dormantClubChance: 0.05,
   /** Multiplicador de actividad de la ventana de invierno. */
   winterFactor: 0.45,
 } as const;

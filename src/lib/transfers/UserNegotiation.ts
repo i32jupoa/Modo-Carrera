@@ -403,6 +403,9 @@ export interface FinalizeResult {
  * fuera (compra/venta real de la plantilla del usuario).
  */
 export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
+  if (windowForDate(date) === "closed") {
+    return { ok: false, reason: "El mercado de fichajes está cerrado." };
+  }
   const deal = deals.get(dealId);
   if (!deal) return { ok: false, reason: "Negociación no encontrada." };
   if (deal.stage !== "ready") return { ok: false, reason: "El acuerdo todavía no está cerrado." };
@@ -425,8 +428,36 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
 // AVANCE DIARIO
 // ============================================================================
 
+/**
+ * Al cerrarse el mercado, toda negociación abierta (tuya o de los clubes que
+ * pujaban por tus jugadores) se cae al instante: no se puede aceptar una
+ * oferta fuera de plazo.
+ */
+function cancelOpenDealsOnMarketClose(userClubId: string, date: string): UserDealEvent[] {
+  const events: UserDealEvent[] = [];
+  for (const deal of Array.from(deals.values())) {
+    if (deal.userClubId !== userClubId) continue;
+    if (deal.stage === "completed" || deal.stage === "failed") continue;
+    deal.stage = "failed";
+    deal.offer.status = "withdrawn";
+    if (deal.direction === "in") dropInterest(deal.playerId, deal.userClubId);
+    log(deal, date, "El mercado se ha cerrado: la operación queda anulada.");
+    pushEvent(
+      events,
+      deal,
+      deal.direction === "in"
+        ? `Mercado cerrado: se cae la negociación por ${deal.playerName}.`
+        : `Mercado cerrado: retirada la oferta por ${deal.playerName}.`,
+    );
+  }
+  return events;
+}
+
 /** Procesa las respuestas pendientes y genera ofertas de la IA por tus jugadores. */
 export function advanceUserDeals(userClubId: string, date: string): UserDealEvent[] {
+  if (windowForDate(date) === "closed") {
+    return cancelOpenDealsOnMarketClose(userClubId, date);
+  }
   const events: UserDealEvent[] = [];
   for (const deal of Array.from(deals.values())) {
     if (deal.stage === "completed" || deal.stage === "failed") continue;
@@ -725,6 +756,9 @@ export interface IncomingResponseResult extends FinalizeResult {
  * puede vetar su salida del club del usuario.
  */
 export function acceptIncomingOffer(dealId: string, date: string): IncomingResponseResult {
+  if (windowForDate(date) === "closed") {
+    return { ok: false, reason: "El mercado de fichajes está cerrado." };
+  }
   const deal = deals.get(dealId);
   if (!deal || deal.direction !== "out" || deal.stage !== "incoming") {
     return { ok: false, reason: "No hay oferta que aceptar." };
