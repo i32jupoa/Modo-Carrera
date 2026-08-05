@@ -15,7 +15,7 @@
 import { teamById } from "@/data/teams";
 import { CONTRACT_RULES, POSITION_AGE_CURVE, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
-import { maxWageOffer, needsToSell } from "./BudgetManager";
+import { getUserClubId, maxWageOffer, needsToSell } from "./BudgetManager";
 import {
   getClubPlayers,
   getMarketIndex,
@@ -277,7 +277,11 @@ export interface ContractExpiry {
 export function advanceSeason(date: string): ContractExpiry[] {
   const expiries: ContractExpiry[] = [];
 
+  const userClubId = getUserClubId();
   for (const team of getAllClubIds()) {
+    // Los contratos del club del usuario no se resuelven solos: nadie sale de
+    // su plantilla sin que él lo decida.
+    if (userClubId && team === userClubId) continue;
     for (const player of getClubPlayers(team)) {
       const yearsLeft = player.contract.yearsLeft - 1;
       if (yearsLeft >= CONTRACT_RULES.minYears) {

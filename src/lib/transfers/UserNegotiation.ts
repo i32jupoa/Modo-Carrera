@@ -31,6 +31,7 @@ import {
 } from "./NegotiationEngine";
 import { completeTransfer } from "./TransferEngine";
 import { recordTransfer } from "./TransferHistory";
+import { withUserApproval } from "./MarketLocks";
 import { getSimulationState, isDeadlineDay, windowForDate } from "./MarketSimulation";
 import { MARKET_TIMING, WAGE_RULES } from "./constants";
 import { clamp, seededInt, seededUnit } from "./random";
@@ -406,7 +407,7 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
   if (!deal) return { ok: false, reason: "Negociación no encontrada." };
   if (deal.stage !== "ready") return { ok: false, reason: "El acuerdo todavía no está cerrado." };
 
-  const record = completeTransfer(deal.offer, date);
+  const record = withUserApproval(() => completeTransfer(deal.offer, date));
   if (!record) return { ok: false, reason: "No se pudo cerrar la operación." };
   recordTransfer(record);
   deal.stage = "completed";
@@ -806,7 +807,7 @@ export function signFreeAgent(
     type: "free",
     date,
   });
-  const record = completeTransfer(offer, date);
+  const record = withUserApproval(() => completeTransfer(offer, date));
   if (!record) return { ok: false, reason: "No se pudo firmar." };
   recordTransfer(record);
   return { ok: true, record, fee: 0, wage: wageOffer };

@@ -43,6 +43,7 @@ import {
   updatePlayer,
 } from "./PlayerIndex";
 import { getSquadReport, playerImprovesSquad } from "./SquadAnalyzer";
+import { isUserApprovedMove, windowDeficit } from "./MarketLocks";
 import { isAvailable, valuePlayer } from "./MarketValuation";
 import { decideOnMove, wageDemand } from "./PlayerDecision";
 import {
@@ -481,6 +482,23 @@ export function pursueTarget(
     return fail("unavailable", `${player.name} no está en el mercado.`, null);
   }
 
+  // El vendedor también tiene voz: ningún club se queda sin plantilla ni
+  // encadena salidas sin reponer. Si ya ha perdido más gente de la que ha
+  // fichado en esta ventana, cierra la puerta hasta que se refuerce.
+  if (player.clubId) {
+    const sellerReport = getSquadReport(player.clubId, cacheKey);
+    if (sellerReport.size <= SQUAD_LIMITS.minSquadSize) {
+      return fail("unavailable", `${teamById(player.clubId).name} no puede quedarse sin efectivos.`, null);
+    }
+    if (windowDeficit(player.clubId) >= MARKET_TIMING.maxWindowDeficit) {
+      return fail(
+        "unavailable",
+        `${teamById(player.clubId).name} no venderá a nadie más hasta reforzarse.`,
+        null,
+      );
+    }
+  }
+
   const profile = getClubProfile(clubId);
   const spendCeiling = maxSpend(clubId);
   const wageCeiling = maxWageOffer(clubId);
@@ -702,6 +720,14 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
 
   const buyerId = offer.fromClubId;
   const sellerId = player.clubId;
+
+  // Barrera final: un jugador del usuario sólo cambia de club dentro de una
+  // operación que él haya cerrado (`UserNegotiation`). Cualquier otra vía
+  // —IA, cesiones, obligaciones de compra— queda anulada aquí.
+  const userClub = getUserClubId();
+  if (userClub && sellerId === userClub && buyerId !== userClub && !isUserApprovedMove()) {
+    return null;
+  }
   const buyerLeague = teamById(buyerId).league;
   const isLoan =
     offer.type === "loan" || offer.type === "loan-option" || offer.type === "loan-obligation";
@@ -797,7 +823,11 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
   // ningún club compra mientras necesite hacer caja.
   const needs = priorityNeeds(clubId, cacheKey);
   const urgentOnly = report.size >= SQUAD_LIMITS.maxSquadSize;
-  if (needsToSell(clubId)) return result;
+  // Un club al que le faltan jugadores ficha aunque tenga que hacer caja: la
+  // prioridad es mantener una plantilla completa, no el balance.
+  const understaffed =
+    report.size < SQUAD_LIMITS.minSquadSize + 4 || windowDeficit(clubId) > 0;
+  if (needsToSell(clubId) && !understaffed) return result;
 
   for (const need of needs) {
     if (urgentOnly && need.priority !== "critical" && need.priority !== "high") continue;

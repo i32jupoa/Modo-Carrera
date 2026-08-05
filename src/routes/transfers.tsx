@@ -19,8 +19,7 @@ import {
   marketValueEuros,
   mapEaPosition,
   POS_LABEL_ES,
-  FcPlayer,
-} from "@/store/playersStore";
+  FcPlayer, clubOfPlayer } from "@/store/playersStore";
 import { Search, Wallet, UserPlus, Filter, X } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
@@ -604,7 +603,7 @@ function TransfersPage() {
                 const pos = mapEaPosition(p.Position);
                 const teamAvg = teamAverages[p.Team] || 75;
                 const cost = marketValueEuros(p, "", "", teamAvg);
-                const clubId = TEAM_NAME_TO_ID[p.Team];
+                const clubId = clubOfPlayer(id) ?? TEAM_NAME_TO_ID[p.Team];
                 const club = clubId ? teamById(clubId) : null;
                 const negotiating = market.deals.some(
                   (d) => d.playerId === id && d.stage !== "completed" && d.stage !== "failed",

@@ -23,12 +23,40 @@ const settled = new Map<string, string>();
 /** clubId -> nº de jugadores que han llegado en la ventana activa. */
 const arrivals = new Map<string, number>();
 
+/** clubId -> nº de jugadores que se han marchado en la ventana activa. */
+const departures = new Map<string, number>();
+
+/**
+ * Salidas aprobadas explícitamente por el usuario.
+ *
+ * Ningún jugador del club del usuario puede cambiar de equipo si no es dentro
+ * de una operación que él haya cerrado. `UserNegotiation` abre esta ventana
+ * justo antes de ejecutar el acuerdo y la cierra al terminar.
+ */
+let userApprovedDepth = 0;
+
+/** Ejecuta `fn` marcando la operación como aprobada por el usuario. */
+export function withUserApproval<T>(fn: () => T): T {
+  userApprovedDepth += 1;
+  try {
+    return fn();
+  } finally {
+    userApprovedDepth -= 1;
+  }
+}
+
+/** ¿Estamos dentro de una operación aprobada por el usuario? */
+export function isUserApprovedMove(): boolean {
+  return userApprovedDepth > 0;
+}
+
 /** Fija la ventana activa. Al cambiar de ventana se liberan los cerrojos. */
 export function setLockWindow(key: string): void {
   if (key === activeWindowKey) return;
   activeWindowKey = key;
   settled.clear();
   arrivals.clear();
+  departures.clear();
 }
 
 /** Ventana activa para los cerrojos. */
@@ -59,11 +87,33 @@ export function arrivalsFor(clubId: string): number {
   return arrivals.get(clubId) ?? 0;
 }
 
+/** Registra una salida de un club en la ventana activa. */
+export function registerDeparture(clubId: string | null): void {
+  if (!clubId) return;
+  departures.set(clubId, (departures.get(clubId) ?? 0) + 1);
+}
+
+/** Salidas de un club en la ventana activa. */
+export function departuresFor(clubId: string): number {
+  return departures.get(clubId) ?? 0;
+}
+
+/**
+ * Saldo de la ventana: positivo si el club ha perdido más gente de la que ha
+ * fichado. La simulación lo usa para que nadie termine el mercado con media
+ * plantilla.
+ */
+export function windowDeficit(clubId: string): number {
+  return departuresFor(clubId) - arrivalsFor(clubId);
+}
+
 /** Limpia todos los cerrojos (cambio de partida). */
 export function resetMarketLocks(): void {
   activeWindowKey = "";
   settled.clear();
   arrivals.clear();
+  departures.clear();
+  userApprovedDepth = 0;
 }
 
 /**
@@ -71,15 +121,19 @@ export function resetMarketLocks(): void {
  * cerrado dentro de la ventana activa vuelve a bloquear a su jugador.
  */
 export function rebuildLocks(
-  records: readonly { playerId: string; toClubId: string; date: string }[],
+  records: readonly { playerId: string; toClubId: string; fromClubId?: string | null; date: string }[],
   windowKeyOf: (date: string) => string,
 ): void {
   settled.clear();
   arrivals.clear();
+  departures.clear();
   if (!activeWindowKey) return;
   for (const record of records) {
     if (windowKeyOf(record.date) !== activeWindowKey) continue;
     settled.set(record.playerId, activeWindowKey);
     if (record.toClubId) arrivals.set(record.toClubId, (arrivals.get(record.toClubId) ?? 0) + 1);
+    if (record.fromClubId) {
+      departures.set(record.fromClubId, (departures.get(record.fromClubId) ?? 0) + 1);
+    }
   }
 }

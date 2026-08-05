@@ -28,6 +28,12 @@ export const MARKET_TIMING = {
   maxSigningsPerWindow: 6,
   /** Máximo de ventas por club y ventana. */
   maxSalesPerWindow: 8,
+  /**
+   * Saldo negativo máximo de una ventana: un club no puede terminar el
+   * mercado con más de estas salidas por encima de sus llegadas. Sin este
+   * tope, los clubes de la IA perdían seis jugadores y fichaban uno.
+   */
+  maxWindowDeficit: 2,
 } as const;
 
 // ============================================================================

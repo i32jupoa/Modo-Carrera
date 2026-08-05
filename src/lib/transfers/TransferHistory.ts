@@ -7,7 +7,7 @@
  */
 
 import { teamById } from "@/data/teams";
-import { lockPlayer, registerArrival } from "./MarketLocks";
+import { lockPlayer, registerArrival, registerDeparture } from "./MarketLocks";
 import type { TransferRecord, TransferType } from "./types";
 
 /** Todos los traspasos, del más antiguo al más reciente. */
@@ -32,6 +32,7 @@ export function recordTransfer(record: TransferRecord): TransferRecord {
   // misma ventana de mercado.
   lockPlayer(record.playerId);
   registerArrival(record.toClubId);
+  registerDeparture(record.fromClubId);
   pushInto(byPlayer, record.playerId, record);
   if (record.fromClubId) pushInto(byClub, record.fromClubId, record);
   pushInto(byClub, record.toClubId, record);

@@ -23,7 +23,7 @@ import { runClubContractCycle, advanceSeason } from "./ContractEngine";
 import { runClubLoanCycle, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
 import { rumorBidWar, rumorInterest, rumorRenewal, rumorSearching } from "./RumorEngine";
-import { setLockWindow } from "./MarketLocks";
+import { setLockWindow, windowDeficit} from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import type { MarketDayResult, MarketSimulationState, MarketWindow, Rumor } from "./types";
 
@@ -231,7 +231,11 @@ function runClubDay(
   }
 
   // 2. Cesiones: colocar a quien no juega.
-  if (window.loans < MARKET_TIMING.maxSalesPerWindow && seededUnit(clubId, date, "loans") < 0.35) {
+  if (
+    window.loans < MARKET_TIMING.maxSalesPerWindow &&
+    windowDeficit(clubId) < MARKET_TIMING.maxWindowDeficit &&
+    seededUnit(clubId, date, "loans") < 0.35
+  ) {
     const loanCycle = runClubLoanCycle(clubId, { date, deadlineDay: state.deadlineDay });
     for (const loan of loanCycle.loans) {
       if (!loan.agreed) continue;
@@ -248,15 +252,20 @@ function runClubDay(
   // y —si es un club "conservador" esta ventana— si es deadline day (fuera
   // de deadline day, un club dormant no sale a fichar por iniciativa propia,
   // pero sigue pudiendo vender si otro club le hace una oferta).
+  // Un club con saldo negativo en la ventana (más salidas que llegadas) sale
+  // a reponer sí o sí: ni la caja ni la pasividad de la temporada le frenan.
+  const deficit = windowDeficit(clubId);
   const canBuy =
     window.signings < MARKET_TIMING.maxSigningsPerWindow &&
-    !needsToSell(clubId) &&
-    !(window.dormant && !state.deadlineDay);
+    (deficit > 0 || (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)));
   if (canBuy) {
     for (const need of priorityNeeds(clubId, date, state.deadlineDay ? 3 : 2)) {
       rumors.push(rumorSearching(clubId, need.group, date));
     }
-    const maxSignings = state.deadlineDay && profile.aggression > 0.6 ? 2 : 1;
+    const maxSignings = Math.max(
+      deficit > 0 ? Math.min(deficit, 3) : 1,
+      state.deadlineDay && profile.aggression > 0.6 ? 2 : 1,
+    );
     const cycle = runClubTransferCycle(clubId, {
       date,
       deadlineDay: state.deadlineDay,

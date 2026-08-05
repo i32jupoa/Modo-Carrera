@@ -11412,23 +11412,16 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
+        // El club real manda: primero la plantilla del usuario, después los
+        // traspasos ya cerrados (CLUB_OVERRIDES) y sólo al final el club que
+        // traía el JSON base. Sin esto, un jugador fichado por otro club
+        // seguía saliendo con el escudo de su equipo anterior en alineaciones
+        // y clasificaciones individuales.
+        const overriddenClub = clubOfPlayer(playerId);
         const teamIdOverride =
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-          myTeamId && rosterIds.includes(playerId) ? myTeamId : undefined;
+          myTeamId && rosterIds.includes(playerId)
+            ? myTeamId
+            : (overriddenClub ?? undefined);
 
 
 
