@@ -1,17 +1,20 @@
 import { useEffect, useRef } from "react";
 import { usePlayersStore } from "@/store/playersStore";
 import { usePlayersReady } from "@/components/PlayersLoading";
+import { getCurrentSaveId } from "@/lib/savedGames";
 import {
-  clearTransferSave,
-  getSimulationState,
-  isTransferSystemInitialized,
   loadOrInitTransferSystem,
   resetTransferSystem,
   saveTransferSystem,
   setUserClubBridge,
   syncMarketWithGameDate,
 } from "@/lib/transfers";
-import { attachWorldBridge, flushWorldMoves, hydrateWorld } from "@/lib/transfers/WorldSync";
+import {
+  attachWorldBridge,
+  detachWorldBridge,
+  flushWorldMoves,
+  hydrateWorld,
+} from "@/lib/transfers/WorldSync";
 
 /**
  * Reloj del mercado: engancha la simulación al calendario del juego.
@@ -25,6 +28,10 @@ export function useMarketClock(): void {
   const currentDate = usePlayersStore((s) => s.currentDate);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const bootedFor = useRef<string | null>(null);
+  // `undefined` = todavía no se ha arrancado el motor en esta sesión de la
+  // app. Se distingue de `null` (partida sin id, caso límite) para que la
+  // primera carga siempre dispare la inicialización.
+  const bootedForSave = useRef<string | null | undefined>(undefined);
 
   // Presupuesto único: el motor opera directamente sobre el de la partida.
   useEffect(() => {
@@ -43,20 +50,25 @@ export function useMarketClock(): void {
   useEffect(() => {
     if (typeof window === "undefined" || !ready || !currentDate) return;
 
-    if (!isTransferSystemInitialized()) {
-      const { restored } = loadOrInitTransferSystem(currentDate);
-      const state = getSimulationState();
-      // Partida nueva (o guardado de otra partida por delante de la fecha):
-      // se descarta y se arranca limpio desde la fecha actual.
-      if (restored && state && Date.parse(state.lastSimulatedDate) > Date.parse(currentDate)) {
-        resetTransferSystem();
-        clearTransferSave();
-        loadOrInitTransferSystem(currentDate);
-      }
+    const saveId = getCurrentSaveId();
+
+    // Primera carga de esta sesión, o cambio de partida sin recargar la
+    // página (por ejemplo, "Continuar" sobre otra partida desde el menú).
+    // El motor guarda todo en variables de módulo (índice, finanzas,
+    // historial...), así que si no se vacían explícitamente al cambiar de
+    // partida, se seguiría simulando sobre el mundo de la partida anterior.
+    // Cada partida tiene su propia ranura de mercado (ver Persistence.ts),
+    // así que restaurar aquí siempre trae el mercado de ESTA partida y no
+    // el de otra: no hace falta ningún heurístico de fechas para "corregirlo".
+    if (bootedForSave.current !== saveId) {
+      detachWorldBridge();
+      resetTransferSystem();
+      loadOrInitTransferSystem(currentDate);
       // El mercado arranca desde el mundo real de la partida, no desde el JSON.
       attachWorldBridge();
       hydrateWorld();
       saveTransferSystem();
+      bootedForSave.current = saveId;
       bootedFor.current = currentDate;
       return;
     }

@@ -152,6 +152,13 @@ export function addSaveToMultiple(save: SaveGame) {
 export function deleteSave(id: string) {
   if (typeof window === "undefined") return;
   localStorage.removeItem(saveKeyFor(id));
+  // Borra también el mercado de esa partida (import perezoso para evitar un
+  // ciclo de módulos: Persistence.ts ya importa `getCurrentSaveId` de aquí).
+  import("@/lib/transfers/Persistence")
+    .then(({ clearTransferSaveFor }) => clearTransferSaveFor(id))
+    .catch(() => {
+      /* si falla la importación no bloqueamos el borrado de la partida */
+    });
   const saves = loadAllSaves().filter(s => s.id !== id);
   saveMultipleSaves(saves);
   // Si era la partida activa, desactivarla y limpiar estado en memoria
