@@ -11,28 +11,107 @@ import { getAllTeams, teamById, type Team } from "@/data/teams";
 import { clamp, seededRange } from "./random";
 import type { ClubProfile } from "./types";
 
-/** Ligas consideradas de primer nivel para reputación y poder económico. */
-const TOP_LEAGUES: Record<string, number> = {
+/**
+ * Peso económico/reputacional de cada liga cargada en el juego (0 a 1).
+ *
+ * Esta es la ÚNICA tabla de fuerza de liga del juego: la usan tanto el poder
+ * financiero y la reputación de los clubes IA como el presupuesto inicial del
+ * equipo del usuario (`BudgetManager.initialBudget`), así que un mismo club
+ * vale lo mismo lo lleve la IA o el usuario. Antes solo estaban afinadas 8
+ * claves (varias de ellas con ids que ni siquiera existían, como "portugal" o
+ * "saudi" en vez de "ligaportugal"/"roshnsaudileague") y el resto de las ~37
+ * ligas restantes caían todas en el mismo 0.35 genérico. Ahora cada liga
+ * cargada tiene su propio peso, así que ligas "menores" como Argentina,
+ * Turquía o la MLS ya no quedan homogeneizadas entre sí.
+ */
+const LEAGUE_WEIGHT: Record<string, number> = {
+  // Top 5 europeas
   premier: 1,
   laliga: 0.9,
-  seriea: 0.85,
   bundesliga: 0.85,
+  seriea: 0.83,
   ligue1: 0.75,
-  portugal: 0.6,
+  // Ligas "grandes" de segundo nivel económico
+  roshnsaudileague: 0.8, // Arabia Saudí: pocos clubes históricos pero petrodólares
   eredivisie: 0.6,
-  saudi: 0.55,
+  ligaportugal: 0.55,
+  trendyolsperlig: 0.55,
+  championship: 0.55, // segunda inglesa: TV muy rica
+  mls: 0.5,
+  // Segundas divisiones "top 5" y ligas medias europeas
+  laliga2: 0.45,
+  bundesliga2: 0.45,
+  "1aproleague": 0.45, // Bélgica: fuerte en scouting/reventa
+  serieb: 0.42,
+  scottish: 0.42,
+  lpf: 0.4, // Argentina: clubes históricos, economía débil
+  bracksuperleague: 0.4, // Suiza
+  ligue2: 0.38,
+  austrianbundesliga: 0.38,
+  "3fsuperliga": 0.35, // Dinamarca
+  // Ligas menores
+  eliteserien: 0.3, // Noruega
+  allsvenskan: 0.3, // Suecia
+  pkobpekstraklasa: 0.3, // Polonia
+  superliga: 0.28, // Rumanía
+  leagueone: 0.28, // Inglaterra 3ª
+  liga3: 0.25, // Alemania 3ª
+  leaguetwo: 0.22, // Inglaterra 4ª
 };
+
+/** Peso por defecto para cualquier liga que aparezca sin entrada propia. */
+const DEFAULT_LEAGUE_WEIGHT = 0.3;
+
+function leagueWeight(leagueId: string): number {
+  return LEAGUE_WEIGHT[leagueId] ?? DEFAULT_LEAGUE_WEIGHT;
+}
+
+/** Ligas top 5 europeas: no sufren la penalización por liga "menor". */
+export const TOP5_LEAGUES = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
+
+/**
+ * Ligas fuera del top 5 que quedan exentas de la penalización del -20%
+ * (Portugal, Bélgica, Turquía y Países Bajos: mercados de reventa fuertes).
+ */
+export const NO_DISCOUNT_LEAGUES = new Set([
+  "ligaportugal", // Liga Portugal
+  "1aproleague", // 1A Pro League (Bélgica)
+  "trendyolsperlig", // Trendyol Süper Lig (Turquía)
+  "eredivisie", // Eredivisie (Países Bajos)
+]);
+
+/** Liga saudí: recibe un bonus de mercado en vez de penalización. */
+export const SAUDI_LEAGUE_ID = "roshnsaudileague";
 
 const LEAGUE_COUNTRY: Record<string, string> = {
   premier: "England",
+  championship: "England",
+  leagueone: "England",
+  leaguetwo: "England",
   laliga: "Spain",
   laliga2: "Spain",
   seriea: "Italy",
+  serieb: "Italy",
   bundesliga: "Germany",
+  bundesliga2: "Germany",
+  liga3: "Germany",
   ligue1: "France",
-  portugal: "Portugal",
+  ligue2: "France",
+  ligaportugal: "Portugal",
   eredivisie: "Netherlands",
-  saudi: "Saudi Arabia",
+  roshnsaudileague: "Saudi Arabia",
+  trendyolsperlig: "Turkey",
+  mls: "United States",
+  lpf: "Argentina",
+  scottish: "Scotland",
+  "1aproleague": "Belgium",
+  pkobpekstraklasa: "Poland",
+  bracksuperleague: "Switzerland",
+  "3fsuperliga": "Denmark",
+  allsvenskan: "Sweden",
+  eliteserien: "Norway",
+  austrianbundesliga: "Austria",
+  superliga: "Romania",
 };
 
 /** Ajustes manuales de identidad de mercado por club. */
@@ -156,17 +235,20 @@ const CLUB_OVERRIDES: Record<
 };
 
 /** Poder económico base a partir de la calidad deportiva y la liga. */
+/** Poder financiero a partir de una media de calidad (0-1) y una liga, sin depender de un club real. Usado como fallback cuando aún no hay un id de club conocido (p. ej. antes de confirmar la elección de equipo). */
+export function estimateFinancialPower(avgOvr: number, leagueId: string): number {
+  return clamp((avgOvr - 62) / 26, 0, 1) * 0.7 + leagueWeight(leagueId) * 0.3;
+}
+
 function baseFinancialPower(team: Team): number {
   const quality = (team.att + team.mid + team.def) / 3;
-  const leagueWeight = TOP_LEAGUES[team.league] ?? 0.35;
-  return clamp((quality - 62) / 26, 0, 1) * 0.7 + leagueWeight * 0.3;
+  return estimateFinancialPower(quality, team.league);
 }
 
 function baseReputation(team: Team): number {
   const quality = (team.att + team.mid + team.def) / 3;
-  const leagueWeight = TOP_LEAGUES[team.league] ?? 0.3;
   const category = team.category === "Gigante" ? 0.2 : team.category === "Aspirante" ? 0.1 : 0;
-  return clamp(((quality - 60) / 30) * 0.6 + leagueWeight * 0.3 + category, 0, 1);
+  return clamp(((quality - 60) / 30) * 0.6 + leagueWeight(team.league) * 0.3 + category, 0, 1);
 }
 
 /**

@@ -8,16 +8,39 @@
  */
 
 import { BUDGET_RULES, WAGE_RULES } from "./constants";
-import { getClubProfile } from "./ClubStrategy";
+import { getClubProfile, NO_DISCOUNT_LEAGUES, SAUDI_LEAGUE_ID, TOP5_LEAGUES } from "./ClubStrategy";
 import { getClubPlayers } from "./PlayerIndex";
 import { clamp } from "./random";
 import type { ClubFinances, ClubProfile } from "./types";
 
-/** Presupuesto inicial de fichajes según el poder económico del club. */
-function initialBudget(profile: ClubProfile): number {
+/**
+ * Multiplicador de "identidad económica" de la liga: el mismo para todo el
+ * mercado (equipo del usuario y clubes IA por igual), para que un Real Madrid
+ * llevado por la IA y uno llevado por el usuario partan del mismo dinero.
+ *  - Liga saudí: +450% (dinero estatal fuera de escala deportiva).
+ *  - Fuera del top 5 (salvo Portugal/Bélgica/Turquía/Países Bajos): -20%.
+ *  - Resto: sin ajuste.
+ */
+function leagueBudgetMultiplier(leagueId: string): number {
+  if (leagueId === SAUDI_LEAGUE_ID) return 5.5; // +450%
+  if (leagueId && !TOP5_LEAGUES.has(leagueId) && !NO_DISCOUNT_LEAGUES.has(leagueId)) return 0.8; // -20%
+  return 1;
+}
+
+/**
+ * Presupuesto inicial de fichajes según el poder económico y la liga del
+ * club. Es la única fórmula de presupuesto inicial del juego: la usan tanto
+ * los clubes controlados por la IA (`createFinances`) como el equipo elegido
+ * por el usuario (`playersStore.teamInitialBudget`), así que ambos comparten
+ * fórmula y escala en vez de tener dos economías que no se hablan entre sí.
+ */
+export function initialBudget(profile: ClubProfile): number {
   const power = clamp(profile.financialPower, 0, 1);
   // Escala exponencial: los grandes manejan cifras de otro orden.
-  const budget = 2_000_000 + Math.pow(power, 3.2) * 260_000_000;
+  const base = 2_000_000 + Math.pow(power, 3.2) * 260_000_000;
+  // +40% de identidad de mercado global, aplicado a todos los clubes por igual.
+  const withGlobalUplift = base * 1.4;
+  const budget = withGlobalUplift * leagueBudgetMultiplier(profile.leagueId);
   return Math.max(BUDGET_RULES.floor, Math.round(budget));
 }
 

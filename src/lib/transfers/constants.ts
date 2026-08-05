@@ -13,9 +13,9 @@ import type { PositionGroup } from "./types";
 
 export const MARKET_TIMING = {
   /** Porcentaje de clubes que actúan cada día de mercado. */
-  dailyActiveClubShare: 0.12,
+  dailyActiveClubShare: 0.16,
   /** Porcentaje de clubes activos durante el deadline day. */
-  deadlineActiveClubShare: 0.4,
+  deadlineActiveClubShare: 0.5,
   /** Días finales de ventana considerados deadline day. */
   deadlineDays: 3,
   /** Máximo de negociaciones abiertas simultáneas por club. */
@@ -261,14 +261,33 @@ export const BALANCE = {
   minIntensity: 0.45,
   /** Intensidad máxima (mercados locos). */
   maxIntensity: 1.25,
-  /** Probabilidad de que un club decida no moverse en toda la ventana. */
-  dormantClubChance: 0.18,
+  /**
+   * Probabilidad de que un club sea "conservador" en la ventana: no sale a
+   * fichar por iniciativa propia salvo en deadline day. IMPORTANTE: esto ya
+   * no lo deja mudo el resto del tiempo — sigue renovando contratos,
+   * gestionando cesiones y puede vender si otro club le hace una oferta (ver
+   * `MarketSimulation.runClubDay`). Antes excluía al club por completo de la
+   * actividad diaria durante 18% de los clubes × toda la ventana, así que
+   * daba la sensación de que "no todos los equipos fichan"; ahora solo se
+   * abstienen de salir a comprar.
+   */
+  dormantClubChance: 0.12,
   /** Multiplicador de actividad de la ventana de invierno. */
   winterFactor: 0.45,
 } as const;
 
-/** Nombre de la clave de persistencia del mercado. */
-export const MARKET_STORAGE_KEY = "fcsim:market:v2";
+/**
+ * Prefijo de la clave de persistencia del mercado (cada partida añade su
+ * propio id: `${MARKET_STORAGE_KEY_PREFIX}:${saveId}`, ver `Persistence.ts`).
+ * Se llamó "v1" cuando el mercado era una única partida global; el nombre se
+ * mantiene porque cambiarlo invalidaría todas las partidas guardadas, pero
+ * ahora es solo un prefijo, no la clave completa.
+ */
+export const MARKET_STORAGE_KEY_PREFIX = "fcsim:market:v1";
 
-/** Versión del estado persistido; se usa para migrar partidas antiguas. */
-export const MARKET_STATE_VERSION = 2;
+/**
+ * Versión del estado persistido; se usa para migrar/invalidar partidas
+ * antiguas. Súbela cada vez que cambie la forma de `TransferSaveData`
+ * (ver `Persistence.ts`) de un modo incompatible con el formato anterior.
+ */
+export const MARKET_STATE_VERSION = 3;

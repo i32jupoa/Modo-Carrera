@@ -173,13 +173,20 @@ function activeShare(state: MarketSimulationState): number {
   return clamp(base * Math.max(state.intensity, 0.2), 0, 1);
 }
 
-/** Clubes que actúan hoy: ni todos a la vez ni siempre los mismos. */
+/**
+ * Clubes que actúan hoy: ni todos a la vez ni siempre los mismos.
+ *
+ * Los clubes "dormant" (ver `BALANCE.dormantClubChance`) NO se excluyen de
+ * aquí: siguen entrando en la rotación diaria igual que cualquier otro, para
+ * que sigan renovando contratos, cediendo jugadores y pudiendo vender a
+ * quien les haga una oferta. Lo único que se les restringe es salir a
+ * comprar por iniciativa propia (ver `runClubDay`), y solo fuera de
+ * deadline day. Antes se les excluía de la actividad diaria por completo,
+ * así que un ~18% de los clubes pasaba la ventana entera invisible.
+ */
 export function activeClubsForDate(date: string, state: MarketSimulationState): string[] {
   const share = activeShare(state);
-  return allClubIds().filter((clubId) => {
-    if (clubWindowState(clubId).dormant && !state.deadlineDay) return false;
-    return clubWantsToActToday(clubId, date, share);
-  });
+  return allClubIds().filter((clubId) => clubWantsToActToday(clubId, date, share));
 }
 
 // ============================================================================
@@ -225,8 +232,14 @@ function runClubDay(
     }
   }
 
-  // 3. Fichajes: sólo si queda cupo y no está obligado a hacer caja primero.
-  const canBuy = window.signings < MARKET_TIMING.maxSigningsPerWindow && !needsToSell(clubId);
+  // 3. Fichajes: sólo si queda cupo, no está obligado a hacer caja primero,
+  // y —si es un club "conservador" esta ventana— si es deadline day (fuera
+  // de deadline day, un club dormant no sale a fichar por iniciativa propia,
+  // pero sigue pudiendo vender si otro club le hace una oferta).
+  const canBuy =
+    window.signings < MARKET_TIMING.maxSigningsPerWindow &&
+    !needsToSell(clubId) &&
+    !(window.dormant && !state.deadlineDay);
   if (canBuy) {
     for (const need of priorityNeeds(clubId, date, state.deadlineDay ? 3 : 2)) {
       rumors.push(rumorSearching(clubId, need.group, date));

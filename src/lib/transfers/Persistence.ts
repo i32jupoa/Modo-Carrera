@@ -26,18 +26,21 @@ import {
   type PursuitMemoryEntry,
 } from "./TransferEngine";
 import { getCurrentSaveId } from "@/lib/savedGames";
+import { MARKET_STATE_VERSION, MARKET_STORAGE_KEY_PREFIX } from "./constants";
 import type { ClubFinances, Rumor, TransferRecord } from "./types";
 
 // Clave heredada de cuando el mercado era global (una sola partida para todo
 // el juego). Se usa sólo para migrar UNA VEZ los datos a la partida activa
 // la primera vez que se carga tras esta corrección; después se borra, para
 // que ninguna otra partida pueda heredarla por accidente.
-const LEGACY_GLOBAL_STORAGE_KEY = "fcsim:market:v1";
-const STORAGE_KEY_PREFIX = "fcsim:market:v1";
+const LEGACY_GLOBAL_STORAGE_KEY = MARKET_STORAGE_KEY_PREFIX;
+const STORAGE_KEY_PREFIX = MARKET_STORAGE_KEY_PREFIX;
 // v3 añade `pursuits`: la memoria de rechazos recientes por club-jugador.
 // Sin ella, cargar una partida "olvidaba" a quién había rechazado ya un
 // club y el mercado volvía a ofertar por los mismos jugadores al instante.
-const VERSION = 3;
+// (Ver MARKET_STATE_VERSION en `constants.ts`: es la única fuente de verdad
+// de la versión, para que este archivo no pueda desincronizarse de ella.)
+const VERSION = MARKET_STATE_VERSION;
 
 /**
  * Clave de almacenamiento del mercado para la partida actualmente activa.
