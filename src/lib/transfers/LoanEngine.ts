@@ -30,8 +30,12 @@ import { buildLoanTerms, createTransferOffer, emptyClauses } from "./Negotiation
 import { completeTransfer } from "./TransferEngine";
 import { contractYearsForAge } from "./ContractEngine";
 import { recordTransfer, transfersForPlayer } from "./TransferHistory";
+import { arrivalsFor, isPlayerSettled } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import type { MarketPlayer, TransferRecord, TransferType } from "./types";
+
+/** Llegadas máximas por club y ventana (compras + cesiones). */
+const MAX_ARRIVALS_PER_WINDOW = 3;
 
 /** Tipos de operación que son una cesión. */
 export type LoanType = Extract<TransferType, "loan" | "loan-option" | "loan-obligation">;
@@ -74,7 +78,7 @@ export function wantsToLoanOut(clubId: string, playerId: string, cacheKey: strin
 /** Jugadores que el club pondría en el mercado de cesiones hoy. */
 export function loanCandidates(clubId: string, cacheKey: string): MarketPlayer[] {
   return getClubPlayers(clubId)
-    .filter((player) => wantsToLoanOut(clubId, player.id, cacheKey))
+    .filter((player) => !isPlayerSettled(player.id) && wantsToLoanOut(clubId, player.id, cacheKey))
     .sort((a, b) => b.potential - a.potential);
 }
 
@@ -107,6 +111,9 @@ export function wantsToLoanIn(
 ): boolean {
   const player = getPlayer(playerId);
   if (!player) return false;
+  if (isPlayerSettled(playerId)) return false;
+  // Ningún club acapara el mercado: como mucho tres llegadas por ventana.
+  if (arrivalsFor(borrowerClubId) >= MAX_ARRIVALS_PER_WINDOW) return false;
   const report = getSquadReport(borrowerClubId, cacheKey);
   if (report.size >= SQUAD_LIMITS.maxSquadSize) return false;
 
@@ -147,7 +154,12 @@ export function findLoanDestinations(playerId: string, cacheKey: string, limit =
     // titular indiscutible a un equipo que le queda muy por debajo.
     if (player.ovr > report.startingRating + LOAN_RULES.ratingGap) continue;
     if (!wantsToLoanIn(clubId, playerId, wageShare, cacheKey)) continue;
-    scored.push({ clubId, urgency: need.urgency });
+    // La urgencia sola hacía que TODAS las cesiones acabaran en los mismos
+    // dos o tres clubes. Se le añade un jitter estable por jugador y se
+    // penaliza a quien ya ha recibido gente esta ventana.
+    const jitter = 0.6 + seededUnit(clubId, playerId, cacheKey, "loandest") * 0.9;
+    const crowding = arrivalsFor(clubId) * 0.2;
+    scored.push({ clubId, urgency: need.urgency * jitter - crowding });
   }
 
   scored.sort((a, b) => b.urgency - a.urgency);

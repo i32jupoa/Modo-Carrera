@@ -16,13 +16,14 @@
 import { BALANCE, MARKET_TIMING } from "./constants";
 import { getMarketIndex } from "./PlayerIndex";
 import { getClubProfile } from "./ClubStrategy";
-import { needsToSell, refillForNewWindow } from "./BudgetManager";
+import { getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
 import { clubWantsToActToday, priorityNeeds, runClubTransferCycle } from "./TransferEngine";
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
 import { runClubLoanCycle, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
 import { rumorBidWar, rumorInterest, rumorRenewal, rumorSearching } from "./RumorEngine";
+import { setLockWindow } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import type { MarketDayResult, MarketSimulationState, MarketWindow, Rumor } from "./types";
 
@@ -74,6 +75,11 @@ function windowKey(date: string): string {
   return `${seasonOf(date)}:${windowForDate(date)}`;
 }
 
+/** Identificador de ventana de una fecha cualquiera (usado al restaurar). */
+export function windowKeyForDate(date: string): string {
+  return windowKey(date);
+}
+
 // ============================================================================
 // ESTADO
 // ============================================================================
@@ -112,6 +118,7 @@ function allClubIds(): string[] {
 /** Prepara los contadores de una ventana nueva y recarga presupuestos. */
 function openWindow(date: string): SimulationInternals {
   const key = windowKey(date);
+  setLockWindow(key);
   const clubs = new Map<string, ClubWindowState>();
   for (const clubId of allClubIds()) {
     refillForNewWindow(clubId);
@@ -200,6 +207,11 @@ function runClubDay(
   state: MarketSimulationState,
   result: MarketDayResult,
 ): void {
+  // El club del usuario nunca actúa por su cuenta: ni ficha, ni cede, ni
+  // renueva de forma automática. Todo lo suyo pasa por `UserNegotiation`,
+  // así que en el feed sólo aparecerán operaciones que el usuario cierre.
+  if (clubId === getUserClubId()) return;
+
   const window = clubWindowState(clubId);
   const profile = getClubProfile(clubId);
   const rumors: Array<Rumor | null> = [];
@@ -397,6 +409,7 @@ export function snapshotSimulation(): SimulationSnapshot | null {
 
 /** Restaura una instantánea previa de la simulación. */
 export function restoreSimulation(snapshot: SimulationSnapshot): MarketSimulationState {
+  setLockWindow(snapshot.windowKey);
   internals = {
     state: { ...snapshot.state },
     windowKey: snapshot.windowKey,

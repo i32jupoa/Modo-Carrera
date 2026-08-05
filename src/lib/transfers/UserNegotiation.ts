@@ -594,17 +594,23 @@ function suitorsFor(playerId: string, userClubId: string, date: string): string[
   const cacheKey = cacheKeyFor(date);
   const valuation = valuePlayer(playerId, { cacheKey });
   const suitors: string[] = [];
+  const fallback: string[] = [];
   for (const profile of getAllClubProfiles()) {
     if (profile.clubId === userClubId) continue;
     if (maxSpend(profile.clubId) < valuation.minimumPrice) continue;
     if (maxWageOffer(profile.clubId) < wageDemand(playerId, profile.clubId)) continue;
     const report = getSquadReport(profile.clubId, cacheKey);
     const need = report.needs.find((n) => n.group === player.group);
-    if (!need) continue;
-    if (player.ovr < report.startingRating - 2) continue;
-    suitors.push(profile.clubId);
+    if (need && player.ovr >= report.startingRating - 2) {
+      suitors.push(profile.clubId);
+      continue;
+    }
+    // Sin necesidad declarada, un club aún puede tantear a un jugador que
+    // mejore claramente su once: si no, había plantillas del usuario a las
+    // que no llegaba jamás una oferta.
+    if (player.ovr >= report.startingRating - 1) fallback.push(profile.clubId);
   }
-  return suitors;
+  return suitors.length > 0 ? suitors : fallback;
 }
 
 /**
@@ -618,7 +624,7 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
   const state = getSimulationState();
   const intensity = state?.intensity ?? 0.5;
   const deadline = deadlineToday(date);
-  const chance = (deadline ? 0.5 : 0.16) * (0.5 + intensity);
+  const chance = (deadline ? 0.6 : 0.3) * (0.5 + intensity);
   if (seededUnit("user-offers", userClubId, date) > chance) return events;
   if (listOpenUserDeals("out").length >= 3) return events;
 
@@ -637,11 +643,18 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
     }))
     .sort((a, b) => b.weight - a.weight);
 
-  const target = scored[0]?.player;
-  if (!target) return events;
-
-  const suitors = suitorsFor(target.id, userClubId, date);
-  if (suitors.length === 0) return events;
+  // Se prueban varios candidatos: si por el primero no hay pretendientes,
+  // se sigue bajando por la lista antes de renunciar a la oferta del día.
+  let target: (typeof scored)[number]["player"] | undefined;
+  let suitors: string[] = [];
+  for (const entry of scored.slice(0, 6)) {
+    const found = suitorsFor(entry.player.id, userClubId, date);
+    if (found.length === 0) continue;
+    target = entry.player;
+    suitors = found;
+    break;
+  }
+  if (!target || suitors.length === 0) return events;
   const buyerId = suitors[Math.floor(seededUnit("suitor", target.id, date) * suitors.length)];
   const profile = getClubProfile(buyerId);
   const valuation = valuePlayer(target.id, { cacheKey, deadlineDay: deadline });

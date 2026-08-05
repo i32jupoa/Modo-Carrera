@@ -16,7 +16,13 @@
 
 import { restoreFinances, snapshotFinances } from "./BudgetManager";
 import { restorePlayerDeltas, snapshotPlayerDeltas, type PlayerDelta } from "./PlayerIndex";
-import { restoreSimulation, snapshotSimulation, type SimulationSnapshot } from "./MarketSimulation";
+import {
+  restoreSimulation,
+  snapshotSimulation,
+  windowKeyForDate,
+  type SimulationSnapshot,
+} from "./MarketSimulation";
+import { rebuildLocks } from "./MarketLocks";
 import { restoreTransferHistory, snapshotTransferHistory } from "./TransferHistory";
 import { restoreRumors, snapshotRumors } from "./RumorEngine";
 import { restoreUserDeals, snapshotUserDeals, type UserDeal } from "./UserNegotiation";
@@ -93,6 +99,8 @@ export function applyTransferSnapshot(data: TransferSaveData): boolean {
   restoreUserDeals(data.userDeals ?? []);
   restorePursuitMemory(data.pursuits ?? []);
   if (data.simulation) restoreSimulation(data.simulation);
+  // Los cerrojos ("ya fichó en esta ventana") se recalculan del historial.
+  rebuildLocks(data.history ?? [], windowKeyForDate);
   return true;
 }
 

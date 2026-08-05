@@ -14,6 +14,7 @@ import { resetClubProfiles } from "./ClubStrategy";
 import { resetMarketIndex } from "./PlayerIndex";
 import { resetTransferHistory } from "./TransferHistory";
 import { resetRumors } from "./RumorEngine";
+import { resetMarketLocks } from "./MarketLocks";
 import { resetUserDeals } from "./UserNegotiation";
 import {
   getSimulationState,
@@ -41,6 +42,7 @@ export * from "./ContractEngine";
 export * from "./LoanEngine";
 export * from "./TransferHistory";
 export * from "./RumorEngine";
+export * from "./MarketLocks";
 export * from "./MarketSimulation";
 export * from "./Persistence";
 export * from "./UserNegotiation";
@@ -57,6 +59,7 @@ export function initializeTransferSystem(date: string): MarketSimulationState {
 
 /** Reinicia el sistema completo (útil al cargar otra partida). */
 export function resetTransferSystem(): void {
+  resetMarketLocks();
   resetSimulation();
   resetUserDeals();
   resetRumors();

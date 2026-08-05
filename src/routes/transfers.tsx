@@ -726,7 +726,13 @@ function TransfersPage() {
       )}
 
       {tab === "feed" && (
-        <MarketFeed rumors={market.rumors} history={market.history} summary={market.summary} />
+        <MarketFeed
+          rumors={market.rumors}
+          history={market.history}
+          summary={market.summary}
+          userDeals={market.deals}
+          myTeamId={myTeamId}
+        />
       )}
 
       {target && (

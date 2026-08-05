@@ -94,8 +94,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const deals = useMemo(() => (ready ? listUserDeals() : []), [ready, tick, currentDate]);
   const incoming = useMemo(() => deals.filter((d) => d.direction === "out"), [deals]);
   const outgoing = useMemo(() => deals.filter((d) => d.direction === "in"), [deals]);
-  const rumors = useMemo(() => (ready ? freshRumors(currentDate, 24) : []), [ready, currentDate, tick]);
-  const history = useMemo(() => (ready ? listTransfers(40) : []), [ready, currentDate, tick]);
+  const rumors = useMemo(() => (ready ? freshRumors(currentDate, 200) : []), [ready, currentDate, tick]);
+  const history = useMemo(() => (ready ? listTransfers(600) : []), [ready, currentDate, tick]);
   const summary = useMemo(() => (ready ? summarize(listTransfers()) : null), [ready, currentDate, tick]);
 
   const commit = useCallback(

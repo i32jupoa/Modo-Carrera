@@ -18,6 +18,7 @@ import type { MarketValuation } from "./types";
 import { getClubProfile } from "./ClubStrategy";
 import { needsToSell } from "./BudgetManager";
 import { getPlayer } from "./PlayerIndex";
+import { isPlayerSettled } from "./MarketLocks";
 import { getSquadReport } from "./SquadAnalyzer";
 import { clamp } from "./random";
 import { GLOBAL_MAX_VALUE_M } from "@/data/players";
@@ -303,6 +304,9 @@ export function askingPrice(playerId: string, options: PlayerValuationOptions = 
 export function isAvailable(playerId: string, cacheKey = "static"): boolean {
   const player = getPlayer(playerId);
   if (!player) return false;
+  // Recién fichado en esta misma ventana: acaba de firmar contrato y no se
+  // vuelve a mover hasta el siguiente mercado.
+  if (isPlayerSettled(playerId)) return false;
   if (!player.clubId) return true;
   if (player.transferListed) return true;
   if (player.contract.yearsLeft <= 1) return true;
