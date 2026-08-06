@@ -214,7 +214,7 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
   // A medida que avanza la ventana, los clubes que todavía no han movido nada
   // (ni entradas ni salidas) entran con más frecuencia en la rotación: en la
   // vida real todos los equipos acaban haciendo algún movimiento.
-  const urgency = clamp((state.windowDay - 8) / 45, 0, 1);
+  const urgency = clamp((state.windowDay - 5) / 25, 0, 1);
   return allClubIds().filter((clubId) => {
     if (clubWantsToActToday(clubId, date, share)) return true;
     if (urgency <= 0) return false;
@@ -284,19 +284,26 @@ function runClubDay(
   // Un club con saldo negativo en la ventana (más salidas que llegadas) sale
   // a reponer sí o sí: ni la caja ni la pasividad de la temporada le frenan.
   const deficit = windowDeficit(clubId);
-  const idleTooLong = window.signings === 0 && window.sales === 0 && state.windowDay > 20;
+  const idleTooLong = window.signings === 0 && window.sales === 0 && state.windowDay > 12;
+  const belowMinimum = window.signings < MARKET_TIMING.minSigningsPerWindow;
   const canBuy =
     window.signings < MARKET_TIMING.maxSigningsPerWindow &&
-    (deficit > 0 || idleTooLong || (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)));
+    (belowMinimum ||
+      deficit > 0 ||
+      idleTooLong ||
+      (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)));
   if (canBuy) {
     // Una sola nota de "busca refuerzos" al día: el resto de necesidades se
     // trabajan igual, pero sin inundar el feed.
     const [firstNeed] = priorityNeeds(clubId, date, state.deadlineDay ? 3 : 2);
     if (firstNeed) rumors.push(rumorSearching(clubId, firstNeed.group, date));
 
+    // Reponer siempre pesa más que esperar: un club que ha vendido sale a
+    // fichar a varios jugadores el mismo día, como en la vida real.
     const maxSignings = Math.max(
-      deficit > 0 ? Math.min(deficit, 3) : 1,
-      state.deadlineDay && profile.aggression > 0.6 ? 2 : 1,
+      deficit > 0 ? Math.min(deficit * 2 + 2, 8) : 3,
+      belowMinimum ? 3 : 2,
+      state.deadlineDay && profile.aggression > 0.6 ? 6 : 4,
     );
     const cycle = runClubTransferCycle(clubId, {
       date,
@@ -324,14 +331,12 @@ function runClubDay(
   // mover nada, cierra al menos una incorporación entre los agentes libres.
   // En la vida real ningún club termina un mercado completamente parado.
   if (
-    window.signings === 0 &&
-    window.sales === 0 &&
-    window.loans === 0 &&
-    (state.deadlineDay || state.windowDay > 30) &&
-    seededUnit(clubId, date, "free-agent-fallback") < 0.35
+    window.signings < MARKET_TIMING.minSigningsPerWindow &&
+    (state.deadlineDay || state.windowDay > 14)
   ) {
-    const record = signBestFreeAgent(clubId, date);
-    if (record) {
+    while (window.signings < MARKET_TIMING.minSigningsPerWindow) {
+      const record = signBestFreeAgent(clubId, date);
+      if (!record) break;
       window.signings += 1;
       recordTransfers([record]);
       result.transfers.push(record);

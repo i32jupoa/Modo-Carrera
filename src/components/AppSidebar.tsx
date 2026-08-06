@@ -11,6 +11,7 @@ import {
 import { loadSave } from "@/lib/store";
 import { loadAllSaves, loadSaveById } from "@/lib/savedGames";
 import { teamById } from "@/data/teams";
+import { useNotificationsStore, type NotificationKind } from "@/store/notificationsStore";
 import { useEffect, useState } from "react";
 
 type Item = { title: string; url: string; icon: React.ComponentType<{ className?: string }> };
@@ -78,6 +79,14 @@ export function AppSidebar() {
     }
   }, [pathname]); // Ejecutar cuando cambia el pathname
 
+  const counts = useNotificationsStore((s) => s.counts);
+  const markAllRead = useNotificationsStore((s) => s.markAllRead);
+
+  // Entrar en el mercado da por vistas todas las novedades.
+  useEffect(() => {
+    if (pathname === "/transfers") markAllRead();
+  }, [pathname, markAllRead]);
+
   const isActive = (url: string) => pathname === url;
 
   return (
@@ -109,7 +118,13 @@ export function AppSidebar() {
             <NavGroup label="Mi equipo" items={MI_EQUIPO} collapsed={collapsed} isActive={isActive} />
             <NavGroup label="Competiciones" items={COMPETICIONES} collapsed={collapsed} isActive={isActive} />
             <NavGroup label="Estadísticas" items={ESTADISTICAS} collapsed={collapsed} isActive={isActive} />
-            <NavGroup label="Mundo" items={MUNDO} collapsed={collapsed} isActive={isActive} />
+            <NavGroup
+              label="Mundo"
+              items={MUNDO}
+              collapsed={collapsed}
+              isActive={isActive}
+              badges={{ "/transfers": counts }}
+            />
           </>
         ) : (
           <div className="px-4 py-8 text-center text-sm text-muted-foreground">
@@ -130,13 +145,49 @@ export function AppSidebar() {
   );
 }
 
+/** Colores de cada tono de notificación. */
+const BADGE_STYLE: Record<NotificationKind, string> = {
+  good: "bg-emerald-500 text-red-600",
+  info: "bg-sky-500 text-red-600",
+  bad: "bg-red-500 text-red-950",
+};
+
+const BADGE_ORDER: NotificationKind[] = ["good", "info", "bad"];
+
+/** Círculos de colores con el número de novedades sin leer. */
+function NotificationDots({
+  counts,
+  compact = false,
+}: {
+  counts: Record<NotificationKind, number>;
+  compact?: boolean;
+}) {
+  const visible = BADGE_ORDER.filter((kind) => counts[kind] > 0);
+  if (visible.length === 0) return null;
+  return (
+    <span className={compact ? "flex items-center -space-x-1" : "flex items-center gap-1"}>
+      {visible.map((kind) => (
+        <span
+          key={kind}
+          className={`grid place-items-center rounded-full font-bold tabular-nums ${BADGE_STYLE[kind]} ${
+            compact ? "h-3.5 w-3.5 text-[0.5rem]" : "h-5 min-w-5 px-1 text-[0.65rem]"
+          }`}
+        >
+          {counts[kind] > 99 ? "99+" : counts[kind]}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function NavGroup({
-  label, items, collapsed, isActive,
+  label, items, collapsed, isActive, badges,
 }: {
   label: string;
   items: Item[];
   collapsed: boolean;
   isActive: (url: string) => boolean;
+  badges?: Record<string, Record<NotificationKind, number>>;
 }) {
   return (
     <SidebarGroup>
@@ -146,11 +197,18 @@ function NavGroup({
           {items.map((item) => (
             <SidebarMenuItem key={item.url}>
               <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                <Link to={item.url} className="flex items-center gap-2 group">
+                <Link to={item.url} className="flex items-center gap-2 group relative">
                   <item.icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && (
+                  {collapsed ? (
+                    badges?.[item.url] && (
+                      <span className="absolute -top-1 right-0">
+                        <NotificationDots counts={badges[item.url]} compact />
+                      </span>
+                    )
+                  ) : (
                     <>
                       <span className="flex-1">{item.title}</span>
+                      {badges?.[item.url] && <NotificationDots counts={badges[item.url]} />}
                       <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-50 transition" />
                     </>
                   )}

@@ -35,6 +35,30 @@ const TOP5: LeagueId[] = ["premier", "laliga", "seriea", "bundesliga", "ligue1"]
 
 type Scope = "all" | "top5" | LeagueId;
 
+/** Orden de la lista de traspasos recientes. */
+type HistorySort = "recent" | "fee-desc" | "fee-asc";
+
+/** Precio mínimo del traspaso mostrado. */
+type MinFee = "all" | "1" | "10" | "25" | "50" | "100";
+
+const MIN_FEE_VALUES: Record<MinFee, number> = {
+  all: 0,
+  "1": 1_000_000,
+  "10": 10_000_000,
+  "25": 25_000_000,
+  "50": 50_000_000,
+  "100": 100_000_000,
+};
+
+const MIN_FEE_LABELS: Record<MinFee, string> = {
+  all: "Cualquier precio",
+  "1": "Desde 1M €",
+  "10": "Desde 10M €",
+  "25": "Desde 25M €",
+  "50": "Desde 50M €",
+  "100": "Desde 100M €",
+};
+
 function clubName(clubId: string | null): string {
   if (!clubId) return "Agente libre";
   try {
@@ -99,6 +123,9 @@ export function MarketFeed({
 }: Props) {
   const [scope, setScope] = useState<Scope>("all");
   const [teamId, setTeamId] = useState<string>("all");
+  // Orden y precio mínimo de la lista de traspasos recientes.
+  const [historySort, setHistorySort] = useState<HistorySort>("recent");
+  const [minFee, setMinFee] = useState<MinFee>("all");
 
   const leagueOptions = useMemo(
     () =>
@@ -133,7 +160,7 @@ export function MarketFeed({
 
   const noFilter = scope === "all" && teamId === "all";
 
-  const filteredHistory = useMemo(() => {
+  const baseHistory = useMemo(() => {
     // `history` ya llega del motor de más reciente a más antiguo. Reordenamos
     // por fecha descendente (estable) para que arriba salga siempre lo último.
     const ordered = history
@@ -146,13 +173,28 @@ export function MarketFeed({
             : -1,
       )
       .map((entry) => entry.record);
-    if (noFilter) return ordered.slice(0, 60);
+    if (noFilter) return ordered;
     // Con un filtro activo se muestra el historial completo de esa liga o
     // club en la ventana, no sólo las últimas operaciones.
-    return ordered
-      .filter((r) => clubInScope(r.fromClubId) || clubInScope(r.toClubId))
-      .slice(0, 400);
+    return ordered.filter((r) => clubInScope(r.fromClubId) || clubInScope(r.toClubId));
   }, [history, clubInScope, noFilter]);
+
+  /**
+   * Traspasos recientes con el orden elegido: por fecha o por precio, para
+   * poder ver de un vistazo las operaciones más caras del mercado.
+   */
+  const filteredHistory = useMemo(() => {
+    const threshold = MIN_FEE_VALUES[minFee];
+    const filtered = threshold > 0 ? baseHistory.filter((r) => r.fee >= threshold) : baseHistory;
+    const sorted =
+      historySort === "recent"
+        ? filtered
+        : filtered
+            .slice()
+            .sort((a, b) => (historySort === "fee-desc" ? b.fee - a.fee : a.fee - b.fee));
+    const limit = noFilter && historySort === "recent" && minFee === "all" ? 60 : 400;
+    return sorted.slice(0, limit);
+  }, [baseHistory, historySort, minFee, noFilter]);
 
 
   const filteredRumors = useMemo(() => {
@@ -295,7 +337,33 @@ export function MarketFeed({
         </section>
 
         <section className="panel p-4">
-          <h2 className="font-bold mb-3">Traspasos recientes</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 className="font-bold">Traspasos recientes</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={historySort} onValueChange={(v) => setHistorySort(v as HistorySort)}>
+                <SelectTrigger className="h-8 w-[12rem] bg-secondary text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="recent">Más recientes</SelectItem>
+                  <SelectItem value="fee-desc">Precio: más caros</SelectItem>
+                  <SelectItem value="fee-asc">Precio: más baratos</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={minFee} onValueChange={(v) => setMinFee(v as MinFee)}>
+                <SelectTrigger className="h-8 w-[11rem] bg-secondary text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(MIN_FEE_LABELS) as MinFee[]).map((key) => (
+                    <SelectItem key={key} value={key}>
+                      {MIN_FEE_LABELS[key]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           {filteredSummary && filteredSummary.total > 0 && (
             <div className="grid grid-cols-3 gap-2 mb-3 text-xs">
               <div className="bg-secondary/50 rounded px-2 py-1.5">

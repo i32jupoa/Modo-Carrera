@@ -13,27 +13,29 @@ import type { PositionGroup } from "./types";
 
 export const MARKET_TIMING = {
   /** Porcentaje de clubes que actúan cada día de mercado. */
-  dailyActiveClubShare: 0.2,
+  dailyActiveClubShare: 0.75,
   /** Porcentaje de clubes activos durante el deadline day. */
-  deadlineActiveClubShare: 0.5,
+  deadlineActiveClubShare: 1,
   /** Días finales de ventana considerados deadline day. */
   deadlineDays: 3,
   /** Máximo de negociaciones abiertas simultáneas por club. */
-  maxNegotiationsPerClub: 3,
+  maxNegotiationsPerClub: 5,
   /** Rondas máximas antes del rechazo definitivo. */
   maxNegotiationRounds: 4,
   /** Días que una negociación puede quedarse parada antes de expirar. */
   negotiationExpiryDays: 7,
-  /** Máximo de fichajes por club y ventana. */
-  maxSigningsPerWindow: 6,
+  /** Máximo de fichajes por club y ventana (sin tope real). */
+  maxSigningsPerWindow: 99,
+  /** Mínimo de fichajes que todo club de la IA debe cerrar en verano. */
+  minSigningsPerWindow: 2,
   /** Máximo de ventas por club y ventana. */
-  maxSalesPerWindow: 8,
+  maxSalesPerWindow: 12,
   /**
    * Saldo negativo máximo de una ventana: un club no puede terminar el
    * mercado con más de estas salidas por encima de sus llegadas. Sin este
    * tope, los clubes de la IA perdían seis jugadores y fichaban uno.
    */
-  maxWindowDeficit: 3,
+  maxWindowDeficit: 1,
 } as const;
 
 // ============================================================================
@@ -262,9 +264,9 @@ export const RUMOR_RULES = {
 
 export const BALANCE = {
   /** Intensidad mínima de una ventana (temporadas tranquilas). */
-  minIntensity: 0.45,
+  minIntensity: 0.7,
   /** Intensidad máxima (mercados locos). */
-  maxIntensity: 1.25,
+  maxIntensity: 1.6,
   /**
    * Probabilidad de que un club sea "conservador" en la ventana: no sale a
    * fichar por iniciativa propia salvo en deadline day. IMPORTANTE: esto ya
@@ -275,9 +277,9 @@ export const BALANCE = {
    * daba la sensación de que "no todos los equipos fichan"; ahora solo se
    * abstienen de salir a comprar.
    */
-  dormantClubChance: 0.05,
+  dormantClubChance: 0.02,
   /** Multiplicador de actividad de la ventana de invierno. */
-  winterFactor: 0.45,
+  winterFactor: 0.55,
 } as const;
 
 /**

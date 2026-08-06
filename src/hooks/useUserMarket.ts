@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { usePlayersStore } from "@/store/playersStore";
+import { useNotificationsStore } from "@/store/notificationsStore";
 import {
   acceptClubDemand,
   acceptIncomingOffer,
@@ -82,20 +83,15 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
 
   const ready = enabled && typeof window !== "undefined" && isTransferSystemInitialized() && !!myTeamId;
 
-  // Avanza las negociaciones del usuario cada vez que cambia la fecha.
+  // Las negociaciones las avanza `MarketNotifier` de forma global (también
+  // con la pantalla de mercado cerrada) y sus novedades se muestran como
+  // círculos de colores en el menú lateral, no como avisos emergentes. Aquí
+  // sólo se refresca la vista cuando llegan novedades nuevas.
+  const notificationsVersion = useNotificationsStore((s) => s.items.length);
   useEffect(() => {
-    if (!ready || !myTeamId) return;
-    const events = advanceUserDeals(myTeamId, currentDate);
-    flushWorldMoves();
-    // Con el mercado cerrado no queda nada abierto: las ofertas anuladas se
-    // borran del panel al momento para que no se puedan aceptar fuera de plazo.
-    if (getSimulationState()?.window === "closed") clearFinishedUserDeals();
-    if (events.length > 0) {
-      for (const event of events.slice(0, 4)) toast.info(event.text);
-      saveTransferSystem();
-      refresh();
-    }
-  }, [ready, myTeamId, currentDate, refresh]);
+    if (!ready) return;
+    refresh();
+  }, [ready, notificationsVersion, currentDate, refresh]);
 
   const state = ready ? getSimulationState() : null;
 

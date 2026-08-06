@@ -102,8 +102,13 @@ export interface UserDeal {
 }
 
 /** Novedad producida al avanzar el calendario. */
+/** Tono de la novedad: buena (verde), informativa (azul) o mala (roja). */
+export type UserDealEventKind = "good" | "info" | "bad";
+
 export interface UserDealEvent {
   dealId: string;
+  /** Tono de la novedad, usado por las notificaciones del menú lateral. */
+  kind: UserDealEventKind;
   playerName: string;
   stage: UserDealStage;
   text: string;
@@ -448,6 +453,7 @@ function cancelOpenDealsOnMarketClose(userClubId: string, date: string): UserDea
       deal.direction === "in"
         ? `Mercado cerrado: se cae la negociación por ${deal.playerName}.`
         : `Mercado cerrado: retirada la oferta por ${deal.playerName}.`,
+      "bad",
     );
   }
   return events;
@@ -470,9 +476,15 @@ export function advanceUserDeals(userClubId: string, date: string): UserDealEven
   return events;
 }
 
-function pushEvent(events: UserDealEvent[], deal: UserDeal, text: string): void {
+function pushEvent(
+  events: UserDealEvent[],
+  deal: UserDeal,
+  text: string,
+  kind: UserDealEventKind = "info",
+): void {
   events.push({
     dealId: deal.id,
+    kind,
     playerName: deal.playerName,
     stage: deal.stage,
     text,
@@ -487,7 +499,7 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
   if (!player || player.clubId !== deal.otherClubId) {
     deal.stage = "failed";
     log(deal, date, "El jugador ya no está disponible.");
-    pushEvent(events, deal, `${deal.playerName} ya no está disponible.`);
+    pushEvent(events, deal, `${deal.playerName} ya no está disponible.`, "bad");
     return events;
   }
 
@@ -511,7 +523,7 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
     deal.clubMessage = `Hay ${competition} club(es) más interesados: el ${deal.otherClubId} espera antes de decidir.`;
     deal.respondsOn = addDays(date, 3);
     log(deal, date, "El club aparca la respuesta a la espera de mejores ofertas.");
-    pushEvent(events, deal, `El club deja en el aire tu oferta por ${deal.playerName}.`);
+    pushEvent(events, deal, `El club deja en el aire tu oferta por ${deal.playerName}.`, "info");
     return events;
   }
 
@@ -522,7 +534,7 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
     log(deal, date, response.message);
     deal.stage = "player-terms";
     deal.respondsOn = date;
-    pushEvent(events, deal, `Acuerdo con el club por ${deal.playerName}: falta la ficha.`);
+    pushEvent(events, deal, `Acuerdo con el club por ${deal.playerName}: falta la ficha.`, "good");
     return [...events, ...processPlayerTerms(deal, date)];
   }
 
@@ -531,7 +543,7 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
     deal.offer.status = "final-rejection";
     dropInterest(deal.playerId, deal.userClubId);
     log(deal, date, response.message);
-    pushEvent(events, deal, `Negociación rota por ${deal.playerName}.`);
+    pushEvent(events, deal, `Negociación rota por ${deal.playerName}.`, "bad");
     return events;
   }
 
@@ -545,7 +557,12 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
   }
   deal.respondsOn = addDays(date, 30);
   log(deal, date, response.message);
-  pushEvent(events, deal, `Contraoferta por ${deal.playerName}: ${fmt(response.counterAmount)}.`);
+  pushEvent(
+    events,
+    deal,
+    `Contraoferta por ${deal.playerName}: ${fmt(response.counterAmount)}.`,
+    "info",
+  );
   return events;
 }
 
@@ -566,14 +583,14 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
   if (decision.verdict === "accepted") {
     deal.stage = "ready";
     log(deal, date, decision.message);
-    pushEvent(events, deal, `${deal.playerName} quiere firmar: confirma el fichaje.`);
+    pushEvent(events, deal, `${deal.playerName} quiere firmar: confirma el fichaje.`, "good");
     return events;
   }
   if (decision.verdict === "rejected-project") {
     deal.stage = "failed";
     dropInterest(deal.playerId, deal.userClubId);
     log(deal, date, decision.message);
-    pushEvent(events, deal, decision.message);
+    pushEvent(events, deal, decision.message, "bad");
     return events;
   }
   deal.stage = "player-terms";
@@ -597,7 +614,12 @@ function processOutgoingBid(deal: UserDeal, date: string): UserDealEvent[] {
     deal.stage = "failed";
     deal.offer.status = "withdrawn";
     log(deal, date, decision.message);
-    pushEvent(events, deal, `El ${deal.otherClubId} retira su oferta por ${deal.playerName}.`);
+    pushEvent(
+      events,
+      deal,
+      `El ${deal.otherClubId} retira su oferta por ${deal.playerName}.`,
+      "bad",
+    );
     return events;
   }
 
@@ -738,7 +760,7 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
     log: [{ date, text: `Oferta recibida: ${fmt(amount)} desde ${buyerId}.` }],
   };
   deals.set(deal.id, deal);
-  pushEvent(events, deal, deal.clubMessage);
+  pushEvent(events, deal, deal.clubMessage, "info");
   return events;
 }
 
