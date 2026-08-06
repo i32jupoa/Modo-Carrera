@@ -111,7 +111,7 @@ import playersData from "@/data/playersData";
 
 
 
-import { TEAMS, getAllTeams, teamById, teamKeyFromName, leagueIdFromName, type LeagueId, teamsByLeague } from "@/data/teams";
+import { TEAMS, getAllTeams, teamById, findTeamStrict, leagueIdFromName, type LeagueId, teamsByLeague } from "@/data/teams";
 
 
 
@@ -1874,6 +1874,21 @@ const TEAM_NAME_TO_ID: Record<string, string> = Object.fromEntries(
 
 const PLAYERS_BY_TEAM: Record<string, FcPlayer[]> = {};
 
+/** Club inicial exacto del registro de la base de datos. Nunca usa
+ * coincidencias parciales (Barcelona SC no puede convertirse en FC Barcelona). */
+function baseClubId(p: FcPlayer): string | null {
+  return findTeamStrict(p.Team, p.League)?.id ?? null;
+}
+
+export function baseClubOfPlayer(playerId: string): string | null {
+  const raw = FC_BY_ID.get(playerId);
+  return raw ? baseClubId(raw) : null;
+}
+
+export function fcPlayerById(playerId: string): FcPlayer | undefined {
+  return FC_BY_ID.get(playerId);
+}
+
 
 
 
@@ -1904,7 +1919,9 @@ for (const p of RAW_PLAYERS) {
 
 
 
-  const teamKey = teamKeyFromName(p.Team);
+  const teamKey = baseClubId(p);
+
+  if (!teamKey) continue;
 
   if (!PLAYERS_BY_TEAM[teamKey]) PLAYERS_BY_TEAM[teamKey] = [];
 
@@ -2040,7 +2057,7 @@ export function clubOfPlayer(playerId: string): string | null {
   const override = CLUB_OVERRIDES[playerId];
   if (override !== undefined) return override === "" ? null : override;
   const raw = FC_BY_ID.get(playerId);
-  return raw ? teamKeyFromName(raw.Team) : null;
+  return raw ? baseClubId(raw) : null;
 }
 
 /** Plantilla real de un club, con todos los traspasos ya aplicados. */
@@ -2062,7 +2079,7 @@ export function squadForTeam(teamId: string): FcPlayer[] {
     if (CLUB_OVERRIDES[playerId] !== teamId) continue;
     const raw = FC_BY_ID.get(playerId);
     if (!raw) continue;
-    if (teamKeyFromName(raw.Team) === teamId) continue; // ya estaba en `base`
+    if (baseClubId(raw) === teamId) continue; // ya estaba en `base`
     squad.push(raw);
   }
   SQUAD_CACHE.set(teamId, squad);
@@ -13019,9 +13036,22 @@ export const usePlayersStore = create<PlayersState>()(
 
 
       merge: (persisted, current) => {
+        const saved = (persisted as Partial<PlayersState>) ?? {};
+        const overrides = saved.clubOverrides ?? {};
+        const myTeamId = saved.myTeamId ?? null;
+        // Migración de partidas creadas con el antiguo emparejamiento parcial:
+        // conserva la plantilla base correcta y todos los fichajes registrados,
+        // pero elimina jugadores de clubes homónimos añadidos por error.
+        const rosterIds = (saved.rosterIds ?? []).filter((playerId) => {
+          if (!myTeamId) return true;
+          const override = overrides[playerId];
+          if (override !== undefined) return override === myTeamId;
+          const raw = FC_BY_ID.get(playerId);
+          return raw ? baseClubId(raw) === myTeamId : false;
+        });
         // El registro central de plantillas vive fuera de React: hay que
         // rehidratarlo antes de que nadie pida una plantilla.
-        setClubOverrides((persisted as Partial<PlayersState>)?.clubOverrides ?? {});
+        setClubOverrides(overrides);
         return {
 
 
@@ -13055,7 +13085,11 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-        ...(persisted as Partial<PlayersState>),
+        ...saved,
+
+        rosterIds,
+
+        squad: syncSquadFromRoster(rosterIds),
 
 
 

@@ -1,4 +1,4 @@
-import { Team, TEAMS, teamById, teamKeyFromName } from "./teams";
+import { Team, TEAMS, teamById, findTeamStrict } from "./teams";
 import playersData from "./playersData";
 
 export type Position = "GK" | "DEF" | "MID" | "FWD";
@@ -207,13 +207,16 @@ function mapPosition(pos: string): Position {
   return "FWD"; // ST, LW, RW, CF
 }
 
-// Vincula de manera inteligente el string del JSON con los IDs compatibles de teams.ts
-function findTeamIdForPlayer(jsonTeamName: string): string {
+// Vincula el string de club del dataset con los IDs de teams.ts usando SOLO
+// coincidencias exactas o alias declarados (y la liga, si está disponible).
+// Cualquier club que no exista en el juego devuelve "free_agent", de forma que
+// las plantillas iniciales son exactamente las de la base de datos.
+function findTeamIdForPlayer(jsonTeamName: string, jsonLeagueName?: string): string {
   if (!jsonTeamName) return "free_agent";
-  const teamKey = teamKeyFromName(jsonTeamName);
-  if (TEAMS.some((team) => team.id === teamKey)) return teamKey;
-  return teamKey || jsonTeamName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const team = findTeamStrict(jsonTeamName, jsonLeagueName);
+  return team ? team.id : "free_agent";
 }
+
 
 let cachedSquads: Record<string, Player[]> | null = null;
 const CACHE_VERSION = 14; // Added discount logging for debugging
@@ -259,11 +262,13 @@ export function generateAllSquads(): Record<string, Player[]> {
     const age = p.Age || p.age || 24;
     const position = mapPosition(p.Position || p.position || "MID");
     const jsonTeamName = p.Team || p.Club || p.team || p.club || "";
+    const jsonLeagueName = p.League || p.league || "";
     
-    const teamId = findTeamIdForPlayer(jsonTeamName);
-    const team = teamById(teamId);
+    const teamId = findTeamIdForPlayer(jsonTeamName, jsonLeagueName);
+    const team = teamId === "free_agent" ? null : teamById(teamId);
     const leagueId = team?.league || "";
     const effectiveTeamId = map[teamId] ? teamId : "free_agent";
+
     
     // Acumulamos ratings por equipo para calcular la media
     if (!teamRatings[effectiveTeamId]) {
@@ -334,21 +339,16 @@ export function generateAllSquads(): Record<string, Player[]> {
     }
   });
 
-  // Ordenamos las alineaciones para poner los mejores jugadores arriba y proteger de arrays vacíos
+  // Ordenamos las plantillas (mejores arriba). NO se inyectan jugadores de
+  // relleno: la plantilla inicial de cada equipo es exactamente la que
+  // aparece en la base de datos.
   const order: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
   TEAMS.forEach(t => {
     if (map[t.id]) {
       map[t.id].sort((a, b) => order[a.position] - order[b.position] || b.rating - a.rating);
-      
-      // Si un equipo del JSON viene muy vacío (menos de 11), le inyectamos Agentes Libres para que no rompa la UI
-      while (map[t.id].length < 15 && map["free_agent"].length > 0) {
-        const filler = map["free_agent"].pop();
-        if (filler) {
-          map[t.id].push({ ...filler, teamId: t.id, id: `${t.id}-filler-${filler.id}` });
-        }
-      }
     }
   });
+
 
   cachedSquads = map;
   return map;

@@ -1,6 +1,11 @@
 import { teamById } from "@/data/teams";
 import { SaveGame } from "./store";
-import { usePlayersStore } from "@/store/playersStore";
+import {
+  baseClubOfPlayer,
+  fcPlayerById,
+  setClubOverrides,
+  usePlayersStore,
+} from "@/store/playersStore";
 
 const STORAGE_KEY = "fcsim:save:v2";
 const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
@@ -43,6 +48,7 @@ function snapshotPlayersStore() {
     fixtures: s.fixtures,
     stats: s.stats,
     rosterIds: s.rosterIds,
+    clubOverrides: s.clubOverrides,
     budget: s.budget,
     dismissedMatchIds: s.dismissedMatchIds,
   };
@@ -206,16 +212,34 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
     return;
   }
 
+  const clubOverrides = snap.clubOverrides ?? {};
+  const myTeamId = snap.myTeamId ?? save.myTeamId ?? null;
+  const validRosterIds = (snap.rosterIds ?? []).filter((playerId: string) => {
+    if (!myTeamId) return true;
+    const override = clubOverrides[playerId];
+    if (override !== undefined) return override === myTeamId;
+    const baseClub = baseClubOfPlayer(playerId);
+    // Una partida antigua no guardaba overrides: jugadores pertenecientes a
+    // otro club válido pueden ser fichajes legítimos. Los registros sin club
+    // del juego (p. ej. Barcelona SC) sí proceden del emparejamiento erróneo.
+    return baseClub === myTeamId || baseClub !== null;
+  });
+
+  setClubOverrides(clubOverrides);
+
   // Restaurar usando setState (mutar el objeto devuelto por getState NO notifica
   // a los componentes ni persiste). Mantener cualquier campo no incluido.
   usePlayersStore.setState({
     loaded: true,
-    myTeamId: snap.myTeamId ?? save.myTeamId ?? null,
-    squad: snap.squad ?? [],
+    myTeamId,
+    squad: validRosterIds
+      .map((id: string) => fcPlayerById(id))
+      .filter(Boolean),
     currentDate: snap.currentDate,
     fixtures: snap.fixtures ?? [],
     stats: snap.stats ?? {},
-    rosterIds: snap.rosterIds ?? [],
+    rosterIds: validRosterIds,
+    clubOverrides,
     budget: snap.budget,
     dismissedMatchIds: snap.dismissedMatchIds ?? [],
   } as any);

@@ -448,6 +448,50 @@ export function teamKeyFromName(name: string): string {
   return findTeamByName(name)?.id ?? normalizeTeamLookup(name);
 }
 
+/**
+ * Emparejamiento ESTRICTO entre el nombre de club del dataset y los equipos
+ * del juego. A diferencia de findTeamByName, NO usa coincidencias parciales
+ * (que metían, por ejemplo, a los jugadores del "Barcelona SC" de Ecuador en
+ * la plantilla del FC Barcelona). Solo acepta:
+ *   - igualdad exacta con el id o el nombre normalizado del equipo
+ *   - un alias declarado explícitamente
+ * Además, si se conoce la liga del jugador en el dataset, esta debe coincidir
+ * con la liga del equipo del juego.
+ */
+export function findTeamStrict(name: string, leagueName?: string): Team | null {
+  const normalized = normalizeTeamLookup(name);
+  if (!normalized) return null;
+
+  const lookup = getTeamLookupMap();
+  let team = lookup.get(normalized) ?? null;
+
+  if (!team) {
+    const aliasTarget = TEAM_NAME_ALIASES[normalized];
+    if (aliasTarget) team = lookup.get(normalizeTeamLookup(aliasTarget)) ?? null;
+  }
+
+  if (!team) return null;
+
+  // La liga solo se usa para desempatar: si el nombre coincide con un equipo
+  // de otra liga, se acepta igualmente salvo que exista otro equipo del juego
+  // con ese mismo nombre en la liga correcta (homónimos entre competiciones).
+  if (leagueName) {
+    const leagueId = leagueIdFromName(leagueName);
+    if (leagueId && team.league !== leagueId) {
+      const sameNameInLeague = getAllTeams().find(
+        (t) =>
+          t.league === leagueId &&
+          (normalizeTeamLookup(t.name) === normalized || normalizeTeamLookup(t.id) === normalized),
+      );
+      if (sameNameInLeague) return sameNameInLeague;
+    }
+  }
+
+
+  return team;
+}
+
+
 // 3. SÚPER RED DE SEGURIDAD: Esta función JAMÁS lanzará un "Team not found"
 export function teamById(id: string): Team {
   if (!id) {
