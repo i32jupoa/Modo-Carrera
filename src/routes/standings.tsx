@@ -19,11 +19,17 @@ function getLeagueName(leagueId: string): string {
 }
 
 export const Route = createFileRoute("/standings")({
+  // Permite llegar desde Equipos con ?league=...&highlight=teamId
+  validateSearch: (search: Record<string, unknown>) => ({
+    league: typeof search.league === "string" ? search.league : "",
+    highlight: typeof search.highlight === "string" ? search.highlight : "",
+  }),
   component: StandingsPage,
 });
 
 function StandingsPage() {
   const navigate = useNavigate();
+  const { league: leagueParam, highlight } = Route.useSearch();
   const [save, setSave] = useState<SaveGame | null>(null);
   const [viewLeague, setViewLeague] = useState<LeagueId>("laliga");
 
@@ -34,8 +40,9 @@ function StandingsPage() {
       return;
     }
     setSave(s);
-    setViewLeague(s.myLeague);
-  }, [navigate]);
+    setViewLeague(leagueParam || s.myLeague);
+  }, [navigate, leagueParam]);
+
   
   // Generate stats on-demand when league changes
   useEffect(() => {
@@ -92,13 +99,13 @@ function StandingsPage() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-bold">Clasificación</h3>
         </div>
-        <StandingsTable standings={standings} myTeamId={save.myTeamId} />
+        <StandingsTable standings={standings} myTeamId={save.myTeamId} highlight={highlight} />
       </div>
     </div>
   );
 }
 
-function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof getSortedStandings>; myTeamId: string }) {
+function StandingsTable({ standings, myTeamId, highlight }: { standings: ReturnType<typeof getSortedStandings>; myTeamId: string; highlight?: string }) {
   return (
     <div className="text-xs">
       <div className="grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
@@ -107,13 +114,14 @@ function StandingsTable({ standings, myTeamId }: { standings: ReturnType<typeof 
       {standings.map((s, i) => {
         const t = teamById(s.teamId);
         const isMe = s.teamId === myTeamId;
+        const isHighlighted = !!highlight && s.teamId === highlight && !isMe;
         const zoneColor =
           i < 4 ? "border-l-primary" : i < 6 ? "border-l-accent" :
           i >= standings.length - 3 ? "border-l-destructive" : "border-l-transparent";
         return (
           <div
             key={s.teamId}
-            className={`grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : ""}`}
+            className={`grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : isHighlighted ? "bg-accent/10 ring-1 ring-accent/50 font-semibold" : ""}`}
           >
             <span className="text-muted-foreground">{i + 1}</span>
             <span className="flex items-center gap-1.5 min-w-0">

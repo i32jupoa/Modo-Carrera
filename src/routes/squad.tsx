@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { loadSave, saveSave } from "@/lib/store";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace";
 import {
   usePlayersStore,
   type FcPlayer,
@@ -109,6 +110,13 @@ function PlayerCard({
       onClick={onClick}
       className="group relative flex w-full items-center gap-3 rounded-xl border border-border/60 bg-card/80 p-3 text-left transition hover:-translate-y-0.5 hover:border-primary/60 hover:bg-card"
     >
+      <PlayerFace
+        name={p.Name}
+        image={p.card}
+        role={roleFromPosition(p.Position)}
+        size={48}
+        className="bg-secondary/40"
+      />
       <div
         className={`grid h-12 w-12 shrink-0 place-items-center rounded-lg border scoreline text-lg font-black ${ovrTone(
           p.OVR,
@@ -126,7 +134,11 @@ function PlayerCard({
           )}
         </div>
         <div className="mt-0.5 flex items-center gap-2 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
-          <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-foreground/80">
+          <span
+            className={`rounded bg-secondary/60 px-1.5 py-0.5 font-black ${
+              ROLE_TEXT[roleFromPosition(p.Position)]
+            }`}
+          >
             {POS_LABEL_ES[pos]}
           </span>
           <span>{p.Age}a</span>

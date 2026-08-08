@@ -32,6 +32,10 @@
   --color-pitch: var(--pitch);
   --color-neon: var(--neon);
   --color-cyan: var(--cyan);
+  --color-pos-gk: var(--pos-gk);
+  --color-pos-def: var(--pos-def);
+  --color-pos-mid: var(--pos-mid);
+  --color-pos-att: var(--pos-att);
   --font-display: var(--font-display);
 }
 
@@ -60,6 +64,11 @@
   --pitch: oklch(0.32 0.12 145);
   --neon: oklch(0.86 0.22 152);
   --cyan: oklch(0.85 0.16 220);
+  /* Colores por demarcación (11 tipo / minimapa) */
+  --pos-gk: oklch(0.78 0.18 60);   /* portero → naranja */
+  --pos-def: oklch(0.7 0.17 250);  /* defensa → azul */
+  --pos-mid: oklch(0.8 0.2 150);   /* centro del campo → verde */
+  --pos-att: oklch(0.68 0.22 25);  /* delantera → rojo */
   --font-display: "Space Grotesk", system-ui, sans-serif;
 }
 

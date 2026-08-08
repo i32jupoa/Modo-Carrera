@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
 import { TEAMS, teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
 import type { Position } from "@/data/players";
@@ -238,7 +238,14 @@ function applyFilters(
   });
 }
 
-export const Route = createFileRoute("/transfers")({ component: TransfersPage });
+export const Route = createFileRoute("/transfers")({
+  // Permite llegar desde Equipos con ?q=nombre&player=id
+  validateSearch: (search: Record<string, unknown>) => ({
+    q: typeof search.q === "string" ? search.q : "",
+    player: typeof search.player === "string" ? search.player : "",
+  }),
+  component: TransfersPage,
+});
 
 const TEAM_NAME_TO_ID: Record<string, string> = Object.fromEntries(
   TEAMS.map((t) => [t.name, t.id]),
@@ -261,6 +268,7 @@ const TABS: { value: MarketTab; label: string }[] = [
 
 function TransfersPage() {
   const navigate = useNavigate();
+  const { q: initialQuery, player: initialPlayerId } = Route.useSearch();
   const { loading, ready } = usePlayersReady();
   const budget = usePlayersStore((s) => s.budget);
   const rawPlayers = usePlayersStore((s) => s.getRawPlayers?.() || []);
@@ -271,7 +279,7 @@ function TransfersPage() {
   const market = useUserMarket(ready);
 
   const [save, setSave] = useState<SaveGame | null>(null);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialQuery);
   const [showFilters, setShowFilters] = useState(false);
   const [tab, setTab] = useState<MarketTab>("market");
 
@@ -321,7 +329,19 @@ function TransfersPage() {
     if (!myTeamId) setMyTeam(s.myTeamId);
   }, [navigate, myTeamId, setMyTeam]);
 
-  const inRoster = useMemo(() => new Set(rosterIds), [rosterIds]);
+  const inRoster = useMemo(() => new Set<string>(rosterIds as string[]), [rosterIds]);
+
+  // Si llegamos desde Equipos con un jugador concreto, abrimos su negociación.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (!ready || autoOpened.current || !initialPlayerId) return;
+    const found = (rawPlayers as FcPlayer[]).find((p) => String(p.ID) === initialPlayerId);
+    if (!found) return;
+    autoOpened.current = true;
+    setTab("market");
+    setTarget(found);
+    setReport(market.scout(String(found.ID)));
+  }, [ready, initialPlayerId, rawPlayers, market]);
 
   const players = useMemo(() => {
     if (!ready) return [];

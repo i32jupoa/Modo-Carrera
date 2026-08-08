@@ -57,13 +57,22 @@ function formatCupResult(result: any): string {
 
 
 
-export const Route = createFileRoute("/fixtures")({ component: FixturesPage });
+export const Route = createFileRoute("/fixtures")({
+  // Permite llegar desde Equipos con ?league=...&team=teamId
+  validateSearch: (search: Record<string, unknown>) => ({
+    league: typeof search.league === "string" ? search.league : "",
+    team: typeof search.team === "string" ? search.team : "",
+  }),
+  component: FixturesPage,
+});
 
 
 
 function FixturesPage() {
 
   const navigate = useNavigate();
+
+  const { league: leagueParam, team: focusTeam } = Route.useSearch();
 
   const [save, setSave] = useState<SaveGame | null>(null);
 
@@ -79,9 +88,11 @@ function FixturesPage() {
 
     if (!s) { navigate({ to: "/" }); return; }
 
-    setSave(s); setLeague(s.myLeague); setViewMd(s.currentMatchday[s.myLeague]);
+    const lg = (leagueParam || s.myLeague) as LeagueId;
 
-  }, [navigate]);
+    setSave(s); setLeague(lg); setViewMd(s.currentMatchday[lg] ?? 1);
+
+  }, [navigate, leagueParam]);
 
   
 
@@ -167,11 +178,13 @@ function FixturesPage() {
 
           const isMine = f.homeId === save.myTeamId || f.awayId === save.myTeamId;
 
+          const isFocus = !!focusTeam && (f.homeId === focusTeam || f.awayId === focusTeam) && !isMine;
+
           const isHome = f.homeId === save.myTeamId;
 
           return (
 
-            <div key={f.id} className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-3 ${isMine ? "bg-primary/5" : ""}`}>
+            <div key={f.id} className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-3 ${isMine ? "bg-primary/5" : isFocus ? "bg-accent/10 ring-1 ring-inset ring-accent/40" : ""}`}>
 
               <div className="flex items-center gap-3 justify-end min-w-0">
 
