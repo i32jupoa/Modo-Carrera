@@ -2,6 +2,8 @@ import { useState } from "react";
 import { btnGhost, btnPrimary, btnSecondary, infoChip } from "./matchUi";
 import { StaminaBar } from "./StaminaPanel";
 import { ArrowLeftRight, X } from "lucide-react";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { faceUrl } from "@/lib/playerFaces";
 
 type P = { id: string; name: string; position: string; rating?: number };
 
@@ -117,7 +119,13 @@ export function SubstitutionPanel({
                     active ? "border-primary bg-primary/10" : "border-border/70 hover:border-accent"
                   }`}
                 >
-                  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
+                  <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-2">
+                    <PlayerFace
+                      name={p.name}
+                      image={faceUrl(p.id)}
+                      role={roleFromPosition(p.position)}
+                      size={26}
+                    />
                     <span className="text-[0.6rem] font-bold text-muted-foreground w-8">{p.position}</span>
                     <span className="truncate text-xs font-semibold">{p.name}</span>
                     <span className="scoreline text-xs tabular-nums text-muted-foreground">
@@ -153,7 +161,13 @@ export function SubstitutionPanel({
                 onClick={() => pickIn(p.id)}
                 className="w-full text-left rounded-lg border border-border/70 px-3 py-2 transition hover:border-accent disabled:opacity-30"
               >
-                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
+                <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-2">
+                  <PlayerFace
+                    name={p.name}
+                    image={faceUrl(p.id)}
+                    role={roleFromPosition(p.position)}
+                    size={26}
+                  />
                   <span className="text-[0.6rem] font-bold text-muted-foreground w-8">{p.position}</span>
                   <span className="truncate text-xs font-semibold">{p.name}</span>
                   <span className="scoreline text-xs tabular-nums text-muted-foreground">

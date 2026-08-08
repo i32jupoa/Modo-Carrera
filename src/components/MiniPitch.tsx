@@ -3,6 +3,8 @@ import { Player } from "@/data/players";
 import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName, type PositionRole } from "@/lib/formations";
 import { teamById } from "@/data/teams";
 import { CardEvent } from "@/lib/simulation";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { faceUrl } from "@/lib/playerFaces";
 
 interface MiniPitchProps {
   startingXI: Player[];
@@ -108,18 +110,14 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
                 transform: 'translate(-50%, -50%)',
               }}
             >
-              <div 
-                className="font-bold rounded-full flex items-center justify-center shadow-lg border-2 relative"
-                style={{
-                  width: '28px',
-                  height: '28px',
-                  backgroundColor: team?.color || '#3b82f6',
-                  borderColor: team?.color || '#3b82f6',
-                  color: textColor,
-                  fontSize: '0.55rem',
-                }}
-              >
-                {player.rating}
+              <div className="relative">
+                <PlayerFace
+                  name={player.name}
+                  image={faceUrl(player.id, player.cardImage)}
+                  role={roleFromPosition(player.position)}
+                  size={28}
+                  className="shadow-lg"
+                />
                 {cardType && (
                   <div className="absolute -top-1 -right-1">
                     <span className={`w-3 h-2 inline-block rounded-sm ${cardType === 'red' ? 'bg-red-500' : 'bg-yellow-400'}`} />

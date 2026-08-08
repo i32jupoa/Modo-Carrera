@@ -7,6 +7,8 @@ import { defaultLineup, Position } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { usePlayersStore } from "@/store/playersStore";
 import { FootballPitch, PlayerNode } from "@/components/FootballPitch";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { faceUrl } from "@/lib/playerFaces";
 import {
   ALL_FORMATIONS,
   FORMATION_COORDINATES,
@@ -943,6 +945,7 @@ function LineupPage() {
                       position: player.position,
                       injured: player.injuredUntil > leagueMd,
                       suspended: isSuspended,
+                      cardImage: player.cardImage,
                     }}
                     coordinates={coords}
                     isSelected={selectedPlayer === player.id}
@@ -1011,8 +1014,17 @@ function LineupPage() {
                       : "border-border bg-card hover:border-primary/60"
                   }`}
                 >
-                  <div className="w-10 h-10 grid place-items-center rounded text-sm font-black bg-secondary text-foreground">
-                    {player.rating}
+                  <div className="relative">
+                    <PlayerFace
+                      name={player.name}
+                      image={faceUrl(player.id, player.cardImage)}
+                      role={roleFromPosition(player.position)}
+                      size={40}
+                      className="bg-secondary shadow"
+                    />
+                    <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
+                      {player.rating}
+                    </span>
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold truncate text-sm flex items-center gap-1">

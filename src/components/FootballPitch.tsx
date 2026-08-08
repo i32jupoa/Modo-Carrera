@@ -1,4 +1,6 @@
 import { PositionCoordinate } from "@/lib/formations";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { faceUrl } from "@/lib/playerFaces";
 
 interface FootballPitchProps {
   children: React.ReactNode;
@@ -51,6 +53,7 @@ interface PlayerNodeProps {
     position: string;
     injured?: boolean;
     suspended?: boolean;
+    cardImage?: string;
   };
   coordinates: PositionCoordinate;
   isSelected: boolean;
@@ -78,12 +81,12 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
   return (
     <button
       onClick={onClick}
-      className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-full flex flex-col items-center justify-center transition-all duration-200 ${
+      className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-14 flex flex-col items-center justify-center bg-transparent transition-all duration-200 ${
         isSelected
-          ? "bg-primary text-primary-foreground scale-110 shadow-lg shadow-primary/50 ring-2 ring-white"
+          ? "scale-110 drop-shadow-[0_0_6px_hsl(var(--primary))]"
           : isUnavailable
-          ? "bg-destructive/20 text-destructive border-2 border-destructive/50 opacity-60"
-          : "bg-card text-foreground border-2 border-primary/50 hover:border-primary hover:scale-105"
+          ? "opacity-60"
+          : "hover:scale-105"
       }`}
       style={{
         top: `${coordinates.top}%`,
@@ -92,9 +95,21 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
       title={`${player.name} (${player.rating}) - ${player.position}${player.injured ? ' - Lesionado' : ''}${player.suspended ? ' - Suspendido' : ''}`}
       disabled={isUnavailable}
     >
-      <span className="text-[0.7rem] font-bold leading-tight">{player.rating}</span>
-      <span className="text-[0.55rem] leading-tight truncate max-w-full px-1">{shortName}</span>
-      <span className="text-[0.45rem] leading-tight text-muted-foreground">{player.position}</span>
+      <span className="relative">
+        <PlayerFace
+          name={player.name}
+          image={faceUrl(player.id, player.cardImage)}
+          role={roleFromPosition(player.position)}
+          size={42}
+          className="shadow"
+        />
+        <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
+          {player.rating}
+        </span>
+      </span>
+      <span className="mt-0.5 text-[0.55rem] font-medium leading-tight truncate max-w-full px-1 text-foreground drop-shadow">
+        {shortName}
+      </span>
       {player.injured && (
         <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-orange-400" title="Lesionado" />
       )}
