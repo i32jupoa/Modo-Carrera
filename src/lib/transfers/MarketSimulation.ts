@@ -14,6 +14,12 @@
  */
 
 import { BALANCE, MARKET_TIMING } from "./constants";
+import {
+  TRANSFER_WINDOWS,
+  isSummerTransferWindow,
+  isWinterTransferWindow,
+  parseDateOnly,
+} from "../transferWindows";
 import { getMarketIndex } from "./PlayerIndex";
 import { getClubProfile } from "./ClubStrategy";
 import { getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
@@ -22,6 +28,7 @@ import {
   clubWantsToActToday,
   forceSellSurplusPlayer,
   priorityNeeds,
+  runClubOpportunisticCycle,
   runClubTransferCycle,
   signBestFreeAgent,
 } from "./TransferEngine";
@@ -46,28 +53,48 @@ function parseDate(date: string): { year: number; month: number; day: number } {
   };
 }
 
-/** Ventana de mercado abierta en una fecha. */
+/**
+ * Ventana de mercado abierta en una fecha.
+ *
+ * Usa `transferWindows.ts` como única fuente de verdad de las fechas (1 jul
+ * — 1 sep en verano, 1 — 31 ene en invierno). Antes esta función tenía su
+ * propia definición local (julio-agosto completos, sin el 1 de septiembre),
+ * así que el motor de simulación cerraba el mercado un día antes de lo que
+ * decía el resto del juego (banner, `isMarketOpenForIso`...).
+ */
 export function windowForDate(date: string): MarketWindow {
-  const { month } = parseDate(date);
-  if (month >= 7 && month <= 8) return "summer";
-  if (month === 1) return "winter";
+  const d = parseDateOnly(date);
+  if (isSummerTransferWindow(d)) return "summer";
+  if (isWinterTransferWindow(d)) return "winter";
   return "closed";
 }
 
-/** Último día natural del mes de cierre de cada ventana. */
+/** Último día natural (mes 1-indexado) del cierre de cada ventana. */
 function windowLastDay(window: MarketWindow): { month: number; day: number } | null {
-  if (window === "summer") return { month: 8, day: 31 };
-  if (window === "winter") return { month: 1, day: 31 };
+  if (window === "summer")
+    return { month: TRANSFER_WINDOWS.summer.endMonth + 1, day: TRANSFER_WINDOWS.summer.endDay };
+  if (window === "winter")
+    return { month: TRANSFER_WINDOWS.winter.endMonth + 1, day: TRANSFER_WINDOWS.winter.endDay };
   return null;
 }
 
-/** ¿Estamos en los últimos días de la ventana? */
+/**
+ * ¿Estamos en los últimos días de la ventana?
+ *
+ * Compara fechas reales (no sólo "mismo mes, día alto"): la ventana de
+ * verano cierra el 1 de septiembre, así que sus últimos días de verdad caen
+ * en agosto (mes distinto al del cierre) y una comparación de "mismo mes"
+ * los habría dejado fuera del deadline day.
+ */
 export function isDeadlineDay(date: string): boolean {
   const window = windowForDate(date);
   const last = windowLastDay(window);
   if (!last) return false;
-  const { month, day } = parseDate(date);
-  return month === last.month && day > last.day - MARKET_TIMING.deadlineDays;
+  const { year } = parseDate(date);
+  const lastDate = new Date(year, last.month - 1, last.day).getTime();
+  const current = parseDateOnly(date).getTime();
+  const daysToClose = Math.round((lastDate - current) / 86_400_000);
+  return daysToClose >= 0 && daysToClose < MARKET_TIMING.deadlineDays;
 }
 
 /**
@@ -310,7 +337,7 @@ function runClubDay(
 
   // 2. Cesiones: colocar a quien no juega.
   if (
-    window.loans < MARKET_TIMING.maxSalesPerWindow &&
+    window.loans < MARKET_TIMING.maxLoansPerWindow &&
     windowDeficit(clubId) < MARKET_TIMING.maxWindowDeficit &&
     seededUnit(clubId, date, "loans") < 0.5
   ) {
@@ -378,6 +405,46 @@ function runClubDay(
       for (const transfer of cycle.transfers) {
         if (!transfer.fromClubId) continue;
         clubWindowState(transfer.fromClubId).sales += 1;
+      }
+    }
+
+    // 3b. Refuerzos de rotación especulativos: pasadas las primeras semanas
+    // de mercado, la mayoría de clubes ya han cubierto sus huecos urgentes
+    // (`priorityNeeds` vacío) y dejan de fichar por iniciativa propia hasta
+    // el deadline day — el verano se sentía vivo sólo hasta agosto y luego
+    // muerto. En la vida real los clubes ambiciosos siguen mirando refuerzos
+    // de rotación sin tener un agujero grave, así que aquí se prueba (con
+    // baja probabilidad, escalada por ambición) un único fichaje sobre el
+    // grupo más flojo de la plantilla aunque no sea urgente.
+    if (
+      state.window === "summer" &&
+      !state.deadlineDay &&
+      state.windowDay > 12 &&
+      cycle.transfers.length === 0 &&
+      window.signings < MARKET_TIMING.maxSigningsPerWindow &&
+      // Antes esta comprobación usaba una probabilidad fija (0.05), así que
+      // la actividad "de fondo" se notaba las primeras semanas y luego se
+      // apagaba según avanzaba julio-agosto, aunque la ventana siguiera
+      // abierta hasta el 1 de septiembre. Escalando la probabilidad con lo
+      // avanzado que está el mercado, la segunda mitad del verano (agosto)
+      // se mantiene tan viva como la primera en vez de sentirse "muerta"
+      // hasta el deadline day.
+      seededUnit(clubId, date, "opportunistic") <
+        clamp(0.06 + (state.windowDay - 12) * 0.003, 0.06, 0.16) * profile.ambition
+    ) {
+      const oppCycle = runClubOpportunisticCycle(clubId, { date, deadlineDay: false });
+      result.offersMade += oppCycle.attempts.length;
+      for (const attempt of oppCycle.attempts) {
+        rumors.push(rumorInterest(clubId, attempt.playerId, date));
+      }
+      if (oppCycle.transfers.length > 0) {
+        window.signings += oppCycle.transfers.length;
+        recordTransfers(oppCycle.transfers);
+        result.transfers.push(...oppCycle.transfers);
+        for (const transfer of oppCycle.transfers) {
+          if (!transfer.fromClubId) continue;
+          clubWindowState(transfer.fromClubId).sales += 1;
+        }
       }
     }
   }

@@ -13,7 +13,7 @@ import type { PositionGroup } from "./types";
 
 export const MARKET_TIMING = {
   /** Porcentaje de clubes que actúan cada día de mercado. */
-  dailyActiveClubShare: 0.85,
+  dailyActiveClubShare: 0.55,
   /** Porcentaje de clubes activos durante el deadline day. */
   deadlineActiveClubShare: 1,
   /** Días finales de ventana considerados deadline day. */
@@ -24,8 +24,13 @@ export const MARKET_TIMING = {
   maxNegotiationRounds: 4,
   /** Días que una negociación puede quedarse parada antes de expirar. */
   negotiationExpiryDays: 7,
-  /** Máximo de fichajes por club y ventana (sin tope real). */
-  maxSigningsPerWindow: 99,
+  /**
+   * Máximo de fichajes por club y ventana. Antes no tenía tope real (99), lo
+   * que permitía a un club encadenar decenas de fichajes en una sola ventana
+   * — nada realista ni siquiera para los clubes más activos del mercado. 10
+   * ya cubre holgadamente hasta las ventanas de reconstrucción más locas.
+   */
+  maxSigningsPerWindow: 10,
   /** Mínimo de fichajes que todo club de la IA debe cerrar en la ventana de invierno. */
   minSigningsPerWindow: 2,
   /**
@@ -33,7 +38,7 @@ export const MARKET_TIMING = {
    * cerrar en la ventana de verano. Un mercado de verano real mueve muchos
    * más nombres que el de invierno, así que el suelo es bastante más alto.
    */
-  minSigningsPerWindowSummer: 4,
+  minSigningsPerWindowSummer: 3,
   /**
    * Mínimo de ventas que todo club de la IA (menos el del usuario) debe
    * cerrar en verano. Sin este suelo, un club podía vender jugadores porque
@@ -43,6 +48,15 @@ export const MARKET_TIMING = {
   minSalesPerWindowSummer: 2,
   /** Máximo de ventas por club y ventana. */
   maxSalesPerWindow: 12,
+  /**
+   * Máximo de cesiones por club y ventana. Antes reutilizaba
+   * `maxSalesPerWindow` (12), demasiado alto: un club real cede a un puñado
+   * de canteranos o suplentes por verano, no a una docena. Un tope bajo
+   * también evita que un club pierda de golpe tantos titulares cedidos que
+   * su nivel de plantilla se desplome y acabe "necesitando" fichar
+   * cualquier cosa para tapar agujeros.
+   */
+  maxLoansPerWindow: 5,
   /**
    * Saldo negativo máximo de una ventana: un club no puede terminar el
    * mercado con más de estas salidas por encima de sus llegadas. Sin este
@@ -57,8 +71,17 @@ export const MARKET_TIMING = {
    * el mercado pasaba de "nada" a "450 fichajes de golpe" en una sola
    * jornada. La ventana de invierno, más corta, usa el mismo rango pero
    * llega a menos días porque la ventana entera dura menos.
+   *
+   * `maxDay: 35` (antes 20): con un máximo tan bajo, la inmensa mayoría de
+   * los clubes cubrían su cupo mínimo antes de terminar julio y, al no tener
+   * ya ninguna necesidad real de plantilla, dejaban de fichar por completo
+   * hasta el deadline day — el mercado de verano se sentía "vivo" sólo las
+   * primeras 3-4 semanas y luego muerto hasta el final, aunque la ventana
+   * siga abierta hasta el 1 de septiembre. Al repartir la repesca en un
+   * rango más amplio (hasta mediados de agosto), la actividad se nota más
+   * a lo largo de toda la ventana en vez de agotarse de golpe al principio.
    */
-  safetyNetWindow: { minDay: 5, maxDay: 20 },
+  safetyNetWindow: { minDay: 5, maxDay: 50 },
   /**
    * Si la red de seguridad no encuentra con quién cerrar el cupo, no se
    * reintenta al día siguiente (casi siempre inútil y caro de comprobar):
@@ -66,6 +89,67 @@ export const MARKET_TIMING = {
    * salta esta espera y siempre da un último empujón.
    */
   safetyNetRetryGapDays: 4,
+  /**
+   * Diferencia máxima de media (OVR) que la red de seguridad de fichajes
+   * tolera entre el techo de plantilla del club (`startingRating`) y el
+   * mejor agente libre disponible. El filtro original sólo ponía techo
+   * (nunca fichar por encima del nivel del once) pero no suelo, así que un
+   * club sin agentes libres decentes cerca de su nivel acababa fichando "el
+   * menos malo" aunque estuviera muy por debajo — de ahí fichajes de relleno
+   * tipo un jugador de league one por unos pocos miles de euros para un
+   * equipo top. Si nadie entra dentro de este margen, la red de seguridad se
+   * rinde esta vez (se reintenta más adelante) en vez de forzar un fichaje
+   * embarazoso.
+   */
+  freeAgentMaxOvrGap: 10,
+  /**
+   * Máximo de traspasos (no cesiones) que un mismo club comprador puede
+   * cerrar con un mismo club vendedor dentro de una misma ventana. Sin este
+   * tope, si un rival necesitaba varias posiciones a la vez y el mismo
+   * vendedor encajaba en todas (p. ej. un lateral, un central y un extremo
+   * del mismo equipo), la búsqueda por puntuación podía acabar mandando dos
+   * o tres titulares del mismo club al mismo rival en la misma ventana —
+   * algo que en la vida real casi nunca pasa entre dos clubes que compiten
+   * por lo mismo.
+   */
+  maxSameSellerPurchasesPerBuyer: 2,
+  /**
+   * Máximo de salidas "de nivel" (titulares o casi, ver `coreDeparturesFor`
+   * en `MarketLocks`) que un mismo club puede sufrir en una sola ventana,
+   * sin importar si la salida viene de una puja rival o de la red de
+   * seguridad de ventas. Sin este tope un club de la IA podía perder a
+   * media alineación titular (los dos porteros, media defensa...) en la
+   * misma ventana porque cada venta se decidía de forma aislada. No cuenta
+   * a los descartes/suplentes: esos pueden salir sin límite, como en la
+   * vida real.
+   */
+  maxCoreDeparturesPerWindow: 2,
+} as const;
+
+/**
+ * Suelo de calidad ligado a la reputación del club, no a su plantilla actual.
+ *
+ * `report.startingRating` se recalcula cada día a partir del once actual, así
+ * que si un club pierde a varios titulares seguidos en la misma ventana (unas
+ * cesiones, una venta...) esa media se desploma temporalmente. Sin este
+ * suelo, un club como el Real Madrid podía terminar "buscando" jugadores por
+ * debajo de su nivel real sólo porque su rating recién recalculado había
+ * bajado, y acababa fichando suplentes de ligas menores por unos pocos miles
+ * de euros — nada realista para un club de máxima reputación. El suelo se
+ * basa en `reputation` (0-1, estable durante toda la ventana) y actúa como
+ * límite mínimo, no como sustituto del cálculo normal.
+ */
+export const REPUTATION_OVR_FLOOR = {
+  /** OVR base para un club de reputación 0. */
+  base: 58,
+  /** Puntos de OVR añadidos a `base` para un club de reputación máxima (1). */
+  maxBonus: 28,
+  /** Margen que se resta al suelo antes de aplicarlo a la lista corta normal
+   *  (deja algo de margen para fichajes de rotación por debajo del once). */
+  shortlistSlack: 8,
+  /** Margen (mayor, porque el mercado de libres es más limitado) para la red
+   *  de seguridad de agentes libres. */
+  freeAgentSlack: 12,
 } as const;
 
 // ============================================================================
@@ -148,17 +232,27 @@ export const DECISION_ACCURACY = {
 // PUNTUACIÓN DE CANDIDATOS
 // ============================================================================
 
-/** Pesos del sistema de puntuación de fichajes (suman 1). */
+/**
+ * Pesos del sistema de puntuación de fichajes (suman 1).
+ *
+ * `prestige` y `league` estaban casi a cero (0.02 y 0.03): un jugador barato
+ * de una liga menor que tapaba un hueco podía puntuar casi igual de bien
+ * para el Real Madrid que para un equipo de mitad de tabla, porque `need` +
+ * `price` + `wage` (0.46 combinado) dominaban por completo el resultado. Se
+ * suben `prestige` y `league` y se baja un poco `need`/`price`/`wage` para
+ * que el encaje de nivel entre club y jugador (no sólo si es barato y cubre
+ * la posición) pese de verdad en la puntuación final.
+ */
 export const SCORE_WEIGHTS = {
-  need: 0.26,
+  need: 0.2,
   quality: 0.16,
   potential: 0.12,
   age: 0.1,
-  price: 0.14,
-  wage: 0.06,
+  price: 0.1,
+  wage: 0.05,
   nationality: 0.04,
-  league: 0.03,
-  prestige: 0.02,
+  league: 0.06,
+  prestige: 0.1,
   /** Encaje con la identidad táctica del club (posesión, pace, físico...). */
   style: 0.07,
 } as const;
@@ -317,14 +411,14 @@ export const BALANCE = {
    * el resto del año (más clubes activos cada día y más operaciones por
    * ciclo, ver `MarketSimulation.runClubDay`).
    */
-  summerFactor: 1.5,
+  summerFactor: 1.25,
   /**
    * Multiplicador sobre el número de fichajes que un club puede intentar
    * cerrar en un mismo ciclo diario durante el verano. En invierno no se
    * aplica: la ventana corta y el mercado más parado hacen que un club rara
    * vez necesite firmar varios jugadores el mismo día.
    */
-  summerSigningBurst: 1.75,
+  summerSigningBurst: 1.3,
 } as const;
 
 /**

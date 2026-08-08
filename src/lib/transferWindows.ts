@@ -96,6 +96,19 @@ export function formatGameDate(iso: string): string {
   });
 }
 
+/**
+ * Identificador estable de la ventana de mercado (año + tipo) para una fecha
+ * ISO dada. Se usa para llevar la cuenta de cosas por ventana (cupos,
+ * límites entre dos clubes...) sin depender de la simulación diaria.
+ */
+export function transferWindowKey(iso: string): string {
+  const d = parseDateOnly(iso);
+  const year = d.getFullYear();
+  if (isSummerTransferWindow(d)) return `${year}:summer`;
+  if (isWinterTransferWindow(d)) return `${year}:winter`;
+  return `${year}:closed`;
+}
+
 /** True if `day` falls inside the transfer window that contains `current` (same year). */
 export function isTransferWindowDay(day: Date, current: Date): boolean {
   if (isSummerTransferWindow(current)) return isSummerTransferWindow(day);

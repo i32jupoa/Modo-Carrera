@@ -27,6 +27,19 @@ const arrivals = new Map<string, number>();
 const departures = new Map<string, number>();
 
 /**
+ * clubId -> nº de salidas "de nivel" (jugadores que de verdad eran titulares
+ * o casi, no descartes de plantilla) en la ventana activa.
+ *
+ * Sin este contador, nada impedía que un club perdiera a media alineación
+ * titular en la misma ventana: cada venta se evaluaba de forma aislada
+ * (¿el comprador puede pagar? ¿el jugador dice que sí?) sin memoria de
+ * cuántos titulares ya se habían ido esa misma ventana. Un club de la IA
+ * podía acabar vendiendo a sus dos porteros titulares y a media defensa en
+ * dos semanas — nada realista.
+ */
+const coreDepartures = new Map<string, number>();
+
+/**
  * Salidas aprobadas explícitamente por el usuario.
  *
  * Ningún jugador del club del usuario puede cambiar de equipo si no es dentro
@@ -86,6 +99,7 @@ export function setLockWindow(key: string): void {
   settled.clear();
   arrivals.clear();
   departures.clear();
+  coreDepartures.clear();
 }
 
 /** Ventana activa para los cerrojos. */
@@ -127,6 +141,17 @@ export function departuresFor(clubId: string): number {
   return departures.get(clubId) ?? 0;
 }
 
+/** Registra una salida "de nivel" (titular o casi) de un club en la ventana activa. */
+export function registerCoreDeparture(clubId: string | null): void {
+  if (!clubId) return;
+  coreDepartures.set(clubId, (coreDepartures.get(clubId) ?? 0) + 1);
+}
+
+/** Salidas "de nivel" de un club en la ventana activa. */
+export function coreDeparturesFor(clubId: string): number {
+  return coreDepartures.get(clubId) ?? 0;
+}
+
 /**
  * Saldo de la ventana: positivo si el club ha perdido más gente de la que ha
  * fichado. La simulación lo usa para que nadie termine el mercado con media
@@ -142,6 +167,7 @@ export function resetMarketLocks(): void {
   settled.clear();
   arrivals.clear();
   departures.clear();
+  coreDepartures.clear();
   userApprovedDepth = 0;
 }
 
@@ -156,6 +182,7 @@ export function rebuildLocks(
   settled.clear();
   arrivals.clear();
   departures.clear();
+  coreDepartures.clear();
   if (!activeWindowKey) return;
   for (const record of records) {
     if (windowKeyOf(record.date) !== activeWindowKey) continue;

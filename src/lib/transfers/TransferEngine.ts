@@ -12,6 +12,7 @@
  */
 
 import { teamById } from "@/data/teams";
+import { transferWindowKey } from "../transferWindows";
 import {
   CONTRACT_RULES,
   DECISION_ACCURACY,
@@ -19,6 +20,7 @@ import {
   MARKET_TIMING,
   POSITION_AGE_CURVE,
   PRICE_MULTIPLIERS,
+  REPUTATION_OVR_FLOOR,
   SCORE_WEIGHTS,
   SEARCH_LIMITS,
   SQUAD_LIMITS,
@@ -46,7 +48,7 @@ import {
   updatePlayer,
 } from "./PlayerIndex";
 import { getSquadReport, playerImprovesSquad } from "./SquadAnalyzer";
-import { isUserApprovedMove, windowDeficit } from "./MarketLocks";
+import { coreDeparturesFor, isUserApprovedMove, registerCoreDeparture, windowDeficit } from "./MarketLocks";
 import { isAvailable, valuePlayer } from "./MarketValuation";
 import { decideOnMove, wageDemand } from "./PlayerDecision";
 import {
@@ -93,6 +95,26 @@ function normalize(value: number, min: number, max: number): number {
 // ============================================================================
 
 const dominantNations = new Map<string, string>();
+
+/**
+ * Traspasos (no cesiones) cerrados entre un comprador y un vendedor
+ * concretos dentro de la ventana en curso. Clave: `windowKey:buyerId:sellerId`.
+ * Ver `MARKET_TIMING.maxSameSellerPurchasesPerBuyer`.
+ */
+const buyerSellerDeals = new Map<string, number>();
+
+function buyerSellerKey(date: string, buyerId: string, sellerId: string): string {
+  return `${transferWindowKey(date)}:${buyerId}:${sellerId}`;
+}
+
+function buyerSellerDealCount(date: string, buyerId: string, sellerId: string): number {
+  return buyerSellerDeals.get(buyerSellerKey(date, buyerId, sellerId)) ?? 0;
+}
+
+function recordBuyerSellerDeal(date: string, buyerId: string, sellerId: string): void {
+  const key = buyerSellerKey(date, buyerId, sellerId);
+  buyerSellerDeals.set(key, (buyerSellerDeals.get(key) ?? 0) + 1);
+}
 
 // La nacionalidad dominante depende de la plantilla actual. Si no se
 // invalida cuando entra o sale un jugador, un club que fiche a varios
@@ -186,6 +208,16 @@ function styleFitScore(
     (attributes.physical / 99) * style.physical +
     (attributes.defending / 99) * style.defending;
   return clamp(weighted / totalWeight, 0, 1);
+}
+
+/**
+ * Suelo de OVR ligado a la reputación del club (ver `REPUTATION_OVR_FLOOR`).
+ * Estable durante toda la ventana, a diferencia de `report.startingRating`,
+ * que se recalcula a diario y puede desplomarse si el club pierde varios
+ * titulares seguidos en pocos días.
+ */
+function reputationOvrFloor(profile: ClubProfile): number {
+  return REPUTATION_OVR_FLOOR.base + profile.reputation * REPUTATION_OVR_FLOOR.maxBonus;
 }
 
 /** Puntúa a un candidato para un club y una necesidad concretas. */
@@ -360,8 +392,14 @@ export function buildShortlist(
   const wageCeiling = maxWageOffer(clubId);
 
   // Rango de calidad: nadie busca por debajo de su banquillo ni muy por encima
-  // de lo que su reputación le permite atraer.
-  const minOvr = Math.round(Math.max(58, report.startingRating - 4));
+  // de lo que su reputación le permite atraer. El suelo también respeta la
+  // reputación del club (estable), no sólo el rating del once recalculado a
+  // diario: así un club como el Real Madrid no se pone a mirar suplentes de
+  // ligas menores sólo porque acaba de perder a varios titulares seguidos en
+  // la misma ventana.
+  const minOvr = Math.round(
+    Math.max(58, report.startingRating - 4, reputationOvrFloor(profile) - REPUTATION_OVR_FLOOR.shortlistSlack),
+  );
   const maxOvr = Math.round(
     clamp(report.startingRating + 6 + profile.reputation * 4, minOvr + 2, 99),
   );
@@ -388,6 +426,14 @@ export function buildShortlist(
     if (!isAvailable(player.id, options.cacheKey)) continue;
     if (isPursuitOnCooldown(clubId, player.id, options.cacheKey)) continue;
     if (!playerImprovesSquad(report, player)) continue;
+    // No más de N traspasos con el mismo vendedor en la misma ventana: evita
+    // que un rival se lleve dos o tres titulares del mismo club de golpe.
+    if (
+      player.clubId &&
+      buyerSellerDealCount(options.cacheKey, clubId, player.clubId) >=
+        MARKET_TIMING.maxSameSellerPurchasesPerBuyer
+    )
+      continue;
     if (player.contract.wage > wageCeiling * 1.4) continue;
     const entry = scoreCandidate({
       clubId,
@@ -414,6 +460,66 @@ export function priorityNeeds(clubId: string, cacheKey: string, limit = 2): Squa
     .slice()
     .sort((a, b) => b.urgency - a.urgency)
     .slice(0, limit);
+}
+
+/**
+ * Necesidad "blanda" para fichajes especulativos de mercado avanzado: a
+ * diferencia de `priorityNeeds` (que sólo devuelve huecos por encima del
+ * umbral de urgencia, 0.15), esto señala el grupo con la media más floja
+ * respecto al resto de la plantilla aunque no llegue a ese umbral. Se usa
+ * para que un club con la plantilla ya cubierta pueda seguir mirando
+ * refuerzos de rotación en agosto — como en la vida real — en vez de
+ * desaparecer del mercado en cuanto cierra sus urgencias.
+ */
+export function weakestGroupNeed(clubId: string, cacheKey: string): SquadNeed | null {
+  const report = getSquadReport(clubId, cacheKey);
+  let weakest: SquadNeed | null = null;
+  let worstGap = -Infinity;
+  for (const group of POSITION_GROUPS) {
+    const shape = IDEAL_SQUAD_SHAPE[group];
+    if (report.countByGroup[group] >= shape.max) continue;
+    if (report.countByGroup[group] === 0) continue; // ya cubierto por priorityNeeds
+    const gap = report.startingRating - report.ratingByGroup[group];
+    if (gap > worstGap) {
+      worstGap = gap;
+      weakest = {
+        group,
+        urgency: clamp(gap / 10, 0, 1),
+        count: report.countByGroup[group],
+        quality: report.ratingByGroup[group],
+        priority: "low",
+      };
+    }
+  }
+  return weakest;
+}
+
+/**
+ * Ciclo especulativo: un único intento de mejorar el grupo más flojo de la
+ * plantilla, sin exigir que la necesidad sea urgente. Lo usa la simulación
+ * diaria para dar algo de vida al mercado en agosto, cuando ya no quedan
+ * huecos "de verdad" pero un club ambicioso seguiría mirando refuerzos.
+ */
+export function runClubOpportunisticCycle(
+  clubId: string,
+  options: ClubCycleOptions,
+): ClubCycleResult {
+  const result: ClubCycleResult = { clubId, transfers: [], attempts: [], shortlisted: 0 };
+  const need = weakestGroupNeed(clubId, options.date);
+  if (!need || need.urgency <= 0.1) return result;
+
+  const shortlist = buildShortlist(clubId, need, { cacheKey: options.date });
+  result.shortlisted = shortlist.length;
+  const candidate = shortlist[0];
+  if (!candidate) return result;
+
+  const attempt = pursueTarget(clubId, candidate.player.id, {
+    date: options.date,
+    deadlineDay: options.deadlineDay,
+  });
+  result.attempts.push(attempt);
+  if (attempt.outcome === "signed" && attempt.record) result.transfers.push(attempt.record);
+  return result;
 }
 
 // ============================================================================
@@ -489,6 +595,7 @@ export function pursueTarget(
   // El vendedor también tiene voz: ningún club se queda sin plantilla ni
   // encadena salidas sin reponer. Si ya ha perdido más gente de la que ha
   // fichado en esta ventana, cierra la puerta hasta que se refuerce.
+  let isCoreDeparture = false;
   if (player.clubId) {
     const sellerReport = getSquadReport(player.clubId, cacheKey);
     if (sellerReport.size <= SQUAD_LIMITS.minSquadSize) {
@@ -501,7 +608,24 @@ export function pursueTarget(
         null,
       );
     }
+    // El jugador no es un descarte claro de plantilla (no está en las listas
+    // de transferibles/cedibles del análisis): es un titular o casi. Un club
+    // sólo se desprende de un puñado de esos por ventana, no de media
+    // alineación — ver `maxCoreDeparturesPerWindow`.
+    isCoreDeparture =
+      !sellerReport.transferables.includes(playerId) && !sellerReport.loanables.includes(playerId);
+    if (
+      isCoreDeparture &&
+      coreDeparturesFor(player.clubId) >= MARKET_TIMING.maxCoreDeparturesPerWindow
+    ) {
+      return fail(
+        "unavailable",
+        `${teamById(player.clubId).name} ya ha soltado suficientes titulares esta ventana.`,
+        null,
+      );
+    }
   }
+  const sellerIdForCoreTracking = player.clubId;
 
   const profile = getClubProfile(clubId);
   const spendCeiling = maxSpend(clubId);
@@ -604,7 +728,7 @@ export function pursueTarget(
           message: `${teamById(sellerId).name} espera mejores ofertas por ${player.name}.`,
         };
       }
-      return closeWithPlayerDecision(offer, valuation, options, rounds);
+      return closeWithPlayerDecisionAndTrack(offer, valuation, options, rounds, sellerIdForCoreTracking, isCoreDeparture);
     }
 
     if (isClosed(response.status) || response.status === "final-rejection") {
@@ -650,6 +774,23 @@ export function pursueTarget(
   withdrawOffer(offer);
   dropInterest(playerId, clubId);
   return fail("rejected-by-club", `No hay acuerdo por ${player.name}.`, offer, rounds);
+}
+
+/** Igual que `closeWithPlayerDecision`, pero además lleva la cuenta de
+ *  salidas "de nivel" del club vendedor si el fichaje se cierra. */
+function closeWithPlayerDecisionAndTrack(
+  offer: TransferOffer,
+  valuation: MarketValuation,
+  options: PursuitOptions,
+  rounds: number,
+  sellerId: string | null,
+  isCoreDeparture: boolean,
+): PursuitResult {
+  const result = closeWithPlayerDecision(offer, valuation, options, rounds);
+  if (result.outcome === "signed" && isCoreDeparture && sellerId) {
+    registerCoreDeparture(sellerId);
+  }
+  return result;
 }
 
 /** Con acuerdo entre clubes, decide el jugador. */
@@ -783,7 +924,10 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
   }
 
   registerSigning(buyerId, offer.amount, offer.wageOffer);
-  if (sellerId && !isLoan) registerSale(sellerId, offer.amount, player.contract.wage);
+  if (sellerId && !isLoan) {
+    registerSale(sellerId, offer.amount, player.contract.wage);
+    if (sellerId !== buyerId) recordBuyerSellerDeal(date, buyerId, sellerId);
+  }
 
   offer.status = "accepted";
   clearInterest(player.id);
@@ -879,6 +1023,7 @@ export function signBestFreeAgent(clubId: string, date: string): TransferRecord 
   if (report.size >= SQUAD_LIMITS.maxSquadSize) return null;
 
   const wageCeiling = maxWageOffer(clubId);
+  const profile = getClubProfile(clubId);
   let needs: SquadNeed[] = priorityNeeds(clubId, date, 3);
   // Cuando el análisis de plantilla no ve ningún agujero pero el club sigue
   // por debajo de su cupo mínimo de fichajes de la ventana, se ignora el
@@ -902,10 +1047,20 @@ export function signBestFreeAgent(clubId: string, date: string): TransferRecord 
     if (!ignoreShapeCap && need.count >= shape.max) continue;
 
     // Nada de estrellas: se busca al mejor agente libre que encaje con el
-    // nivel real de la plantilla, que es el que puede decir que sí.
+    // nivel real de la plantilla, que es el que puede decir que sí. Pero
+    // tampoco al revés: si no hay ningún agente libre cerca de ese nivel, no
+    // se fuerza el fichaje del "menos malo" (ver `freeAgentMaxOvrGap`) — un
+    // club top no ficha a un suplente de league one sólo por cubrir el cupo.
     const ceilingOvr = report.startingRating + 1;
+    const floorOvr = Math.max(
+      ceilingOvr - MARKET_TIMING.freeAgentMaxOvrGap,
+      reputationOvrFloor(profile) - REPUTATION_OVR_FLOOR.freeAgentSlack,
+    );
     const options = getFreeAgents()
-      .filter((player) => player.group === need.group && player.ovr <= ceilingOvr)
+      .filter(
+        (player) =>
+          player.group === need.group && player.ovr <= ceilingOvr && player.ovr >= floorOvr,
+      )
       .filter((player) => wageDemand(player.id, clubId) <= wageCeiling)
       .sort((a, b) => b.ovr - a.ovr)
       .slice(0, 12);
@@ -955,6 +1110,13 @@ export function signBestFreeAgent(clubId: string, date: string): TransferRecord 
 export function forceSellSurplusPlayer(clubId: string, date: string): TransferRecord | null {
   const report = getSquadReport(clubId, date);
   if (report.size <= SQUAD_LIMITS.minSquadSize) return null;
+  if (coreDeparturesFor(clubId) >= MARKET_TIMING.maxCoreDeparturesPerWindow) {
+    // El club ya ha soltado suficientes titulares esta ventana: si no le
+    // queda ningún descarte real (`transferables` vacío), es más realista
+    // que se quede sin cubrir el cupo de ventas esta vez a que malvenda a
+    // otro titular sólo para no incumplir el mínimo.
+    if (report.transferables.length === 0) return null;
+  }
 
   let pool: readonly string[] = report.transferables;
   if (pool.length === 0) {
@@ -962,9 +1124,18 @@ export function forceSellSurplusPlayer(clubId: string, date: string): TransferRe
     // club sigue por debajo de su cupo mínimo de ventas de verano. Se busca
     // al menos prescindible de verdad: el peor valorado de una demarcación
     // que tenga margen por encima de su mínimo, sin tocar nunca el piso de
-    // plantilla.
+    // plantilla — y sin bajar nunca de un nivel razonablemente por debajo
+    // del once titular. Antes este filtro no comprobaba nivel alguno, así
+    // que en una plantilla muy nivelada (todo el bloque de un color) podía
+    // acabar "forzando" la venta de alguien que en realidad era un titular
+    // más, sólo por ser el peor valorado de su grupo.
+    const fallbackFloor = report.startingRating - SQUAD_LIMITS.benchGapForSale + 2;
     pool = getClubPlayers(clubId)
-      .filter((player) => report.countByGroup[player.group] > IDEAL_SQUAD_SHAPE[player.group].min)
+      .filter(
+        (player) =>
+          report.countByGroup[player.group] > IDEAL_SQUAD_SHAPE[player.group].min &&
+          player.ovr <= fallbackFloor,
+      )
       .sort((a, b) => a.ovr - b.ovr)
       .slice(0, 5)
       .map((player) => player.id);
@@ -1009,6 +1180,21 @@ export function forceSellSurplusPlayer(clubId: string, date: string): TransferRe
     for (const { id: buyerId } of ranked) {
       const buyerReport = getSquadReport(buyerId, date);
       if (buyerReport.size >= SQUAD_LIMITS.maxSquadSize) continue;
+      // El comprador tiene que tener un hueco real en esa demarcación (no
+      // sólo sitio genérico en la plantilla) y el jugador tiene que encajar
+      // con su nivel — ni muy por debajo (un club top no ficha un suplente
+      // de liga menor sólo porque puede pagarlo) ni muy por encima (un
+      // club pequeño no se lleva a un titular de un gigante a precio de
+      // saldo). Sin este filtro, la selección de comprador era puramente
+      // aleatoria entre "tiene sitio y presupuesto", así que cualquier club
+      // del mundo podía acabar fichando el descarte de cualquier otro,
+      // tuviera o no sentido para su plantilla.
+      const shapeForGroup = IDEAL_SQUAD_SHAPE[player.group];
+      if (buyerReport.countByGroup[player.group] >= shapeForGroup.max) continue;
+      const buyerProfile = getClubProfile(buyerId);
+      const buyerFloor = reputationOvrFloor(buyerProfile) - REPUTATION_OVR_FLOOR.shortlistSlack;
+      const buyerCeiling = buyerReport.startingRating + 6 + buyerProfile.reputation * 4;
+      if (player.ovr < buyerFloor || player.ovr > buyerCeiling) continue;
 
       // Se ofrece bastante por encima de lo que pide: es una salida de
       // emergencia, no una negociación al céntimo, y maximiza que el
@@ -1061,4 +1247,5 @@ export function clubWantsToActToday(clubId: string, date: string, share: number)
 export function resetTransferEngine(): void {
   dominantNations.clear();
   pursuitMemory.clear();
+  buyerSellerDeals.clear();
 }

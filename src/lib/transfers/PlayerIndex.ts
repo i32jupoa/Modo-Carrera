@@ -62,15 +62,27 @@ function estimatePotential(ovr: number, age: number, seed: string): number {
 }
 
 /** Contrato inicial coherente con la edad y el valor del jugador. */
-function buildContract(value: number, age: number, seed: string): Contract {
+function buildContract(value: number, age: number, ovr: number, seed: string): Contract {
   const byAge = CONTRACT_RULES.yearsByAge.find((entry) => age <= entry.maxAge);
   const baseYears = byAge ? byAge.years : CONTRACT_RULES.minYears;
   // Al arrancar la partida casi nadie está en su último año: los contratos que
   // expiran deben ser la excepción, no la norma (si no, todo el mundo saldría
   // gratis y el mercado perdería sentido).
+  //
+  // Esa excepción, además, no puede repartirse por igual entre un suplente
+  // cualquiera y una estrella mundial: en la vida real los clubes renuevan a
+  // sus mejores activos mucho antes de dejarlos llegar al último año. Sin
+  // este ajuste, ~1 de cada 8 jugadores (ovr incluido) arrancaba la partida a
+  // un año de quedarse libre —protección de "jugador clave" que salta con
+  // contrato corto— así que salían a la venta nombres como Rodrygo o Carvajal
+  // en la primera semana de mercado sin que nadie los hubiera puesto en
+  // venta. `eliteProtection` reduce esa probabilidad cuanto mejor es el
+  // jugador, hasta casi anularla en el nivel top mundial.
+  const eliteProtection = clamp((ovr - 75) / 18, 0, 1);
+  const expiringChance = 0.12 * (1 - eliteProtection * 0.9);
   const roll = seededUnit(seed, "years");
   const yearsLeft = clamp(
-    roll < 0.12 ? CONTRACT_RULES.minYears : Math.round(1 + roll * (baseYears - 1)),
+    roll < expiringChance ? CONTRACT_RULES.minYears : Math.round(1 + roll * (baseYears - 1)),
     CONTRACT_RULES.minYears,
     CONTRACT_RULES.maxYears,
   );
@@ -213,7 +225,7 @@ function buildIndex(): MarketIndex {
       clubId: clubId || null,
       leagueId,
       value,
-      contract: buildContract(value, age, id),
+      contract: buildContract(value, age, ovr, id),
       personality: buildPersonality(id, age, ovr),
       transferListed: false,
       listReason: null,
