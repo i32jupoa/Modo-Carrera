@@ -127,6 +127,34 @@ export const MARKET_TIMING = {
 } as const;
 
 /**
+ * Ritmo de los fichajes "grandes" (caros respecto al presupuesto del club)
+ * dentro de una ventana. En la vida real ni los clubes más ricos cierran sus
+ * fichajes estrella el primer día de mercado: hay pretemporada, cesiones que
+ * resolver, ruedas de prensa escalonadas... Ver `transfers/MarketPacing.ts`,
+ * que traduce esto en un tope de gasto por operación que empieza bajo y se
+ * abre progresivamente a lo largo de la ventana, a un ritmo propio de cada
+ * club (no todos "se destapan" el mismo día), para que los traspasos
+ * importantes se repartan por todo el mercado en vez de amontonarse en la
+ * primera semana.
+ */
+export const BIG_SIGNING_PACING = {
+  /** Fracción del techo de gasto disponible para una sola operación desde
+   *  el primer día de la ventana, en una necesidad normal. */
+  startRatio: 0.32,
+  /** Igual, pero para una necesidad crítica (agujero grave de plantilla):
+   *  un club real también tapa urgencias de verdad más rápido. */
+  startRatioCritical: 0.55,
+  /**
+   * Rango, como fracción de la duración total de la ventana, en el que un
+   * club deja de tener restricción de gasto por operación. Es un rango
+   * amplio a propósito: unos clubes "se lanzan" pronto y otros esperan casi
+   * hasta el final, así los grandes anuncios no llegan todos el mismo día.
+   */
+  rampFractionMin: 0.08,
+  rampFractionMax: 0.7,
+} as const;
+
+/**
  * Suelo de calidad ligado a la reputación del club, no a su plantilla actual.
  *
  * `report.startingRating` se recalcula cada día a partir del once actual, así
@@ -226,6 +254,15 @@ export const DECISION_ACCURACY = {
   generousMoodChance: 0.15,
   /** Cuánto se acerca al techo de gasto un club generoso al abrir la oferta. */
   generousMoodBoost: 0.12,
+  /**
+   * Penalización sobre la puntuación 0..1 cuando el candidato juega en un
+   * club "Gigante" de la misma liga que el comprador (un rival directo de
+   * arriba de la tabla). En la vida real dos grandes de la misma liga casi
+   * nunca se venden titulares entre sí en directo (Real Madrid-Barça,
+   * City-Liverpool...); no se bloquea del todo porque alguna vez ocurre
+   * (Figo al Madrid en 2000), pero se hace muy improbable.
+   */
+  domesticRivalScorePenalty: 0.55,
 } as const;
 
 // ============================================================================

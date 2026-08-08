@@ -115,3 +115,38 @@ export function isTransferWindowDay(day: Date, current: Date): boolean {
   if (isWinterTransferWindow(current)) return isWinterTransferWindow(day);
   return false;
 }
+
+/** Límites (inicio/fin) de la ventana de mercado que contiene `d`, o null si está cerrado. */
+function windowBounds(d: Date): { start: Date; end: Date } | null {
+  const y = d.getFullYear();
+  if (isSummerTransferWindow(d)) {
+    const w = TRANSFER_WINDOWS.summer;
+    return { start: new Date(y, w.startMonth, w.startDay), end: new Date(y, w.endMonth, w.endDay) };
+  }
+  if (isWinterTransferWindow(d)) {
+    const w = TRANSFER_WINDOWS.winter;
+    return { start: new Date(y, w.startMonth, w.startDay), end: new Date(y, w.endMonth, w.endDay) };
+  }
+  return null;
+}
+
+/**
+ * Día dentro de la ventana de mercado vigente (1 = primer día). 0 si el
+ * mercado está cerrado en esa fecha. Se usa para repartir la actividad de
+ * la IA a lo largo de toda la ventana en vez de amontonarla al principio
+ * (ver `transfers/MarketPacing.ts`).
+ */
+export function daysIntoTransferWindow(iso: string): number {
+  const d = parseDateOnly(iso);
+  const bounds = windowBounds(d);
+  if (!bounds) return 0;
+  return Math.round((d.getTime() - bounds.start.getTime()) / 86_400_000) + 1;
+}
+
+/** Duración total (en días) de la ventana de mercado vigente en `iso`, o 0 si está cerrado. */
+export function transferWindowLengthDays(iso: string): number {
+  const d = parseDateOnly(iso);
+  const bounds = windowBounds(d);
+  if (!bounds) return 0;
+  return Math.round((bounds.end.getTime() - bounds.start.getTime()) / 86_400_000) + 1;
+}

@@ -28,6 +28,7 @@ import {
   WAGE_RULES,
 } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
+import { bigSigningSpendCapRatio } from "./MarketPacing";
 import {
   canAfford,
   getUserClubId,
@@ -220,6 +221,20 @@ function reputationOvrFloor(profile: ClubProfile): number {
   return REPUTATION_OVR_FLOOR.base + profile.reputation * REPUTATION_OVR_FLOOR.maxBonus;
 }
 
+/**
+ * ¿Es el candidato de un rival directo de arriba de tabla en la misma liga?
+ * Dos clubes "Gigante" de la misma competición casi nunca se traspasan
+ * titulares entre sí en la vida real (Real Madrid-Barça, City-Liverpool,
+ * Bayern-Dortmund...): la rivalidad deportiva pesa más que el encaje táctico
+ * o económico. No se bloquea del todo (alguna vez pasa), pero se penaliza
+ * con fuerza en `scoreCandidate` (ver `DECISION_ACCURACY.domesticRivalScorePenalty`).
+ */
+function isDirectDomesticRival(clubId: string, player: MarketPlayer): boolean {
+  if (!player.clubId || player.clubId === clubId) return false;
+  if (player.leagueId !== getClubProfile(clubId).leagueId) return false;
+  return teamById(clubId).category === "Gigante" && teamById(player.clubId).category === "Gigante";
+}
+
 /** Puntúa a un candidato para un club y una necesidad concretas. */
 export function scoreCandidate(input: {
   clubId: string;
@@ -276,7 +291,10 @@ export function scoreCandidate(input: {
     player.ovr >= STAR_THRESHOLD - 4 &&
     seededUnit(input.clubId, player.id, cacheKey, "starstruck") <
       DECISION_ACCURACY.starstruckChance;
-  const finalScore = starstruck ? score + DECISION_ACCURACY.starstruckBonus : score;
+  const withStarstruck = starstruck ? score + DECISION_ACCURACY.starstruckBonus : score;
+  const finalScore = isDirectDomesticRival(input.clubId, player)
+    ? withStarstruck - DECISION_ACCURACY.domesticRivalScorePenalty
+    : withStarstruck;
 
   return {
     player,
@@ -374,6 +392,8 @@ export interface ShortlistOptions {
   leagueIds?: readonly string[];
   /** Tamaño máximo de la lista corta. */
   size?: number;
+  /** Últimos días de la ventana: sin restricción de ritmo en fichajes grandes. */
+  deadlineDay?: boolean;
 }
 
 /**
@@ -390,6 +410,17 @@ export function buildShortlist(
   const profile = getClubProfile(clubId);
   const spendCeiling = maxSpend(clubId);
   const wageCeiling = maxWageOffer(clubId);
+
+  // Ritmo de fichajes grandes: al principio de la ventana sólo se compromete
+  // una fracción del techo de gasto en una sola operación (ver
+  // `MarketPacing`), así que los "bombazos" no se cierran todos en los
+  // primeros días. Una necesidad crítica arranca con más margen, y el
+  // deadline day no tiene restricción.
+  const bigCapRatio = bigSigningSpendCapRatio(clubId, options.cacheKey, {
+    deadlineDay: options.deadlineDay,
+    critical: need.priority === "critical",
+  });
+  const effectiveSpendCeiling = Math.round(spendCeiling * bigCapRatio);
 
   // Rango de calidad: nadie busca por debajo de su banquillo ni muy por encima
   // de lo que su reputación le permite atraer. El suelo también respeta la
@@ -415,7 +446,7 @@ export function buildShortlist(
     group: need.group,
     minOvr,
     maxOvr,
-    maxValue: spendCeiling,
+    maxValue: effectiveSpendCeiling,
     excludeClubIds,
     leagueIds: options.leagueIds,
     limit: SEARCH_LIMITS.candidatesPerNeed,
@@ -445,7 +476,7 @@ export function buildShortlist(
       wageCeiling,
     });
     if (entry.score < SEARCH_LIMITS.minimumScore) continue;
-    if (entry.askingPrice > spendCeiling) continue;
+    if (entry.askingPrice > effectiveSpendCeiling) continue;
     scored.push(entry);
   }
 
@@ -508,7 +539,10 @@ export function runClubOpportunisticCycle(
   const need = weakestGroupNeed(clubId, options.date);
   if (!need || need.urgency <= 0.1) return result;
 
-  const shortlist = buildShortlist(clubId, need, { cacheKey: options.date });
+  const shortlist = buildShortlist(clubId, need, {
+    cacheKey: options.date,
+    deadlineDay: options.deadlineDay,
+  });
   result.shortlisted = shortlist.length;
   const candidate = shortlist[0];
   if (!candidate) return result;
@@ -991,7 +1025,7 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
     const shape = IDEAL_SQUAD_SHAPE[need.group];
     if (need.count >= shape.max) continue;
 
-    const shortlist = buildShortlist(clubId, need, { cacheKey });
+    const shortlist = buildShortlist(clubId, need, { cacheKey, deadlineDay: options.deadlineDay });
     result.shortlisted += shortlist.length;
 
     for (const candidate of shortlist) {
