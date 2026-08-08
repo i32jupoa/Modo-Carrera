@@ -11,7 +11,7 @@
  */
 
 import rawPlayers from "@/data/playersData";
-import { getAllTeams, teamKeyFromName, type Team } from "@/data/teams";
+import { getAllTeams, findTeamStrict, type Team } from "@/data/teams";
 import { marketValueFor } from "@/data/players";
 import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { clamp, seededRange, seededUnit } from "./random";
@@ -154,7 +154,15 @@ function buildIndex(): MarketIndex {
   const resolvedClub: string[] = new Array(records.length);
   for (let i = 0; i < records.length; i++) {
     const raw = records[i];
-    const key = raw.Team ? teamKeyFromName(raw.Team) : "";
+    // Emparejamiento ESTRICTO (igualdad exacta o alias declarado, sin
+    // coincidencias parciales): el resto del juego (plantilla del usuario,
+    // `src/data/players.ts`) ya usa esta función. El mercado usaba antes
+    // `teamKeyFromName`, que acepta que un nombre "contenga" el id de un
+    // club — con ids cortos de 3 letras (p. ej. "ang" de Angers) eso hacía
+    // que decenas de equipos con ese id como subcadena de su nombre (o del
+    // nombre del equipo) se fusionaran por error en la misma plantilla,
+    // inflándola a cientos de jugadores.
+    const key = raw.Team ? (findTeamStrict(raw.Team, raw.League)?.id ?? "") : "";
     const clubId = key && teams.has(key) ? key : "";
     resolvedClub[i] = clubId;
     if (!clubId) continue;

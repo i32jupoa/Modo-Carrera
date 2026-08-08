@@ -18,6 +18,7 @@ import {
   IDEAL_SQUAD_SHAPE,
   MARKET_TIMING,
   POSITION_AGE_CURVE,
+  PRICE_MULTIPLIERS,
   SCORE_WEIGHTS,
   SEARCH_LIMITS,
   SQUAD_LIMITS,
@@ -38,6 +39,7 @@ import {
   findCandidates,
   getClubPlayers,
   getFreeAgents,
+  getMarketIndex,
   getPlayer,
   onSquadChanged,
   reassignPlayerClub,
@@ -67,16 +69,17 @@ import {
   sellerShouldWait,
 } from "./BidWar";
 import { clamp, seededUnit } from "./random";
-import type {
-  ClubProfile,
-  MarketPlayer,
-  MarketValuation,
-  PositionGroup,
-  SquadNeed,
-  SquadReport,
-  TransferOffer,
-  TransferRecord,
-  TransferType,
+import {
+  POSITION_GROUPS,
+  type ClubProfile,
+  type MarketPlayer,
+  type MarketValuation,
+  type PositionGroup,
+  type SquadNeed,
+  type SquadReport,
+  type TransferOffer,
+  type TransferRecord,
+  type TransferType,
 } from "./types";
 
 /** Escala un valor a 0..1 dentro de un rango. */
@@ -820,6 +823,14 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
   const maxSignings = options.maxSignings ?? 1;
   const report = getSquadReport(clubId, cacheKey);
 
+  // Techo duro de plantilla: por muy "crítica" que el análisis marque una
+  // necesidad, ningún club ficha por encima de este tamaño. Sin este límite
+  // incondicional, una necesidad que no se cierra del todo con un fichaje de
+  // nivel bajo (típico de la red de seguridad) podía repetirse día tras día
+  // sin fin y disparar la plantilla a decenas de jugadores en una misma
+  // demarcación.
+  if (report.size >= SQUAD_LIMITS.maxSquadSize + 2) return result;
+
   // Con la plantilla saturada sólo se ficha para tapar un agujero grave, y
   // ningún club compra mientras necesite hacer caja.
   const needs = priorityNeeds(clubId, cacheKey);
@@ -868,12 +879,27 @@ export function signBestFreeAgent(clubId: string, date: string): TransferRecord 
   if (report.size >= SQUAD_LIMITS.maxSquadSize) return null;
 
   const wageCeiling = maxWageOffer(clubId);
-  const needs = priorityNeeds(clubId, date, 3);
-  if (needs.length === 0) return null;
+  let needs: SquadNeed[] = priorityNeeds(clubId, date, 3);
+  // Cuando el análisis de plantilla no ve ningún agujero pero el club sigue
+  // por debajo de su cupo mínimo de fichajes de la ventana, se ignora el
+  // filtro de "hueco libre por demarcación": un club de sobra completo
+  // también ficha profundidad de vez en cuando en la vida real. El único
+  // límite real sigue siendo el tamaño máximo de plantilla, ya comprobado
+  // arriba.
+  const ignoreShapeCap = needs.length === 0;
+  if (ignoreShapeCap) {
+    needs = POSITION_GROUPS.map((group) => ({
+      group,
+      urgency: 0,
+      count: report.countByGroup[group],
+      quality: report.ratingByGroup[group],
+      priority: "low" as const,
+    })).sort((a, b) => a.count - b.count);
+  }
 
   for (const need of needs) {
     const shape = IDEAL_SQUAD_SHAPE[need.group];
-    if (need.count >= shape.max) continue;
+    if (!ignoreShapeCap && need.count >= shape.max) continue;
 
     // Nada de estrellas: se busca al mejor agente libre que encaje con el
     // nivel real de la plantilla, que es el que puede decir que sí.
@@ -885,7 +911,14 @@ export function signBestFreeAgent(clubId: string, date: string): TransferRecord 
       .slice(0, 12);
 
     for (const player of options) {
-      const wageOffer = Math.round(wageDemand(player.id, clubId));
+      // Red de última instancia: nadie bloquea la operación salvo el propio
+      // jugador, así que se ofrece algo por encima de lo que pide (nunca por
+      // debajo del tope salarial del club) para maximizar que diga que sí.
+      // Sin este margen, un empate técnico en la puntuación de decisión
+      // dejaba muchos fichajes de relleno en "se lo está pensando" para
+      // siempre.
+      const demanded = wageDemand(player.id, clubId);
+      const wageOffer = Math.min(wageCeiling, Math.round(demanded * 1.5));
       const decision = decideOnMove({
         playerId: player.id,
         toClubId: clubId,
@@ -911,7 +944,108 @@ export function signBestFreeAgent(clubId: string, date: string): TransferRecord 
   return null;
 }
 
+/**
+ * Red de seguridad de ventas: el equivalente, del lado del vendedor, a
+ * `signBestFreeAgent`. Si un club de la IA llega tarde en la ventana de
+ * verano sin haber soltado a nadie, coloca a su transferible más
+ * prescindible en otro club rival con hueco y presupuesto. Sin esto, un
+ * club podía terminar el verano sin vender a nadie simplemente porque
+ * ningún rival se había fijado en sus descartes por iniciativa propia.
+ */
+export function forceSellSurplusPlayer(clubId: string, date: string): TransferRecord | null {
+  const report = getSquadReport(clubId, date);
+  if (report.size <= SQUAD_LIMITS.minSquadSize) return null;
 
+  let pool: readonly string[] = report.transferables;
+  if (pool.length === 0) {
+    // El análisis habitual no señala a ningún "descarte" claro, pero el
+    // club sigue por debajo de su cupo mínimo de ventas de verano. Se busca
+    // al menos prescindible de verdad: el peor valorado de una demarcación
+    // que tenga margen por encima de su mínimo, sin tocar nunca el piso de
+    // plantilla.
+    pool = getClubPlayers(clubId)
+      .filter((player) => report.countByGroup[player.group] > IDEAL_SQUAD_SHAPE[player.group].min)
+      .sort((a, b) => a.ovr - b.ovr)
+      .slice(0, 5)
+      .map((player) => player.id);
+  }
+  if (pool.length === 0) return null;
+
+  // El más prescindible primero: peor valorado respecto a su grupo.
+  const candidates = pool
+    .map((id) => getPlayer(id))
+    .filter((player): player is MarketPlayer => Boolean(player))
+    .sort((a, b) => a.ovr - b.ovr);
+  if (candidates.length === 0) return null;
+
+  const userClubId = getUserClubId();
+  const buyerIds = Array.from(getMarketIndex().byClub.keys()).filter(
+    (id) => id !== clubId && id !== userClubId,
+  );
+
+  // Rebajas progresivas sólo sobre el traspaso: un jugador de un club
+  // grande puede no tener comprador al precio de mercado ni con el
+  // descuento habitual de deadline day, así que se va bajando el precio de
+  // traspaso hasta que algún club pueda permitírselo. La ficha del jugador
+  // NO se rebaja — al contrario, se ofrece por encima de lo que pide, que es
+  // lo único que de verdad mueve su decisión de aceptar o no (rebajarla
+  // garantizaba el rechazo automático por sueldo insultante).
+  const fireSaleDiscounts = [PRICE_MULTIPLIERS.deadlineDiscount, 0.55, 0.35];
+
+  for (const player of candidates) {
+    if (!isAvailable(player.id, date)) continue;
+    const valuation = valuePlayer(player.id, { cacheKey: date, deadlineDay: true });
+
+    // Compradores en orden determinista pero distinto cada día y jugador,
+    // para no vaciar siempre la plantilla del mismo club rival. Con cientos
+    // de clubes en el mundo, evaluar a todos por cada intento sale caro sin
+    // aportar nada: una muestra ya da suficiente variedad para encontrar
+    // comprador.
+    const ranked = buyerIds
+      .map((id) => ({ id, roll: seededUnit(clubId, player.id, id, date, "force-sell") }))
+      .sort((a, b) => a.roll - b.roll)
+      .slice(0, 60);
+
+    for (const { id: buyerId } of ranked) {
+      const buyerReport = getSquadReport(buyerId, date);
+      if (buyerReport.size >= SQUAD_LIMITS.maxSquadSize) continue;
+
+      // Se ofrece bastante por encima de lo que pide: es una salida de
+      // emergencia, no una negociación al céntimo, y maximiza que el
+      // jugador diga que sí en vez de quedarse "pensándoselo" para siempre.
+      const demanded = wageDemand(player.id, buyerId);
+      const wageOffer = Math.min(maxWageOffer(buyerId), Math.round(demanded * 1.5));
+      if (wageOffer < demanded) continue; // el club destino no puede pagar ni lo mínimo.
+
+      const decision = decideOnMove({
+        playerId: player.id,
+        toClubId: buyerId,
+        wageOffer,
+        cacheKey: date,
+      });
+      if (decision.verdict !== "accepted") continue;
+
+      for (const discount of fireSaleDiscounts) {
+        const askingPrice = Math.round(valuation.listPrice * discount);
+        if (!canAfford(buyerId, askingPrice, wageOffer)) continue;
+
+        const offer = createTransferOffer({
+          playerId: player.id,
+          playerName: player.name,
+          fromClubId: buyerId,
+          toClubId: buyerId,
+          amount: askingPrice,
+          wageOffer,
+          type: "permanent",
+          date,
+        });
+        const record = completeTransfer(offer, date);
+        if (record) return record;
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * Decide de forma determinista si un club se plantea reforzarse hoy.

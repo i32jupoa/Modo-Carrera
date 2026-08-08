@@ -20,6 +20,7 @@ import { getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager"
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
 import {
   clubWantsToActToday,
+  forceSellSurplusPlayer,
   priorityNeeds,
   runClubTransferCycle,
   signBestFreeAgent,
@@ -108,6 +109,17 @@ export interface ClubWindowState {
   sales: number;
   loans: number;
   dormant: boolean;
+  /**
+   * Próximo día de ventana en el que la red de seguridad de fichajes puede
+   * volver a intentarlo. Cada club arranca en un día distinto (repartido a
+   * lo largo de las primeras semanas, no todos el mismo día) y, si falla,
+   * lo reintenta pasados unos días en vez de esperar al deadline day. Así
+   * la actividad "de repesca" se reparte en vez de amontonarse toda en una
+   * única jornada gigante y luego no volver a tocarla hasta el final.
+   */
+  nextSigningAttempt: number;
+  /** Igual que `nextSigningAttempt`, pero para la red de seguridad de ventas. */
+  nextSalesAttempt: number;
 }
 
 interface SimulationInternals {
@@ -125,7 +137,33 @@ function intensityFor(date: string): number {
   if (window === "closed") return 0;
   const roll = seededUnit(windowKey(date), "intensity");
   const base = BALANCE.minIntensity + roll * (BALANCE.maxIntensity - BALANCE.minIntensity);
-  return window === "winter" ? base * BALANCE.winterFactor : base;
+  if (window === "winter") return base * BALANCE.winterFactor;
+  if (window === "summer") return base * BALANCE.summerFactor;
+  return base;
+}
+
+/** Mínimo de fichajes exigido a un club de la IA según la ventana. */
+function minSigningsFor(window: MarketWindow): number {
+  return window === "summer"
+    ? MARKET_TIMING.minSigningsPerWindowSummer
+    : MARKET_TIMING.minSigningsPerWindow;
+}
+
+/** Mínimo de ventas exigido a un club de la IA según la ventana (0 fuera de verano). */
+function minSalesFor(window: MarketWindow): number {
+  return window === "summer" ? MARKET_TIMING.minSalesPerWindowSummer : 0;
+}
+
+/**
+ * Día de ventana en el que un club concreto empieza a poder usar la red de
+ * seguridad (fichajes o ventas), repartido de forma determinista dentro de
+ * `[minDay, maxDay]`. Cada club "cae" en un día distinto en vez de todos a
+ * la vez: así la repesca no se amontona en una única jornada gigantesca.
+ */
+function staggeredSafetyNetDay(clubId: string, kind: "signing" | "sale", key: string): number {
+  const roll = seededUnit(clubId, key, "safety-net-start", kind);
+  const { minDay, maxDay } = MARKET_TIMING.safetyNetWindow;
+  return minDay + Math.round(roll * (maxDay - minDay));
 }
 
 /** Ids de los clubes con plantilla indexada. */
@@ -145,6 +183,8 @@ function openWindow(date: string): SimulationInternals {
       sales: 0,
       loans: 0,
       dormant: seededUnit(clubId, key, "dormant") < BALANCE.dormantClubChance,
+      nextSigningAttempt: staggeredSafetyNetDay(clubId, "signing", key),
+      nextSalesAttempt: staggeredSafetyNetDay(clubId, "sale", key),
     });
   }
   return {
@@ -181,7 +221,16 @@ export function resetSimulation(): void {
 export function clubWindowState(clubId: string): ClubWindowState {
   const existing = internals?.clubs.get(clubId);
   if (existing) return existing;
-  const fresh: ClubWindowState = { signings: 0, sales: 0, loans: 0, dormant: false };
+  const fresh: ClubWindowState = {
+    signings: 0,
+    sales: 0,
+    loans: 0,
+    dormant: false,
+    nextSigningAttempt: internals
+      ? staggeredSafetyNetDay(clubId, "signing", internals.windowKey)
+      : 0,
+    nextSalesAttempt: internals ? staggeredSafetyNetDay(clubId, "sale", internals.windowKey) : 0,
+  };
   internals?.clubs.set(clubId, fresh);
   return fresh;
 }
@@ -285,7 +334,7 @@ function runClubDay(
   // a reponer sí o sí: ni la caja ni la pasividad de la temporada le frenan.
   const deficit = windowDeficit(clubId);
   const idleTooLong = window.signings === 0 && window.sales === 0 && state.windowDay > 12;
-  const belowMinimum = window.signings < MARKET_TIMING.minSigningsPerWindow;
+  const belowMinimum = window.signings < minSigningsFor(state.window);
   const canBuy =
     window.signings < MARKET_TIMING.maxSigningsPerWindow &&
     (belowMinimum ||
@@ -299,11 +348,17 @@ function runClubDay(
     if (firstNeed) rumors.push(rumorSearching(clubId, firstNeed.group, date));
 
     // Reponer siempre pesa más que esperar: un club que ha vendido sale a
-    // fichar a varios jugadores el mismo día, como en la vida real.
-    const maxSignings = Math.max(
-      deficit > 0 ? Math.min(deficit * 2 + 2, 8) : 3,
-      belowMinimum ? 3 : 2,
-      state.deadlineDay && profile.aggression > 0.6 ? 6 : 4,
+    // fichar a varios jugadores el mismo día, como en la vida real. En
+    // verano, además, se multiplica: es la ventana donde de verdad se mueve
+    // el mercado, y un club no puede pasarse el mes entero fichando de uno
+    // en uno.
+    const burst = state.window === "summer" ? BALANCE.summerSigningBurst : 1;
+    const maxSignings = Math.round(
+      Math.max(
+        deficit > 0 ? Math.min(deficit * 2 + 2, 8) : 3,
+        belowMinimum ? 3 : 2,
+        state.deadlineDay && profile.aggression > 0.6 ? 6 : 4,
+      ) * burst,
     );
     const cycle = runClubTransferCycle(clubId, {
       date,
@@ -327,19 +382,52 @@ function runClubDay(
     }
   }
 
-  // 4. Red de seguridad: si la ventana va muy avanzada y el club sigue sin
-  // mover nada, cierra al menos una incorporación entre los agentes libres.
-  // En la vida real ningún club termina un mercado completamente parado.
+  // 4. Red de seguridad de fichajes: si el club sigue sin cubrir su mínimo
+  // para cuando le toca (cada club tiene su propio día de "repesca", para no
+  // amontonar la actividad de todo el mundo en una sola jornada), cierra
+  // incorporaciones entre los agentes libres. En la vida real ningún club
+  // termina un mercado completamente parado, y desde luego no llega al
+  // primer partido de liga sin haber movido una ficha. Si falla, no se
+  // reintenta cada día (caro y casi siempre inútil) sino cada pocos días,
+  // salvo en el deadline day, que siempre da un último empujón.
+  const requiredSignings = minSigningsFor(state.window);
   if (
-    window.signings < MARKET_TIMING.minSigningsPerWindow &&
-    (state.deadlineDay || state.windowDay > 14)
+    window.signings < requiredSignings &&
+    (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
   ) {
-    while (window.signings < MARKET_TIMING.minSigningsPerWindow) {
+    while (window.signings < requiredSignings) {
       const record = signBestFreeAgent(clubId, date);
-      if (!record) break;
+      if (!record) {
+        window.nextSigningAttempt = state.windowDay + MARKET_TIMING.safetyNetRetryGapDays;
+        break;
+      }
       window.signings += 1;
       recordTransfers([record]);
       result.transfers.push(record);
+    }
+  }
+
+  // 5. Red de seguridad de ventas (sólo verano): un club que no ha soltado a
+  // nadie en toda la ventana no es realista — todo equipo hace sitio en la
+  // plantilla durante el verano. Se fuerza a un rival con hueco y
+  // presupuesto a quedarse con el transferible más prescindible. Mismo
+  // reparto por días y el mismo reintento periódico que en la red de
+  // fichajes.
+  const requiredSales = minSalesFor(state.window);
+  if (
+    window.sales < requiredSales &&
+    (state.deadlineDay || state.windowDay >= window.nextSalesAttempt)
+  ) {
+    while (window.sales < requiredSales) {
+      const record = forceSellSurplusPlayer(clubId, date);
+      if (!record) {
+        window.nextSalesAttempt = state.windowDay + MARKET_TIMING.safetyNetRetryGapDays;
+        break;
+      }
+      window.sales += 1;
+      recordTransfers([record]);
+      result.transfers.push(record);
+      if (record.toClubId) clubWindowState(record.toClubId).signings += 1;
     }
   }
 

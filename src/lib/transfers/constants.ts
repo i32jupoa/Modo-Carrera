@@ -13,7 +13,7 @@ import type { PositionGroup } from "./types";
 
 export const MARKET_TIMING = {
   /** Porcentaje de clubes que actúan cada día de mercado. */
-  dailyActiveClubShare: 0.75,
+  dailyActiveClubShare: 0.85,
   /** Porcentaje de clubes activos durante el deadline day. */
   deadlineActiveClubShare: 1,
   /** Días finales de ventana considerados deadline day. */
@@ -26,8 +26,21 @@ export const MARKET_TIMING = {
   negotiationExpiryDays: 7,
   /** Máximo de fichajes por club y ventana (sin tope real). */
   maxSigningsPerWindow: 99,
-  /** Mínimo de fichajes que todo club de la IA debe cerrar en verano. */
+  /** Mínimo de fichajes que todo club de la IA debe cerrar en la ventana de invierno. */
   minSigningsPerWindow: 2,
+  /**
+   * Mínimo de fichajes que todo club de la IA (menos el del usuario) debe
+   * cerrar en la ventana de verano. Un mercado de verano real mueve muchos
+   * más nombres que el de invierno, así que el suelo es bastante más alto.
+   */
+  minSigningsPerWindowSummer: 4,
+  /**
+   * Mínimo de ventas que todo club de la IA (menos el del usuario) debe
+   * cerrar en verano. Sin este suelo, un club podía vender jugadores porque
+   * otros los reclamaban y no reponer nunca por su cuenta, o al revés:
+   * fichar sin soltar lastre. En la vida real todo equipo mueve salidas.
+   */
+  minSalesPerWindowSummer: 2,
   /** Máximo de ventas por club y ventana. */
   maxSalesPerWindow: 12,
   /**
@@ -36,6 +49,23 @@ export const MARKET_TIMING = {
    * tope, los clubes de la IA perdían seis jugadores y fichaban uno.
    */
   maxWindowDeficit: 1,
+  /**
+   * Ventana de días en la que cada club puede empezar a usar la red de
+   * seguridad (fichajes o ventas de emergencia), repartida de forma
+   * determinista por club: no todos caen el mismo día. Con un único día fijo
+   * para todo el mundo, cientos de clubes disparaban su repesca a la vez y
+   * el mercado pasaba de "nada" a "450 fichajes de golpe" en una sola
+   * jornada. La ventana de invierno, más corta, usa el mismo rango pero
+   * llega a menos días porque la ventana entera dura menos.
+   */
+  safetyNetWindow: { minDay: 5, maxDay: 20 },
+  /**
+   * Si la red de seguridad no encuentra con quién cerrar el cupo, no se
+   * reintenta al día siguiente (casi siempre inútil y caro de comprobar):
+   * se espera este número de días antes de volver a probar. El deadline day
+   * salta esta espera y siempre da un último empujón.
+   */
+  safetyNetRetryGapDays: 4,
 } as const;
 
 // ============================================================================
@@ -280,6 +310,21 @@ export const BALANCE = {
   dormantClubChance: 0.02,
   /** Multiplicador de actividad de la ventana de invierno. */
   winterFactor: 0.55,
+  /**
+   * Multiplicador de actividad de la ventana de verano. La pretemporada es,
+   * con diferencia, el momento de más movimiento del mercado: se aplica
+   * sobre la intensidad base para que el verano se note mucho más vivo que
+   * el resto del año (más clubes activos cada día y más operaciones por
+   * ciclo, ver `MarketSimulation.runClubDay`).
+   */
+  summerFactor: 1.5,
+  /**
+   * Multiplicador sobre el número de fichajes que un club puede intentar
+   * cerrar en un mismo ciclo diario durante el verano. En invierno no se
+   * aplica: la ventana corta y el mercado más parado hacen que un club rara
+   * vez necesite firmar varios jugadores el mismo día.
+   */
+  summerSigningBurst: 1.75,
 } as const;
 
 /**

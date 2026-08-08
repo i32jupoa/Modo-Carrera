@@ -105,7 +105,14 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     () => (ready ? rumorsSince(currentWindowStart(currentDate), 3000) : []),
     [ready, currentDate, tick],
   );
-  const history = useMemo(() => (ready ? listTransfers(600) : []), [ready, currentDate, tick]);
+  // Historial completo (sin tope): con más actividad de mercado, un tope
+  // bajo aquí hacía que el filtro por liga/club, o la orden "más caros",
+  // se calculasen sobre solo los últimos cientos de traspasos y se perdiera
+  // el récord real si había ocurrido antes. Ordenar/filtrar un array de
+  // varios miles de elementos es instantáneo, así que no hace falta capar
+  // los datos — sólo lo que se pinta en pantalla (eso ya lo hace
+  // `MarketFeed` al final, con su propio límite de renderizado).
+  const history = useMemo(() => (ready ? listTransfers() : []), [ready, currentDate, tick]);
   const summary = useMemo(() => (ready ? summarize(listTransfers()) : null), [ready, currentDate, tick]);
 
   const commit = useCallback(

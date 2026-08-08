@@ -192,7 +192,10 @@ export function MarketFeed({
         : filtered
             .slice()
             .sort((a, b) => (historySort === "fee-desc" ? b.fee - a.fee : a.fee - b.fee));
-    const limit = noFilter && historySort === "recent" && minFee === "all" ? 60 : 400;
+    // El límite de aquí es sólo de renderizado (cuántas filas se pintan);
+    // el orden y el filtro ya se han calculado sobre el historial completo,
+    // así que el "récord" y el top por precio siempre son los reales.
+    const limit = noFilter && historySort === "recent" && minFee === "all" ? 60 : 600;
     return sorted.slice(0, limit);
   }, [baseHistory, historySort, minFee, noFilter]);
 

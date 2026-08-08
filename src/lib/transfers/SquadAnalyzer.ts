@@ -8,7 +8,7 @@
  */
 
 import { IDEAL_SQUAD_SHAPE, SQUAD_LIMITS } from "./constants";
-import { getClubPlayers } from "./PlayerIndex";
+import { getClubPlayers, onSquadChanged } from "./PlayerIndex";
 import { clamp } from "./random";
 import { POSITION_GROUPS, type MarketPlayer, type PositionGroup, type SquadNeed, type SquadReport } from "./types";
 
@@ -150,6 +150,18 @@ export function canSell(report: SquadReport, group: PositionGroup): boolean {
 
 /** Informe cacheado por club durante un mismo día de simulación. */
 const reportCache = new Map<string, { key: string; report: SquadReport }>();
+
+// Sin esto, un informe calculado a primera hora del día se quedaba
+// "congelado" el resto de la jornada: si el club fichaba o vendía a media
+// tarde, todo el mundo que consultara su plantilla después seguía viendo el
+// tamaño y las necesidades de antes de esa operación. En un mundo con
+// cientos de clubes, eso permitía que un mismo club (normalmente el más
+// rico, siempre "con hueco" según el caché) recibiera decenas de fichajes
+// el mismo día sin que el límite de plantilla lo frenara nunca a mitad de
+// jornada.
+onSquadChanged((clubIds) => {
+  for (const clubId of clubIds) reportCache.delete(clubId);
+});
 
 /** Informe con caché por fecha: evita recalcular la misma plantilla mil veces. */
 export function getSquadReport(clubId: string, cacheKey: string): SquadReport {
