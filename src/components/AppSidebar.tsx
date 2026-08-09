@@ -145,11 +145,12 @@ export function AppSidebar() {
   );
 }
 
-/** Colores de cada tono de notificación. */
+/** Colores de cada tono de notificación. El círculo cambia de color según
+ *  el tono (verde/azul/rojo), pero el número siempre en negro sólido. */
 const BADGE_STYLE: Record<NotificationKind, string> = {
-  good: "bg-emerald-500 text-red-600",
-  info: "bg-sky-500 text-red-600",
-  bad: "bg-red-500 text-red-950",
+  good: "bg-emerald-500 text-black",
+  info: "bg-sky-500 text-black",
+  bad: "bg-red-500 text-black",
 };
 
 const BADGE_ORDER: NotificationKind[] = ["good", "info", "bad"];
