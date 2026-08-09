@@ -13,7 +13,7 @@
  * Todo lo que ocurre se vuelca en `TransferHistory` y `RumorEngine`.
  */
 
-import { BALANCE, MARKET_TIMING } from "./constants";
+import { BALANCE, ELITE_EXIT, MARKET_TIMING } from "./constants";
 import {
   TRANSFER_WINDOWS,
   isSummerTransferWindow,
@@ -25,6 +25,7 @@ import { getClubProfile } from "./ClubStrategy";
 import { getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
 import {
+  attemptEliteDeparture,
   clubWantsToActToday,
   forceSellSurplusPlayer,
   priorityNeeds,
@@ -391,6 +392,7 @@ function runClubDay(
       date,
       deadlineDay: state.deadlineDay,
       maxSignings,
+      belowMinimum,
     });
     result.offersMade += cycle.attempts.length;
     for (const attempt of cycle.attempts) {
@@ -446,6 +448,26 @@ function runClubDay(
           clubWindowState(transfer.fromClubId).sales += 1;
         }
       }
+    }
+  }
+
+  // 3c. Salida de galáctico: sólo en verano y sólo en clubes de máxima
+  // reputación, con una probabilidad diaria muy baja (ver `ELITE_EXIT`), un
+  // titular de verdad puede hacer las maletas aunque el club no lo necesite.
+  // Da variedad de temporada a temporada en vez de que los mismos nombres se
+  // queden siempre fijos en los mismos clubes.
+  if (
+    state.window === "summer" &&
+    !state.deadlineDay &&
+    seededUnit(clubId, date, "elite-exit-roll") < ELITE_EXIT.dailyChance
+  ) {
+    const departure = attemptEliteDeparture(clubId, date);
+    if (departure) {
+      recordTransfers([departure]);
+      result.transfers.push(departure);
+      window.sales += 1;
+      clubWindowState(departure.toClubId).signings += 1;
+      rumors.push(rumorInterest(departure.toClubId, departure.playerId, date));
     }
   }
 

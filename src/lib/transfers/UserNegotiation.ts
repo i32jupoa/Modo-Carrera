@@ -99,6 +99,12 @@ export interface UserDeal {
   createdOn: string;
   updatedOn: string;
   log: DealLogEntry[];
+  /**
+   * Última vez que se avisó al usuario de que esta operación lleva tiempo
+   * esperando una decisión suya (ver `nudgeStaleUserDeals`). `undefined`
+   * hasta el primer aviso.
+   */
+  lastNudgedOn?: string;
 }
 
 /** Novedad producida al avanzar el calendario. */
@@ -459,6 +465,44 @@ function cancelOpenDealsOnMarketClose(userClubId: string, date: string): UserDea
   return events;
 }
 
+/**
+ * Días sin que el usuario mueva ficha (mejorar oferta, aceptar demanda,
+ * ajustar la ficha, retirarse...) antes de recordarle que hay una operación
+ * esperando su decisión. Las fases "club-counter" y "player-terms" paran la
+ * negociación durante mucho tiempo (`respondsOn` a 30 días) precisamente
+ * porque quien tiene que mover ficha es el usuario, no el motor — pero sin
+ * ningún aviso, esa espera podía sentirse como una negociación "muerta" que
+ * nadie recuerda que sigue abierta.
+ */
+const STALE_DEAL_NUDGE_DAYS = 5;
+
+/**
+ * Recuerda al usuario las operaciones que llevan un tiempo esperando su
+ * decisión (contraoferta del club rival por aceptar/mejorar, o ficha del
+ * jugador por ajustar). No repite el aviso más de una vez cada
+ * `STALE_DEAL_NUDGE_DAYS`, para no inundar el panel de notificaciones.
+ */
+function nudgeStaleUserDeals(userClubId: string, date: string): UserDealEvent[] {
+  const events: UserDealEvent[] = [];
+  for (const deal of Array.from(deals.values())) {
+    if (deal.userClubId !== userClubId) continue;
+    if (deal.stage !== "club-counter" && deal.stage !== "player-terms") continue;
+    const since = deal.lastNudgedOn ?? deal.updatedOn;
+    const days = Math.round((Date.parse(date) - Date.parse(since)) / 86_400_000);
+    if (days < STALE_DEAL_NUDGE_DAYS) continue;
+    deal.lastNudgedOn = date;
+    pushEvent(
+      events,
+      deal,
+      deal.stage === "club-counter"
+        ? `Sigue pendiente tu decisión sobre la contraoferta por ${deal.playerName}.`
+        : `${deal.playerName} sigue esperando que ajustes su ficha para firmar.`,
+      "info",
+    );
+  }
+  return events;
+}
+
 /** Procesa las respuestas pendientes y genera ofertas de la IA por tus jugadores. */
 export function advanceUserDeals(userClubId: string, date: string): UserDealEvent[] {
   if (windowForDate(date) === "closed") {
@@ -472,6 +516,7 @@ export function advanceUserDeals(userClubId: string, date: string): UserDealEven
     if (deal.direction === "in") events.push(...processIncomingResponse(deal, date));
     else events.push(...processOutgoingBid(deal, date));
   }
+  events.push(...nudgeStaleUserDeals(userClubId, date));
   events.push(...generateOffersForUserPlayers(userClubId, date));
   return events;
 }

@@ -14,8 +14,10 @@
 import { teamById } from "@/data/teams";
 import { transferWindowKey } from "../transferWindows";
 import {
+  BIG_DEAL_DAILY_LIMIT,
   CONTRACT_RULES,
   DECISION_ACCURACY,
+  ELITE_EXIT,
   IDEAL_SQUAD_SHAPE,
   MARKET_TIMING,
   POSITION_AGE_CURVE,
@@ -49,7 +51,13 @@ import {
   updatePlayer,
 } from "./PlayerIndex";
 import { getSquadReport, playerImprovesSquad } from "./SquadAnalyzer";
-import { coreDeparturesFor, isUserApprovedMove, registerCoreDeparture, windowDeficit } from "./MarketLocks";
+import {
+  coreDeparturesFor,
+  isUserApprovedMove,
+  recentCoreLossOvr,
+  registerCoreDeparture,
+  windowDeficit,
+} from "./MarketLocks";
 import { isAvailable, valuePlayer } from "./MarketValuation";
 import { decideOnMove, wageDemand } from "./PlayerDecision";
 import {
@@ -292,9 +300,25 @@ export function scoreCandidate(input: {
     seededUnit(input.clubId, player.id, cacheKey, "starstruck") <
       DECISION_ACCURACY.starstruckChance;
   const withStarstruck = starstruck ? score + DECISION_ACCURACY.starstruckBonus : score;
+
+  // Reemplazo reactivo: si el club acaba de perder a un jugador de nivel en
+  // esta demarcación, se prima a los candidatos de nivel parecido al que se
+  // fue (el "sustituto natural"), no sólo al que más mejora la media actual.
+  const lossOvr = recentCoreLossOvr(input.clubId, need.group);
+  const replacementBonus =
+    lossOvr > 0 ? clamp(1 - Math.abs(player.ovr - lossOvr) / 10, 0, 1) * 0.12 : 0;
+
+  // Ruido de ojeador: baraja el orden entre candidatos de nivel similar de
+  // forma estable dentro de una misma partida (ver `DECISION_ACCURACY.
+  // scoutingNoise`), para que no sea siempre el mismo puñado de nombres el
+  // que se lleva todos los traspasos caros en cada partida nueva.
+  const scoutingNoise =
+    (seededUnit(input.clubId, player.id, "scout-noise") - 0.5) * DECISION_ACCURACY.scoutingNoise;
+
+  const withBonuses = withStarstruck + replacementBonus + scoutingNoise;
   const finalScore = isDirectDomesticRival(input.clubId, player)
-    ? withStarstruck - DECISION_ACCURACY.domesticRivalScorePenalty
-    : withStarstruck;
+    ? withBonuses - DECISION_ACCURACY.domesticRivalScorePenalty
+    : withBonuses;
 
   return {
     player,
@@ -452,9 +476,15 @@ export function buildShortlist(
     limit: SEARCH_LIMITS.candidatesPerNeed,
   });
 
+  const buyerContext = {
+    clubId,
+    spendCeiling: effectiveSpendCeiling,
+    critical: need.priority === "critical",
+  };
+
   const scored: ScoredCandidate[] = [];
   for (const player of candidates) {
-    if (!isAvailable(player.id, options.cacheKey)) continue;
+    if (!isAvailable(player.id, options.cacheKey, buyerContext)) continue;
     if (isPursuitOnCooldown(clubId, player.id, options.cacheKey)) continue;
     if (!playerImprovesSquad(report, player)) continue;
     // No más de N traspasos con el mismo vendedor en la misma ventana: evita
@@ -550,6 +580,7 @@ export function runClubOpportunisticCycle(
   const attempt = pursueTarget(clubId, candidate.player.id, {
     date: options.date,
     deadlineDay: options.deadlineDay,
+    critical: need.priority === "critical",
   });
   result.attempts.push(attempt);
   if (attempt.outcome === "signed" && attempt.record) result.transfers.push(attempt.record);
@@ -587,6 +618,14 @@ export interface PursuitOptions {
   deadlineDay?: boolean;
   /** Tipo de operación (permanente por defecto). */
   type?: TransferType;
+  /**
+   * La necesidad que motiva esta persecución es crítica para el comprador.
+   * Repite en `pursueTarget` la misma condición ya evaluada en
+   * `buildShortlist` para que un jugador clave que sólo se destapó ahí por
+   * tratarse de una necesidad crítica no se vuelva a bloquear aquí por no
+   * pasársela.
+   */
+  critical?: boolean;
 }
 
 /**
@@ -622,7 +661,12 @@ export function pursueTarget(
   if (userClubId && player.clubId === userClubId && clubId !== userClubId) {
     return fail("unavailable", `${player.name} pertenece a tu club: no se puede fichar sin tu acuerdo.`, null);
   }
-  if (!isAvailable(playerId, cacheKey)) {
+  const buyerContext = {
+    clubId,
+    spendCeiling: maxSpend(clubId),
+    critical: options.critical ?? false,
+  };
+  if (!isAvailable(playerId, cacheKey, buyerContext)) {
     return fail("unavailable", `${player.name} no está en el mercado.`, null);
   }
 
@@ -762,7 +806,31 @@ export function pursueTarget(
           message: `${teamById(sellerId).name} espera mejores ofertas por ${player.name}.`,
         };
       }
-      return closeWithPlayerDecisionAndTrack(offer, valuation, options, rounds, sellerIdForCoreTracking, isCoreDeparture);
+      if (!options.deadlineDay && !canCloseBigDeal(options.date, offer.amount)) {
+        offer.status = "pending";
+        return {
+          outcome: "waiting",
+          playerId,
+          clubId,
+          record: null,
+          offer,
+          rounds,
+          message: `${teamById(sellerId).name} y ${teamById(clubId).name} tienen acuerdo por ${player.name}, pero el anuncio se retrasa: hoy ya hay demasiados bombazos en el mercado.`,
+        };
+      }
+      const closed = closeWithPlayerDecisionAndTrack(
+        offer,
+        valuation,
+        options,
+        rounds,
+        sellerIdForCoreTracking,
+        isCoreDeparture,
+        player.group,
+        player.ovr,
+        player.name,
+      );
+      if (closed.outcome === "signed") recordBigDeal(options.date, offer.amount);
+      return closed;
     }
 
     if (isClosed(response.status) || response.status === "final-rejection") {
@@ -819,12 +887,56 @@ function closeWithPlayerDecisionAndTrack(
   rounds: number,
   sellerId: string | null,
   isCoreDeparture: boolean,
+  departingGroup: PositionGroup,
+  departingOvr: number,
+  departingName: string,
 ): PursuitResult {
   const result = closeWithPlayerDecision(offer, valuation, options, rounds);
   if (result.outcome === "signed" && isCoreDeparture && sellerId) {
-    registerCoreDeparture(sellerId);
+    registerCoreDeparture(sellerId, departingGroup, departingOvr, departingName);
   }
   return result;
+}
+
+// ============================================================================
+// REPARTO DE "BOMBAZOS" POR DÍA
+// ============================================================================
+
+/** Día para el que se lleva la cuenta de bombazos anunciados. */
+let bigDealDayKey = "";
+/** Bombazos ya anunciados en `bigDealDayKey`. */
+let bigDealsToday = 0;
+
+function rollBigDealCounterIfNeeded(date: string): void {
+  if (date !== bigDealDayKey) {
+    bigDealDayKey = date;
+    bigDealsToday = 0;
+  }
+}
+
+/**
+ * ¿Puede anunciarse hoy una operación de esta cuantía? Las operaciones por
+ * debajo de `BIG_DEAL_DAILY_LIMIT.minFee` nunca se ven afectadas: el tope
+ * sólo existe para que los fichajes estrella no se amontonen todos en el
+ * mismo día en todo el mercado.
+ */
+function canCloseBigDeal(date: string, amount: number): boolean {
+  if (amount < BIG_DEAL_DAILY_LIMIT.minFee) return true;
+  rollBigDealCounterIfNeeded(date);
+  return bigDealsToday < BIG_DEAL_DAILY_LIMIT.maxPerDay;
+}
+
+/** Registra un bombazo ya cerrado hoy (no hace nada si no llega al umbral). */
+function recordBigDeal(date: string, amount: number): void {
+  if (amount < BIG_DEAL_DAILY_LIMIT.minFee) return;
+  rollBigDealCounterIfNeeded(date);
+  bigDealsToday += 1;
+}
+
+/** Reinicia el contador de bombazos (nueva partida). */
+export function resetBigDealPacing(): void {
+  bigDealDayKey = "";
+  bigDealsToday = 0;
 }
 
 /** Con acuerdo entre clubes, decide el jugador. */
@@ -989,6 +1101,13 @@ export interface ClubCycleOptions {
   deadlineDay?: boolean;
   /** Máximo de fichajes a intentar cerrar en este ciclo. */
   maxSignings?: number;
+  /**
+   * El club todavía no ha cerrado su cupo mínimo de fichajes de la ventana
+   * (ver `minSigningsFor` en `MarketSimulation`). Si es así, el ciclo se
+   * ejecuta aunque el club necesite hacer caja: el cupo mínimo no puede
+   * quedar bloqueado indefinidamente por la salud financiera del club.
+   */
+  belowMinimum?: boolean;
 }
 
 /**
@@ -1017,10 +1136,25 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
   // prioridad es mantener una plantilla completa, no el balance.
   const understaffed =
     report.size < SQUAD_LIMITS.minSquadSize + 4 || windowDeficit(clubId) > 0;
-  if (needsToSell(clubId) && !understaffed) return result;
+  // Tampoco se congela del todo si el club sigue por debajo de su cupo
+  // mínimo de fichajes de la ventana (`belowMinimum`, calculado por la
+  // simulación diaria): antes este corte era total —ni siquiera una
+  // necesidad crítica se atendía—, así que un club con la masa salarial
+  // ajustada (habitual en los clubes grandes, que gastan cerca del tope)
+  // podía pasarse la ventana entera sin fichar nada y sin que la red de
+  // seguridad de fichajes (limitada a agentes libres de su nivel, casi
+  // inexistentes para un club top) pudiera compensarlo nunca.
+  const mustBuyRegardless = understaffed || (options.belowMinimum ?? false);
+  const hasUrgentNeed = needs.some(
+    (need) => need.priority === "critical" || need.priority === "high",
+  );
+  if (needsToSell(clubId) && !mustBuyRegardless && !hasUrgentNeed) return result;
+  // Con la caja apretada, sólo se atienden agujeros de verdad (crítico o
+  // alto) salvo que el club esté obligado a comprar igualmente.
+  const restrictToUrgent = urgentOnly || (needsToSell(clubId) && !mustBuyRegardless);
 
   for (const need of needs) {
-    if (urgentOnly && need.priority !== "critical" && need.priority !== "high") continue;
+    if (restrictToUrgent && need.priority !== "critical" && need.priority !== "high") continue;
     if (result.transfers.length >= maxSignings) break;
     const shape = IDEAL_SQUAD_SHAPE[need.group];
     if (need.count >= shape.max) continue;
@@ -1032,6 +1166,7 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
       const attempt = pursueTarget(clubId, candidate.player.id, {
         date: options.date,
         deadlineDay: options.deadlineDay,
+        critical: need.priority === "critical",
       });
       result.attempts.push(attempt);
       if (attempt.outcome === "signed" && attempt.record) {
@@ -1268,6 +1403,98 @@ export function forceSellSurplusPlayer(clubId: string, date: string): TransferRe
 }
 
 /**
+ * Salida de galáctico: con muy poca frecuencia, un club de máxima reputación
+ * recibe una oferta lo bastante grande como para dejar salir a uno de sus
+ * titulares de verdad (nunca un descarte de los que ya cubre
+ * `forceSellSurplusPlayer`), igual que en la vida real un crack puede
+ * cambiar de aires en pleno verano aunque su club no "necesite" vender.
+ * Respeta el mismo tope de salidas de nivel por ventana que cualquier otra
+ * operación (`maxCoreDeparturesPerWindow`) y exige un comprador de peso real
+ * pagando cerca del precio pleno, nunca una rebaja de saldo.
+ */
+export function attemptEliteDeparture(clubId: string, date: string): TransferRecord | null {
+  const profile = getClubProfile(clubId);
+  if (profile.reputation < ELITE_EXIT.reputationThreshold) return null;
+  if (coreDeparturesFor(clubId) >= MARKET_TIMING.maxCoreDeparturesPerWindow) return null;
+
+  const report = getSquadReport(clubId, date);
+  if (report.size <= SQUAD_LIMITS.minSquadSize + 2) return null;
+
+  // Sólo titulares de verdad: nunca porteros (posición demasiado sensible
+  // para este tipo de saga) ni nadie que ya esté en las listas de
+  // transferibles/cedibles — a esos ya los cubre la red de ventas normal.
+  const candidates = getClubPlayers(clubId)
+    .filter((player) => player.group !== "GK")
+    .filter(
+      (player) =>
+        !report.transferables.includes(player.id) && !report.loanables.includes(player.id),
+    )
+    .sort((a, b) => b.ovr - a.ovr)
+    .slice(0, 6);
+  if (candidates.length === 0) return null;
+
+  const userClubId = getUserClubId();
+  const buyerIds = Array.from(getMarketIndex().byClub.keys()).filter(
+    (id) => id !== clubId && id !== userClubId,
+  );
+
+  for (const player of candidates) {
+    if (!isAvailable(player.id, date)) continue;
+    const valuation = valuePlayer(player.id, { cacheKey: date, deadlineDay: false });
+
+    const ranked = buyerIds
+      .map((id) => ({ id, roll: seededUnit(clubId, player.id, id, date, "elite-exit") }))
+      .sort((a, b) => a.roll - b.roll)
+      .slice(0, 40);
+
+    for (const { id: buyerId } of ranked) {
+      const buyerProfile = getClubProfile(buyerId);
+      // Sólo un club de peso real puede tentar a un galáctico: dinero por
+      // encima de la media y no muy por debajo en reputación.
+      if (buyerProfile.financialPower < ELITE_EXIT.minBuyerFinancialPower) continue;
+      if (buyerProfile.reputation < profile.reputation - ELITE_EXIT.maxReputationGap) continue;
+
+      const buyerReport = getSquadReport(buyerId, date);
+      if (buyerReport.size >= SQUAD_LIMITS.maxSquadSize) continue;
+      const shapeForGroup = IDEAL_SQUAD_SHAPE[player.group];
+      if (buyerReport.countByGroup[player.group] >= shapeForGroup.max) continue;
+
+      // Precio pleno (nunca rebajado): esto no es una salida de emergencia.
+      const askingPrice = valuation.idealPrice;
+      const demanded = wageDemand(player.id, buyerId);
+      const wageOffer = Math.min(maxWageOffer(buyerId), Math.round(demanded * 1.3));
+      if (wageOffer < demanded) continue;
+      if (!canAfford(buyerId, askingPrice, wageOffer)) continue;
+
+      const decision = decideOnMove({
+        playerId: player.id,
+        toClubId: buyerId,
+        wageOffer,
+        cacheKey: date,
+      });
+      if (decision.verdict !== "accepted") continue;
+
+      const offer = createTransferOffer({
+        playerId: player.id,
+        playerName: player.name,
+        fromClubId: buyerId,
+        toClubId: buyerId,
+        amount: askingPrice,
+        wageOffer,
+        type: "permanent",
+        date,
+      });
+      const record = completeTransfer(offer, date);
+      if (record) {
+        registerCoreDeparture(clubId, player.group, player.ovr, player.name);
+        return record;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Decide de forma determinista si un club se plantea reforzarse hoy.
  * Lo usa la simulación diaria para repartir la actividad por el calendario.
  */
@@ -1282,4 +1509,5 @@ export function resetTransferEngine(): void {
   dominantNations.clear();
   pursuitMemory.clear();
   buyerSellerDeals.clear();
+  resetBigDealPacing();
 }

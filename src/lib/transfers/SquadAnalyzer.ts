@@ -8,6 +8,7 @@
  */
 
 import { IDEAL_SQUAD_SHAPE, SQUAD_LIMITS } from "./constants";
+import { recentCoreLossOvr } from "./MarketLocks";
 import { getClubPlayers, onSquadChanged } from "./PlayerIndex";
 import { clamp } from "./random";
 import { POSITION_GROUPS, type MarketPlayer, type PositionGroup, type SquadNeed, type SquadReport } from "./types";
@@ -38,9 +39,15 @@ function priorityOf(urgency: number): SquadNeed["priority"] {
 
 /**
  * Urgencia de una demarcación: combina falta de efectivos y falta de calidad
- * respecto a la media del club.
+ * respecto a la media del club, y reacciona a una salida de nivel reciente
+ * en esa misma demarcación (ver más abajo).
  */
-function computeUrgency(group: PositionGroup, players: MarketPlayer[], squadRating: number): number {
+function computeUrgency(
+  group: PositionGroup,
+  players: MarketPlayer[],
+  squadRating: number,
+  recentLossOvr: number,
+): number {
   const shape = IDEAL_SQUAD_SHAPE[group];
   const count = players.length;
   const shortage = count < shape.min ? 1 : count < shape.ideal ? 0.5 : 0;
@@ -52,7 +59,18 @@ function computeUrgency(group: PositionGroup, players: MarketPlayer[], squadRati
   const quality = average(best.map((p) => p.ovr));
   const qualityGap = squadRating > 0 ? clamp((squadRating - quality) / 8, 0, 1) : 0;
 
-  return clamp(shortage * 0.6 + qualityGap * 0.4, 0, 1);
+  const baseUrgency = clamp(shortage * 0.6 + qualityGap * 0.4, 0, 1);
+  if (recentLossOvr <= 0) return baseUrgency;
+
+  // Reemplazo reactivo: si el club acaba de perder a un jugador de nivel en
+  // esta demarcación (p. ej. su extremo estrella), la urgencia sube aunque
+  // el hueco numérico ya lo tape cualquier suplente — en la vida real el
+  // club sale a buscar un sustituto de nivel similar, no se conforma con
+  // cubrir el cupo. Cuanto mayor la diferencia entre lo perdido y lo que
+  // queda, más urgente (y más "crítica") se vuelve la necesidad.
+  const dropSeverity = clamp((recentLossOvr - Math.max(quality, squadRating - 8)) / 12, 0, 1);
+  const reactiveUrgency = clamp(0.55 + dropSeverity * 0.35, 0.55, 0.95);
+  return Math.max(baseUrgency, reactiveUrgency);
 }
 
 /** ¿Debería el club poner a este jugador en la lista de transferibles? */
@@ -96,7 +114,7 @@ export function analyzeSquad(clubId: string): SquadReport {
     countByGroup[group] = players.length;
     ratingByGroup[group] = Math.round(average(players.map((p) => p.ovr)) * 10) / 10;
 
-    const urgency = computeUrgency(group, players, startingRating);
+    const urgency = computeUrgency(group, players, startingRating, recentCoreLossOvr(clubId, group));
     if (urgency > 0.15) {
       needs.push({
         group,

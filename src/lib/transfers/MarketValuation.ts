@@ -13,6 +13,7 @@ import {
   WORLD_CLASS_THRESHOLD,
   INSULTING_OFFER_RATIO,
   SQUAD_LIMITS,
+  KEY_PLAYER_MARKET,
 } from "./constants";
 import type { MarketValuation } from "./types";
 import { getClubProfile } from "./ClubStrategy";
@@ -20,7 +21,8 @@ import { needsToSell } from "./BudgetManager";
 import { getPlayer } from "./PlayerIndex";
 import { isPlayerSettled } from "./MarketLocks";
 import { getSquadReport } from "./SquadAnalyzer";
-import { clamp } from "./random";
+import { wantsOut } from "./PlayerDecision";
+import { clamp, seededUnit } from "./random";
 import { GLOBAL_MAX_VALUE_M } from "@/data/players";
 
 
@@ -301,7 +303,24 @@ export function askingPrice(playerId: string, options: PlayerValuationOptions = 
 }
 
 /** ¿Está el jugador disponible en el mercado a algún precio? */
-export function isAvailable(playerId: string, cacheKey = "static"): boolean {
+/**
+ * Contexto del comprador para la válvula de escape de jugadores clave: sólo
+ * se usa para decidir si vale la pena intentar un bombazo (ver más abajo),
+ * nunca para relajar el resto de comprobaciones de disponibilidad.
+ */
+export interface KeyPlayerBuyerContext {
+  clubId: string;
+  /** Techo de gasto real del comprador (ya con el ritmo de bombazos aplicado). */
+  spendCeiling: number;
+  /** El comprador tiene una necesidad crítica en la demarcación del jugador. */
+  critical: boolean;
+}
+
+export function isAvailable(
+  playerId: string,
+  cacheKey = "static",
+  buyerContext?: KeyPlayerBuyerContext,
+): boolean {
   const player = getPlayer(playerId);
   if (!player) return false;
   // Recién fichado en esta misma ventana: acaba de firmar contrato y no se
@@ -310,5 +329,26 @@ export function isAvailable(playerId: string, cacheKey = "static"): boolean {
   if (!player.clubId) return true;
   if (player.transferListed) return true;
   if (player.contract.yearsLeft <= 1) return true;
-  return !isKeyPlayer(playerId, cacheKey);
+  if (!isKeyPlayer(playerId, cacheKey)) return true;
+
+  // Jugador clave con contrato largo: en principio intransferible, pero no
+  // imposible. Dos escenarios reales lo destapan:
+  //  1) El propio jugador quiere salir de verdad (ambición insatisfecha,
+  //     poco protagonismo, ver `wantsOut`) — el club no puede retener a
+  //     alguien que empuja activamente para irse.
+  //  2) Un comprador con una necesidad crítica en esa posición puede pagar
+  //     su cláusula de rescisión al contado y, alguna vez, se atreve a
+  //     intentarlo — el bombazo puntual, no la costumbre.
+  if (wantsOut(playerId, cacheKey)) return true;
+  if (
+    buyerContext &&
+    buyerContext.critical &&
+    player.contract.releaseClause > 0 &&
+    buyerContext.spendCeiling >= player.contract.releaseClause &&
+    seededUnit(buyerContext.clubId, playerId, cacheKey, "key-player-approach") <
+      KEY_PLAYER_MARKET.approachChance
+  ) {
+    return true;
+  }
+  return false;
 }

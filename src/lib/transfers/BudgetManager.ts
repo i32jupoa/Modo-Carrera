@@ -55,6 +55,17 @@ function currentWageBill(clubId: string): number {
   return getClubPlayers(clubId).reduce((sum, player) => sum + player.contract.wage, 0);
 }
 
+/**
+ * Techo del presupuesto de un club de la IA (ver `BUDGET_RULES.maxBudgetMultiple`).
+ * Se aplica en todos los puntos donde el presupuesto puede crecer (relleno
+ * de ventana y ventas), nunca al gastar. El club del usuario nunca pasa por
+ * aquí: su presupuesto es el de la partida y no se recorta desde el motor.
+ */
+function capBudget(entry: ClubFinances): void {
+  const ceiling = entry.initialBudget * BUDGET_RULES.maxBudgetMultiple;
+  if (entry.budget > ceiling) entry.budget = Math.round(ceiling);
+}
+
 function createFinances(clubId: string): ClubFinances {
   const profile = getClubProfile(clubId);
   const budget = initialBudget(profile);
@@ -179,6 +190,7 @@ export function registerSale(clubId: string, fee: number, wage: number): void {
   entry.budget += bridge ? fee : Math.round(fee * BUDGET_RULES.saleReinvestment);
   entry.earned += fee;
   entry.wageBill = Math.max(0, entry.wageBill - wage);
+  if (!bridge) capBudget(entry);
   bridge?.setBudget(entry.budget);
 }
 
@@ -209,6 +221,7 @@ export function refillForNewWindow(clubId: string): void {
     BUDGET_RULES.floor,
     Math.round(entry.budget + entry.initialBudget * BUDGET_RULES.windowRefill),
   );
+  capBudget(entry);
   entry.spent = 0;
   entry.earned = 0;
   entry.wageBill = currentWageBill(clubId);
@@ -217,5 +230,15 @@ export function refillForNewWindow(clubId: string): void {
 /** Restaura las finanzas guardadas en una partida. */
 export function restoreFinances(entries: readonly ClubFinances[]): void {
   finances.clear();
-  for (const entry of entries) finances.set(entry.clubId, { ...entry });
+  for (const entry of entries) {
+    const copy = { ...entry };
+    // Migra partidas guardadas antes del techo de presupuesto: sin esto, una
+    // partida vieja con un club de la IA ya inflado a cientos o miles de
+    // millones se quedaría así para siempre, porque `capBudget` sólo actúa
+    // en los puntos donde el presupuesto crece (relleno de ventana, ventas),
+    // no al cargar. No se toca el club del usuario (no pasa por aquí: su
+    // presupuesto vive en el estado de la partida, no en este mapa).
+    if (!bridgeFor(copy.clubId)) capBudget(copy);
+    finances.set(copy.clubId, copy);
+  }
 }

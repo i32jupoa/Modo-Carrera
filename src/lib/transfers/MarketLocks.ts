@@ -40,6 +40,23 @@ const departures = new Map<string, number>();
 const coreDepartures = new Map<string, number>();
 
 /**
+ * `clubId:group` -> mejor OVR (y nombre) de una salida "de nivel" reciente en
+ * esa demarcación dentro de la ventana activa.
+ *
+ * Con esto un club que pierde a un jugador top puede reaccionar buscando de
+ * verdad un reemplazo de nivel similar (ver `SquadAnalyzer.computeUrgency`),
+ * en vez de limitarse a rellenar el hueco numérico con cualquiera. Se guarda
+ * aquí (no en `SquadAnalyzer` ni en `TransferEngine`) para evitar un ciclo de
+ * imports: este módulo no depende de ningún otro, así que tanto el análisis
+ * de plantilla como el motor de fichajes pueden leerlo sin problema.
+ */
+const lastCoreLoss = new Map<string, { ovr: number; playerName: string }>();
+
+function coreLossKey(clubId: string, group: string): string {
+  return `${clubId}:${group}`;
+}
+
+/**
  * Salidas aprobadas explícitamente por el usuario.
  *
  * Ningún jugador del club del usuario puede cambiar de equipo si no es dentro
@@ -100,6 +117,7 @@ export function setLockWindow(key: string): void {
   arrivals.clear();
   departures.clear();
   coreDepartures.clear();
+  lastCoreLoss.clear();
 }
 
 /** Ventana activa para los cerrojos. */
@@ -141,15 +159,39 @@ export function departuresFor(clubId: string): number {
   return departures.get(clubId) ?? 0;
 }
 
-/** Registra una salida "de nivel" (titular o casi) de un club en la ventana activa. */
-export function registerCoreDeparture(clubId: string | null): void {
+/**
+ * Registra una salida "de nivel" (titular o casi) de un club en la ventana
+ * activa. Si se pasa demarcación y OVR, también queda memoria de qué nivel
+ * hay que reponer en esa posición (ver `recentCoreLossOvr`).
+ */
+export function registerCoreDeparture(
+  clubId: string | null,
+  group?: string,
+  ovr?: number,
+  playerName?: string,
+): void {
   if (!clubId) return;
   coreDepartures.set(clubId, (coreDepartures.get(clubId) ?? 0) + 1);
+  if (group && typeof ovr === "number") {
+    const key = coreLossKey(clubId, group);
+    const existing = lastCoreLoss.get(key);
+    if (!existing || ovr > existing.ovr) {
+      lastCoreLoss.set(key, { ovr, playerName: playerName ?? "" });
+    }
+  }
 }
 
 /** Salidas "de nivel" de un club en la ventana activa. */
 export function coreDeparturesFor(clubId: string): number {
   return coreDepartures.get(clubId) ?? 0;
+}
+
+/**
+ * Mejor OVR perdido recientemente por un club en una demarcación concreta,
+ * dentro de la ventana activa (0 si no ha perdido a nadie de nivel ahí).
+ */
+export function recentCoreLossOvr(clubId: string, group: string): number {
+  return lastCoreLoss.get(coreLossKey(clubId, group))?.ovr ?? 0;
 }
 
 /**
@@ -168,6 +210,7 @@ export function resetMarketLocks(): void {
   arrivals.clear();
   departures.clear();
   coreDepartures.clear();
+  lastCoreLoss.clear();
   userApprovedDepth = 0;
 }
 
@@ -183,6 +226,7 @@ export function rebuildLocks(
   arrivals.clear();
   departures.clear();
   coreDepartures.clear();
+  lastCoreLoss.clear();
   if (!activeWindowKey) return;
   for (const record of records) {
     if (windowKeyOf(record.date) !== activeWindowKey) continue;

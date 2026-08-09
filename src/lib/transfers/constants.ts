@@ -127,6 +127,52 @@ export const MARKET_TIMING = {
 } as const;
 
 /**
+ * Mercado de jugadores clave (titulares indiscutibles, ver `isKeyPlayer` en
+ * `MarketValuation`). Por defecto un jugador clave con contrato largo no
+ * entra en el mercado — así se evita que la IA se los vaya robando entre sí
+ * como si fueran suplentes. Pero "por defecto intransferible" no puede
+ * significar "nunca, bajo ninguna circunstancia": en la vida real los
+ * grandes bombazos existen (un crack que pide salir, un club que paga la
+ * cláusula). Sin ninguna válvula de escape, ni siquiera esos casos límite
+ * pasaban, y perder a un titular de nivel se convertía en un callejón sin
+ * salida: el club afectado no encontraba con quién reponerlo porque todos
+ * los buenos reemplazos eran, a su vez, intransferibles en sus clubes.
+ */
+export const KEY_PLAYER_MARKET = {
+  /**
+   * Probabilidad, por día y por pareja comprador-jugador que ya cumple el
+   * resto de condiciones (necesidad crítica, presupuesto para pagar la
+   * cláusula), de que el comprador se atreva a intentarlo. Deliberadamente
+   * baja: la rareza real no viene sólo de este número sino de lo poco común
+   * que es cumplir las condiciones previas (casi ningún club puede pagar la
+   * cláusula de una estrella ajena), así que no hace falta bajarla más para
+   * que el bombazo siga siendo la excepción y no la norma.
+   */
+  approachChance: 0.12,
+} as const;
+
+/**
+ * Salidas de galáctico: de vez en cuando un club de referencia deja salir a
+ * un titular de verdad (no un descarte) porque llega una oferta que no
+ * puede rechazar — un Bellingham, un Mbappé, un Griezmann cambiando de aires
+ * en pleno verano aunque su club no "necesite" vender. Es un evento
+ * narrativo aparte de `KEY_PLAYER_MARKET` (que exige pagar la cláusula al
+ * contado): aquí basta con un comprador de peso real y una negociación
+ * normal a precio pleno, pero sólo se prueba en los clubes de reputación
+ * más alta y con muy poca frecuencia, para que siga siendo la excepción.
+ */
+export const ELITE_EXIT = {
+  /** Reputación mínima (0-1) del club vendedor para que aplique este evento. */
+  reputationThreshold: 0.9,
+  /** Probabilidad diaria, sólo en verano y fuera de deadline day. */
+  dailyChance: 0.006,
+  /** Poder financiero mínimo (0-1) que necesita el club comprador. */
+  minBuyerFinancialPower: 0.6,
+  /** Diferencia máxima de reputación admitida entre vendedor y comprador. */
+  maxReputationGap: 0.25,
+} as const;
+
+/**
  * Ritmo de los fichajes "grandes" (caros respecto al presupuesto del club)
  * dentro de una ventana. En la vida real ni los clubes más ricos cierran sus
  * fichajes estrella el primer día de mercado: hay pretemporada, cesiones que
@@ -152,6 +198,27 @@ export const BIG_SIGNING_PACING = {
    */
   rampFractionMin: 0.08,
   rampFractionMax: 0.7,
+} as const;
+
+/**
+ * Tope de "bombazos" (fichajes muy caros, con eco mediático) que el mercado
+ * global puede cerrar el mismo día. `MarketPacing` ya limita cuánto puede
+ * comprometer un club por operación según lo avanzada que esté la ventana,
+ * pero eso no evita que, por pura coincidencia, varios clubes ricos con
+ * necesidades distintas cierren su fichaje estrella justo el mismo día
+ * (típicamente muy pronto, nada más abrir el mercado). Este tope hace que,
+ * si ya se han anunciado suficientes bombazos hoy, el resto de acuerdos ya
+ * cerrados con el club y el jugador esperen a otro día para hacerse
+ * oficiales — como en la vida real, donde los grandes anuncios se reparten
+ * en el calendario en vez de amontonarse. El deadline day, como el resto de
+ * restricciones de ritmo, queda exento: en la última jornada todo se cierra
+ * cueste lo que cueste.
+ */
+export const BIG_DEAL_DAILY_LIMIT = {
+  /** Ficha a partir de la cual una operación cuenta como "bombazo". */
+  minFee: 35_000_000,
+  /** Máximo de bombazos que se anuncian el mismo día en todo el mercado. */
+  maxPerDay: 2,
 } as const;
 
 /**
@@ -263,6 +330,19 @@ export const DECISION_ACCURACY = {
    * (Figo al Madrid en 2000), pero se hace muy improbable.
    */
   domesticRivalScorePenalty: 0.55,
+  /**
+   * Ruido de "ojeador" añadido a la puntuación final (0..1) de cada pareja
+   * club-jugador, estable durante toda la partida (no cambia día a día) pero
+   * distinto en cada partida nueva. Sin esto, la puntuación es determinista
+   * y puramente jerárquica: el jugador objetivamente mejor de cada
+   * demarcación siempre puntúa más alto para cualquier club ambicioso, así
+   * que las mismas quince o veinte estrellas mundiales acaban protagonizando
+   * todos los traspasos caros de todas las partidas. Este ruido no cambia
+   * qué necesita un club (eso lo sigue marcando `need`), pero sí baraja el
+   * orden entre candidatos de nivel similar para que no gane siempre el
+   * mismo nombre.
+   */
+  scoutingNoise: 0.16,
 } as const;
 
 // ============================================================================
@@ -346,6 +426,22 @@ export const BUDGET_RULES = {
   windowRefill: 0.35,
   /** Presupuesto mínimo garantizado por club. */
   floor: 500_000,
+  /**
+   * Techo del presupuesto de un club de la IA, como múltiplo de su
+   * presupuesto inicial (`ClubFinances.initialBudget`). `refillForNewWindow`
+   * suma cada ventana un porcentaje del presupuesto inicial (premios,
+   * ingresos de temporada...) sin descontar nada si el club no gasta, así
+   * que sin este techo un club pasivo acumula indefinidamente: en partidas
+   * largas (10+ temporadas) un club top podía terminar con miles de
+   * millones de euros sin ningún jugador en el mundo capaz de costar tanto
+   * (el valor de un jugador ya tiene techo duro, ver `GLOBAL_MAX_VALUE_M`
+   * en `data/players.ts`), rompiendo por completo la sensación de escasez
+   * del mercado. 3x da margen de sobra para que un club ahorre para un
+   * fichaje muy por encima de lo habitual sin permitir una acumulación sin
+   * límite. Sólo aplica a clubes de la IA: el presupuesto del club del
+   * usuario lo gestiona la partida y nunca se recorta aquí.
+   */
+  maxBudgetMultiple: 3,
 } as const;
 
 // ============================================================================
