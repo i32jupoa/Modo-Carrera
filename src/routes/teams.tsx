@@ -29,6 +29,7 @@ import {
   elevenAverage,
   sortByPosition,
   styleLabel,
+  getTeamStyle,
   levelLabel,
 } from "@/lib/teamProfile";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
@@ -161,22 +162,23 @@ function TeamsPage() {
 
   const isUserTeam = !!save && selectedTeam?.id === save.myTeamId;
 
-  // Dibujo que mejor encaja con la plantilla, entre todos los de Dirección de equipo.
+  // Dibujo que mejor encaja con la plantilla, entre las formaciones típicas del estilo del equipo.
   const bestFormation = useMemo(
-    () => (teamSquad.length ? bestFormationForSquad(teamSquad) : null),
-    [teamSquad],
+    () => (selectedTeam && teamSquad.length ? bestFormationForSquad(teamSquad, selectedTeam) : null),
+    [teamSquad, selectedTeam],
   );
 
   // Táctica: la real si es tu equipo, la estimada si la lleva la IA.
   const tactics = useMemo(() => {
     if (!selectedTeam) return null;
     const est = estimateTactics(selectedTeam);
+    const teamStyle = getTeamStyle(selectedTeam);
     const formation = bestFormation ?? est.formation;
     if (isUserTeam) {
       const real = loadTactics(selectedTeam.id);
       return { ...est, formation, style: real.style, pressure: real.pressure, defenseLine: real.defenseLine };
     }
-    return { ...est, formation };
+    return { ...est, formation, style: teamStyle.style, pressure: teamStyle.pressure, defenseLine: teamStyle.defenseLine };
   }, [selectedTeam, isUserTeam, bestFormation]);
 
   const eleven = useMemo(() => {

@@ -2161,6 +2161,16 @@ export function saveSave(s: SaveGame) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
   } catch (e) {
     console.warn("saveSave: almacenamiento lleno", (e as Error)?.message);
+    // Limpiar localStorage y reintentar
+    console.log("Limpiando localStorage y reintentando...");
+    localStorage.clear();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+      console.log("Save guardado después de limpiar localStorage");
+    } catch (retryError) {
+      console.error("saveSave: falló incluso después de limpiar localStorage", retryError);
+      throw retryError;
+    }
   }
   try { persistCurrentSave(slim); } catch (e) { console.error("persistCurrentSave failed", e); }
 

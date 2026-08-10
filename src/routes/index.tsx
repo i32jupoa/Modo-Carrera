@@ -63,11 +63,6 @@ function Index() {
       // Si no hay partidas guardadas, limpiar también el sistema antiguo
       localStorage.removeItem("fcsim:save:v2");
     }
-    // Limpiar myTeamId del playersStore para evitar que aparezca el nombre de un equipo
-    const playersStore = usePlayersStore.getState();
-    if (playersStore.myTeamId) {
-      playersStore.myTeamId = null;
-    }
   }, []);
 
   function pickTeam(id: string) {
@@ -87,12 +82,22 @@ function Index() {
       addSaveToMultiple(s);
       // Guardar en el sistema antiguo para compatibilidad con SeasonPage
       saveSave(s);
+      // Verificar que el save se guardó correctamente
+      const saved = loadSave();
+      if (!saved || saved.myTeamId !== id) {
+        throw new Error("Save no se guardó correctamente");
+      }
+      console.log("Save verificado correctamente:", saved.myTeamId);
       // Esperar para mostrar la animación de stadium reveal
-      setTimeout(() => navigate({ to: "/season" }), 2400);
+      setTimeout(() => {
+        console.log("Navigating to season with save:", s.myTeamId);
+        navigate({ to: "/season" });
+      }, 2400);
     } catch (err) {
       console.error("Failed to start career:", err);
       setLoading(false);
       setLoaderTeamId(null);
+      alert("Error al crear la partida: " + (err instanceof Error ? err.message : String(err)));
     }
   }
 

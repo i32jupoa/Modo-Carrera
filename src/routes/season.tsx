@@ -66,6 +66,8 @@ function SeasonPage() {
 
     const s = loadSave();
 
+    console.log("Season page loaded save:", s?.myTeamId);
+
     if (!s) { navigate({ to: "/" }); return; }
 
     setSave(s);

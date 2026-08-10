@@ -76,6 +76,7 @@ export function TypicalElevenPitch({ eleven, formation, className = "" }: Props)
                   role={role}
                   size={40}
                   className="bg-background/70 shadow-md"
+                  showRing={false}
                 />
                 {slot.player && (
                   <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">

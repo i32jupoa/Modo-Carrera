@@ -148,7 +148,21 @@ export function addSaveToMultiple(save: SaveGame) {
   setCurrentSaveId(meta.id);
 
   const payload = { ...save, playersStoreState: snapshotPlayersStore() };
-  localStorage.setItem(saveKeyFor(meta.id), JSON.stringify(payload));
+  try {
+    localStorage.setItem(saveKeyFor(meta.id), JSON.stringify(payload));
+  } catch (e) {
+    console.warn("addSaveToMultiple: almacenamiento lleno", (e as Error)?.message);
+    // Limpiar localStorage y reintentar
+    console.log("Limpiando localStorage y reintentando...");
+    localStorage.clear();
+    try {
+      localStorage.setItem(saveKeyFor(meta.id), JSON.stringify(payload));
+      console.log("Save guardado después de limpiar localStorage");
+    } catch (retryError) {
+      console.error("addSaveToMultiple: falló incluso después de limpiar localStorage", retryError);
+      throw retryError;
+    }
+  }
 
   // Añadir a la lista de metadatos
   saves.unshift(meta);

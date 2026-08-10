@@ -6,6 +6,154 @@ import type { Team } from "@/data/teams";
 import type { FcPlayer } from "@/store/playersStore";
 import type { DefenseLine, PlayStyle, Pressure } from "@/lib/teamTactics";
 import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
+import { buildPositions, canPlayPosition, type PosCode } from "@/lib/positions";
+
+/* ------------------------------------------------------- formaciones por estilo */
+
+/** Formaciones típicas según el estilo de juego del equipo */
+const FORMATIONS_BY_STYLE: Record<PlayStyle, FormationName[]> = {
+  offensive: [
+    "Táctica 4-3-3",
+    "Táctica 4-2-3-1 (2)",
+    "Táctica 4-2-3-1 con 3 MCO",
+    "Táctica 4-3-3 con mediocentro ofensivo",
+  ],
+  balanced: [
+    "Táctica 4-3-3",
+    "Táctica 4-2-3-1 (2)",
+    "Táctica 4-3-3 con mediocentro defensivo",
+    "Táctica 4-4-2",
+    "Táctica 4-1-4-1",
+  ],
+  defensive: [
+    "Táctica 5-3-2",
+    "Táctica 4-5-1",
+    "Táctica 5-2-2-1",
+    "Táctica 5-2-1-2",
+    "Táctica 4-4-2",
+  ],
+};
+
+/** Mapeo de estilos de juego específicos por equipo (del CSV team_play_styles.csv) */
+const TEAM_STYLES: Record<string, PlayStyle> = {
+  // España - La Liga
+  "Athletic Club": "offensive",
+  "Atlético de Madrid": "defensive",
+  "CA Osasuna": "defensive",
+  "CD Leganés": "defensive",
+  "Celta": "offensive",
+  "Cádiz CF": "defensive",
+  "D. Alavés": "defensive",
+  "FC Barcelona": "offensive",
+  "Getafe CF": "defensive",
+  "Girona FC": "offensive",
+  "R. Valladolid CF": "balanced",
+  "RCD Espanyol": "balanced",
+  "RCD Mallorca": "defensive",
+  "Rayo Vallecano": "offensive",
+  "Real Betis": "offensive",
+  "Real Madrid": "offensive",
+  "Real Sociedad": "offensive",
+  "Sevilla FC": "offensive",
+  "UD Las Palmas": "balanced",
+  "Valencia CF": "offensive",
+  "Villarreal CF": "offensive",
+  // Italia - Serie A
+  "AS Roma": "offensive",
+  "Bergamo Calcio": "offensive",
+  "Bologna": "offensive",
+  "Cagliari": "defensive",
+  "Como": "offensive",
+  "Empoli": "defensive",
+  "Fiorentina": "offensive",
+  "Genoa": "defensive",
+  "Hellas Verona": "defensive",
+  "Juventus": "offensive",
+  "Latium": "offensive",
+  "Lecce": "defensive",
+  "Milano FC": "offensive",
+  "Monza": "balanced",
+  "Parma": "offensive",
+  "Pisa": "balanced",
+  "SSC Napoli": "offensive",
+  "Torino": "defensive",
+  "Udinese": "defensive",
+  "Venezia": "defensive",
+  // Italia - Serie B
+  "Lombardia FC": "balanced",
+  // Alemania - Bundesliga
+  "Borussia Dortmund": "offensive",
+  "FC Bayern München": "offensive",
+  "Frankfurt": "offensive",
+  "Leverkusen": "offensive",
+  "M'gladbach": "offensive",
+  "RB Leipzig": "offensive",
+  "SC Freiburg": "offensive",
+  "SV Werder Bremen": "offensive",
+  "TSG Hoffenheim": "offensive",
+  "VfB Stuttgart": "offensive",
+  // Francia - Ligue 1
+  "AS Monaco": "offensive",
+  "LOSC Lille": "offensive",
+  "OL": "offensive",
+  "OM": "offensive",
+  "Paris SG": "offensive",
+  "RC Lens": "offensive",
+  "Stade Brestois 29": "offensive",
+  "Stade Rennais FC": "offensive",
+  "Toulouse FC": "offensive",
+  // Inglaterra - Premier League
+  "Arsenal": "offensive",
+  "Aston Villa": "offensive",
+  "Brentford": "offensive",
+  "Brighton": "offensive",
+  "Chelsea": "offensive",
+  "Fulham": "offensive",
+  "Ipswich": "offensive",
+  "Liverpool": "offensive",
+  "Man Utd": "offensive",
+  "Manchester City": "offensive",
+  "Spurs": "offensive",
+  "West Ham": "offensive",
+  "Wolves": "offensive",
+  // Países Bajos - Eredivisie
+  "AZ": "offensive",
+  "Ajax": "offensive",
+  "FC Twente": "offensive",
+  "FC Utrecht": "offensive",
+  "Feyenoord": "offensive",
+  "N.E.C. Nijmegen": "offensive",
+  "PSV": "offensive",
+  // Portugal - Primeira Liga
+  "FC Famalicão": "offensive",
+  "FC Porto": "offensive",
+  "SC Braga": "offensive",
+  "SL Benfica": "offensive",
+  "Sporting CP": "offensive",
+  "Vitória SC": "offensive",
+};
+
+/** Presión y línea defensiva según el estilo de juego */
+const TACTICS_BY_STYLE: Record<PlayStyle, { pressure: Pressure; defenseLine: DefenseLine }> = {
+  offensive: { pressure: "high", defenseLine: "high" },
+  balanced: { pressure: "medium", defenseLine: "medium" },
+  defensive: { pressure: "low", defenseLine: "low" },
+};
+
+/**
+ * Obtiene el estilo de juego específico del equipo del CSV si existe,
+ * si no usa estimateTactics. También devuelve presión y línea defensiva
+ * basadas en el estilo.
+ */
+export function getTeamStyle(team: Team): {
+  style: PlayStyle;
+  pressure: Pressure;
+  defenseLine: DefenseLine;
+} {
+  const style = TEAM_STYLES[team.name] || estimateTactics(team).style;
+  const { pressure, defenseLine } = TACTICS_BY_STYLE[style];
+  return { style, pressure, defenseLine };
+}
 
 /* ------------------------------------------------------------------ orden */
 
@@ -172,26 +320,68 @@ export type ElevenSlot = { label: string; player: FcPlayer | null; natural: bool
 
 /**
  * 11 tipo estimado: para cada hueco de la formación coge al jugador libre
- * con mejor media que encaje de forma natural; si no hay, uno adaptable y,
- * como último recurso, alguien de la misma demarcación.
+ * con mejor media que encaje usando posiciones principales y secundarias.
+ * Prioriza la posición principal sobre la secundaria cuando hay empate de OVR.
+ * Ignora lesiones para mostrar el 11 ideal del equipo.
  */
 export function estimatedEleven(formation: string, squad: FcPlayer[]): ElevenSlot[] {
   const slots = formationSlots(formation);
   if (!slots.length) return [];
   const used = new Set<number>();
-  const pool = squad.slice().sort((a, b) => b.OVR - a.OVR);
-  const posOf = (p: FcPlayer) => (p.Position || "").toUpperCase();
+  
+  // Convertir etiquetas de slot a PosCode del sistema de posiciones
+  const slotToPosCode: Record<string, PosCode> = {
+    "POR": "GK",
+    "DFC": "DFC",
+    "LI": "LI",
+    "LD": "LD",
+    "CAI": "CAI",
+    "CAD": "CAD",
+    "MCD": "MCD",
+    "MC": "MC",
+    "MCO": "MCO",
+    "MI": "MI",
+    "MD": "MD",
+    "EI": "EI",
+    "ED": "ED",
+    "DC": "DC",
+    "SD": "SD",
+  };
 
   return slots.map((slot) => {
-    const free = (extra?: (p: FcPlayer) => boolean) =>
-      pool.find((p) => !used.has(p.ID) && (!extra || extra(p)));
+    const requiredPos = slotToPosCode[slot.label];
+    if (!requiredPos) {
+      // Fallback para slots no mapeados
+      const pool = squad.slice().sort((a, b) => b.OVR - a.OVR);
+      const pick = pool.find((p) => !used.has(p.ID)) ?? null;
+      if (pick) used.add(pick.ID);
+      return { label: slot.label, player: pick, natural: false };
+    }
 
-    const exact = free((p) => slot.natural.includes(posOf(p)));
-    const adapted = exact ?? free((p) => slot.adaptable.includes(posOf(p)));
-    const sameGroup = adapted ?? free((p) => positionGroup(p.Position) === slot.group);
-    const pick = sameGroup ?? free() ?? null;
-    if (pick) used.add(pick.ID);
-    return { label: slot.label, player: pick, natural: !!exact };
+    // Obtener jugadores que pueden jugar en la posición requerida
+    const candidates = squad.filter((p) => !used.has(p.ID)).map((p) => {
+      const codes = buildPositions(p.Position, p["Alternative positions"]);
+      const isPrimary = codes[0] === requiredPos; // La primera posición es la principal
+      const canPlay = codes.includes(requiredPos) || canPlayPosition(codes, requiredPos);
+      return { player: p, isPrimary, canPlay };
+    }).filter((c) => c.canPlay);
+
+    if (candidates.length === 0) {
+      return { label: slot.label, player: null, natural: false };
+    }
+
+    // Ordenar: primero por OVR, luego por si es posición principal
+    candidates.sort((a, b) => {
+      if (b.player.OVR !== a.player.OVR) {
+        return b.player.OVR - a.player.OVR;
+      }
+      // Si mismo OVR, priorizar posición principal
+      return (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0);
+    });
+
+    const pick = candidates[0].player;
+    used.add(pick.ID);
+    return { label: slot.label, player: pick, natural: candidates[0].isPrimary };
   });
 }
 
@@ -216,13 +406,19 @@ function elevenScore(eleven: ElevenSlot[]): number {
 }
 
 /**
- * Elige, entre todas las formaciones disponibles en Dirección de equipo, la
- * que mejor encaja con la plantilla (mejor media en su sitio natural).
+ * Elige, entre las formaciones típicas del estilo del equipo, la que mejor
+ * encaja con la plantilla (mejor media en su sitio natural).
+ * Usa el estilo específico del equipo del CSV si está disponible, si no usa estimateTactics.
  */
-export function bestFormationForSquad(squad: FcPlayer[]): FormationName {
-  let best: FormationName = "Táctica 4-2-3-1 (2)";
+export function bestFormationForSquad(squad: FcPlayer[], team: Team): FormationName {
+  // Usar estilo específico del CSV si existe, si no usar estimateTactics
+  const style = TEAM_STYLES[team.name] || estimateTactics(team).style;
+  const candidateFormations = FORMATIONS_BY_STYLE[style];
+  
+  let best: FormationName = candidateFormations[0] || "Táctica 4-2-3-1 (2)";
   let bestScore = -Infinity;
-  for (const formation of ALL_FORMATIONS) {
+  
+  for (const formation of candidateFormations) {
     const score = elevenScore(estimatedEleven(formation, squad));
     if (score > bestScore) {
       bestScore = score;
