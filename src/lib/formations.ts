@@ -7,6 +7,8 @@
  * Pitch orientation: Portrait (vertical), goal at top and bottom
  */
 
+import type { PosCode } from "./positions";
+
 export type FormationName =
   | "Táctica 3-1-4-2"
   | "Táctica 3-4-1-2"
@@ -364,6 +366,33 @@ export const FORMATION_COORDINATES: Record<FormationName, FormationCoordinates> 
 // Get position keys for a formation
 export function getFormationPositions(formation: FormationName): string[] {
   return Object.keys(FORMATION_COORDINATES[formation]);
+}
+
+/**
+ * Demarcación concreta que exige cada hueco del 11 titular
+ * (gk, dfc, li, mc, md, ed...). Sustituye al viejo agrupamiento por bloques:
+ * el rol ancho (`role`) sólo se usa para pintar/ordenar, nunca para validar.
+ */
+export function slotPosCode(posKey: string): PosCode {
+  const base = posKey.toLowerCase().replace(/\d+$/, "");
+  const MAP: Record<string, PosCode> = {
+    gk: "GK",
+    cb: "DFC",
+    lb: "LI",
+    rb: "LD",
+    lwb: "CAI",
+    rwb: "CAD",
+    cdm: "MCD",
+    cm: "MC",
+    cam: "MCO",
+    lm: "MI",
+    rm: "MD",
+    lw: "EI",
+    rw: "ED",
+    st: "DC",
+    cf: "SD",
+  };
+  return MAP[base] ?? "MC";
 }
 
 // Get coordinates for a specific position in a formation

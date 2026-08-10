@@ -51,6 +51,8 @@ interface PlayerFaceProps {
   role?: PosRole;
   size?: number;
   className?: string;
+  /** Aro de color según la demarcación. Se puede desactivar (alineación). */
+  showRing?: boolean;
 }
 
 /**
@@ -58,13 +60,22 @@ interface PlayerFaceProps {
  * Recorta la parte superior de la carta (donde está el retrato) y cae en
  * las iniciales si no hay imagen o falla la carga.
  */
-export function PlayerFace({ name, image, role = "MID", size = 32, className = "" }: PlayerFaceProps) {
+export function PlayerFace({
+  name,
+  image,
+  role = "MID",
+  size = 32,
+  className = "",
+  showRing = true,
+}: PlayerFaceProps) {
   const [failed, setFailed] = useState(false);
   const showImage = !!image && !failed;
 
   return (
     <span
-      className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border-2 ${ROLE_BORDER[role]} ${ROLE_BG[role]} ${className}`}
+      className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full ${
+        showRing ? `border-2 ${ROLE_BORDER[role]} ${ROLE_BG[role]}` : "border-0 bg-secondary"
+      } ${className}`}
       style={{ width: size, height: size }}
       aria-hidden={showImage ? undefined : true}
     >
@@ -75,7 +86,7 @@ export function PlayerFace({ name, image, role = "MID", size = 32, className = "
           loading="lazy"
           onError={() => setFailed(true)}
           className="h-full w-full object-cover"
-          style={{ objectPosition: "50% 22%", transform: "scale(1.75)" }}
+          style={{ objectPosition: "44% 30%", transform: "scale(1.45)" }}
         />
       ) : (
         <span className={`text-[0.6rem] font-black ${ROLE_TEXT[role]}`}>{initials(name)}</span>

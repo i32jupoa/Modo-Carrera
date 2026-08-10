@@ -1,5 +1,6 @@
 import { Team, TEAMS, teamById, findTeamStrict } from "./teams";
 import playersData from "./playersData";
+import { buildPositions, canPlayPosition, isNaturalFor, playerPosCodes, type PosCode } from "@/lib/positions";
 
 export type Position = "GK" | "DEF" | "MID" | "FWD";
 
@@ -7,6 +8,8 @@ export type Player = {
   id: string;
   name: string;
   position: Position;
+  /** Demarcaciones reales (principal + alternativas), todas al mismo nivel. */
+  positions?: PosCode[];
   rating: number;
   age: number;
   teamId: string;
@@ -318,6 +321,10 @@ export function generateAllSquads(): Record<string, Player[]> {
       id: rp.id,
       name: rp.name,
       position: rp.position,
+      positions: buildPositions(
+        rp.rawData?.Position ?? rp.pos,
+        rp.rawData?.["Alternative positions"],
+      ),
       rating: rp.rating,
       age: rp.age,
       teamId: rp.teamId,
@@ -359,22 +366,54 @@ export function generateSquad(team: Team): Player[] {
   return all[team.id] || [];
 }
 
+/**
+ * Demarcaciones exactas del 4-3-3 por defecto, en el MISMO orden que los
+ * huecos de FORMATION_COORDINATES["Táctica 4-3-3"]
+ * (gk, lb, cb1, cb2, rb, cm1..cm3, lw, st, rw).
+ */
+const DEFAULT_LINEUP_SLOTS: PosCode[] = [
+  "GK", "LI", "DFC", "DFC", "LD", "MC", "MC", "MC", "EI", "DC", "ED",
+];
+
 export function defaultLineup(squad: Player[], unavailable: Set<string> = new Set()): string[] {
   const available = squad.filter((p) => !unavailable.has(p.id));
-  const pickN = (pos: Position, n: number) =>
-    available.filter((p) => p.position === pos).slice(0, n).map((p) => p.id);
-  
-  const lineup = [...pickN("GK", 1), ...pickN("DEF", 4), ...pickN("MID", 3), ...pickN("FWD", 3)];
-  
-  // Si falta gente, rellenamos con lo que sea hasta tener 11 IDs
-  if (lineup.length < 11) {
-    const used = new Set(lineup);
-    const rest = available.filter(p => !used.has(p.id)).sort((a, b) => b.rating - a.rating);
-    while (lineup.length < 11 && rest.length > 0) {
-      lineup.push(rest.shift()!.id);
+  const byRating = [...available].sort((a, b) => b.rating - a.rating);
+  const used = new Set<string>();
+  // Mantenemos los índices alineados con los huecos de la formación:
+  // si un hueco se queda vacío NO se desplazan los demás.
+  const lineup: string[] = DEFAULT_LINEUP_SLOTS.map(() => "");
+
+  // 1ª pasada: sólo demarcación exacta (sin privilegiar la principal).
+  DEFAULT_LINEUP_SLOTS.forEach((slot, i) => {
+    const pick = byRating.find((p) => !used.has(p.id) && isNaturalFor(playerPosCodes(p), slot));
+    if (pick) {
+      used.add(pick.id);
+      lineup[i] = pick.id;
     }
+  });
+
+  // 2ª pasada: demarcaciones casi idénticas (LD↔CAD, DC↔SD, MC↔MCD/MCO...).
+  DEFAULT_LINEUP_SLOTS.forEach((slot, i) => {
+    if (lineup[i]) return;
+    const pick = byRating.find((p) => !used.has(p.id) && canPlayPosition(playerPosCodes(p), slot));
+    if (pick) {
+      used.add(pick.id);
+      lineup[i] = pick.id;
+    }
+  });
+
+  // 3ª pasada: si aún queda algún hueco sin nadie válido, se rellena con el
+  // mejor disponible para no dejar el 11 incompleto.
+  const rest = byRating.filter((p) => !used.has(p.id));
+  for (let i = 0; i < lineup.length; i++) {
+    if (lineup[i]) continue;
+    const pick = rest.shift();
+    if (!pick) break;
+    used.add(pick.id);
+    lineup[i] = pick.id;
   }
-  return lineup;
+
+  return lineup.filter((id) => id !== "");
 }
 
 export function avgForm(p: Player): number {

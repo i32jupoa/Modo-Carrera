@@ -96,6 +96,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 
 import playersData from "@/data/playersData";
+import { buildPositions } from "@/lib/positions";
 
 
 
@@ -1312,6 +1313,7 @@ export type FcPlayer = {
 
 
   Position: string;
+  "Alternative positions"?: string;
 
 
 
@@ -3350,6 +3352,7 @@ function fcToPlayer(
 
 
     position: mapEaPosition(fc.Position),
+    positions: buildPositions(fc.Position, (fc as any)["Alternative positions"]),
 
 
 

@@ -240,7 +240,7 @@ function applyFilters(
 
 export const Route = createFileRoute("/transfers")({
   // Permite llegar desde Equipos con ?q=nombre&player=id
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): { q?: string; player?: string } => ({
     q: typeof search.q === "string" ? search.q : "",
     player: typeof search.player === "string" ? search.player : "",
   }),

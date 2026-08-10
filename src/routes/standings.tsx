@@ -20,7 +20,7 @@ function getLeagueName(leagueId: string): string {
 
 export const Route = createFileRoute("/standings")({
   // Permite llegar desde Equipos con ?league=...&highlight=teamId
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): { league?: string; highlight?: string } => ({
     league: typeof search.league === "string" ? search.league : "",
     highlight: typeof search.highlight === "string" ? search.highlight : "",
   }),

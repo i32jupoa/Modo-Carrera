@@ -7,15 +7,24 @@ import { defaultLineup, Position } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { usePlayersStore } from "@/store/playersStore";
 import { FootballPitch, PlayerNode } from "@/components/FootballPitch";
-import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 import {
   ALL_FORMATIONS,
   FORMATION_COORDINATES,
   getFormationPositions,
+  slotPosCode,
   type FormationName,
   type PositionRole,
 } from "@/lib/formations";
+import {
+  canPlayPosition,
+  formatPositions,
+  isNaturalFor,
+  playerPosCodes,
+  POS_NAME,
+  type PosCode,
+} from "@/lib/positions";
 import { toast } from "sonner";
 import {
   loadTactics,
@@ -35,72 +44,32 @@ import {
 } from "@/lib/liveMatch";
 import { btnPrimary, btnSecondary, infoChip } from "@/components/match/matchUi";
 
-// Friendly label for an empty slot, derived from formation position key.
-function emptySlotLabel(posKey: string): string {
-  const k = posKey.toLowerCase().replace(/\d+$/, "");
-  const MAP: Record<string, string> = {
-    gk: "POR", cb: "DFC", lb: "LD", rb: "LI", lwb: "CAD", rwb: "CAI",
-    cdm: "MCD", cm: "MC", cam: "MCO", lm: "MI", rm: "MD",
-    lw: "EI", rw: "ED", st: "DC", cf: "SD",
-  };
-  return MAP[k] ?? posKey.toUpperCase();
+// Demarcación exacta que exige cada hueco del 11 titular (GK, DFC, MI, ED...).
+function emptySlotLabel(posKey: string): PosCode {
+  return slotPosCode(posKey);
 }
 
 export const Route = createFileRoute("/lineup")({ component: LineupPage });
 
-// Position validation mappings
-const POSITION_ROLES: Record<string, PositionRole> = {
-  // Goalkeepers
-  "GK": "GK",
-  "POR": "GK",
-
-  // Defenders
-  "CB": "DEF",
-  "RB": "DEF",
-  "LB": "DEF",
-  "RWB": "DEF",
-  "LWB": "DEF",
-  "DFC": "DEF",
-  "LD": "DEF",
-  "LI": "DEF",
-  "CAD": "DEF",
-  "CAI": "DEF",
-  "DEF": "DEF",
-
-  // Midfielders
-  "CDM": "MID",
-  "CM": "MID",
-  "CAM": "MID",
-  "RM": "MID",
-  "LM": "MID",
-  "MCD": "MID",
-  "MC": "MID",
-  "MCO": "MID",
-  "MD": "MID",
-  "MI": "MID",
-  "MID": "MID",
-
-  // Attackers
-  "ST": "ATT",
-  "CF": "ATT",
-  "RW": "ATT",
-  "LW": "ATT",
-  "DC": "ATT",
-  "SD": "ATT",
-  "ED": "ATT",
-  "EI": "ATT",
-  "FWD": "ATT",
-  "ATT": "ATT",
-};
-
-function getPlayerRole(position: string): PositionRole | null {
-  return POSITION_ROLES[position] || null;
+/** Demarcaciones del jugador: principal y alternativas, todas al mismo nivel. */
+function posCodesOf(player: { positions?: any; position?: string }): PosCode[] {
+  return playerPosCodes(player as any);
 }
 
-function canPlayInRole(playerPosition: string, nodeRole: PositionRole): boolean {
-  const playerRole = getPlayerRole(playerPosition);
-  if (!playerRole) return false; // Unknown position cannot play anywhere
-  return playerRole === nodeRole;
+function posLabelOf(player: { positions?: any; position?: string }): string {
+  return formatPositions(posCodesOf(player));
+}
+
+/** ¿Puede este jugador ocupar un hueco que pide `slot`? */
+function canPlayInSlot(player: { positions?: any; position?: string }, slot: PosCode): boolean {
+  return canPlayPosition(posCodesOf(player), slot);
+}
+
+function invalidPositionMessage(
+  player: { name: string; positions?: any; position?: string },
+  slot: PosCode,
+): string {
+  return `Posición inválida: ${player.name} juega de ${posLabelOf(player)} y no puede jugar de ${POS_NAME[slot]} (${slot}).`;
 }
 
 function LineupPage() {
@@ -366,9 +335,8 @@ function LineupPage() {
     Object.entries(playerPositions).forEach(([posKey, player]) => {
       if (!player) return;
       total += 1;
-      const requiredRole = FORMATION_COORDINATES[selectedFormation][posKey]?.role;
-      const playerRole = getPlayerRole((player as any).position);
-      if (requiredRole && playerRole && requiredRole === playerRole) matched += 1;
+      const slot = slotPosCode(posKey);
+      if (isNaturalFor(posCodesOf(player as any), slot)) matched += 1;
     });
     return total ? Math.round((matched / total) * 100) : 0;
   }, [playerPositions, selectedFormation, xiPlayers.length]);
@@ -393,8 +361,8 @@ function LineupPage() {
   }, [save]);
 
   // Get the role for a position key in the current formation
-  function getPositionRoleForKey(posKey: string): PositionRole {
-    return FORMATION_COORDINATES[selectedFormation][posKey]?.role || "MID";
+  function getSlotCodeForKey(posKey: string): PosCode {
+    return slotPosCode(posKey);
   }
 
   function handlePitchPlayerClick(playerId: string) {
@@ -424,35 +392,19 @@ function LineupPage() {
         }
         
         // Get required roles for both positions
-        const requiredRole1 = getPositionRoleForKey(posKey1);
-        const requiredRole2 = getPositionRoleForKey(posKey2);
+        const slot1 = getSlotCodeForKey(posKey1);
+        const slot2 = getSlotCodeForKey(posKey2);
         
         // Validate that player2 can play in player1's position
-        if (!canPlayInRole(player2.position, requiredRole1)) {
-          const roleNames: Record<PositionRole, string> = {
-            GK: "portero",
-            DEF: "defensa",
-            MID: "centrocampista",
-            ATT: "delantero",
-          };
-          toast.error(
-            `Posición inválida: ${player2.name} es ${player2.position} y no puede jugar de ${roleNames[requiredRole1]}.`
-          );
+        if (!canPlayInSlot(player2, slot1)) {
+          toast.error(invalidPositionMessage(player2, slot1));
           setSelectedPlayer(null);
           return;
         }
         
         // Validate that player1 can play in player2's position
-        if (!canPlayInRole(player1.position, requiredRole2)) {
-          const roleNames: Record<PositionRole, string> = {
-            GK: "portero",
-            DEF: "defensa",
-            MID: "centrocampista",
-            ATT: "delantero",
-          };
-          toast.error(
-            `Posición inválida: ${player1.name} es ${player1.position} y no puede jugar de ${roleNames[requiredRole2]}.`
-          );
+        if (!canPlayInSlot(player1, slot2)) {
+          toast.error(invalidPositionMessage(player1, slot2));
           setSelectedPlayer(null);
           return;
         }
@@ -573,19 +525,11 @@ function LineupPage() {
     if (!posKey) return;
 
     // Get the role required for this position
-    const requiredRole = getPositionRoleForKey(posKey);
+    const requiredSlot = getSlotCodeForKey(posKey);
 
     // Validate that the bench player can play in this role
-    if (!canPlayInRole(benchPlayer.position, requiredRole)) {
-      const roleNames: Record<PositionRole, string> = {
-        GK: "portero",
-        DEF: "defensa",
-        MID: "centrocampista",
-        ATT: "delantero",
-      };
-      toast.error(
-        `Posición inválida: ${benchPlayer.name} es ${benchPlayer.position} y no puede jugar de ${roleNames[requiredRole]}.`
-      );
+    if (!canPlayInSlot(benchPlayer, requiredSlot)) {
+      toast.error(invalidPositionMessage(benchPlayer, requiredSlot));
       setSelectedPlayer(null);
       return;
     }
@@ -619,19 +563,11 @@ function LineupPage() {
     }
 
     // Get the role required for the empty position
-    const requiredRole = getPositionRoleForKey(emptyPosKey);
+    const requiredSlot = getSlotCodeForKey(emptyPosKey);
 
     // Validate that the player can play in this role
-    if (!canPlayInRole(player.position, requiredRole)) {
-      const roleNames: Record<PositionRole, string> = {
-        GK: "portero",
-        DEF: "defensa",
-        MID: "centrocampista",
-        ATT: "delantero",
-      };
-      toast.error(
-        `Posición inválida: ${player.name} es ${player.position} y no puede jugar de ${roleNames[requiredRole]}.`
-      );
+    if (!canPlayInSlot(player, requiredSlot)) {
+      toast.error(invalidPositionMessage(player, requiredSlot));
       setSelectedPlayer(null);
       return;
     }
@@ -692,19 +628,11 @@ function LineupPage() {
     if (!posKey) return;
 
     // Get the role required for this position
-    const requiredRole = getPositionRoleForKey(posKey);
+    const requiredSlot = getSlotCodeForKey(posKey);
 
     // Validate that the bench player can play in this role
-    if (!canPlayInRole(benchPlayer.position, requiredRole)) {
-      const roleNames: Record<PositionRole, string> = {
-        GK: "portero",
-        DEF: "defensa",
-        MID: "centrocampista",
-        ATT: "delantero",
-      };
-      toast.error(
-        `Posición inválida: ${benchPlayer.name} es ${benchPlayer.position} y no puede jugar de ${roleNames[requiredRole]}.`
-      );
+    if (!canPlayInSlot(benchPlayer, requiredSlot)) {
+      toast.error(invalidPositionMessage(benchPlayer, requiredSlot));
       setSelectedPlayer(null);
       return;
     }
@@ -754,34 +682,30 @@ function LineupPage() {
 
     const newFormationPositions = getFormationPositions(newFormation);
 
-    // Group current starting players by role
-    const playersByRole: Record<PositionRole, string[]> = {
-      GK: [],
-      DEF: [],
-      MID: [],
-      ATT: [],
-    };
-
-    startingXI.forEach((playerId) => {
-      const player = squad.find(p => p.id === playerId);
-      if (player) {
-        const role = getPlayerRole(player.position);
-        if (role) {
-          playersByRole[role].push(playerId);
-        }
-      }
-    });
-
-    // Fill new formation positions in the order they appear in the formation
+    // Reasignamos el 11 hueco a hueco por DEMARCACIÓN concreta: primero
+    // quien juegue ahí de forma natural (posición principal o alternativa,
+    // sin privilegios) y después quien pueda hacerlo en una demarcación
+    // casi idéntica. Ya no se agrupa por bloques (DEF/MED/DEL).
+    const availableIds = startingXI.filter((id) => !!id);
     const newStartingXI: string[] = [];
 
     newFormationPositions.forEach((posKey) => {
-      const requiredRole = FORMATION_COORDINATES[newFormation][posKey]?.role;
+      const slot = slotPosCode(posKey);
+      const pick = (predicate: (codes: PosCode[]) => boolean) =>
+        availableIds.find((id) => {
+          const player = squad.find((p) => p.id === id);
+          return player ? predicate(posCodesOf(player)) : false;
+        });
 
-      if (requiredRole && playersByRole[requiredRole].length > 0) {
-        newStartingXI.push(playersByRole[requiredRole].shift()!);
+      const chosen =
+        pick((codes) => isNaturalFor(codes, slot)) ??
+        pick((codes) => canPlayPosition(codes, slot));
+
+      if (chosen) {
+        availableIds.splice(availableIds.indexOf(chosen), 1);
+        newStartingXI.push(chosen);
       } else {
-        // No player available for this position - leave empty
+        // Sin jugador válido para esta demarcación: hueco vacío.
         newStartingXI.push("");
       }
     });
@@ -943,6 +867,10 @@ function LineupPage() {
                       name: player.name,
                       rating: player.rating,
                       position: player.position,
+                      slotLabel: getSlotCodeForKey(posKey),
+                      otherPositions: posCodesOf(player).filter(
+                        (c) => c !== getSlotCodeForKey(posKey),
+                      ),
                       injured: player.injuredUntil > leagueMd,
                       suspended: isSuspended,
                       cardImage: player.cardImage,
@@ -1018,8 +946,8 @@ function LineupPage() {
                     <PlayerFace
                       name={player.name}
                       image={faceUrl(player.id, player.cardImage)}
-                      role={roleFromPosition(player.position)}
                       size={40}
+                      showRing={false}
                       className="bg-secondary shadow"
                     />
                     <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
@@ -1046,7 +974,7 @@ function LineupPage() {
                       })()}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {player.position} · {player.age}a · {player.goals}G {player.assists}A
+                      {posLabelOf(player)} · {player.age}a · {player.goals}G {player.assists}A
                     </div>
                   </div>
                   {selectedPlayer === player.id && <span className="text-primary text-lg">✓</span>}

@@ -1,5 +1,5 @@
 import { PositionCoordinate } from "@/lib/formations";
-import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 
 interface FootballPitchProps {
@@ -53,6 +53,10 @@ interface PlayerNodeProps {
     name: string;
     rating: number;
     position: string;
+    /** Demarcación del hueco que ocupa en el campo ("EI"). */
+    slotLabel?: string;
+    /** Resto de demarcaciones del jugador (burbuja): ["MD", "DC"]. */
+    otherPositions?: string[];
     injured?: boolean;
     suspended?: boolean;
     cardImage?: string;
@@ -94,24 +98,34 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
         top: `${coordinates.top}%`,
         left: `${coordinates.left}%`,
       }}
-      title={`${player.name} (${player.rating}) - ${player.position}${player.injured ? ' - Lesionado' : ''}${player.suspended ? ' - Suspendido' : ''}`}
+      title={`${player.name} (${player.rating}) - ${[player.slotLabel, ...(player.otherPositions ?? [])].filter(Boolean).join(' · ') || player.position}${player.injured ? ' - Lesionado' : ''}${player.suspended ? ' - Suspendido' : ''}`}
       disabled={isUnavailable}
     >
       <span className="relative">
         <PlayerFace
           name={player.name}
           image={faceUrl(player.id, player.cardImage)}
-          role={roleFromPosition(player.position)}
           size={56}
+          showRing={false}
           className="shadow-md"
         />
         <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1.5 text-[0.6rem] font-black leading-tight text-foreground shadow">
           {player.rating}
         </span>
+        {player.otherPositions && player.otherPositions.length > 0 && (
+          <span className="absolute -top-1 -left-1 max-w-[3.5rem] truncate rounded-full border border-primary/40 bg-background/85 px-1 text-[0.45rem] font-bold uppercase leading-[0.9rem] text-foreground/70 shadow">
+            {player.otherPositions.join(" · ")}
+          </span>
+        )}
       </span>
       <span className="mt-0.5 text-[0.6rem] font-medium leading-tight truncate max-w-full px-1 text-foreground drop-shadow">
         {shortName}
       </span>
+      {player.slotLabel && (
+        <span className="text-[0.55rem] font-black uppercase leading-tight text-foreground drop-shadow">
+          {player.slotLabel}
+        </span>
+      )}
       {player.injured && (
         <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-orange-400" title="Lesionado" />
       )}

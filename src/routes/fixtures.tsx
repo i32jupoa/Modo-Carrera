@@ -59,7 +59,7 @@ function formatCupResult(result: any): string {
 
 export const Route = createFileRoute("/fixtures")({
   // Permite llegar desde Equipos con ?league=...&team=teamId
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): { league?: string; team?: string } => ({
     league: typeof search.league === "string" ? search.league : "",
     team: typeof search.team === "string" ? search.team : "",
   }),
