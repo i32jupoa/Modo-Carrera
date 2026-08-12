@@ -418,6 +418,15 @@ export interface ShortlistOptions {
   size?: number;
   /** Últimos días de la ventana: sin restricción de ritmo en fichajes grandes. */
   deadlineDay?: boolean;
+  /**
+   * Relaja el criterio de "mejora la plantilla" hasta admitir fichajes de
+   * nivel similar (ver `playerImprovesSquad`). Se activa cuando el club está
+   * obligado a cerrar su cupo mínimo de fichajes de la ventana y su plantilla
+   * en esa demarcación ya es tan fuerte que, en modo estricto, nunca
+   * encontraría a nadie que la "mejore" — el caso típico de un club de
+   * máximo nivel con el once ya completo de estrellas.
+   */
+  lenient?: boolean;
 }
 
 /**
@@ -486,7 +495,7 @@ export function buildShortlist(
   for (const player of candidates) {
     if (!isAvailable(player.id, options.cacheKey, buyerContext)) continue;
     if (isPursuitOnCooldown(clubId, player.id, options.cacheKey)) continue;
-    if (!playerImprovesSquad(report, player)) continue;
+    if (!playerImprovesSquad(report, player, options.lenient)) continue;
     // No más de N traspasos con el mismo vendedor en la misma ventana: evita
     // que un rival se lleve dos o tres titulares del mismo club de golpe.
     if (
@@ -1120,17 +1129,29 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
   const maxSignings = options.maxSignings ?? 1;
   const report = getSquadReport(clubId, cacheKey);
 
-  // Techo duro de plantilla: por muy "crítica" que el análisis marque una
-  // necesidad, ningún club ficha por encima de este tamaño. Sin este límite
-  // incondicional, una necesidad que no se cierra del todo con un fichaje de
-  // nivel bajo (típico de la red de seguridad) podía repetirse día tras día
-  // sin fin y disparar la plantilla a decenas de jugadores en una misma
-  // demarcación.
-  if (report.size >= SQUAD_LIMITS.maxSquadSize + 2) return result;
-
   // Con la plantilla saturada sólo se ficha para tapar un agujero grave, y
   // ningún club compra mientras necesite hacer caja.
   const needs = priorityNeeds(clubId, cacheKey);
+
+  // Techo duro de plantilla: por muy "crítica" que el análisis marque una
+  // necesidad, en general ningún club ficha por encima de este tamaño. Sin
+  // este límite, una necesidad que no se cierra del todo con un fichaje de
+  // nivel bajo (típico de la red de seguridad) podía repetirse día tras día
+  // sin fin y disparar la plantilla a decenas de jugadores en una misma
+  // demarcación.
+  //
+  // Excepción: si a pesar de tener la plantilla llena en total el club tiene
+  // un agujero de verdad en una demarcación concreta (prioridad crítica o
+  // alta — p. ej. un solo extremo natural para todo el año), sí se deja
+  // fichar. Sin esta excepción, un club con la plantilla abultada por arriba
+  // (de más centrales, por ejemplo) se quedaba bloqueado para siempre en una
+  // posición donde de verdad le faltaba gente, por muchas ventanas que
+  // pasaran.
+  if (report.size >= SQUAD_LIMITS.maxSquadSize + 2) {
+    const topNeed = needs[0];
+    if (!topNeed || (topNeed.priority !== "critical" && topNeed.priority !== "high")) return result;
+  }
+
   const urgentOnly = report.size >= SQUAD_LIMITS.maxSquadSize;
   // Un club al que le faltan jugadores ficha aunque tenga que hacer caja: la
   // prioridad es mantener una plantilla completa, no el balance.
@@ -1159,7 +1180,16 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
     const shape = IDEAL_SQUAD_SHAPE[need.group];
     if (need.count >= shape.max) continue;
 
-    const shortlist = buildShortlist(clubId, need, { cacheKey, deadlineDay: options.deadlineDay });
+    const shortlist = buildShortlist(clubId, need, {
+      cacheKey,
+      deadlineDay: options.deadlineDay,
+      // Sólo se relaja el criterio de mejora cuando el club está realmente
+      // obligado a fichar (por debajo de su cupo mínimo o corto de
+      // efectivos), no en cualquier compra normal: así un club con la
+      // plantilla completa sigue exigiendo una mejora de verdad salvo que
+      // de verdad necesite cerrar el cupo.
+      lenient: options.belowMinimum || understaffed,
+    });
     result.shortlisted += shortlist.length;
 
     for (const candidate of shortlist) {
@@ -1187,7 +1217,7 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
  * vendedor que pueda bloquear la operación, así que sirve para que ningún
  * equipo termine el mercado completamente parado.
  */
-export function signBestFreeAgent(clubId: string, date: string): TransferRecord | null {
+export function signBestFreeAgent(clubId: string, date: string, desperate = false): TransferRecord | null {
   const report = getSquadReport(clubId, date);
   if (report.size >= SQUAD_LIMITS.maxSquadSize) return null;
 
@@ -1220,10 +1250,20 @@ export function signBestFreeAgent(clubId: string, date: string): TransferRecord 
     // tampoco al revés: si no hay ningún agente libre cerca de ese nivel, no
     // se fuerza el fichaje del "menos malo" (ver `freeAgentMaxOvrGap`) — un
     // club top no ficha a un suplente de league one sólo por cubrir el cupo.
+    //
+    // `desperate` (sólo cuando ya no queda margen: deadline day y el club
+    // sigue sin cubrir su cupo mínimo) amplía mucho este margen. Sin esta
+    // válvula, un club cuyo nivel real es tan alto que ningún agente libre
+    // del mundo cae dentro del hueco de 10 puntos de OVR (habitual en clubes
+    // top: el mercado de libres apenas tiene nombres de su categoría) fallaba
+    // este intento SIEMPRE, ventana tras ventana, y terminaba el mercado sin
+    // fichar a nadie aunque estuviera obligado a hacerlo.
+    const gap = desperate ? MARKET_TIMING.freeAgentMaxOvrGap + 25 : MARKET_TIMING.freeAgentMaxOvrGap;
+    const slack = desperate ? REPUTATION_OVR_FLOOR.freeAgentSlack + 20 : REPUTATION_OVR_FLOOR.freeAgentSlack;
     const ceilingOvr = report.startingRating + 1;
     const floorOvr = Math.max(
-      ceilingOvr - MARKET_TIMING.freeAgentMaxOvrGap,
-      reputationOvrFloor(profile) - REPUTATION_OVR_FLOOR.freeAgentSlack,
+      ceilingOvr - gap,
+      reputationOvrFloor(profile) - slack,
     );
     const options = getFreeAgents()
       .filter(

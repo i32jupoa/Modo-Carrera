@@ -53,8 +53,15 @@ function Index() {
   }, [selectedTeamColor]);
 
   useEffect(() => {
+    setMounted(true);
     const saves = loadAllSaves();
     setHasSave(saves.length > 0);
+    // Limpiar el ID de partida activa al cargar la página principal para evitar contaminación
+    setCurrentSaveId(null);
+  }, []);
+
+  useEffect(() => {
+    const saves = loadAllSaves();
     // Limpiar el estado persistente del playersStore solo si hay partidas guardadas
     // para evitar estado compartido entre partidas
     if (saves.length > 0) {

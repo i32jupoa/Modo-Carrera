@@ -22,6 +22,7 @@ import {
 } from "../transferWindows";
 import { getMarketIndex } from "./PlayerIndex";
 import { getClubProfile } from "./ClubStrategy";
+import { shoppingRamp } from "./MarketPacing";
 import { getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
 import {
@@ -37,7 +38,7 @@ import { runClubContractCycle, advanceSeason } from "./ContractEngine";
 import { runClubLoanCycle, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
 import { rumorBidWar, rumorInterest, rumorRenewal, rumorSearching } from "./RumorEngine";
-import { setLockWindow, windowDeficit} from "./MarketLocks";
+import { setLockWindow, windowDeficit, recentCoreLossOvr } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import type { MarketDayResult, MarketSimulationState, MarketWindow, Rumor } from "./types";
 
@@ -306,6 +307,7 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
 // DÍA DE MERCADO
 // ============================================================================
 
+
 /** Acciones que puede tomar un club en su turno diario. */
 function runClubDay(
   clubId: string,
@@ -336,11 +338,15 @@ function runClubDay(
     return;
   }
 
-  // 2. Cesiones: colocar a quien no juega.
+  // 2. Cesiones: colocar a quien no juega. La probabilidad diaria también
+  // sigue la misma rampa que las compras (`shoppingRamp`): sin esto, las
+  // cesiones no se veían afectadas por ningún suavizado y por sí solas
+  // representaban más de la mitad del pico de operaciones del día 1 (todo
+  // club con una promesa de cantera de sobra la cedía el primer día posible).
   if (
     window.loans < MARKET_TIMING.maxLoansPerWindow &&
     windowDeficit(clubId) < MARKET_TIMING.maxWindowDeficit &&
-    seededUnit(clubId, date, "loans") < 0.5
+    seededUnit(clubId, date, "loans") < 0.5 * shoppingRamp(date)
   ) {
     const loanCycle = runClubLoanCycle(clubId, { date, deadlineDay: state.deadlineDay });
     for (const loan of loanCycle.loans) {
@@ -361,14 +367,41 @@ function runClubDay(
   // Un club con saldo negativo en la ventana (más salidas que llegadas) sale
   // a reponer sí o sí: ni la caja ni la pasividad de la temporada le frenan.
   const deficit = windowDeficit(clubId);
-  const idleTooLong = window.signings === 0 && window.sales === 0 && state.windowDay > 12;
+  const idleTooLong = window.signings === 0 && window.sales === 0 && state.windowDay > 8;
   const belowMinimum = window.signings < minSigningsFor(state.window);
+  // Una necesidad "crítica" (ver `SquadAnalyzer.computeUrgency`) puede venir
+  // de dos sitios muy distintos: (a) haber perdido a un titular de nivel
+  // hace poco (reposición reactiva de verdad, debe ir ya), o (b) la simple
+  // forma de la plantilla al abrir la ventana (un hueco que ya existía antes
+  // de que el mercado abriera). Confundir ambas fue el motivo real de que el
+  // día 1 siguiera teniendo casi 500 operaciones pese a la rampa: el 70%+ de
+  // los clubes arrancan la ventana con AL MENOS una demarcación "crítica"
+  // por pura forma de plantilla (no por ninguna venta reciente), así que esa
+  // rama bloqueaba la rampa para la inmensa mayoría del mercado. Sólo la
+  // pérdida reciente de verdad (`recentCoreLossOvr`) debe saltarse la rampa;
+  // un hueco que ya estaba ahí desde el minuto uno se cubre igual, pero
+  // repartido en las mismas dos semanas que el resto de compras "por gusto".
+  const topNeed = priorityNeeds(clubId, date, 1)[0];
+  const hasCriticalReactiveNeed = !!topNeed && recentCoreLossOvr(clubId, topNeed.group) > 0;
+  // Compra "por gusto" o para cubrir el cupo mínimo de la ventana: ambas se
+  // someten a una misma probabilidad que empieza más baja el día 1 y sube
+  // hasta 1 en poco más de una semana (ver `shoppingRamp`). Es una
+  // probabilidad diaria, no una fecha fija por club, así que ningún club
+  // puede quedarse sin poder fichar durante semanas por mala suerte en un
+  // sorteo: como mucho pierde algún intento suelto al principio, y para
+  // cuando la rampa llega a 1 (~día 9) todo el mundo puede intentarlo cada
+  // día igual que antes. Sólo las urgencias de verdad (déficit de ventana,
+  // salida reciente de un titular, o llevar demasiado tiempo sin mover
+  // ficha) se saltan esta probabilidad.
+  const rollsToShop = seededUnit(clubId, date, "shopping-roll") < shoppingRamp(date);
   const canBuy =
     window.signings < MARKET_TIMING.maxSigningsPerWindow &&
-    (belowMinimum ||
-      deficit > 0 ||
+    (deficit > 0 ||
       idleTooLong ||
-      (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)));
+      hasCriticalReactiveNeed ||
+      state.deadlineDay ||
+      (rollsToShop &&
+        (belowMinimum || (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)))));
   if (canBuy) {
     // Una sola nota de "busca refuerzos" al día: el resto de necesidades se
     // trabajan igual, pero sin inundar el feed.
@@ -380,14 +413,28 @@ function runClubDay(
     // verano, además, se multiplica: es la ventana donde de verdad se mueve
     // el mercado, y un club no puede pasarse el mes entero fichando de uno
     // en uno.
+    //
+    // El tope por operación diaria es deliberadamente bajo fuera de
+    // deadline day: antes un único club activo podía cerrar hasta 5-6
+    // fichajes en un solo día, así que en cuanto se abría la ventana
+    // cientos de clubes con algún hueco cerraban TODAS sus necesidades de
+    // golpe la misma jornada (los cientos de fichajes del día 1) y luego no
+    // les quedaba nada por hacer el resto del mes. Limitando cuántas
+    // operaciones puede cerrar un club por día (no cuántas necesita), cubrir
+    // 2-3 huecos reales le lleva varios días activos en vez de una sola
+    // jornada, y el mercado se mantiene vivo durante toda la ventana en vez
+    // de agotarse el primer día.
     const burst = state.window === "summer" ? BALANCE.summerSigningBurst : 1;
-    const maxSignings = Math.round(
-      Math.max(
-        deficit > 0 ? Math.min(deficit * 2 + 2, 8) : 3,
-        belowMinimum ? 3 : 2,
-        state.deadlineDay && profile.aggression > 0.6 ? 6 : 4,
-      ) * burst,
-    );
+    const baseSignings = state.deadlineDay
+      ? (profile.aggression > 0.6 ? 5 : 3)
+      : deficit > 0
+        ? Math.min(deficit + 1, 3)
+        : hasCriticalReactiveNeed
+          ? 2
+          : belowMinimum
+            ? 2
+            : 1;
+    const maxSignings = Math.max(1, Math.round(baseSignings * burst));
     const cycle = runClubTransferCycle(clubId, {
       date,
       deadlineDay: state.deadlineDay,
@@ -421,18 +468,18 @@ function runClubDay(
     if (
       state.window === "summer" &&
       !state.deadlineDay &&
-      state.windowDay > 12 &&
+      state.windowDay > 6 &&
       cycle.transfers.length === 0 &&
       window.signings < MARKET_TIMING.maxSigningsPerWindow &&
       // Antes esta comprobación usaba una probabilidad fija (0.05), así que
       // la actividad "de fondo" se notaba las primeras semanas y luego se
       // apagaba según avanzaba julio-agosto, aunque la ventana siguiera
       // abierta hasta el 1 de septiembre. Escalando la probabilidad con lo
-      // avanzado que está el mercado, la segunda mitad del verano (agosto)
-      // se mantiene tan viva como la primera en vez de sentirse "muerta"
-      // hasta el deadline day.
+      // avanzado que está el mercado, todo el verano (incluida la segunda
+      // mitad, agosto) se mantiene vivo en vez de sentirse "muerto" entre el
+      // primer estallido de fichajes y el deadline day.
       seededUnit(clubId, date, "opportunistic") <
-        clamp(0.06 + (state.windowDay - 12) * 0.003, 0.06, 0.16) * profile.ambition
+        clamp(0.07 + (state.windowDay - 6) * 0.0025, 0.07, 0.18) * profile.ambition
     ) {
       const oppCycle = runClubOpportunisticCycle(clubId, { date, deadlineDay: false });
       result.offersMade += oppCycle.attempts.length;
@@ -485,7 +532,7 @@ function runClubDay(
     (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
   ) {
     while (window.signings < requiredSignings) {
-      const record = signBestFreeAgent(clubId, date);
+      const record = signBestFreeAgent(clubId, date, state.deadlineDay);
       if (!record) {
         window.nextSigningAttempt = state.windowDay + MARKET_TIMING.safetyNetRetryGapDays;
         break;

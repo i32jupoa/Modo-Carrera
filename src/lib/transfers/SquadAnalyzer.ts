@@ -151,10 +151,28 @@ export function analyzeSquad(clubId: string): SquadReport {
   };
 }
 
-/** ¿Mejora este jugador la plantilla lo suficiente como para ficharlo? */
-export function playerImprovesSquad(report: SquadReport, player: MarketPlayer): boolean {
+/**
+ * ¿Mejora este jugador la plantilla lo suficiente como para ficharlo?
+ *
+ * `lenient` (por defecto `false`) relaja el margen exigido, hasta permitir
+ * fichajes "de nivel similar" (hasta 3 puntos de OVR por debajo del grupo).
+ * Lo usa `TransferEngine` cuando un club está obligado a cerrar su cupo
+ * mínimo de fichajes de la ventana (`belowMinimum`): sin esta vía, un club
+ * con una demarcación ya muy fuerte (un Real Madrid con su ataque titular)
+ * nunca encontraba a nadie que "mejorara" esa posición y se quedaba sin
+ * fichar NADA en toda la ventana, aunque hubiera media docena de jugadores
+ * de nivel top disponibles. En la vida real los grandes clubes también
+ * fichan profundidad de plantilla o releva a futuro aunque el titular
+ * actual sea mejor.
+ */
+export function playerImprovesSquad(
+  report: SquadReport,
+  player: MarketPlayer,
+  lenient = false,
+): boolean {
   const groupRating = report.ratingByGroup[player.group];
-  const bar = Math.max(groupRating, report.startingRating - 2) + SQUAD_LIMITS.improvementMargin;
+  const margin = lenient ? -3 : SQUAD_LIMITS.improvementMargin;
+  const bar = Math.max(groupRating, report.startingRating - 2) + margin;
   if (player.ovr >= bar) return true;
   // Una promesa con recorrido también encaja aunque hoy no sea titular.
   return player.age <= SQUAD_LIMITS.youngAge && player.potential >= report.startingRating + 1;

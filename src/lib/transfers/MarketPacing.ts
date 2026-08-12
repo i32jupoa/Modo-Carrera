@@ -44,6 +44,26 @@ function rampDay(clubId: string, date: string): number {
   return Math.max(2, Math.round(adjusted * windowLen));
 }
 
+/**
+ * Fracción de clubes que, siendo elegibles para actuar hoy, realmente se
+ * plantean salir a cubrir necesidades "normales" de plantilla (no urgentes).
+ * Al principio de la ventana esta fracción es más baja y sube hasta 1 en
+ * unos días: así el día de apertura del mercado no ve a los ~700 clubes con
+ * algún hueco salir a comprar a la vez, sin necesidad de bloquear a ningún
+ * club concreto durante semanas (una versión anterior de este freno usaba un
+ * único "día de arranque" aleatorio por club, y para un club con mala suerte
+ * en el sorteo —p. ej. el Madrid saliendo en el día 31— eso significaba no
+ * fichar NADA durante casi un mes entero, aunque tuviera necesidades reales).
+ * Una necesidad urgente (mínimo de ventana, déficit, o una salida reciente de
+ * nivel) siempre puede saltarse esta rampa: ver `runClubDay`.
+ */
+function shoppingRamp(date: string): number {
+  const day = daysIntoTransferWindow(date);
+  return clamp(0.14 + day / 12, 0.14, 1);
+}
+
+export { shoppingRamp };
+
 export interface BigSigningCapOptions {
   /** Últimos días de la ventana: siempre desbloqueado. */
   deadlineDay?: boolean;
