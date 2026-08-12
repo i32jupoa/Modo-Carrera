@@ -8,7 +8,7 @@
  */
 
 import { IDEAL_SQUAD_SHAPE, SQUAD_LIMITS } from "./constants";
-import { recentCoreLossOvr } from "./MarketLocks";
+import { recentCoreLossOvr, recentCoreSigningOvr } from "./MarketLocks";
 import { getClubPlayers, onSquadChanged } from "./PlayerIndex";
 import { clamp } from "./random";
 import { POSITION_GROUPS, type MarketPlayer, type PositionGroup, type SquadNeed, type SquadReport } from "./types";
@@ -43,6 +43,7 @@ function priorityOf(urgency: number): SquadNeed["priority"] {
  * en esa misma demarcación (ver más abajo).
  */
 function computeUrgency(
+  clubId: string,
   group: PositionGroup,
   players: MarketPlayer[],
   squadRating: number,
@@ -70,6 +71,16 @@ function computeUrgency(
   // queda, más urgente (y más "crítica") se vuelve la necesidad.
   const dropSeverity = clamp((recentLossOvr - Math.max(quality, squadRating - 8)) / 12, 0, 1);
   const reactiveUrgency = clamp(0.55 + dropSeverity * 0.35, 0.55, 0.95);
+  
+  // Si el club acaba de fichar un jugador de calidad en esta posición,
+  // reducir la urgencia para evitar fichajes duplicados, pero solo si el
+  // fichaje es de nivel igual o mejor que la pérdida
+  const recentSigning = recentCoreSigningOvr(clubId, group);
+  if (recentSigning > 0 && recentSigning >= recentLossOvr) {
+    // El fichaje reciente es de nivel igual o mejor que la pérdida
+    return Math.max(baseUrgency * 0.3, 0); // Reducir significativamente la urgencia
+  }
+  
   return Math.max(baseUrgency, reactiveUrgency);
 }
 
@@ -114,7 +125,7 @@ export function analyzeSquad(clubId: string): SquadReport {
     countByGroup[group] = players.length;
     ratingByGroup[group] = Math.round(average(players.map((p) => p.ovr)) * 10) / 10;
 
-    const urgency = computeUrgency(group, players, startingRating, recentCoreLossOvr(clubId, group));
+    const urgency = computeUrgency(clubId, group, players, startingRating, recentCoreLossOvr(clubId, group));
     if (urgency > 0.15) {
       needs.push({
         group,

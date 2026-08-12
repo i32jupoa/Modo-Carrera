@@ -127,7 +127,7 @@ export function playerPosCodes(player: {
   // Grupos legados (DEF/MID/FWD) sin demarcación concreta.
   const legacy = String(player.position ?? "").toUpperCase();
   if (legacy === "DEF") return ["DFC"];
-  if (legacy === "MID") return ["MC"];
+  if (legacy === "MID") return ["MI"]; // MI (Mediapunta) es más genérico que MC (Mediocentro)
   if (legacy === "FWD") return ["DC"];
   return [];
 }

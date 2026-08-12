@@ -56,6 +56,7 @@ import {
   isUserApprovedMove,
   recentCoreLossOvr,
   registerCoreDeparture,
+  registerCoreSigning,
   windowDeficit,
 } from "./MarketLocks";
 import { isAvailable, valuePlayer } from "./MarketValuation";
@@ -688,13 +689,7 @@ export function pursueTarget(
     if (sellerReport.size <= SQUAD_LIMITS.minSquadSize) {
       return fail("unavailable", `${teamById(player.clubId).name} no puede quedarse sin efectivos.`, null);
     }
-    if (windowDeficit(player.clubId) >= MARKET_TIMING.maxWindowDeficit) {
-      return fail(
-        "unavailable",
-        `${teamById(player.clubId).name} no venderá a nadie más hasta reforzarse.`,
-        null,
-      );
-    }
+    // Eliminada la restricción de "no vender hasta reforzarse" para permitir más fichajes de estrellas
     // El jugador no es un descarte claro de plantilla (no está en las listas
     // de transferibles/cedibles del análisis): es un titular o casi. Un club
     // sólo se desprende de un puñado de esos por ventana, no de media

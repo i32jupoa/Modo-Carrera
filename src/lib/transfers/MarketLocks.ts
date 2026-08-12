@@ -43,14 +43,16 @@ const coreDepartures = new Map<string, number>();
  * `clubId:group` -> mejor OVR (y nombre) de una salida "de nivel" reciente en
  * esa demarcación dentro de la ventana activa.
  *
- * Con esto un club que pierde a un jugador top puede reaccionar buscando de
- * verdad un reemplazo de nivel similar (ver `SquadAnalyzer.computeUrgency`),
- * en vez de limitarse a rellenar el hueco numérico con cualquiera. Se guarda
- * aquí (no en `SquadAnalyzer` ni en `TransferEngine`) para evitar un ciclo de
- * imports: este módulo no depende de ningún otro, así que tanto el análisis
- * de plantilla como el motor de fichajes pueden leerlo sin problema.
+ * Con esto un club que pierde a un jugador top puede reaccionar buscando de verdad un reemplazo de nivel similar (ver `SquadAnalyzer.computeUrgency`), en vez de limitarse a rellenar el hueco numérico con cualquiera. Se guarda aquí (no en `SquadAnalyzer` ni en `TransferEngine`) para evitar un ciclo de imports: este módulo no depende de ningún otro, así que tanto el análisis de plantilla como el motor de fichajes pueden leerlo sin problema.
  */
 const lastCoreLoss = new Map<string, { ovr: number; playerName: string }>();
+
+/**
+ * `clubId:group` -> mejor OVR (y nombre) de un fichaje "de nivel" reciente en esa demarcación dentro de la ventana activa.
+ *
+ * Con esto un club que acaba de fichar un jugador de calidad en una posición puede evitar fichajes duplicados en la misma posición (ver `SquadAnalyzer.computeUrgency`).
+ */
+const lastCoreSigning = new Map<string, { ovr: number; playerName: string }>();
 
 function coreLossKey(clubId: string, group: string): string {
   return `${clubId}:${group}`;
@@ -195,6 +197,35 @@ export function recentCoreLossOvr(clubId: string, group: string): number {
 }
 
 /**
+ * Registra un fichaje "de nivel" (titular o casi) de un club en la ventana
+ * activa. Si se pasa demarcación y OVR, queda memoria de qué nivel se ha
+ * fichado en esa posición (ver `recentCoreSigningOvr`).
+ */
+export function registerCoreSigning(
+  clubId: string | null,
+  group?: string,
+  ovr?: number,
+  playerName?: string,
+): void {
+  if (!clubId) return;
+  if (group && typeof ovr === "number") {
+    const key = coreLossKey(clubId, group);
+    const existing = lastCoreSigning.get(key);
+    if (!existing || ovr > existing.ovr) {
+      lastCoreSigning.set(key, { ovr, playerName: playerName ?? "" });
+    }
+  }
+}
+
+/**
+ * Mejor OVR fichado recientemente por un club en una demarcación concreta,
+ * dentro de la ventana activa (0 si no ha fichado a nadie de nivel ahí).
+ */
+export function recentCoreSigningOvr(clubId: string, group: string): number {
+  return lastCoreSigning.get(coreLossKey(clubId, group))?.ovr ?? 0;
+}
+
+/**
  * Saldo de la ventana: positivo si el club ha perdido más gente de la que ha
  * fichado. La simulación lo usa para que nadie termine el mercado con media
  * plantilla.
@@ -211,6 +242,7 @@ export function resetMarketLocks(): void {
   departures.clear();
   coreDepartures.clear();
   lastCoreLoss.clear();
+  lastCoreSigning.clear();
   userApprovedDepth = 0;
 }
 

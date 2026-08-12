@@ -7,7 +7,8 @@
  */
 
 import { teamById } from "@/data/teams";
-import { lockPlayer, registerArrival, registerDeparture } from "./MarketLocks";
+import { lockPlayer, registerArrival, registerCoreSigning, registerDeparture } from "./MarketLocks";
+import { getPlayer } from "./PlayerIndex";
 import type { TransferRecord, TransferType } from "./types";
 
 /** Todos los traspasos, del más antiguo al más reciente. */
@@ -33,6 +34,13 @@ export function recordTransfer(record: TransferRecord): TransferRecord {
   lockPlayer(record.playerId);
   registerArrival(record.toClubId);
   registerDeparture(record.fromClubId);
+  
+  // Registrar fichaje de nivel para evitar duplicados en la misma posición
+  const player = getPlayer(record.playerId);
+  if (player && record.type === "permanent") {
+    registerCoreSigning(record.toClubId, player.group, player.ovr, player.name);
+  }
+  
   pushInto(byPlayer, record.playerId, record);
   if (record.fromClubId) pushInto(byClub, record.fromClubId, record);
   pushInto(byClub, record.toClubId, record);

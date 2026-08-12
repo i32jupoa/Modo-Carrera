@@ -9,6 +9,10 @@ import {
   restorePlayersStoreState,
   setCurrentSaveId,
 } from "@/lib/savedGames";
+import { resetTransferSystem, clearAllTransferSaves } from "@/lib/transfers";
+import { resetMarketIndex } from "@/lib/transfers/PlayerIndex";
+import { resetSquadReports } from "@/lib/transfers/SquadAnalyzer";
+import { resetClubOverrides } from "@/store/playersStore";
 import { usePlayersStore } from "@/store/playersStore";
 
 import ClubPreviewModal from "@/components/home/ClubPreviewModal";
@@ -76,12 +80,25 @@ function Index() {
     setLoaderTeamId(id);
     setLoading(true);
     try {
+      // Primero borrar cualquier dato persistente del mercado de localStorage
+      // ANTES de limpiar el saveId, para borrar TODOS los mercados guardados
+      clearAllTransferSaves();
+      
       // Limpiar el estado persistente del playersStore para evitar estado compartido
       localStorage.removeItem("fcsim:players:v1");
       // Limpiar la partida activa previa y resetear el playersStore en memoria
       setCurrentSaveId(null);
       usePlayersStore.getState().clear();
       usePlayersStore.getState().resetAllStats();
+      
+      // Resetear completamente el sistema de transferencias y plantillas para nueva partida
+      resetTransferSystem();
+      resetMarketIndex();
+      resetSquadReports();
+      
+      // Resetear los overrides de club para que los fichajes no persistan entre partidas
+      resetClubOverrides();
+      
       initPlayers();
       const s = newSave(id);
       setMyTeam(id);

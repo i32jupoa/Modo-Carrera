@@ -147,8 +147,9 @@ export const KEY_PLAYER_MARKET = {
    * que es cumplir las condiciones previas (casi ningún club puede pagar la
    * cláusula de una estrella ajena), así que no hace falta bajarla más para
    * que el bombazo siga siendo la excepción y no la norma.
+   * Aumentado para permitir más fichajes de estrellas.
    */
-  approachChance: 0.12,
+  approachChance: 0.5,
 } as const;
 
 /**
@@ -163,13 +164,13 @@ export const KEY_PLAYER_MARKET = {
  */
 export const ELITE_EXIT = {
   /** Reputación mínima (0-1) del club vendedor para que aplique este evento. */
-  reputationThreshold: 0.9,
+  reputationThreshold: 0.85,
   /** Probabilidad diaria, sólo en verano y fuera de deadline day. */
-  dailyChance: 0.006,
+  dailyChance: 0.035,
   /** Poder financiero mínimo (0-1) que necesita el club comprador. */
-  minBuyerFinancialPower: 0.6,
+  minBuyerFinancialPower: 0.5,
   /** Diferencia máxima de reputación admitida entre vendedor y comprador. */
-  maxReputationGap: 0.25,
+  maxReputationGap: 0.4,
 } as const;
 
 /**
@@ -216,9 +217,9 @@ export const BIG_SIGNING_PACING = {
  */
 export const BIG_DEAL_DAILY_LIMIT = {
   /** Ficha a partir de la cual una operación cuenta como "bombazo". */
-  minFee: 35_000_000,
+  minFee: 25_000_000,
   /** Máximo de bombazos que se anuncian el mismo día en todo el mercado. */
-  maxPerDay: 2,
+  maxPerDay: 6,
 } as const;
 
 /**

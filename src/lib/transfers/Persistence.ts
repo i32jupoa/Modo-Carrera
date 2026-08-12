@@ -171,3 +171,25 @@ export function clearTransferSaveFor(saveId: string): void {
     /* sin espacio o modo privado: no pasa nada */
   }
 }
+
+/** Borra TODOS los mercados guardados (al crear una nueva partida desde cero). */
+export function clearAllTransferSaves(): void {
+  if (!hasStorage()) return;
+  try {
+    // Borrar la clave heredada global
+    window.localStorage.removeItem(LEGACY_GLOBAL_STORAGE_KEY);
+    // Borrar todas las claves específicas de partida
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (key && key.startsWith(STORAGE_KEY_PREFIX + ":")) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    /* sin espacio o modo privado: no pasa nada */
+  }
+}

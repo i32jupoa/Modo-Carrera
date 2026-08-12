@@ -23,7 +23,7 @@ import {
   resetSimulation,
   simulateUntil,
 } from "./MarketSimulation";
-import { applyTransferSnapshot, loadTransferSave, saveTransferSystem } from "./Persistence";
+import { applyTransferSnapshot, clearAllTransferSaves, loadTransferSave, saveTransferSystem } from "./Persistence";
 import type { MarketDayResult, MarketSimulationState } from "./types";
 
 export * from "./types";

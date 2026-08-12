@@ -2043,6 +2043,12 @@ export function setClubOverrides(next: Record<string, string>): void {
   SQUAD_CACHE = new Map();
 }
 
+/** Resetea completamente los overrides (nueva partida). */
+export function resetClubOverrides(): void {
+  CLUB_OVERRIDES = {};
+  SQUAD_CACHE = new Map();
+}
+
 /** Overrides actuales (para guardar con la partida). */
 export function getClubOverrides(): Record<string, string> {
   return CLUB_OVERRIDES;
