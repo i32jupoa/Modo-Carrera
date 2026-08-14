@@ -73,11 +73,17 @@ function positionGroupKey(pos: string): PositionGroupKey {
  *  pivote defensivo, aunque ambos entren en el grupo "MID". */
 function positionRoleModifier(pos: string): number {
   const up = String(pos || "").toUpperCase();
-  if (["LW", "RW", "CAM", "MCO", "LM", "RM", "MD", "MI"].includes(up)) return 1.08;
-  if (["CDM", "MCD"].includes(up)) return 0.92;
-  if (["ST", "CF", "DC"].includes(up)) return 1.05;
-  if (["CB", "DFC", "DEF"].includes(up)) return 0.95;
-  return 1.0; // laterales, mediocentros puros, GK, etc.
+  // Extremos y mediapuntas ofensivos: más valorados por su rareza y atractivo
+  if (["LW", "RW", "CAM", "MCO", "LM", "RM", "MD", "MI"].includes(up)) return 1.12;
+  // Mediocentros defensivos: menos valorados por su rol más limitado
+  if (["CDM", "MCD"].includes(up)) return 0.88;
+  // Delanteros centro: valorados por su rol principal
+  if (["ST", "CF", "DC"].includes(up)) return 1.08;
+  // Centrales defensivos: menos valorados que laterales por su rol más estático
+  if (["CB", "DFC", "DEF"].includes(up)) return 0.92;
+  // Laterales: valorados por su versatilidad y rareza
+  if (["LB", "RB", "LWB", "RWB"].includes(up)) return 1.05;
+  return 1.0; // mediocentros puros, GK, etc.
 }
 
 /** Curva de rating: continua y muy progresiva (exponente alto). Un jugador
