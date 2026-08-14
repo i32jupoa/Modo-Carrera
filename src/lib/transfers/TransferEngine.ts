@@ -755,8 +755,8 @@ export function pursueTarget(
   const offer = createTransferOffer({
     playerId,
     playerName: player.name,
-    fromClubId: clubId,
-    toClubId: player.clubId ?? "",
+    buyerClubId: clubId,
+    sellerClubId: player.clubId ?? "",
     amount: player.clubId ? opening : 0,
     // El comprador endulza la ficha desde el principio si puede permitírselo:
     // es más barato convencer al jugador con salario que subir el traspaso.
@@ -952,7 +952,7 @@ function closeWithPlayerDecision(
 ): PursuitResult {
   const decision = decideOnMove({
     playerId: offer.playerId,
-    toClubId: offer.fromClubId,
+    toClubId: offer.buyerClubId,
     wageOffer: offer.wageOffer,
     cacheKey: options.date,
     loan: offer.type !== "permanent" && offer.type !== "free",
@@ -961,18 +961,18 @@ function closeWithPlayerDecision(
 
   if (
     decision.verdict === "negotiating" &&
-    decision.wageRequested <= maxWageOffer(offer.fromClubId)
+    decision.wageRequested <= maxWageOffer(offer.buyerClubId)
   ) {
     // El club sube la ficha para cerrar: es más barato que subir el traspaso.
     offer.wageOffer = Math.round(decision.wageRequested * WAGE_RULES.moveRaise);
   } else if (decision.verdict !== "accepted") {
     withdrawOffer(offer);
-    dropInterest(offer.playerId, offer.fromClubId);
-    rememberPursuit(offer.fromClubId, offer.playerId, options.date, "rejected-by-player");
+    dropInterest(offer.playerId, offer.buyerClubId);
+    rememberPursuit(offer.buyerClubId, offer.playerId, options.date, "rejected-by-player");
     return {
       outcome: "rejected-by-player",
       playerId: offer.playerId,
-      clubId: offer.fromClubId,
+      clubId: offer.buyerClubId,
       record: null,
       offer,
       rounds,
@@ -984,12 +984,12 @@ function closeWithPlayerDecision(
   return {
     outcome: "signed",
     playerId: offer.playerId,
-    clubId: offer.fromClubId,
+    clubId: offer.buyerClubId,
     record,
     offer,
     rounds,
     message: record
-      ? `${offer.playerName} firma por ${teamById(offer.fromClubId).name}.`
+      ? `${offer.playerName} firma por ${teamById(offer.buyerClubId).name}.`
       : "El traspaso no pudo completarse.",
   };
 }
@@ -1013,7 +1013,11 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
   const player = getPlayer(offer.playerId);
   if (!player) return null;
 
-  const buyerId = offer.fromClubId;
+  const buyerId = offer.buyerClubId;
+  // El vendedor SIEMPRE se toma del club actual del jugador en el índice,
+  // nunca de `offer.sellerClubId`: ese campo sólo refleja lo que se sabía al
+  // crear la oferta y puede haber quedado desactualizado (o directamente sin
+  // usar, como en las salidas forzadas más abajo en este archivo).
   const sellerId = player.clubId;
 
   // Barrera final: un jugador del usuario sólo cambia de club dentro de una
@@ -1289,8 +1293,9 @@ export function signBestFreeAgent(clubId: string, date: string, desperate = fals
       const offer = createTransferOffer({
         playerId: player.id,
         playerName: player.name,
-        fromClubId: clubId,
-        toClubId: clubId,
+        buyerClubId: clubId,
+        // Agente libre: no hay vendedor real.
+        sellerClubId: "",
         amount: 0,
         wageOffer,
         type: "free",
@@ -1422,8 +1427,13 @@ export function forceSellSurplusPlayer(clubId: string, date: string): TransferRe
         const offer = createTransferOffer({
           playerId: player.id,
           playerName: player.name,
-          fromClubId: buyerId,
-          toClubId: buyerId,
+          buyerClubId: buyerId,
+          // Antes esto ponía `buyerId` también aquí (duplicando comprador y
+          // vendedor). No cambiaba el resultado porque `completeTransfer`
+          // siempre saca al vendedor real de `player.clubId`, pero dejaba el
+          // dato informativo mal — el vendedor real es `clubId`, el club al
+          // que se está forzando a vender.
+          sellerClubId: clubId,
           amount: askingPrice,
           wageOffer,
           type: "permanent",
@@ -1512,8 +1522,10 @@ export function attemptEliteDeparture(clubId: string, date: string): TransferRec
       const offer = createTransferOffer({
         playerId: player.id,
         playerName: player.name,
-        fromClubId: buyerId,
-        toClubId: buyerId,
+        buyerClubId: buyerId,
+        // Vendedor real: el club de máxima reputación que deja salir al
+        // galáctico (`clubId`), no el comprador.
+        sellerClubId: clubId,
         amount: askingPrice,
         wageOffer,
         type: "permanent",

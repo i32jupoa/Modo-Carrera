@@ -250,10 +250,22 @@ export interface TransferOffer {
   id: string;
   playerId: string;
   playerName: string;
-  /** Club que ofrece. */
-  fromClubId: string;
-  /** Club propietario del jugador. */
-  toClubId: string;
+  /**
+   * Club que hace la oferta (comprador/destino).
+   *
+   * Antes se llamaba `fromClubId`, un nombre que sugería justo lo contrario
+   * (el club de origen del jugador). El vendedor real nunca se lee de aquí
+   * — `completeTransfer` lo obtiene siempre de `player.clubId` en el momento
+   * de cerrar el traspaso — así que renombrarlo a lo que realmente es evita
+   * que alguien confíe en el nombre antiguo y calcule mal comprador/vendedor.
+   */
+  buyerClubId: string;
+  /**
+   * Club vendedor conocido en el momento de crear la oferta (informativo).
+   * No es la fuente de verdad del vendedor al cerrar el traspaso: usa
+   * `player.clubId` para eso. Antes se llamaba `toClubId`.
+   */
+  sellerClubId: string;
   amount: number;
   wageOffer: number;
   type: TransferType;

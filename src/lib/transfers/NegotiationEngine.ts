@@ -53,8 +53,10 @@ export function emptyClauses(): OfferClauses {
 export interface CreateOfferInput {
   playerId: string;
   playerName: string;
-  fromClubId: string;
-  toClubId: string;
+  /** Club comprador (antes `fromClubId`). */
+  buyerClubId: string;
+  /** Club vendedor conocido al crear la oferta (antes `toClubId`); ver nota en `TransferOffer`. */
+  sellerClubId: string;
   amount: number;
   wageOffer?: number;
   type?: TransferType;
@@ -68,8 +70,8 @@ export function createTransferOffer(input: CreateOfferInput): TransferOffer {
     id: nextOfferId(),
     playerId: input.playerId,
     playerName: input.playerName,
-    fromClubId: input.fromClubId,
-    toClubId: input.toClubId,
+    buyerClubId: input.buyerClubId,
+    sellerClubId: input.sellerClubId,
     amount: Math.max(0, Math.round(input.amount)),
     wageOffer: Math.max(
       WAGE_RULES.minimumWage,
@@ -265,7 +267,7 @@ export function decideImprovement(
   valuation: MarketValuation,
   budgetCeiling: number,
 ): ImprovementDecision {
-  const profile = getClubProfile(offer.fromClubId);
+  const profile = getClubProfile(offer.buyerClubId);
   const asked = response.counterAmount;
   const ceiling = Math.min(
     budgetCeiling,
@@ -296,7 +298,7 @@ export function decideImprovement(
   }
 
   const gap = Math.max(0, asked - amount);
-  const extra = proposeClauses(offer.fromClubId, valuation, gap, `${offer.id}-r${offer.round}`);
+  const extra = proposeClauses(offer.buyerClubId, valuation, gap, `${offer.id}-r${offer.round}`);
   return {
     action: "improve",
     amount,
@@ -371,7 +373,7 @@ export function getNegotiation(offerId: string): Negotiation | undefined {
 /** Negociaciones vivas, opcionalmente filtradas por club comprador. */
 export function listNegotiations(clubId?: string): Negotiation[] {
   const all = Array.from(negotiations.values());
-  return clubId ? all.filter((n) => n.offer.fromClubId === clubId) : all;
+  return clubId ? all.filter((n) => n.offer.buyerClubId === clubId) : all;
 }
 
 /** Negociaciones vivas por jugador. */

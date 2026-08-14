@@ -57,20 +57,35 @@ export function initializeTransferSystem(date: string): MarketSimulationState {
   return initializeSimulation(date);
 }
 
+/**
+ * Todos los `reset*()` de módulo que hay que vaciar al cambiar de partida.
+ *
+ * Cada módulo del motor guarda su propio estado en variables de módulo
+ * (índices, cachés, mapas de interés...). Si uno de ellos no se resetea al
+ * cargar otra partida, la fuga de estado entre partidas no da ningún error:
+ * simplemente el mercado de la partida nueva arranca "contaminado" con datos
+ * de la anterior. Se centraliza en una lista, en vez de siete llamadas
+ * sueltas, para que añadir un módulo nuevo con caché propia sea tan fácil
+ * como añadir una línea aquí — y para que sea evidente si falta.
+ */
+const MODULE_RESETTERS: Array<() => void> = [
+  resetMarketLocks,
+  resetSimulation,
+  resetUserDeals,
+  resetRumors,
+  resetTransferHistory,
+  resetNegotiations,
+  resetBidWars,
+  resetTransferEngine,
+  resetSquadReports,
+  resetFinances,
+  resetClubProfiles,
+  resetMarketIndex,
+];
+
 /** Reinicia el sistema completo (útil al cargar otra partida). */
 export function resetTransferSystem(): void {
-  resetMarketLocks();
-  resetSimulation();
-  resetUserDeals();
-  resetRumors();
-  resetTransferHistory();
-  resetNegotiations();
-  resetBidWars();
-  resetTransferEngine();
-  resetSquadReports();
-  resetFinances();
-  resetClubProfiles();
-  resetMarketIndex();
+  for (const reset of MODULE_RESETTERS) reset();
 }
 
 /**

@@ -240,7 +240,14 @@ function applyFilters(
 
 export const Route = createFileRoute("/transfers")({
   // Permite llegar desde Equipos con ?q=nombre&player=id
-  validateSearch: (search: Record<string, unknown>): { q?: string; player?: string } => ({
+  // `q` NO lleva `?`: la implementación de abajo siempre devuelve string
+  // (con "" de fallback), nunca undefined — marcarlo opcional aquí era
+  // mentira de cara a TypeScript y hacía que `search.trim()` en
+  // TransfersPage tuviera que tratarlo como `string | undefined` sin
+  // motivo real. `player` sí se deja opcional a propósito: hay enlaces
+  // (p. ej. en teams.tsx, el botón "Ver en el mercado") que navegan aquí
+  // pasando sólo `q`, sin `player`.
+  validateSearch: (search: Record<string, unknown>): { q: string; player?: string } => ({
     q: typeof search.q === "string" ? search.q : "",
     player: typeof search.player === "string" ? search.player : "",
   }),

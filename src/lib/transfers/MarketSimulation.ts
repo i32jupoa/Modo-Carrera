@@ -633,10 +633,24 @@ export function simulateDay(date: string): MarketDayResult {
 }
 
 /**
- * Avanza la simulación hasta la fecha indicada, día a día.
- * Si el juego salta varios días, todos se simulan en orden.
+ * Tope duro de seguridad para `simulateUntil`. No es un límite de uso normal
+ * (un salto de calendario real —incluso una temporada entera saltada de
+ * golpe— se queda muy por debajo), sino la última defensa contra un bucle
+ * gigantesco si `date` viniera corrupta o de una partida muy antigua. Antes
+ * el tope estaba en 40 días y se aplicaba en silencio: cualquier salto mayor
+ * (cargar una partida bastante parada, o un salto de calendario grande)
+ * simplemente "olvidaba" simular los días intermedios —sin fichajes, sin
+ * rumores, sin red de seguridad para esos días— y nadie se enteraba.
  */
-export function simulateUntil(date: string, maxDays = 40): MarketDayResult[] {
+const HARD_SIMULATION_DAY_CAP = 2000;
+
+/**
+ * Avanza la simulación hasta la fecha indicada, día a día.
+ * Si el juego salta varios días, todos se simulan en orden. Si el salto
+ * supera `maxDays` (sólo debería ocurrir con datos corruptos o partidas muy
+ * antiguas), se avisa por consola en vez de recortar el rango en silencio.
+ */
+export function simulateUntil(date: string, maxDays = HARD_SIMULATION_DAY_CAP): MarketDayResult[] {
   const results: MarketDayResult[] = [];
   if (!internals) {
     results.push(simulateDay(date));
@@ -650,7 +664,15 @@ export function simulateUntil(date: string, maxDays = 40): MarketDayResult[] {
     return results;
   }
 
-  const days = Math.min(Math.round((to - from) / 86_400_000), maxDays);
+  const requestedDays = Math.round((to - from) / 86_400_000);
+  const days = Math.min(requestedDays, maxDays);
+  if (days < requestedDays) {
+    console.warn(
+      `[market] simulateUntil: salto de ${requestedDays} días recortado a ${days} ` +
+        `(desde ${internals.state.lastSimulatedDate} hasta ${date}). ` +
+        `Puede faltar actividad de mercado en el tramo omitido.`,
+    );
+  }
   for (let index = 1; index <= days; index += 1) {
     const current = new Date(to - (days - index) * 86_400_000).toISOString().slice(0, 10);
     results.push(simulateDay(current));

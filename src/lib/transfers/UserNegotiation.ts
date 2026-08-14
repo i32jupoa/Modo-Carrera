@@ -266,8 +266,8 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   const offer = createTransferOffer({
     playerId: player.id,
     playerName: player.name,
-    fromClubId: input.userClubId,
-    toClubId: player.clubId,
+    buyerClubId: input.userClubId,
+    sellerClubId: player.clubId ?? "",
     amount: input.amount,
     wageOffer: Math.max(WAGE_RULES.minimumWage, Math.round(input.wageOffer)),
     type: input.type ?? "permanent",
@@ -767,8 +767,8 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
   const offer = createTransferOffer({
     playerId: target.id,
     playerName: target.name,
-    fromClubId: buyerId,
-    toClubId: userClubId,
+    buyerClubId: buyerId,
+    sellerClubId: userClubId,
     amount,
     wageOffer: Math.min(maxWageOffer(buyerId), wageDemand(target.id, buyerId)),
     clauses: emptyClauses(),
@@ -906,8 +906,9 @@ export function signFreeAgent(
   const offer = createTransferOffer({
     playerId,
     playerName: player.name,
-    fromClubId: userClubId,
-    toClubId: userClubId,
+    buyerClubId: userClubId,
+    // Agente libre: no hay vendedor real.
+    sellerClubId: "",
     amount: 0,
     wageOffer,
     type: "free",

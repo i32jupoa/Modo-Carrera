@@ -199,8 +199,8 @@ export function arrangeLoan(
   const offer = createTransferOffer({
     playerId,
     playerName: player.name,
-    fromClubId: borrowerClubId,
-    toClubId: player.clubId,
+    buyerClubId: borrowerClubId,
+    sellerClubId: player.clubId,
     amount: 0,
     wageOffer: Math.round(player.contract.wage * clauses.wageShare),
     type,
