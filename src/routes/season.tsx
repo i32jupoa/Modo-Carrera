@@ -14,6 +14,7 @@ import { usePlayersStore, ensureStatsForLeague, useCurrentDate } from "@/store/p
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { CountryFlag } from "@/components/CountryFlag";
+import { MatchStatsModal } from "@/components/MatchStatsModal";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -95,6 +96,8 @@ function SeasonPage() {
   const currentDate = useCurrentDate();
 
   const fixtures = usePlayersStore((s) => s.fixtures);
+
+  const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
 
   if (!save) return null;
 
@@ -316,6 +319,8 @@ function SeasonPage() {
 
   return (
 
+    <>
+
     <div className={`p-4 md:p-6 max-w-6xl mx-auto relative ${theme.bgOverlay}`}>
 
       {/* Theme banner */}
@@ -426,7 +431,7 @@ function SeasonPage() {
 
               <div className="space-y-2">
 
-                {recent.map((f) => <ResultRow key={f.id} fixture={f} myId={save.myTeamId} />)}
+                {recent.map((f) => <ResultRow key={f.id} fixture={f} myId={save.myTeamId} onClick={setSelectedFixture} />)}
 
               </div>
 
@@ -491,6 +496,10 @@ function SeasonPage() {
       </div>
 
     </div>
+
+      <MatchStatsModal fixture={selectedFixture} onClose={() => setSelectedFixture(null)} />
+
+    </>
 
   );
 
@@ -773,7 +782,7 @@ function TeamSide({ team, side, recentResults, label }: { team: ReturnType<typeo
 
 
 
-function ResultRow({ fixture, myId }: { fixture: Fixture; myId: string }) {
+function ResultRow({ fixture, myId, onClick }: { fixture: Fixture; myId: string; onClick?: (fixture: Fixture) => void }) {
 
   const home = teamById(fixture.homeId);
 
@@ -799,7 +808,7 @@ function ResultRow({ fixture, myId }: { fixture: Fixture; myId: string }) {
 
   return (
 
-    <div className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
+    <div className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0 cursor-pointer hover:bg-accent/20 transition" onClick={() => onClick?.(fixture)}>
 
       <div className={`w-6 h-6 rounded grid place-items-center text-xs font-black ${outcomeColor}`}>
 

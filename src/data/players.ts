@@ -245,7 +245,7 @@ export function invalidateSquadsCache() {
   cachedSquads = null;
 }
 
-export function generateAllSquads(): Record<string, Player[]> {
+export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record<string, Player[]> {
   // Always regenerate to ensure fresh market values with new system
   // (Remove this check if performance becomes an issue)
   // if (cachedSquads) return cachedSquads;
@@ -321,13 +321,17 @@ export function generateAllSquads(): Record<string, Player[]> {
   rawPlayers.forEach((rp) => {
     const teamAvgRating = teamAverages[rp.teamId] || 75;
     
+    // Use dynamic OVR if available, otherwise use static rating
+    const dynamicOVR = dynamicStatsMap?.[rp.id]?.dynamicStats?.currentOVR;
+    const effectiveRating = dynamicOVR || rp.rating;
+    
     const playerPositions = buildPositions(
       rp.rawData?.Position ?? rp.pos,
       rp.rawData?.["Alternative positions"],
     );
     
     const marketValueResult = marketValueFor(
-      rp.rating, 
+      effectiveRating, 
       rp.age, 
       rp.pos,
       rp.teamId,
@@ -335,7 +339,8 @@ export function generateAllSquads(): Record<string, Player[]> {
       0, 0, 0,
       false,
       teamAvgRating,
-      playerPositions
+      playerPositions,
+      dynamicOVR
     );
     
     const playerObj: Player = {
@@ -345,7 +350,7 @@ export function generateAllSquads(): Record<string, Player[]> {
         rp.rawData?.Position ?? rp.pos,
         rp.rawData?.["Alternative positions"],
       ),
-      rating: rp.rating,
+      rating: effectiveRating,
       age: rp.age,
       teamId: rp.teamId,
       marketValue: marketValueResult.value,
@@ -389,8 +394,8 @@ export function generateAllSquads(): Record<string, Player[]> {
   return map;
 }
 
-export function generateSquad(team: Team): Player[] {
-  const all = generateAllSquads();
+export function generateSquad(team: Team, dynamicStatsMap?: Record<string, any>): Player[] {
+  const all = generateAllSquads(dynamicStatsMap);
   return all[team.id] || [];
 }
 

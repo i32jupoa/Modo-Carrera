@@ -10,6 +10,7 @@ import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
 
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
+import { MatchStatsModal } from "@/components/MatchStatsModal";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -17,6 +18,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { ChevronDown } from "lucide-react";
+import type { Fixture } from "@/lib/season";
 
 
 
@@ -79,6 +81,8 @@ function FixturesPage() {
   const [league, setLeague] = useState<LeagueId>("laliga");
 
   const [viewMd, setViewMd] = useState(1);
+
+  const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
 
 
 
@@ -184,7 +188,11 @@ function FixturesPage() {
 
           return (
 
-            <div key={f.id} className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-3 ${isMine ? "bg-primary/5" : isFocus ? "bg-accent/10 ring-1 ring-inset ring-accent/40" : ""}`}>
+            <div 
+              key={f.id} 
+              className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-3 ${isMine ? "bg-primary/5" : isFocus ? "bg-accent/10 ring-1 ring-inset ring-accent/40" : ""} ${f.result ? "cursor-pointer hover:bg-accent/20 transition" : ""}`}
+              onClick={() => f.result && setSelectedFixture(f)}
+            >
 
               <div className="flex items-center gap-3 justify-end min-w-0">
 
@@ -221,6 +229,8 @@ function FixturesPage() {
         })}
 
       </div>
+
+      <MatchStatsModal fixture={selectedFixture} onClose={() => setSelectedFixture(null)} />
 
     </div>
 

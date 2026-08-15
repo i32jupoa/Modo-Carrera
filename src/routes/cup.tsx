@@ -15,7 +15,10 @@ import { CountryFlag } from "@/components/CountryFlag";
 
 import { LeagueLogo } from "@/components/LeagueLogo";
 
+import { MatchStatsModal } from "@/components/MatchStatsModal";
+
 import { getCupStructureForCountry } from "@/lib/cups";
+import type { Fixture } from "@/lib/season";
 
 
 
@@ -138,10 +141,6 @@ function getCupMatchWinner(result: any): "home" | "away" | null {
   return result.homeGoals >= result.awayGoals ? "home" : "away";
 
 }
-
-
-
-import { Fixture } from "@/lib/season";
 
 
 
@@ -276,6 +275,8 @@ function CupPage() {
   const [save, setSave] = useState<SaveGame | null>(null);
 
   const [country, setCountry] = useState<string>("");
+
+  const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
 
 
 
@@ -427,7 +428,7 @@ function CupPage() {
 
               <div className="divide-y divide-border/40">
 
-                {rf.map((f) => <KOFixtureRow key={f.id} f={f} myId={myId} />)}
+                {rf.map((f) => <KOFixtureRow key={f.id} f={f} myId={myId} onClick={setSelectedFixture} />)}
 
               </div>
 
@@ -438,6 +439,8 @@ function CupPage() {
         })}
 
       </div>
+
+      <MatchStatsModal fixture={selectedFixture} onClose={() => setSelectedFixture(null)} />
 
     </div>
 
@@ -471,7 +474,7 @@ function RoundBlock({ label, matchday, children }: { label: string; matchday: nu
 
 
 
-export function KOFixtureRow({ f, myId }: { f: Fixture; myId: string }) {
+export function KOFixtureRow({ f, myId, onClick }: { f: Fixture; myId: string; onClick?: (fixture: Fixture) => void }) {
 
   const home = teamById(f.homeId);
 
@@ -495,7 +498,10 @@ export function KOFixtureRow({ f, myId }: { f: Fixture; myId: string }) {
 
   return (
 
-    <div className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3 ${isMine ? "bg-primary/5" : ""}`}>
+    <div 
+      className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3 ${isMine ? "bg-primary/5" : ""} ${f.result ? "cursor-pointer hover:bg-accent/20 transition" : ""}`}
+      onClick={() => f.result && onClick?.(f)}
+    >
 
       <div className="flex items-center gap-2 justify-end min-w-0">
 

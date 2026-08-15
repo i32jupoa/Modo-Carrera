@@ -160,6 +160,88 @@ import {
 import { addDaysToIso } from "@/lib/transferWindows";
 import { applyMonthlyProgressionToAll } from "@/lib/monthlyProgression";
 import { applySeasonEndProgressionToAll } from "@/lib/seasonEndProgression";
+import { applySeasonEndProgressionToPlayer } from "@/lib/progressionHelper";
+import { applyMonthlyProgressionToPlayer } from "@/lib/progressionHelper";
+import { usePlayersStore } from "@/store/playersStore";
+import type { Player } from "@/data/players";
+import type { DynamicPlayerStats } from "@/types/playerStats";
+import { invalidateSquadsCache, generateAllSquads } from "@/data/players";
+
+/**
+ * Parse season string (e.g., "2025-26") to season number (e.g., 1)
+ */
+function parseSeasonNumber(season: string): number {
+  const startYear = parseInt(season.split("-")[0]);
+  return startYear - 2025 + 1; // 2025-26 is season 1
+}
+
+/**
+ * Apply season-end progression to all players in the players store
+ */
+function applySeasonEndProgressionToAllPlayers(seasonNumber: number): void {
+  const store = usePlayersStore.getState();
+  const allStats = store.stats;
+  
+  // Apply season-end progression to each player's dynamic stats
+  for (const [playerId, stats] of Object.entries(allStats)) {
+    if (!stats.dynamicStats) continue;
+    
+    // Get player info for age and positions
+    const player = store.getSimPlayer(playerId);
+    if (!player) continue;
+    
+    const { updatedStats, newOVR } = applySeasonEndProgressionToPlayer(
+      player,
+      stats.dynamicStats,
+      seasonNumber
+    );
+    
+    // Update the stats with the modified dynamic stats
+    store.mutatePlayerStat(playerId, (s) => ({
+      ...s,
+      dynamicStats: updatedStats,
+    }));
+  }
+  
+  // Invalidate squads cache so new ratings are used when squads are regenerated
+  invalidateSquadsCache();
+}
+
+/**
+ * Apply monthly progression to all players in the players store
+ */
+function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: number): void {
+  const store = usePlayersStore.getState();
+  const allStats = store.stats;
+  
+  // Apply monthly progression to each player's dynamic stats
+  for (const [playerId, stats] of Object.entries(allStats)) {
+    if (!stats.dynamicStats) continue;
+    
+    // Get player info for age and positions
+    const player = store.getSimPlayer(playerId);
+    if (!player) continue;
+    
+    const { updatedStats, newOVR } = applyMonthlyProgressionToPlayer(
+      player,
+      stats.dynamicStats,
+      currentMonth,
+      currentYear
+    );
+    
+    // Update the stats with the modified dynamic stats
+    store.mutatePlayerStat(playerId, (s) => ({
+      ...s,
+      dynamicStats: updatedStats,
+    }));
+  }
+  
+  // Invalidate squads cache so new ratings are used when squads are regenerated
+  invalidateSquadsCache();
+  
+  // Regenerate squads with updated dynamic stats
+  generateAllSquads(allStats);
+}
 
 
 
@@ -4961,6 +5043,20 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
 
 function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false, isCup = false): Fixture {
+  // Apply monthly progression for league matches (only once per month)
+  if (fixture.competition === "league") {
+    const seasonStart = new Date("2025-08-16T12:00:00Z");
+    const matchDate = new Date(seasonStart.getTime() + (fixture.matchday - 1) * 7 * 86400000);
+    const currentMonth = matchDate.getMonth();
+    const currentYear = matchDate.getFullYear();
+    
+    // Check if we haven't applied monthly progression for this month yet
+    const progressionKey = `monthlyProgression-${currentYear}-${currentMonth}`;
+    if (!save.uclPrizesAwarded?.includes(progressionKey)) {
+      applyMonthlyProgressionToAllPlayers(currentMonth, currentYear);
+      save.uclPrizesAwarded = [...(save.uclPrizesAwarded || []), progressionKey];
+    }
+  }
 
 
 
@@ -18123,6 +18219,14 @@ export function processUCLKnockoutProgress(save: SaveGame, throughOffset: number
     if (next.uclChampion) {
       // Champion gets champion bonus on top of the finalist bonus already granted at SF completion.
       grantUCLPrizeOnce(next, `champion-${next.uclChampion}`, next.uclChampion, UCL_PRIZES.champion);
+    }
+    
+    // Apply season-end progression to all players (only once per season)
+    const seasonNumber = parseSeasonNumber(next.season);
+    const progressionKey = `seasonEndProgression-${next.season}`;
+    if (!next.uclPrizesAwarded?.includes(progressionKey)) {
+      applySeasonEndProgressionToAllPlayers(seasonNumber);
+      next.uclPrizesAwarded = [...(next.uclPrizesAwarded || []), progressionKey];
     }
   }
 
