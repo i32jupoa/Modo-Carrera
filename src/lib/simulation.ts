@@ -8,6 +8,7 @@ import {
 } from "@/lib/matchStats";
 import { tacticsModifiers, type TeamTactics } from "@/lib/teamTactics";
 import { type PosCode } from "@/lib/positions";
+import { type FormationName } from "@/lib/formations";
 
 export type { MatchStats, PlayerRating };
 
@@ -251,6 +252,15 @@ export type InjuryEvent = {
   forcedSub?: boolean;
 };
 
+export type SubstitutionEvent = {
+  minute: number;
+  team: "home" | "away";
+  playerOutId: string;
+  playerOutName: string;
+  playerInId: string;
+  playerInName: string;
+};
+
 export type SimResult = {
   homeGoals: number;
   awayGoals: number;
@@ -274,6 +284,11 @@ export type SimResult = {
     awayGoals: number;
     shootout: Array<{ team: 'home' | 'away'; scored: boolean; playerId?: string }>;
   };
+  homeLineup?: Player[];
+  awayLineup?: Player[];
+  homeFormation?: FormationName;
+  awayFormation?: FormationName;
+  substitutions?: SubstitutionEvent[];
 };
 
 function pickScorer(xi: Player[]): Player {

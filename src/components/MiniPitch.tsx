@@ -2,7 +2,7 @@ import { Player } from "@/data/players";
 
 import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName, type PositionRole } from "@/lib/formations";
 import { teamById } from "@/data/teams";
-import { CardEvent } from "@/lib/simulation";
+import { CardEvent, MatchEvent, InjuryEvent, SubstitutionEvent } from "@/lib/simulation";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 
@@ -12,6 +12,12 @@ interface MiniPitchProps {
   teamId: string;
   className?: string;
   cards?: CardEvent[];
+  ratings?: Array<{ playerId: string; rating: number }>;
+  goals?: MatchEvent[];
+  assists?: MatchEvent[];
+  mvp?: string;
+  injuries?: InjuryEvent[];
+  substitutions?: SubstitutionEvent[];
 }
 
 // Position role mappings for CPU lineup generation
@@ -46,7 +52,7 @@ function getContrastColor(hexColor: string): string {
   return luminance > 0.5 ? '#000000' : '#ffffff';
 }
 
-export function MiniPitch({ startingXI, formation, teamId, className = "", cards = [] }: MiniPitchProps) {
+export function MiniPitch({ startingXI, formation, teamId, className = "", cards = [], ratings = [], goals = [], assists = [], mvp, injuries = [], substitutions = [] }: MiniPitchProps) {
   const formationPositions = FORMATION_COORDINATES[formation];
   const positionKeys = Object.keys(formationPositions);
   const team = teamById(teamId);
@@ -69,6 +75,54 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
       playerCards[card.playerId] = [];
     }
     playerCards[card.playerId].push(card);
+  });
+
+  // Create a map of player IDs to their ratings
+  const playerRatings: Record<string, number> = {};
+  ratings.forEach(r => {
+    playerRatings[r.playerId] = r.rating;
+  });
+
+  // Create a map of player IDs to their goals
+  const playerGoals: Record<string, number> = {};
+  goals.filter(g => g.type === "goal").forEach(g => {
+    if (!playerGoals[g.scorerId]) {
+      playerGoals[g.scorerId] = 0;
+    }
+    playerGoals[g.scorerId]++;
+  });
+
+  // Create a map of player IDs to their assists
+  const playerAssists: Record<string, number> = {};
+  assists.filter(a => a.assistId).forEach(a => {
+    if (a.assistId) {
+      if (!playerAssists[a.assistId]) {
+        playerAssists[a.assistId] = 0;
+      }
+      playerAssists[a.assistId]++;
+    }
+  });
+
+  // Create a map of player IDs to their injuries
+  const playerInjuries: Record<string, InjuryEvent[]> = {};
+  injuries.forEach(i => {
+    if (!playerInjuries[i.playerId]) {
+      playerInjuries[i.playerId] = [];
+    }
+    playerInjuries[i.playerId].push(i);
+  });
+
+  // Create a map of player IDs to their substitutions
+  const playerSubstitutions: Record<string, SubstitutionEvent[]> = {};
+  substitutions.forEach(s => {
+    if (!playerSubstitutions[s.playerOutId]) {
+      playerSubstitutions[s.playerOutId] = [];
+    }
+    playerSubstitutions[s.playerOutId].push(s);
+    if (!playerSubstitutions[s.playerInId]) {
+      playerSubstitutions[s.playerInId] = [];
+    }
+    playerSubstitutions[s.playerInId].push(s);
   });
 
   const textColor = getContrastColor(team?.color || '#3b82f6');
@@ -100,6 +154,26 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
           const hasRedCard = playerCardList.some(c => c.cardType === "red");
           const cardType = hasRedCard ? 'red' : hasYellowCard ? 'yellow' : null;
 
+          // Get rating for this player
+          const rating = playerRatings[player.id];
+
+          // Get goals for this player
+          const goals = playerGoals[player.id] || 0;
+
+          // Get assists for this player
+          const assists = playerAssists[player.id] || 0;
+
+          // Get injuries for this player
+          const injuryList = playerInjuries[player.id] || [];
+          const isInjured = injuryList.length > 0;
+
+          // Get substitutions for this player
+          const subList = playerSubstitutions[player.id] || [];
+          const wasSubstituted = subList.length > 0;
+
+          // Check if MVP
+          const isMvp = mvp === player.id;
+
           return (
             <div
               key={posKey}
@@ -114,15 +188,27 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
                 <PlayerFace
                   name={player.name}
                   image={faceUrl(player.id, player.cardImage)}
-                  role={roleFromPosition(player.position)}
-                  size={28}
+                  role={roleFromPosition(player.positions[0])}
+                  size={36}
                   className="shadow-lg"
+                  showRing={false}
                 />
-                {cardType && (
-                  <div className="absolute -top-1 -right-1">
-                    <span className={`w-3 h-2 inline-block rounded-sm ${cardType === 'red' ? 'bg-red-500' : 'bg-yellow-400'}`} />
+                {/* Rating - top right */}
+                {rating !== undefined && (
+                  <div className="absolute -top-1 -right-1 bg-white/90 rounded-full w-4 h-4 flex items-center justify-center text-[0.5rem] font-bold text-black shadow-sm">
+                    {rating.toFixed(1)}
                   </div>
                 )}
+                {/* Indicators - bottom right */}
+                <div className="absolute -bottom-1 -right-1 flex flex-row gap-0.5">
+                  {cardType === 'yellow' && <span className="text-[0.5rem]">🟨</span>}
+                  {cardType === 'red' && <span className="text-[0.5rem]">🟥</span>}
+                  {goals > 0 && <span className="text-[0.5rem]">⚽</span>}
+                  {isMvp && <span className="text-[0.5rem]">⭐</span>}
+                  {assists > 0 && <span className="text-[0.5rem]">👟</span>}
+                  {isInjured && <span className="text-[0.5rem]">🚑</span>}
+                  {wasSubstituted && <span className="text-[0.5rem]">🔄</span>}
+                </div>
               </div>
               <div className="mt-0.5 text-[0.5rem] text-foreground font-medium text-center leading-tight">
                 {player.name.split(' ').pop()}
@@ -151,7 +237,7 @@ export function generateCPULineup(roster: Player[]): { lineup: Player[]; formati
   };
   
   availablePlayers.forEach(player => {
-    const role = getPlayerRole(player.position);
+    const role = getPlayerRole(player.positions[0]);
     if (role) {
       playersByRole[role].push(player);
     }
