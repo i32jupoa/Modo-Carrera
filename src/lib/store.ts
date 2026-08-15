@@ -1,15 +1,26 @@
 // @ts-nocheck
 import { persistCurrentSave } from "./savedGames";
 import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getPrimaryLeagueForCountry, Team } from "@/data/teams";
+import { type PosCode } from "@/lib/positions";
 
+// Funciones auxiliares para determinar tipo de jugador basado en posiciones específicas
+function isGoalkeeper(positions: PosCode[]): boolean {
+  return positions.includes("GK");
+}
 
+function isDefensive(positions: PosCode[]): boolean {
+  return positions.some(p => ["DFC", "LD", "LI", "CAD", "CAI"].includes(p));
+}
 
+function isMidfield(positions: PosCode[]): boolean {
+  return positions.some(p => ["MCD", "MC", "MCO", "MD", "MI"].includes(p));
+}
 
-
-
+function isAttacking(positions: PosCode[]): boolean {
+  return positions.some(p => ["ED", "EI", "DC", "SD"].includes(p));
+}
 
 import { Player, defaultLineup } from "@/data/players";
-
 
 
 
@@ -147,6 +158,8 @@ import {
 
 
 import { addDaysToIso } from "@/lib/transferWindows";
+import { applyMonthlyProgressionToAll } from "@/lib/monthlyProgression";
+import { applySeasonEndProgressionToAll } from "@/lib/seasonEndProgression";
 
 
 
@@ -4679,11 +4692,8 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
 
 
-          !playersToRemove.has(p.id) &&
 
-
-
-          p.position === playerToRemove.position
+          p.positions.some(pos => playerToRemove.positions.includes(pos))
 
 
 
@@ -4892,11 +4902,11 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
     const homeGoals = r.homeGoals ?? 0;
     const awayGoals = r.awayGoals ?? 0;
     if (awayGoals === 0) {
-      const gk = homeXI.find(p => (p.position === "POR" || p.position === "GK"));
+      const gk = homeXI.find(p => p.positions.includes("GK"));
       if (gk) store.recordCleanSheet(gk.id, fixture.competition);
     }
     if (homeGoals === 0) {
-      const gk = awayXI.find(p => (p.position === "POR" || p.position === "GK"));
+      const gk = awayXI.find(p => p.positions.includes("GK"));
       if (gk) store.recordCleanSheet(gk.id, fixture.competition);
     }
     // MOTM: top scorer of the match (or a random starter of winner if 0-0)
@@ -9893,7 +9903,7 @@ function generateFakeStatsForBackgroundLeagues(save: SaveGame, leagues: LeagueId
 
 
 
-        if (player.position === "GK") {
+        if (player.positions.includes("GK")) {
 
 
 
@@ -9949,7 +9959,7 @@ function generateFakeStatsForBackgroundLeagues(save: SaveGame, leagues: LeagueId
 
 
 
-        const goalProb = player.position === "FWD" ? 0.5 : player.position === "MID" ? 0.2 : 0.05;
+        const goalProb = isAttacking(player.positions) ? 0.5 : isMidfield(player.positions) ? 0.2 : 0.05;
 
 
 
@@ -10429,7 +10439,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const gks = squad.filter(p => p.position === "GK").slice(0, 1);
+          const gks = squad.filter(p => isGoalkeeper(p.positions)).slice(0, 1);
 
 
 
@@ -10437,7 +10447,8 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const defs = squad.filter(p => p.position === "DEF").slice(0, 4);
+
+          const defs = squad.filter(p => isDefensive(p.positions)).slice(0, 4);
 
 
 
@@ -10445,7 +10456,8 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const mids = squad.filter(p => p.position === "MID").slice(0, 4);
+
+          const mids = squad.filter(p => isMidfield(p.positions)).slice(0, 4);
 
 
 
@@ -10453,7 +10465,8 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const fwds = squad.filter(p => p.position === "FWD").slice(0, 2);
+
+          const fwds = squad.filter(p => isAttacking(p.positions)).slice(0, 2);
 
 
 
@@ -10797,7 +10810,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const forwards = players.filter(p => p.position === "FWD");
+          const forwards = players.filter(p => isAttacking(p.positions));
 
 
 
@@ -10805,7 +10818,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const mids = players.filter(p => p.position === "MID");
+          const mids = players.filter(p => isMidfield(p.positions));
 
 
 
@@ -10813,7 +10826,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const defs = players.filter(p => p.position === "DEF");
+          const defs = players.filter(p => isDefensive(p.positions));
 
 
 
@@ -10965,7 +10978,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const mids = players.filter(p => p.position === "MID");
+          const mids = players.filter(p => isMidfield(p.positions));
 
 
 
@@ -10973,7 +10986,7 @@ export function generateRealisticStatsForO1Leagues(save: SaveGame, o1Leagues: Le
 
 
 
-          const forwards = players.filter(p => p.position === "FWD");
+          const forwards = players.filter(p => isAttacking(p.positions));
 
 
 
@@ -11641,11 +11654,11 @@ function recordFakeMatchStats(
 
   const assignGoals = (teamGoals: number, players: Player[]) => {
 
-    const forwards = players.filter(p => p.position === "FWD");
+    const forwards = players.filter(p => isAttacking(p.positions));
 
-    const mids = players.filter(p => p.position === "MID");
+    const mids = players.filter(p => isMidfield(p.positions));
 
-    const defs = players.filter(p => p.position === "DEF");
+    const defs = players.filter(p => isDefensive(p.positions));
 
     for (let i = 0; i < teamGoals; i++) {
 
@@ -11735,13 +11748,13 @@ function recordFakeMatchStats(
 
 function selectMatchPlayers(squad: Player[]): Player[] {
 
-  const gks = squad.filter(p => p.position === "GK").slice(0, 1);
+  const gks = squad.filter(p => isGoalkeeper(p.positions)).slice(0, 1);
 
-  const defs = squad.filter(p => p.position === "DEF").slice(0, 4);
+  const defs = squad.filter(p => isDefensive(p.positions)).slice(0, 4);
 
-  const mids = squad.filter(p => p.position === "MID").slice(0, 4);
+  const mids = squad.filter(p => isMidfield(p.positions)).slice(0, 4);
 
-  const fwds = squad.filter(p => p.position === "FWD").slice(0, 2);
+  const fwds = squad.filter(p => isAttacking(p.positions)).slice(0, 2);
 
   let players = [...gks, ...defs, ...mids, ...fwds];
 

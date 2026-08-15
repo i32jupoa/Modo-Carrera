@@ -2,6 +2,24 @@
 // Pure functions: no side effects, no store access.
 
 import type { Player } from "@/data/players";
+import { type PosCode } from "@/lib/positions";
+
+// Funciones auxiliares para determinar tipo de jugador basado en posiciones específicas
+function isGoalkeeper(positions: PosCode[]): boolean {
+  return positions.includes("GK");
+}
+
+function isDefensive(positions: PosCode[]): boolean {
+  return positions.some(p => ["DFC", "LD", "LI", "CAD", "CAI"].includes(p));
+}
+
+function isMidfield(positions: PosCode[]): boolean {
+  return positions.some(p => ["MCD", "MC", "MCO", "MD", "MI"].includes(p));
+}
+
+function isAttacking(positions: PosCode[]): boolean {
+  return positions.some(p => ["ED", "EI", "DC", "SD"].includes(p));
+}
 
 export type TeamStats = {
   possession: number; // 0..100
@@ -284,7 +302,7 @@ export function computePlayerRatings(input: RatingInput): { ratings: PlayerRatin
         (c) => c.playerId === p.id && c.cardType === "yellow",
       ).length;
       const red = input.cards.some((c) => c.playerId === p.id && c.cardType === "red");
-      const saves = p.position === "GK" ? teamSaves : 0;
+      const saves = isGoalkeeper(p.positions) ? teamSaves : 0;
       const missedPen = (input.penaltiesMissed ?? []).filter((x) => x.playerId === p.id).length;
 
       let r = 6.0;
@@ -293,17 +311,17 @@ export function computePlayerRatings(input: RatingInput): { ratings: PlayerRatin
       r += ((p.rating - 72) / 100) * 1.2;
 
       // Attacking contributions.
-      const goalBonus = p.position === "FWD" ? 1.0 : p.position === "MID" ? 1.25 : p.position === "DEF" ? 1.5 : 2.5;
+      const goalBonus = isAttacking(p.positions) ? 1.0 : isMidfield(p.positions) ? 1.25 : isDefensive(p.positions) ? 1.5 : 2.5;
       r += goals * goalBonus;
       r += assists * 0.75;
 
       // Goalkeeper / defensive contributions.
-      if (p.position === "GK") {
+      if (isGoalkeeper(p.positions)) {
         r += saves * 0.18;
         r += conceded === 0 ? 1.0 : -conceded * 0.35;
-      } else if (p.position === "DEF") {
+      } else if (isDefensive(p.positions)) {
         r += conceded === 0 ? 0.6 : -conceded * 0.18;
-      } else if (p.position === "MID") {
+      } else if (isMidfield(p.positions)) {
         r += conceded === 0 ? 0.2 : -conceded * 0.06;
       }
 
@@ -324,7 +342,7 @@ export function computePlayerRatings(input: RatingInput): { ratings: PlayerRatin
         playerId: p.id,
         playerName: p.name,
         team,
-        position: p.position,
+        position: p.positions[0] || "MC",
         rating: Math.round(clamp(r, 3, 10) * 10) / 10,
         goals,
         assists,

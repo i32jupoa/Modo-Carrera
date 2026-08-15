@@ -7,8 +7,26 @@ import {
   type PlayerRating,
 } from "@/lib/matchStats";
 import { tacticsModifiers, type TeamTactics } from "@/lib/teamTactics";
+import { type PosCode } from "@/lib/positions";
 
 export type { MatchStats, PlayerRating };
+
+// Funciones auxiliares para determinar tipo de jugador basado en posiciones específicas
+function isGoalkeeper(positions: PosCode[]): boolean {
+  return positions.includes("GK");
+}
+
+function isDefensive(positions: PosCode[]): boolean {
+  return positions.some(p => ["DFC", "LD", "LI", "CAD", "CAI"].includes(p));
+}
+
+function isMidfield(positions: PosCode[]): boolean {
+  return positions.some(p => ["MCD", "MC", "MCO", "MD", "MI"].includes(p));
+}
+
+function isAttacking(positions: PosCode[]): boolean {
+  return positions.some(p => ["ED", "EI", "DC", "SD"].includes(p));
+}
 
 /**
  * Tactics as configured by the manager in "Editar alineación / Tácticas".
@@ -22,12 +40,12 @@ function rand(): number { return Math.random(); }
 
 // Weighted scorer pick considering position and OVR for fast simulation
 function fastPickScorerWeighted(xi: Player[]): Player {
-  const candidates = xi.filter((p) => p.position !== "GK");
+  const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   if (candidates.length === 0) return xi[0];
   
   // Weight = position factor * (rating / 70) to favor high-OVR players
   const weights = candidates.map((p) => {
-    const posFactor = p.position === "FWD" ? 5 : p.position === "MID" ? 2 : 0.5;
+    const posFactor = isAttacking(p.positions) ? 5 : isMidfield(p.positions) ? 2 : 0.5;
     const ratingFactor = p.rating / 70; // Normalize around 70
     return posFactor * ratingFactor;
   });
@@ -44,12 +62,12 @@ function fastPickScorerWeighted(xi: Player[]): Player {
 // Fast assister pick with 75% probability, excluding scorer
 function fastPickAssister(xi: Player[], scorerId: string): Player | null {
   if (rand() > 0.75) return null; // 75% of goals have an assist
-  const candidates = xi.filter((p) => p.id !== scorerId && p.position !== "GK");
+  const candidates = xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions));
   if (candidates.length === 0) return null;
   
   // Weight toward midfielders and high-OVR players
   const weights = candidates.map((p) => {
-    const posFactor = p.position === "MID" ? 3 : p.position === "FWD" ? 2 : 1;
+    const posFactor = isMidfield(p.positions) ? 3 : isAttacking(p.positions) ? 2 : 1;
     const ratingFactor = p.rating / 70;
     return posFactor * ratingFactor;
   });
@@ -82,9 +100,9 @@ export function calculateActiveOVR(activePlayers: Player[]): number {
 // Calculate attack strength from XI (forwards and midfielders weighted)
 function calculateAttackStrength(xi: Player[]): number {
   if (xi.length === 0) return 65;
-  const forwards = xi.filter(p => p.position === "FWD");
-  const mids = xi.filter(p => p.position === "MID");
-  const defenders = xi.filter(p => p.position === "DEF");
+  const forwards = xi.filter(p => isAttacking(p.positions));
+  const mids = xi.filter(p => isMidfield(p.positions));
+  const defenders = xi.filter(p => isDefensive(p.positions));
   
   // Attack is heavily weighted by forwards (70%), midfielders (25%), defenders (5%)
   const fwdAvg = forwards.length > 0 ? forwards.reduce((s, p) => s + p.rating, 0) / forwards.length : 0;
@@ -97,9 +115,9 @@ function calculateAttackStrength(xi: Player[]): number {
 // Calculate defense strength from XI (defenders and goalkeepers weighted)
 function calculateDefenseStrength(xi: Player[]): number {
   if (xi.length === 0) return 65;
-  const goalkeepers = xi.filter(p => p.position === "GK");
-  const defenders = xi.filter(p => p.position === "DEF");
-  const mids = xi.filter(p => p.position === "MID");
+  const goalkeepers = xi.filter(p => isGoalkeeper(p.positions));
+  const defenders = xi.filter(p => isDefensive(p.positions));
+  const mids = xi.filter(p => isMidfield(p.positions));
   
   // Defense is heavily weighted by defenders (60%), goalkeepers (25%), midfielders (15%)
   const gkAvg = goalkeepers.length > 0 ? goalkeepers.reduce((s, p) => s + p.rating, 0) / goalkeepers.length : 0;
@@ -259,9 +277,9 @@ export type SimResult = {
 };
 
 function pickScorer(xi: Player[]): Player {
-  const candidates = xi.filter((p) => p.position !== "GK");
+  const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   const weights = candidates.map((p) => {
-    const posBonus = p.position === "FWD" ? 5 : p.position === "MID" ? 1.6 : 0.4;
+    const posBonus = isAttacking(p.positions) ? 5 : isMidfield(p.positions) ? 1.6 : 0.4;
     const formAvg = p.formHistory.length === 0 ? 5 : p.formHistory.reduce((a, b) => a + b, 0) / p.formHistory.length;
     const formMul = 0.7 + (formAvg / 10) * 0.6; // 0.7..1.3
     return Math.pow(p.rating / 70, 2) * posBonus * formMul;
@@ -271,10 +289,10 @@ function pickScorer(xi: Player[]): Player {
 
 function pickAssister(xi: Player[], scorerId: string): Player | null {
   if (rand() > 0.72) return null;
-  const candidates = xi.filter((p) => p.id !== scorerId && p.position !== "GK");
+  const candidates = xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions));
   if (candidates.length === 0) return null;
   const weights = candidates.map((p) => {
-    const posBonus = p.position === "MID" ? 3 : p.position === "FWD" ? 2 : 1;
+    const posBonus = isMidfield(p.positions) ? 3 : isAttacking(p.positions) ? 2 : 1;
     return Math.pow(p.rating / 70, 2) * posBonus;
   });
   return weightedPick(candidates, weights);
@@ -309,7 +327,10 @@ function maybeInjury(
   // A forced substitution happens whenever a bench player of a compatible
   // profile is available and the injury happens before the 88th minute.
   const candidates = bench.filter((p) => p.id !== victim.id);
-  const samePos = candidates.filter((p) => p.position === victim.position);
+  // Check if positions overlap (at least one common position)
+  const samePos = candidates.filter((p) => 
+    p.positions.some(pos => victim.positions.includes(pos))
+  );
   const replacement = (samePos.length > 0 ? samePos : candidates)
     .slice()
     .sort((a, b) => b.rating - a.rating)[0];
@@ -438,9 +459,9 @@ export function simulateMatch(
     for (const player of xi) {
       // Defenders and defensive midfielders commit more fouls than keepers.
       const base =
-        (player.position === "GK" ? 0.02 :
-        player.position === "DEF" ? 0.115 :
-        player.position === "MID" ? 0.095 : 0.055) * aggression;
+        (isGoalkeeper(player.positions) ? 0.02 :
+        isDefensive(player.positions) ? 0.115 :
+        isMidfield(player.positions) ? 0.095 : 0.055) * aggression;
 
 
       // Direct red card: rare (~0.35% per player => ~4% per team per match).
@@ -468,7 +489,7 @@ export function simulateMatch(
       // Contextual second yellow: only booked players can get one, it becomes
       // more likely the earlier the first yellow arrived and for defenders.
       const timeLeft = Math.max(0, 90 - firstMinute) / 90;
-      const secondYellowChance = 0.10 * timeLeft * (player.position === "DEF" ? 1.4 : 1);
+      const secondYellowChance = 0.10 * timeLeft * (isDefensive(player.positions) ? 1.4 : 1);
       if (rand() < secondYellowChance) {
         reds++;
         cards.push({
@@ -562,7 +583,7 @@ export function simulateMatch(
 
     // 6% of goals are actually own goals by a defender of the other team.
     if (defendXI.length > 0 && rand() < 0.06) {
-      const defenders = defendXI.filter((p) => p.position === "DEF" || p.position === "GK");
+      const defenders = defendXI.filter((p) => isDefensive(p.positions) || isGoalkeeper(p.positions));
       const pool = defenders.length > 0 ? defenders : defendXI;
       const unlucky = pool[Math.floor(rand() * pool.length)];
       events.push({
@@ -577,7 +598,7 @@ export function simulateMatch(
     // produces exactly ONE chronicle entry (scored or missed), never a
     // separate "penalty awarded" line.
     if (rand() < 0.09) {
-      const takers = attackXI.filter((p) => p.position !== "GK");
+      const takers = attackXI.filter((p) => !isGoalkeeper(p.positions));
       const taker =
         designated(attackXI, tactics, "penaltyTakerId") ??
         (takers.length > 0
@@ -585,7 +606,7 @@ export function simulateMatch(
           : attackXI[0]);
 
       // Which rival player gave the penalty away.
-      const foulPool = defendXI.filter((p) => p.position !== "GK");
+      const foulPool = defendXI.filter((p) => !isGoalkeeper(p.positions));
       const offender = (foulPool.length > 0 ? foulPool : defendXI)[
         Math.floor(rand() * Math.max(1, (foulPool.length > 0 ? foulPool : defendXI).length))
       ];
@@ -603,7 +624,7 @@ export function simulateMatch(
         return true;
       }
       penaltiesMissed.push({ playerId: taker.id });
-      const keeper = defendXI.find((p) => p.position === "GK");
+      const keeper = defendXI.find((p) => isGoalkeeper(p.positions));
       highlights.push({
         minute, team, type: "penalty_missed",
         playerId: taker.id, playerName: taker.name,
@@ -719,8 +740,8 @@ export function simulateMatch(
   // -------------------------------------------------------------------------
   // 5. Extra highlights: saves and woodwork, tied to the generated stats.
   // -------------------------------------------------------------------------
-  const homeGK = homeXI.find((p) => p.position === "GK");
-  const awayGK = awayXI.find((p) => p.position === "GK");
+  const homeGK = homeXI.find((p) => isGoalkeeper(p.positions));
+  const awayGK = awayXI.find((p) => isGoalkeeper(p.positions));
 
   const addSaves = (gk: Player | undefined, team: "home" | "away", count: number) => {
     if (!gk) return;
@@ -739,7 +760,7 @@ export function simulateMatch(
 
   const addWoodwork = (xi: Player[], team: "home" | "away") => {
     if (rand() > 0.18) return;
-    const candidates = xi.filter((p) => p.position !== "GK");
+    const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
     if (candidates.length === 0) return;
     const p = candidates[Math.floor(rand() * candidates.length)];
     highlights.push({

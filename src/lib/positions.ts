@@ -148,3 +148,65 @@ export function canPlayPosition(codes: PosCode[], slot: PosCode): boolean {
   const compat = COMPATIBLE[slot] ?? [];
   return codes.some((c) => compat.includes(c));
 }
+
+/**
+ * Matriz de similitud entre posiciones (0.0 = completamente diferentes, 1.0 = idénticas).
+ * Usada para calcular el bonus de versatilidad en valoración de mercado.
+ */
+const POSITION_SIMILARITY: Record<PosCode, Partial<Record<PosCode, number>>> = {
+  GK: { GK: 1.0 },
+  DFC: { DFC: 1.0, LD: 0.7, LI: 0.7, CAD: 0.6, CAI: 0.6, MCD: 0.4 },
+  LD: { LD: 1.0, DFC: 0.7, CAD: 0.95, LI: 0.3, CAI: 0.2 },
+  LI: { LI: 1.0, DFC: 0.7, CAI: 0.95, LD: 0.3, CAD: 0.2 },
+  CAD: { CAD: 1.0, LD: 0.95, MCD: 0.6, DFC: 0.5, LI: 0.2 },
+  CAI: { CAI: 1.0, LI: 0.95, MCD: 0.6, DFC: 0.5, LD: 0.2 },
+  MCD: { MCD: 1.0, MC: 0.8, DFC: 0.4, CAD: 0.6, CAI: 0.6 },
+  MC: { MC: 1.0, MCD: 0.8, MCO: 0.8, MD: 0.7, MI: 0.7 },
+  MCO: { MCO: 1.0, MC: 0.8, MD: 0.6, MI: 0.6, DC: 0.5, SD: 0.4 },
+  MD: { MD: 1.0, MC: 0.7, ED: 0.85, MCO: 0.6, MI: 0.5 },
+  MI: { MI: 1.0, MC: 0.7, EI: 0.85, MCO: 0.6, MD: 0.5 },
+  ED: { ED: 1.0, MD: 0.85, DC: 0.6, EI: 0.4 },
+  EI: { EI: 1.0, MI: 0.85, DC: 0.6, ED: 0.4 },
+  SD: { SD: 1.0, DC: 0.85, MCO: 0.4, EI: 0.3, ED: 0.3 },
+  DC: { DC: 1.0, SD: 0.85, MCO: 0.5, ED: 0.6, EI: 0.6 },
+};
+
+/**
+ * Calcula la similitud entre dos posiciones específicas.
+ * @returns 0.0 (completamente diferentes) a 1.0 (idénticas)
+ */
+export function calculatePositionSimilarity(pos1: PosCode, pos2: PosCode): number {
+  return POSITION_SIMILARITY[pos1]?.[pos2] ?? 0;
+}
+
+/**
+ * Calcula el bonus de versatilidad de un jugador basado en sus posiciones alternativas.
+ * Un jugador con posiciones muy diferentes (ej: MI que puede jugar EI y DC) tiene más bonus
+ * que uno con posiciones similares (ej: LD que puede jugar CAD).
+ * @returns Multiplicador de valor (1.0 = sin bonus, hasta 1.15 máximo)
+ */
+export function calculateVersatilityBonus(positions: PosCode[]): number {
+  if (positions.length <= 1) return 1.0;
+  
+  let totalDiversity = 0;
+  let comparisons = 0;
+  
+  // Comparar cada par de posiciones
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      const similarity = calculatePositionSimilarity(positions[i], positions[j]);
+      // Menor similitud = mayor diversidad = mayor bonus
+      const diversity = 1 - similarity;
+      totalDiversity += diversity;
+      comparisons++;
+    }
+  }
+  
+  if (comparisons === 0) return 1.0;
+  
+  const avgDiversity = totalDiversity / comparisons;
+  // Bonus máximo de 15% para jugadores muy versátiles
+  const bonus = 1 + (avgDiversity * 0.15);
+  
+  return Math.min(bonus, 1.15);
+}

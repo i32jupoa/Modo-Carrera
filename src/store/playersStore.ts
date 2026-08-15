@@ -128,7 +128,9 @@ import { TEAMS, getAllTeams, teamById, findTeamStrict, leagueIdFromName, type Le
 
 
 
-import { defaultLineup, type Player, type Position, marketValueFor } from "@/data/players";
+import { defaultLineup, type Player, marketValueFor } from "@/data/players";
+import { initializeDynamicStats, updatePlayerMatchStats, applyMonthlyProgression, applySeasonEndProgression } from "@/lib/playerProgression";
+import type { DynamicPlayerStats } from "@/types/playerStats";
 
 
 
@@ -1713,17 +1715,10 @@ export type PlayerStats = {
 
 
 
-
   accumulatedYellowCards: number;
 
-
-
-
-
-
-
-
-
+  /** Estadísticas dinámicas que cambian con el tiempo (persistidas por partida) */
+  dynamicStats?: DynamicPlayerStats;
 
 
 
@@ -3538,31 +3533,12 @@ function fcToPlayer(
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
     formHistory: stats.formHistory,
 
 
 
-
-
-
-
-
-
-
-
-
+    // Inicializar estadísticas dinámicas si no existen
+    dynamicStats: stats.dynamicStats || initializeDynamicStats(fc.OVR),
 
 
 
@@ -11986,6 +11962,19 @@ export const usePlayersStore = create<PlayersState>()(
             uclAppearances: (s.uclAppearances ?? 0) + (isUcl ? 1 : 0),
           };
         });
+        
+        // Update dynamic stats (assuming 90 minutes for appearance)
+        mutatePlayerStat(get, set, playerId, (s) => {
+          if (!s.dynamicStats) return s;
+          return {
+            ...s,
+            dynamicStats: {
+              ...s.dynamicStats,
+              seasonAppearances: s.dynamicStats.seasonAppearances + 1,
+              seasonMinutes: s.dynamicStats.seasonMinutes + 90,
+            },
+          };
+        });
         return;
 
 
@@ -12113,6 +12102,18 @@ export const usePlayersStore = create<PlayersState>()(
             goals: s.goals + 1,
             cupGoals: (s.cupGoals ?? 0) + (isCup ? 1 : 0),
             uclGoals: (s.uclGoals ?? 0) + (isUcl ? 1 : 0),
+          };
+        });
+        
+        // Update dynamic stats
+        mutatePlayerStat(get, set, playerId, (s) => {
+          if (!s.dynamicStats) return s;
+          return {
+            ...s,
+            dynamicStats: {
+              ...s.dynamicStats,
+              seasonGoals: s.dynamicStats.seasonGoals + 1,
+            },
           };
         });
         return;
@@ -12244,6 +12245,18 @@ export const usePlayersStore = create<PlayersState>()(
             uclAssists: (s.uclAssists ?? 0) + (isUcl ? 1 : 0),
           };
         });
+        
+        // Update dynamic stats
+        mutatePlayerStat(get, set, playerId, (s) => {
+          if (!s.dynamicStats) return s;
+          return {
+            ...s,
+            dynamicStats: {
+              ...s.dynamicStats,
+              seasonAssists: s.dynamicStats.seasonAssists + 1,
+            },
+          };
+        });
         return;
 
 
@@ -12312,6 +12325,18 @@ export const usePlayersStore = create<PlayersState>()(
             uclCleanSheets: (s.uclCleanSheets ?? 0) + (isUcl ? 1 : 0),
           };
         });
+        
+        // Update dynamic stats
+        mutatePlayerStat(get, set, playerId, (s) => {
+          if (!s.dynamicStats) return s;
+          return {
+            ...s,
+            dynamicStats: {
+              ...s.dynamicStats,
+              seasonCleanSheets: s.dynamicStats.seasonCleanSheets + 1,
+            },
+          };
+        });
         return;
         const next = { ...get().stats };
         const s = next[playerId] ?? defaultStats();
@@ -12330,6 +12355,19 @@ export const usePlayersStore = create<PlayersState>()(
           const history = [...(s.formHistory ?? []), Math.max(1, Math.min(10, rating))];
           return { ...s, formHistory: history.slice(-6) };
         });
+        
+        // Update dynamic stats
+        mutatePlayerStat(get, set, playerId, (s) => {
+          if (!s.dynamicStats) return s;
+          const history = [...(s.dynamicStats.formHistory ?? []), Math.max(1, Math.min(10, rating))];
+          return {
+            ...s,
+            dynamicStats: {
+              ...s.dynamicStats,
+              formHistory: history.slice(-10),
+            },
+          };
+        });
       },
       recordMotm: (playerId, competition) => {
         mutatePlayerStat(get, set, playerId, (s) => {
@@ -12340,6 +12378,18 @@ export const usePlayersStore = create<PlayersState>()(
             motm: (s.motm ?? 0) + 1,
             cupMotm: (s.cupMotm ?? 0) + (isCup ? 1 : 0),
             uclMotm: (s.uclMotm ?? 0) + (isUcl ? 1 : 0),
+          };
+        });
+        
+        // Update dynamic stats
+        mutatePlayerStat(get, set, playerId, (s) => {
+          if (!s.dynamicStats) return s;
+          return {
+            ...s,
+            dynamicStats: {
+              ...s.dynamicStats,
+              seasonMVPs: s.dynamicStats.seasonMVPs + 1,
+            },
           };
         });
         return;

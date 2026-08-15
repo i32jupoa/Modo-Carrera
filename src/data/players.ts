@@ -1,15 +1,13 @@
 import { Team, TEAMS, teamById, findTeamStrict } from "./teams";
 import playersData from "./playersData";
-import { buildPositions, canPlayPosition, isNaturalFor, playerPosCodes, type PosCode } from "@/lib/positions";
-
-export type Position = "GK" | "DEF" | "MID" | "FWD";
+import { buildPositions, canPlayPosition, isNaturalFor, playerPosCodes, toPosCode, calculateVersatilityBonus, type PosCode } from "@/lib/positions";
+import type { DynamicPlayerStats } from "@/types/playerStats";
 
 export type Player = {
   id: string;
   name: string;
-  position: Position;
   /** Demarcaciones reales (principal + alternativas), todas al mismo nivel. */
-  positions?: PosCode[];
+  positions: PosCode[];
   rating: number;
   age: number;
   teamId: string;
@@ -23,6 +21,8 @@ export type Player = {
   morale: number;
   formHistory: number[];
   cardImage?: string;
+  /** Estadísticas dinámicas que cambian con el tiempo (persistidas por partida) */
+  dynamicStats?: DynamicPlayerStats;
 };
 
 // ==================== REALISTIC MARKET VALUATION SYSTEM ====================
@@ -38,17 +38,26 @@ export type Player = {
 // (inspirados en las valoraciones más altas del mercado real) y sin saltos
 // bruscos entre rating 85 y 86 o entre liga "top" y "media".
 
-type PositionGroupKey = "GK" | "DEF" | "MID" | "FWD";
-
-/** Techo de valor por grupo de posición (en millones de €). Techo global
+/** Techo de valor por posición específica (en millones de €). Techo global
  *  absoluto añadido más abajo (GLOBAL_MAX_VALUE_M) para que ni el mejor
  *  jugador del juego supere el fichaje más caro de la historia real
  *  (≈220M, Mbappé al PSG). */
-const POSITION_VALUE_CAP: Record<PositionGroupKey, number> = {
+const POSITION_VALUE_CAP: Record<PosCode, number> = {
   GK: 75,
-  DEF: 130,
-  MID: 165,
-  FWD: 200,
+  DFC: 120,
+  LD: 110,
+  LI: 110,
+  CAD: 105,
+  CAI: 105,
+  MCD: 140,
+  MC: 150,
+  MCO: 165,
+  MD: 155,
+  MI: 155,
+  ED: 180,
+  EI: 180,
+  SD: 190,
+  DC: 200,
 };
 
 /** Techo absoluto en millones de € para CUALQUIER valor o precio del juego
@@ -60,12 +69,10 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
-function positionGroupKey(pos: string): PositionGroupKey {
-  const up = String(pos || "MID").toUpperCase();
-  if (up === "GK" || up === "POR") return "GK";
-  if (["CB", "DFC", "DEF", "LB", "RB", "LWB", "RWB"].includes(up)) return "DEF";
-  if (["CDM", "MCD", "CM", "MC", "MID", "CAM", "MCO", "LM", "RM", "MD", "MI"].includes(up)) return "MID";
-  return "FWD"; // ST, CF, DC, LW, RW, FWD, Ei, Ed...
+/** Obtiene el código de posición canónico desde una posición en crudo. */
+function getPosCode(pos: string): PosCode {
+  const code = toPosCode(pos);
+  return code || "MC"; // Fallback a mediocentro si no se reconoce
 }
 
 /** Matiz dentro de cada grupo: dos jugadores con el mismo rating no valen
@@ -152,21 +159,27 @@ export function marketValueFor(
   assists = 0,
   appearances = 0,
   isStar = false,
-  teamAvgRating = 75
+  teamAvgRating = 75,
+  positions?: PosCode[],
+  dynamicOVR?: number
 ): { value: number; explanation: string } {
 
-  if (rating < 55) return { value: 0.05, explanation: "Jugador amateur sin valor de mercado" };
+  // Use dynamic OVR if provided, otherwise use static rating
+  const effectiveRating = dynamicOVR || rating;
+  
+  if (effectiveRating < 55) return { value: 0.05, explanation: "Jugador amateur sin valor de mercado" };
 
-  const group = positionGroupKey(pos);
-  const cap = POSITION_VALUE_CAP[group];
+  const posCode = getPosCode(pos);
+  const cap = POSITION_VALUE_CAP[posCode] || 150;
 
-  const curve = ratingCurve(rating);
+  const curve = ratingCurve(effectiveRating);
   const ageMult = ageCurveMultiplier(age);
   const roleMult = positionRoleModifier(pos);
   const leagueMult = leagueValueMultiplier(leagueId);
   const teamMult = teamValueMultiplier(teamAvgRating);
+  const versatilityMult = positions ? calculateVersatilityBonus(positions) : 1.0;
 
-  let finalValue = cap * curve * ageMult * roleMult * leagueMult * teamMult;
+  let finalValue = cap * curve * ageMult * roleMult * leagueMult * teamMult * versatilityMult;
 
   // Techo absoluto global: ni el mejor jugador del juego en las mejores
   // condiciones puede superar el fichaje más caro de la historia real.
@@ -176,20 +189,26 @@ export function marketValueFor(
 
   // Explicación legible para la ficha del jugador.
   const reasons: string[] = [];
-  if (rating >= 90) reasons.push("jugador de clase mundial");
-  else if (rating >= 87) reasons.push("jugador de élite");
-  else if (rating >= 84) reasons.push("muy buen nivel");
-  else if (rating >= 80) reasons.push("buen nivel");
-  else if (rating >= 75) reasons.push("nivel sólido");
+  if (effectiveRating >= 90) reasons.push("jugador de clase mundial");
+  else if (effectiveRating >= 87) reasons.push("jugador de élite");
+  else if (effectiveRating >= 84) reasons.push("muy buen nivel");
+  else if (effectiveRating >= 80) reasons.push("buen nivel");
+  else if (effectiveRating >= 75) reasons.push("nivel sólido");
   else reasons.push("jugador de rol");
 
   if (age <= 21) reasons.push("gran proyección");
   else if (age <= 29) reasons.push("edad óptima");
   else reasons.push("veterano");
 
-  if (group === "FWD" || group === "MID") reasons.push("posición ofensiva");
-  else if (group === "DEF") reasons.push("posición defensiva");
-  else reasons.push("portero");
+  // Determinar tipo de posición basado en PosCode
+  const isDefensive = ["GK", "DFC", "LD", "LI", "CAD", "CAI", "MCD"].includes(posCode);
+  const isAttacking = ["ED", "EI", "DC", "SD", "MCO", "MD", "MI"].includes(posCode);
+  
+  if (isAttacking) reasons.push("posición ofensiva");
+  else if (isDefensive) reasons.push("posición defensiva");
+  else reasons.push("posición mixta");
+
+  if (positions && positions.length > 1) reasons.push("versátil");
 
   if (TOP_LEAGUES.has(leagueId)) reasons.push("liga top");
   else if (MID_LEAGUES.has(leagueId)) reasons.push("liga media");
@@ -206,14 +225,6 @@ export function marketValueFor(
 export function legacyMarketValueFor(rating: number, age: number, pos = "MID", teamAvgRating = 75): number {
   const result = marketValueFor(rating, age, pos, "", "", 0, 0, 0, false, teamAvgRating);
   return result.value;
-}
-
-function mapPosition(pos: string): Position {
-  const up = String(pos || "MID").toUpperCase();
-  if (up === "GK") return "GK";
-  if (["CB", "LB", "RB", "LWB", "RWB", "DEF"].includes(up)) return "DEF";
-  if (["CM", "CDM", "CAM", "LM", "RM", "MID"].includes(up)) return "MID";
-  return "FWD"; // ST, LW, RW, CF
 }
 
 // Vincula el string de club del dataset con los IDs de teams.ts usando SOLO
@@ -253,7 +264,6 @@ export function generateAllSquads(): Record<string, Player[]> {
   const rawPlayers: Array<{
     id: string;
     name: string;
-    position: Position;
     rating: number;
     age: number;
     teamId: string;
@@ -269,7 +279,7 @@ export function generateAllSquads(): Record<string, Player[]> {
   dataArray.forEach((p: any, idx: number) => {
     const rating = p.OVR || p.rating || 70;
     const age = p.Age || p.age || 24;
-    const position = mapPosition(p.Position || p.position || "MID");
+    const pos = p.Position || p.position || "MID";
     const jsonTeamName = p.Team || p.Club || p.team || p.club || "";
     const jsonLeagueName = p.League || p.league || "";
     
@@ -288,12 +298,11 @@ export function generateAllSquads(): Record<string, Player[]> {
     rawPlayers.push({
       id: p.ID ? String(p.ID) : `p-${idx}`,
       name: p.Name || p.name || "Jugador",
-      position,
       rating,
       age,
       teamId: effectiveTeamId,
       leagueId,
-      pos: p.Position || "MID",
+      pos,
       cardImage: p.card || p.cardImage || p.PhotoUrl || "",
       rawData: p,
       idx
@@ -312,6 +321,11 @@ export function generateAllSquads(): Record<string, Player[]> {
   rawPlayers.forEach((rp) => {
     const teamAvgRating = teamAverages[rp.teamId] || 75;
     
+    const playerPositions = buildPositions(
+      rp.rawData?.Position ?? rp.pos,
+      rp.rawData?.["Alternative positions"],
+    );
+    
     const marketValueResult = marketValueFor(
       rp.rating, 
       rp.age, 
@@ -320,13 +334,13 @@ export function generateAllSquads(): Record<string, Player[]> {
       rp.leagueId,
       0, 0, 0,
       false,
-      teamAvgRating
+      teamAvgRating,
+      playerPositions
     );
     
     const playerObj: Player = {
       id: rp.id,
       name: rp.name,
-      position: rp.position,
       positions: buildPositions(
         rp.rawData?.Position ?? rp.pos,
         rp.rawData?.["Alternative positions"],
@@ -355,10 +369,18 @@ export function generateAllSquads(): Record<string, Player[]> {
   // Ordenamos las plantillas (mejores arriba). NO se inyectan jugadores de
   // relleno: la plantilla inicial de cada equipo es exactamente la que
   // aparece en la base de datos.
-  const order: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+  const positionOrder: Record<PosCode, number> = {
+    GK: 0, DFC: 1, LD: 2, LI: 3, CAD: 4, CAI: 5,
+    MCD: 6, MC: 7, MCO: 8, MD: 9, MI: 10,
+    ED: 11, EI: 12, SD: 13, DC: 14,
+  };
   TEAMS.forEach(t => {
     if (map[t.id]) {
-      map[t.id].sort((a, b) => order[a.position] - order[b.position] || b.rating - a.rating);
+      map[t.id].sort((a, b) => {
+        const aPos = a.positions[0] || "MC";
+        const bPos = b.positions[0] || "MC";
+        return (positionOrder[aPos] || 99) - (positionOrder[bPos] || 99) || b.rating - a.rating;
+      });
     }
   });
 

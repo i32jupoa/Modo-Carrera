@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSave, SaveGame, saveSave, setLineup, setFormation } from "@/lib/store";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
-import { defaultLineup, Position } from "@/data/players";
+import { defaultLineup } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { usePlayersStore } from "@/store/playersStore";
 import { FootballPitch, PlayerNode } from "@/components/FootballPitch";
@@ -165,9 +165,10 @@ function LineupPage() {
 
       // Process each injured player
       injuredPlayers.forEach(injuredPlayer => {
-        // Find a healthy replacement from bench
+        // Find a healthy replacement from bench with compatible position
         const healthyBench = squad.filter(p => 
-          newBench.includes(p.id) && p.injuredUntil <= leagueMd && p.position === injuredPlayer.position
+          newBench.includes(p.id) && p.injuredUntil <= leagueMd && 
+          p.positions.some(pos => injuredPlayer.positions.includes(pos))
         );
         
         if (healthyBench.length > 0) {
@@ -223,7 +224,7 @@ function LineupPage() {
           newBench.includes(p.id) && 
           p.injuredUntil <= leagueMd && 
           !suspendedPlayerIds.has(p.id) &&
-          p.position === suspendedPlayer.position
+          p.positions.some(pos => suspendedPlayer.positions.includes(pos))
         );
         
         if (healthyBench.length > 0) {
