@@ -822,6 +822,11 @@ export function simulateMatch(
     homeGoals, awayGoals, events, cards, injuries,
     xgHome: lh, xgAway: la,
     highlights, stats, ratings, mvp,
+    homeLineup: homeXI,
+    awayLineup: awayXI,
+    homeFormation: "Táctica 4-4-2",
+    awayFormation: "Táctica 4-4-2",
+    substitutions: [],
   };
 }
 

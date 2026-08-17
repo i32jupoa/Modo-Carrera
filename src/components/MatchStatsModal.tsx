@@ -7,6 +7,8 @@ import { Trophy, Target, AlertTriangle, Star, TrendingUp, Clock, Shield, Circle,
 import type { Fixture } from "@/lib/season";
 import type { Player } from "@/data/players";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { loadSave, getStartersWithFormation } from "@/lib/store";
+import type { FormationName } from "@/lib/formations";
 
 interface MatchStatsModalProps {
   fixture: Fixture | null;
@@ -20,10 +22,45 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   const away = teamById(fixture.awayId);
   const result = fixture.result;
   const store = usePlayersStore();
+  const save = loadSave();
 
   if (!home || !away) return null;
 
-  // Get player ratings
+  // Generate basic stats if not available
+  const stats = result.stats || {
+    home: {
+      possession: 50,
+      shots: result.events?.filter(e => e.team === 'home' && e.type === 'goal').length * 3 || 0,
+      shotsOnTarget: result.events?.filter(e => e.team === 'home' && e.type === 'goal').length || 0,
+      corners: Math.floor(Math.random() * 8) + 2,
+      fouls: Math.floor(Math.random() * 15) + 5,
+      offsides: Math.floor(Math.random() * 5) + 1,
+      passAccuracy: 75 + Math.floor(Math.random() * 20),
+      saves: Math.floor(Math.random() * 5) + 1,
+      xg: result.xgHome || 0,
+    },
+    away: {
+      possession: 50,
+      shots: result.events?.filter(e => e.team === 'away' && e.type === 'goal').length * 3 || 0,
+      shotsOnTarget: result.events?.filter(e => e.team === 'away' && e.type === 'goal').length || 0,
+      corners: Math.floor(Math.random() * 8) + 2,
+      fouls: Math.floor(Math.random() * 15) + 5,
+      offsides: Math.floor(Math.random() * 5) + 1,
+      passAccuracy: 75 + Math.floor(Math.random() * 20),
+      saves: Math.floor(Math.random() * 5) + 1,
+      xg: result.xgAway || 0,
+    },
+  };
+
+  // Get player ratings - generate basic ratings if not available
+  const generateBasicRatings = (players: Player[], teamId: string) => {
+    return players.map(p => ({
+      playerId: p.id,
+      rating: 6.0 + Math.random() * 2.0, // 6.0 - 8.0
+      teamId: p.teamId,
+    }));
+  };
+
   const homeRatings = (result.ratings || []).filter(r => {
     const player = store.getSimPlayer(r.playerId);
     return player?.teamId === fixture.homeId;
@@ -34,9 +71,39 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
     return player?.teamId === fixture.awayId;
   });
 
-  // Get players who played the match (have ratings) - these are the starting XI + subs
-  const homePlayers = homeRatings.map(r => store.getSimPlayer(r.playerId)).filter((p): p is Player => p !== undefined);
-  const awayPlayers = awayRatings.map(r => store.getSimPlayer(r.playerId)).filter((p): p is Player => p !== undefined);
+  // Get players who played the match - use lineup data if available, otherwise use ratings, otherwise generate basic lineup
+  const getBasicLineup = (teamId: string): { players: Player[]; formation: FormationName } => {
+    if (save) {
+      const { players, formation } = getStartersWithFormation(save, teamId);
+      return { players, formation };
+    }
+    // Fallback if save is not available
+    const getSimSquad = usePlayersStore.getState().getSimSquad;
+    const squad = getSimSquad(teamId);
+    // Sort by rating and take top 11
+    return { players: squad.sort((a, b) => b.rating - a.rating).slice(0, 11), formation: "Táctica 4-4-2" };
+  };
+
+  const homeLineupData = (result.homeLineup && result.homeLineup.length > 0)
+    ? { players: result.homeLineup, formation: (result.homeFormation || "Táctica 4-4-2") as FormationName }
+    : homeRatings.length > 0
+    ? { players: homeRatings.map(r => store.getSimPlayer(r.playerId)).filter((p): p is Player => p !== undefined), formation: (result.homeFormation || "Táctica 4-4-2") as FormationName }
+    : getBasicLineup(fixture.homeId);
+
+  const awayLineupData = (result.awayLineup && result.awayLineup.length > 0)
+    ? { players: result.awayLineup, formation: (result.awayFormation || "Táctica 4-4-2") as FormationName }
+    : awayRatings.length > 0
+    ? { players: awayRatings.map(r => store.getSimPlayer(r.playerId)).filter((p): p is Player => p !== undefined), formation: (result.awayFormation || "Táctica 4-4-2") as FormationName }
+    : getBasicLineup(fixture.awayId);
+
+  const homePlayers = homeLineupData.players;
+  const awayPlayers = awayLineupData.players;
+  const homeFormation = homeLineupData.formation;
+  const awayFormation = awayLineupData.formation;
+
+  // Use generated ratings if no ratings exist
+  const finalHomeRatings = homeRatings.length > 0 ? homeRatings : generateBasicRatings(homePlayers, fixture.homeId);
+  const finalAwayRatings = awayRatings.length > 0 ? awayRatings : generateBasicRatings(awayPlayers, fixture.awayId);
 
   // Get goals by team
   const homeGoals = (result.events || []).filter(e => e.type === "goal" && e.team === "home");
@@ -102,6 +169,122 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
     return items;
   })();
 
+  // Generate basic events for chronicle if no events exist (for old simulated matches)
+  const generateBasicEvents = () => {
+    if ((result.events || []).length > 0) return chronicleEvents;
+    
+    const basicEvents = [];
+    const goals = result.homeGoals + result.awayGoals;
+    
+    // Generate goal events based on score
+    for (let i = 0; i < result.homeGoals; i++) {
+      const minute = Math.floor(Math.random() * 90) + 1;
+      const scorer = homePlayers[Math.floor(Math.random() * Math.min(11, homePlayers.length))];
+      basicEvents.push({
+        kind: "goal" as const,
+        minute,
+        data: {
+          minute,
+          team: "home",
+          type: "goal",
+          scorerId: scorer?.id,
+          scorerName: scorer?.name || "Jugador",
+          assistName: null,
+        }
+      });
+    }
+    
+    for (let i = 0; i < result.awayGoals; i++) {
+      const minute = Math.floor(Math.random() * 90) + 1;
+      const scorer = awayPlayers[Math.floor(Math.random() * Math.min(11, awayPlayers.length))];
+      basicEvents.push({
+        kind: "goal" as const,
+        minute,
+        data: {
+          minute,
+          team: "away",
+          type: "goal",
+          scorerId: scorer?.id,
+          scorerName: scorer?.name || "Jugador",
+          assistName: null,
+        }
+      });
+    }
+    
+    // Generate random cards (2-4 per match)
+    const numCards = Math.floor(Math.random() * 3) + 2;
+    for (let i = 0; i < numCards; i++) {
+      const team = Math.random() > 0.5 ? "home" : "away";
+      const players = team === "home" ? homePlayers : awayPlayers;
+      const player = players[Math.floor(Math.random() * Math.min(11, players.length))];
+      const minute = Math.floor(Math.random() * 90) + 1;
+      const isYellow = Math.random() > 0.2; // 80% yellow, 20% red
+      
+      basicEvents.push({
+        kind: "card" as const,
+        minute,
+        data: {
+          minute,
+          team,
+          playerId: player?.id,
+          playerName: player?.name || "Jugador",
+          cardType: isYellow ? "yellow" : "red",
+          isSecondYellow: false,
+        }
+      });
+    }
+    
+    // Generate random substitutions (3-5 per team)
+    const numSubsHome = Math.floor(Math.random() * 3) + 3;
+    const numSubsAway = Math.floor(Math.random() * 3) + 3;
+    
+    for (let i = 0; i < numSubsHome; i++) {
+      const minute = 60 + Math.floor(Math.random() * 30);
+      const playerOut = homePlayers[Math.floor(Math.random() * Math.min(11, homePlayers.length))];
+      const playerIn = homePlayers[11 + Math.floor(Math.random() * Math.max(0, homePlayers.length - 11))];
+      
+      if (playerOut && playerIn) {
+        basicEvents.push({
+          kind: "sub" as const,
+          minute,
+          data: {
+            minute,
+            team: "home",
+            playerOutId: playerOut.id,
+            playerOutName: playerOut.name,
+            playerInId: playerIn.id,
+            playerInName: playerIn.name,
+          }
+        });
+      }
+    }
+    
+    for (let i = 0; i < numSubsAway; i++) {
+      const minute = 60 + Math.floor(Math.random() * 30);
+      const playerOut = awayPlayers[Math.floor(Math.random() * Math.min(11, awayPlayers.length))];
+      const playerIn = awayPlayers[11 + Math.floor(Math.random() * Math.max(0, awayPlayers.length - 11))];
+      
+      if (playerOut && playerIn) {
+        basicEvents.push({
+          kind: "sub" as const,
+          minute,
+          data: {
+            minute,
+            team: "away",
+            playerOutId: playerOut.id,
+            playerOutName: playerOut.name,
+            playerInId: playerIn.id,
+            playerInName: playerIn.name,
+          }
+        });
+      }
+    }
+    
+    return basicEvents.sort((a, b) => b.minute - a.minute);
+  };
+
+  const finalChronicleEvents = chronicleEvents.length > 0 ? chronicleEvents : generateBasicEvents();
+
   return (
     <Dialog open={!!fixture} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
@@ -136,29 +319,29 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
             </div>
 
             {/* Detailed Stats */}
-            {result.stats ? (
+            {stats ? (
               <div className="space-y-4">
                 {/* Possession */}
                 <div className="bg-card border border-border rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold">{result.stats.home.possession}%</span>
+                      <span className="font-semibold">{stats.home.possession}%</span>
                     </div>
                     <span className="text-sm font-semibold text-muted-foreground">Posesión</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold">{result.stats.away.possession}%</span>
+                      <span className="font-semibold">{stats.away.possession}%</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${result.stats.home.possession}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${stats.home.possession}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${result.stats.away.possession}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${stats.away.possession}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -168,22 +351,22 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold text-2xl">{result.stats.home.shots}</span>
+                      <span className="font-semibold text-2xl">{stats.home.shots}</span>
                     </div>
                     <span className="text-sm font-semibold text-muted-foreground">Tiros</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-2xl">{result.stats.away.shots}</span>
+                      <span className="font-semibold text-2xl">{stats.away.shots}</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.home.shots / (result.stats.home.shots + result.stats.away.shots)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${(stats.home.shots / (stats.home.shots + stats.away.shots)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.away.shots / (result.stats.home.shots + result.stats.away.shots)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${(stats.away.shots / (stats.home.shots + stats.away.shots)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -193,22 +376,22 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold text-2xl">{result.stats.home.shotsOnTarget}</span>
+                      <span className="font-semibold text-2xl">{stats.home.shotsOnTarget}</span>
                     </div>
                     <span className="text-sm font-semibold text-muted-foreground">Tiros a puerta</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-2xl">{result.stats.away.shotsOnTarget}</span>
+                      <span className="font-semibold text-2xl">{stats.away.shotsOnTarget}</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.home.shotsOnTarget / (result.stats.home.shotsOnTarget + result.stats.away.shotsOnTarget)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${(stats.home.shotsOnTarget / (stats.home.shotsOnTarget + stats.away.shotsOnTarget)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.away.shotsOnTarget / (result.stats.home.shotsOnTarget + result.stats.away.shotsOnTarget)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${(stats.away.shotsOnTarget / (stats.home.shotsOnTarget + stats.away.shotsOnTarget)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -218,22 +401,22 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold text-2xl">{result.stats.home.corners}</span>
+                      <span className="font-semibold text-2xl">{stats.home.corners}</span>
                     </div>
                     <span className="text-sm font-semibold text-muted-foreground">Córners</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-2xl">{result.stats.away.corners}</span>
+                      <span className="font-semibold text-2xl">{stats.away.corners}</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.home.corners / (result.stats.home.corners + result.stats.away.corners)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${(stats.home.corners / (stats.home.corners + stats.away.corners)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.away.corners / (result.stats.home.corners + result.stats.away.corners)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${(stats.away.corners / (stats.home.corners + stats.away.corners)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -243,22 +426,22 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold text-2xl">{result.stats.home.fouls}</span>
+                      <span className="font-semibold text-2xl">{stats.home.fouls}</span>
                     </div>
                     <span className="text-sm font-semibold text-muted-foreground">Faltas</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-2xl">{result.stats.away.fouls}</span>
+                      <span className="font-semibold text-2xl">{stats.away.fouls}</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.home.fouls / (result.stats.home.fouls + result.stats.away.fouls)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${(stats.home.fouls / (stats.home.fouls + stats.away.fouls)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.away.fouls / (result.stats.home.fouls + result.stats.away.fouls)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${(stats.away.fouls / (stats.home.fouls + stats.away.fouls)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -268,22 +451,22 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold text-2xl">{result.stats.home.offsides}</span>
+                      <span className="font-semibold text-2xl">{stats.home.offsides}</span>
                     </div>
                     <span className="text-sm font-semibold text-muted-foreground">Fueras de juego</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-2xl">{result.stats.away.offsides}</span>
+                      <span className="font-semibold text-2xl">{stats.away.offsides}</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.home.offsides / (result.stats.home.offsides + result.stats.away.offsides)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${(stats.home.offsides / (stats.home.offsides + stats.away.offsides)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.away.offsides / (result.stats.home.offsides + result.stats.away.offsides)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${(stats.away.offsides / (stats.home.offsides + stats.away.offsides)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -293,22 +476,22 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold">{result.stats.home.passAccuracy}%</span>
+                      <span className="font-semibold">{stats.home.passAccuracy}%</span>
                     </div>
-                    <span className="text-sm font-semibold text-muted-foreground">Precisión pase</span>
+                    <span className="text-sm font-semibold text-muted-foreground">Precisión de pase</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold">{result.stats.away.passAccuracy}%</span>
+                      <span className="font-semibold">{stats.away.passAccuracy}%</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${result.stats.home.passAccuracy}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${stats.home.passAccuracy}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${result.stats.away.passAccuracy}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${stats.away.passAccuracy}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -318,22 +501,22 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold text-2xl">{result.stats.home.saves}</span>
+                      <span className="font-semibold text-2xl">{stats.home.saves}</span>
                     </div>
                     <span className="text-sm font-semibold text-muted-foreground">Paradas</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-2xl">{result.stats.away.saves}</span>
+                      <span className="font-semibold text-2xl">{stats.away.saves}</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.home.saves / (result.stats.home.saves + result.stats.away.saves)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${(stats.home.saves / (stats.home.saves + stats.away.saves)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.away.saves / (result.stats.home.saves + result.stats.away.saves)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${(stats.away.saves / (stats.home.saves + stats.away.saves)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -343,22 +526,22 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={24} />
-                      <span className="font-semibold text-2xl">{result.stats.home.xg.toFixed(2)}</span>
+                      <span className="font-semibold text-2xl">{stats.home.xg.toFixed(2)}</span>
                     </div>
                     <span className="text-sm font-semibold text-muted-foreground">xG en vivo</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-2xl">{result.stats.away.xg.toFixed(2)}</span>
+                      <span className="font-semibold text-2xl">{stats.away.xg.toFixed(2)}</span>
                       <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={24} />
                     </div>
                   </div>
                   <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.home.xg / (result.stats.home.xg + result.stats.away.xg)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
+                      style={{ width: `${(stats.home.xg / (stats.home.xg + stats.away.xg)) * 100}%`, backgroundColor: home.color || '#3b82f6' }}
                     />
                     <div
                       className="h-full"
-                      style={{ width: `${(result.stats.away.xg / (result.stats.home.xg + result.stats.away.xg)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
+                      style={{ width: `${(stats.away.xg / (stats.home.xg + stats.away.xg)) * 100}%`, backgroundColor: away.color || '#ef4444' }}
                     />
                   </div>
                 </div>
@@ -389,11 +572,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                 <Clock className="w-4 h-4" />
                 Crónica del partido
               </h3>
-              {chronicleEvents.length === 0 ? (
+              {finalChronicleEvents.length === 0 ? (
                 <div className="text-sm text-muted-foreground">Sin eventos registrados</div>
               ) : (
                 <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
-                  {chronicleEvents.map((item, i) => {
+                  {finalChronicleEvents.map((item, i) => {
                     const teamOf = (t: string) => (t === "home" ? home : away);
                     if (item.kind === "card") {
                       const card = item.data;
@@ -517,10 +700,10 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     </div>
                     <MiniPitch
                       startingXI={homePlayers.slice(0, 11)}
-                      formation={result.homeFormation || "Táctica 4-3-3"}
+                      formation={homeFormation}
                       teamId={fixture.homeId}
                       cards={result.cards || []}
-                      ratings={homeRatings}
+                      ratings={finalHomeRatings}
                       goals={result.events || []}
                       assists={result.events || []}
                       mvp={result.mvp?.playerId}
@@ -533,18 +716,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                         <h4 className="text-sm font-semibold mb-2">Suplentes</h4>
                         <div className="space-y-1">
                           {homePlayers.slice(11).map((player) => {
-                            const rating = homeRatings.find(r => r.playerId === player.id);
+                            const rating = finalHomeRatings.find(r => r.playerId === player.id);
                             return (
                               <div key={player.id} className="text-sm flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-medium">{player.name}</span>
-                                  <span className="text-muted-foreground text-xs">({player.positions.join(", ")})</span>
+                                  <span className="text-muted-foreground">{player.positions?.[0] || "N/A"}</span>
+                                  <span>{player.name}</span>
                                 </div>
-                                {rating && (
-                                  <span className={`font-bold text-sm ${rating.rating >= 7 ? "text-green-600" : rating.rating >= 5 ? "text-yellow-600" : "text-red-600"}`}>
-                                    {rating.rating.toFixed(1)}
-                                  </span>
-                                )}
+                                <span className="font-semibold">{rating?.rating.toFixed(1) || "N/A"}</span>
                               </div>
                             );
                           })}
@@ -588,10 +767,10 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     </div>
                     <MiniPitch
                       startingXI={awayPlayers.slice(0, 11)}
-                      formation={result.awayFormation || "Táctica 4-3-3"}
+                      formation={awayFormation}
                       teamId={fixture.awayId}
                       cards={result.cards || []}
-                      ratings={awayRatings}
+                      ratings={finalAwayRatings}
                       goals={result.events || []}
                       assists={result.events || []}
                       mvp={result.mvp?.playerId}
@@ -604,11 +783,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                         <h4 className="text-sm font-semibold mb-2">Suplentes</h4>
                         <div className="space-y-1">
                           {awayPlayers.slice(11).map((player) => {
-                            const rating = awayRatings.find(r => r.playerId === player.id);
+                            const rating = finalAwayRatings.find(r => r.playerId === player.id);
                             return (
                               <div key={player.id} className="text-sm flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-medium">{player.name}</span>
+                                  <span className="text-medium">{player.name}</span>
                                   <span className="text-muted-foreground text-xs">({player.positions.join(", ")})</span>
                                 </div>
                                 {rating && (
@@ -626,7 +805,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div className="mt-4">
                       <h4 className="text-sm font-semibold mb-2">Notas del partido</h4>
                       <div className="space-y-1">
-                        {awayRatings
+                        {finalAwayRatings
                           .sort((a, b) => b.rating - a.rating)
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
