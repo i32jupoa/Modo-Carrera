@@ -85,12 +85,14 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
 
   // Create a map of player IDs to their goals
   const playerGoals: Record<string, number> = {};
-  goals.filter(g => g.type === "goal").forEach(g => {
-    if (!playerGoals[g.scorerId]) {
-      playerGoals[g.scorerId] = 0;
-    }
-    playerGoals[g.scorerId]++;
-  });
+  goals
+    .filter(g => (g.type === "goal" || g.type === "penalty_goal" || g.type === "free_kick_goal") && g.scorerId)
+    .forEach(g => {
+      if (!playerGoals[g.scorerId]) {
+        playerGoals[g.scorerId] = 0;
+      }
+      playerGoals[g.scorerId]++;
+    });
 
   // Create a map of player IDs to their assists
   const playerAssists: Record<string, number> = {};

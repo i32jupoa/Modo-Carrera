@@ -105,6 +105,10 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   const finalHomeRatings = homeRatings.length > 0 ? homeRatings : generateBasicRatings(homePlayers, fixture.homeId);
   const finalAwayRatings = awayRatings.length > 0 ? awayRatings : generateBasicRatings(awayPlayers, fixture.awayId);
 
+  // Fall back to the best-rated player among the (possibly generated) ratings
+  // if the stored result doesn't carry an explicit MVP.
+  const displayMvp = result.mvp ?? [...finalHomeRatings, ...finalAwayRatings].sort((a, b) => b.rating - a.rating)[0] ?? null;
+
   // Get goals by team
   const homeGoals = (result.events || []).filter(e => e.type === "goal" && e.team === "home");
   const awayGoals = (result.events || []).filter(e => e.type === "goal" && e.team === "away");
@@ -284,6 +288,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   };
 
   const finalChronicleEvents = chronicleEvents.length > 0 ? chronicleEvents : generateBasicEvents();
+
+  // Events used to draw goal ⚽ / assist 👟 icons on the mini pitch. For
+  // matches from other leagues (fast-simulated, no individual events saved)
+  // we fall back to the same generated goal events used in the chronicle,
+  // instead of leaving the pitch without any icons.
+  const displayEvents = (result.events && result.events.length > 0)
+    ? result.events
+    : finalChronicleEvents.filter((e) => e.kind === "goal").map((e) => e.data);
 
   return (
     <Dialog open={!!fixture} onOpenChange={onClose}>
@@ -669,7 +681,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
               </div>
 
               {/* MVP */}
-              {result.mvp && (
+              {displayMvp && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
                   <div className="flex items-center gap-3">
                     <Star className="w-5 h-5 text-yellow-500" />
@@ -677,8 +689,8 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       <div className="font-bold text-yellow-700">MVP del partido</div>
                       <div className="text-sm">
                         {(() => {
-                          const player = store.getSimPlayer(result.mvp.playerId);
-                          return player ? `${player.name} (${result.mvp.rating.toFixed(1)})` : "N/A";
+                          const player = store.getSimPlayer(displayMvp.playerId);
+                          return player ? `${player.name} (${displayMvp.rating.toFixed(1)})` : "N/A";
                         })()}
                       </div>
                     </div>
@@ -704,9 +716,9 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       teamId={fixture.homeId}
                       cards={result.cards || []}
                       ratings={finalHomeRatings}
-                      goals={result.events || []}
-                      assists={result.events || []}
-                      mvp={result.mvp?.playerId}
+                      goals={displayEvents}
+                      assists={displayEvents}
+                      mvp={displayMvp?.playerId}
                       injuries={result.injuries || []}
                       substitutions={result.substitutions || []}
                     />
@@ -734,11 +746,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div className="mt-4">
                       <h4 className="text-sm font-semibold mb-2">Notas del partido</h4>
                       <div className="space-y-1">
-                        {homeRatings
+                        {finalHomeRatings
                           .sort((a, b) => b.rating - a.rating)
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
-                            const isMvp = result.mvp?.playerId === rating.playerId;
+                            const isMvp = displayMvp?.playerId === rating.playerId;
                             return (
                               <div key={rating.playerId} className="text-sm flex items-center justify-between">
                                 <div className="flex items-center gap-2">
@@ -771,9 +783,9 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       teamId={fixture.awayId}
                       cards={result.cards || []}
                       ratings={finalAwayRatings}
-                      goals={result.events || []}
-                      assists={result.events || []}
-                      mvp={result.mvp?.playerId}
+                      goals={displayEvents}
+                      assists={displayEvents}
+                      mvp={displayMvp?.playerId}
                       injuries={result.injuries || []}
                       substitutions={result.substitutions || []}
                     />
@@ -809,7 +821,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           .sort((a, b) => b.rating - a.rating)
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
-                            const isMvp = result.mvp?.playerId === rating.playerId;
+                            const isMvp = displayMvp?.playerId === rating.playerId;
                             return (
                               <div key={rating.playerId} className="text-sm flex items-center justify-between">
                                 <div className="flex items-center gap-2">

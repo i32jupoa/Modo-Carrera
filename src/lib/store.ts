@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { persistCurrentSave } from "./savedGames";
 import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getPrimaryLeagueForCountry, Team } from "@/data/teams";
-import { type PosCode } from "@/lib/positions";
+import { type PosCode, canPlayPosition, isNaturalFor } from "@/lib/positions";
 
 // Funciones auxiliares para determinar tipo de jugador basado en posiciones específicas
 function isGoalkeeper(positions: PosCode[]): boolean {
@@ -162,7 +162,6 @@ import { applyMonthlyProgressionToAll } from "@/lib/monthlyProgression";
 import { applySeasonEndProgressionToAll } from "@/lib/seasonEndProgression";
 import { applySeasonEndProgressionToPlayer } from "@/lib/progressionHelper";
 import { applyMonthlyProgressionToPlayer } from "@/lib/progressionHelper";
-import { usePlayersStore } from "@/store/playersStore";
 import type { Player } from "@/data/players";
 import type { DynamicPlayerStats } from "@/types/playerStats";
 import { invalidateSquadsCache, generateAllSquads } from "@/data/players";
@@ -268,7 +267,8 @@ import { UCL_SIMULATION_DAYS } from "@/data/ucl";
 
 
 
-import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
+import { ALL_FORMATIONS, FORMATION_COORDINATES, slotPosCode, type FormationName } from "@/lib/formations";
+import { getTeamStyle, formationsForStyle } from "@/lib/teamProfile";
 
 
 
@@ -284,286 +284,90 @@ import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName } from "@/lib
 
 
 
-function generateCPUXI(squad: Player[], unavailable: Set<string>, forcedFormation?: FormationName): { ids: string[]; formation: FormationName } {
-
-
-
-  // Filter available players sorted by rating desc
-
-
-
-  const byPos: Record<string, Player[]> = { GK: [], DEF: [], MID: [], FWD: [] };
-
-
-
-  for (const p of squad) {
-
-
-
-    if (!unavailable.has(p.id) && byPos[p.position]) {
-
-
-
-      byPos[p.position].push(p);
-
-
-
-    }
-
-
-
-  }
-
-
-
-  for (const pos of Object.keys(byPos)) {
-
-
-
-    byPos[pos].sort((a, b) => b.rating - a.rating);
-
-
-
-  }
-
-
-
-
-
-
-
-  // Pick a random formation unless one is specified
-
-
-
-  const formation = forcedFormation ?? ALL_FORMATIONS[Math.floor(Math.random() * ALL_FORMATIONS.length)];
-
-
-
+/**
+ * Coloca 11 jugadores disponibles en los huecos de una formación concreta,
+ * respetando su demarcación real (natural o adaptable), igual que el 11
+ * ideal de /equipos (ver `estimatedEleven` en teamProfile.ts). Devuelve los
+ * ids en el mismo orden que los huecos de la formación (Object.keys), que es
+ * el orden que espera <MiniPitch> para pintar cada jugador en su sitio.
+ */
+function pickXIForFormation(
+  squad: Player[],
+  unavailable: Set<string>,
+  formation: FormationName,
+): { ids: string[]; score: number } {
   const coords = FORMATION_COORDINATES[formation];
-
-
-
-  const slots = Object.values(coords); // always exactly 11 slots
-
-
-
-
-
-
-
-  // Count how many of each role the formation needs
-
-
-
-  const needed: Record<string, number> = { GK: 0, DEF: 0, MID: 0, ATT: 0 };
-
-
-
-  for (const slot of slots) needed[slot.role]++;
-
-
-
-
-
-
-
-  // Build pools: GK→GK, DEF→DEF, MID→MID, ATT→FWD then MID fallback then DEF fallback
-
-
-
-  const pools: Record<string, Player[]> = {
-
-
-
-    GK:  byPos.GK.slice(0, needed.GK),
-
-
-
-    DEF: byPos.DEF.slice(0, needed.DEF),
-
-
-
-    MID: byPos.MID.slice(0, needed.MID),
-
-
-
-    ATT: [],
-
-
-
-  };
-
-
-
-
-
-
-
-  // Fill ATT pool: prefer FWD, then MID leftovers, then DEF leftovers, then any
-
-
-
-  const midUsed = pools.MID.map(p => p.id);
-
-
-
-  const defUsed = pools.DEF.map(p => p.id);
-
-
-
-  const attCandidates = [
-
-
-
-    ...byPos.FWD,
-
-
-
-    ...byPos.MID.filter(p => !midUsed.includes(p.id)),
-
-
-
-    ...byPos.DEF.filter(p => !defUsed.includes(p.id)),
-
-
-
-    ...byPos.GK.slice(1), // extra GKs as last resort
-
-
-
-  ];
-
-
-
-  const usedInPools = new Set([...pools.GK, ...pools.DEF, ...pools.MID].map(p => p.id));
-
-
-
-  pools.ATT = attCandidates.filter(p => !usedInPools.has(p.id)).slice(0, needed.ATT);
-
-
-
-
-
-
-
-  // If any pool is short, fill from remaining available players (any position)
-
-
-
-  const allUsed = new Set<string>();
-
-
-
-  for (const pool of Object.values(pools)) pool.forEach(p => allUsed.add(p.id));
-
-
-
-  const remaining = squad
-
-
-
-    .filter(p => !unavailable.has(p.id) && !allUsed.has(p.id))
-
-
-
-    .sort((a, b) => b.rating - a.rating);
-
-
-
-
-
-
-
-  for (const role of ["GK", "DEF", "MID", "ATT"] as const) {
-
-
-
-    while (pools[role].length < needed[role] && remaining.length > 0) {
-
-
-
-      const p = remaining.shift()!;
-
-
-
-      pools[role].push(p);
-
-
-
-      allUsed.add(p.id);
-
-
-
+  const slotKeys = Object.keys(coords);
+  const available = squad.filter((p) => !unavailable.has(p.id));
+  const used = new Set<string>();
+  const slotIds: (string | null)[] = new Array(slotKeys.length).fill(null);
+  let score = 0;
+
+  slotKeys.forEach((key, idx) => {
+    const required = slotPosCode(key);
+    const candidates = available
+      .filter((p) => !used.has(p.id))
+      .map((p) => ({ p, natural: isNaturalFor(p.positions, required), can: canPlayPosition(p.positions, required) }))
+      .filter((c) => c.can)
+      .sort((a, b) => (b.p.rating - a.p.rating) || ((b.natural ? 1 : 0) - (a.natural ? 1 : 0)));
+
+    if (candidates.length > 0) {
+      const pick = candidates[0];
+      used.add(pick.p.id);
+      slotIds[idx] = pick.p.id;
+      score += pick.p.rating - (pick.natural ? 0 : 5);
+    } else {
+      // Hueco sin candidato natural/adaptable disponible (p.ej. plantilla muy
+      // corta de una demarcación por lesiones). Se rellenará después con el
+      // mejor jugador libre que quede, para no salir a jugar con menos de 11.
+      score -= 40;
     }
+  });
 
-
-
+  if (slotIds.some((id) => id === null)) {
+    const leftovers = available.filter((p) => !used.has(p.id)).sort((a, b) => b.rating - a.rating);
+    for (let i = 0; i < slotIds.length; i++) {
+      if (slotIds[i] === null && leftovers.length > 0) {
+        const p = leftovers.shift()!;
+        slotIds[i] = p.id;
+        used.add(p.id);
+      }
+    }
   }
 
+  return { ids: slotIds.filter((id): id is string => !!id), score };
+}
 
-
-
-
-
-
-  // Build ids array in slot order (matching formation slot order for MiniPitch index mapping)
-
-
-
-  const roleCursors: Record<string, number> = { GK: 0, DEF: 0, MID: 0, ATT: 0 };
-
-
-
-  const ids: string[] = [];
-
-
-
-  for (const slot of slots) {
-
-
-
-    const pool = pools[slot.role];
-
-
-
-    const cursor = roleCursors[slot.role];
-
-
-
-    if (cursor < pool.length) {
-
-
-
-      ids.push(pool[cursor].id);
-
-
-
-      roleCursors[slot.role]++;
-
-
-
-    }
-
-
-
-    // If pool exhausted (shouldn't happen with fallback above), skip — MiniPitch handles null
-
-
-
+// Genera el once de un equipo CPU eligiendo, entre el catálogo de
+// formaciones típicas de su estilo de juego (ofensivo / equilibrado /
+// defensivo — el mismo catálogo que el 11 ideal de /equipos), la que mejor
+// encaje con los jugadores realmente disponibles en ese momento (se excluyen
+// lesionados y sancionados vía `unavailable`). Así, si un titular habitual
+// no puede jugar, tanto la alineación como la táctica se adaptan a lo que
+// queda en la plantilla, en vez de forzar siempre el mismo dibujo.
+function generateCPUXI(
+  squad: Player[],
+  unavailable: Set<string>,
+  team: Team,
+  forcedFormation?: FormationName,
+): { ids: string[]; formation: FormationName } {
+  if (forcedFormation) {
+    const { ids } = pickXIForFormation(squad, unavailable, forcedFormation);
+    return { ids, formation: forcedFormation };
   }
 
+  const { style } = getTeamStyle(team);
+  const candidateFormations = formationsForStyle(style);
 
+  let best: { ids: string[]; formation: FormationName; score: number } | null = null;
+  for (const formation of candidateFormations) {
+    const { ids, score } = pickXIForFormation(squad, unavailable, formation);
+    if (!best || score > best.score) {
+      best = { ids, formation, score };
+    }
+  }
 
-
-
-
-
-  return { ids, formation };
-
-
-
+  return { ids: best!.ids, formation: best!.formation };
 }
 
 
@@ -3595,23 +3399,7 @@ export function getStartersWithFormation(
 
 
 
-    const { ids: autoIds, formation } = existingFormation
-
-
-
-
-
-
-
-      ? generateCPUXI(squad, unavailable, existingFormation)
-
-
-
-
-
-
-
-      : generateCPUXI(squad, unavailable);
+    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, existingFormation);
 
 
 
@@ -3885,15 +3673,7 @@ export function getStarters(save: SaveGame, teamId: string): Player[] {
 
 
 
-    const { ids: autoIds, formation } = existingFormation
-
-
-
-      ? generateCPUXI(squad, unavailable, existingFormation)
-
-
-
-      : generateCPUXI(squad, unavailable);
+    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, existingFormation);
 
 
 
@@ -5200,41 +4980,23 @@ function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false, i
 
 
 
-  const result = isCup 
+  const homeFormationForSim = (save.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2";
+  const awayFormationForSim = (save.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2";
 
-
-
-
-
-
-
-    ? simulateCupMatch(home, away, homeXI, awayXI)
-
-
-
-
-
-
-
-    : fast 
-
-
-
-
-
-
-
+  const result = isCup
+    ? simulateCupMatch(home, away, homeXI, awayXI, {
+        homeTactics: loadTactics(fixture.homeId),
+        awayTactics: loadTactics(fixture.awayId),
+        homeFormation: homeFormationForSim,
+        awayFormation: awayFormationForSim,
+      })
+    : fast
       ? simulateMatchFast(home, away, homeXI, awayXI)
-
-
-
-
-
-
-
       : simulateMatch(home, away, homeXI, awayXI, {
           homeTactics: loadTactics(fixture.homeId),
           awayTactics: loadTactics(fixture.awayId),
+          homeFormation: homeFormationForSim,
+          awayFormation: awayFormationForSim,
         });
 
 
@@ -7006,7 +6768,12 @@ export async function simulateCupMatchdayLayered(save: SaveGame, matchday: numbe
 
         } else {
 
-          result = simulateCupMatch(home, away, homeXI, awayXI);
+          result = simulateCupMatch(home, away, homeXI, awayXI, {
+            homeTactics: loadTactics(fixture.homeId),
+            awayTactics: loadTactics(fixture.awayId),
+            homeFormation: (next.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2",
+            awayFormation: (next.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2",
+          });
 
           next = applyMatchToStats(next, { ...fixture, result });
 
@@ -7651,6 +7418,8 @@ export async function simulateRemainingCupMatches(save: SaveGame, currentRound: 
           result = simulateMatch(home, away, homeXI, awayXI, {
             homeTactics: loadTactics(fixture.homeId),
             awayTactics: loadTactics(fixture.awayId),
+            homeFormation: (next.formations[f.homeId] as FormationName | undefined) || "Táctica 4-4-2",
+            awayFormation: (next.formations[f.awayId] as FormationName | undefined) || "Táctica 4-4-2",
           });
 
 
@@ -12457,6 +12226,8 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
           result = simulateMatch(home, away, homeXI, awayXI, {
             homeTactics: loadTactics(fixture.homeId),
             awayTactics: loadTactics(fixture.awayId),
+            homeFormation: (next.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2",
+            awayFormation: (next.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2",
           });
 
           next = applyMatchToStats(next, { ...fixture, result });

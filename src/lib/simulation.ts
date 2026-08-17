@@ -430,12 +430,16 @@ export function simulateMatch(
     awayBench?: Player[];
     homeTactics?: SimTactics | null;
     awayTactics?: SimTactics | null;
+    homeFormation?: FormationName;
+    awayFormation?: FormationName;
   } = {},
 ): SimResult {
   const homeBench = opts.homeBench ?? [];
   const awayBench = opts.awayBench ?? [];
   const homeTactics = opts.homeTactics ?? null;
   const awayTactics = opts.awayTactics ?? null;
+  const homeFormation = opts.homeFormation ?? "Táctica 4-4-2";
+  const awayFormation = opts.awayFormation ?? "Táctica 4-4-2";
   const homeMods = tacticsModifiers(homeTactics);
   const awayMods = tacticsModifiers(awayTactics);
 
@@ -824,8 +828,8 @@ export function simulateMatch(
     highlights, stats, ratings, mvp,
     homeLineup: homeXI,
     awayLineup: awayXI,
-    homeFormation: "Táctica 4-4-2",
-    awayFormation: "Táctica 4-4-2",
+    homeFormation,
+    awayFormation,
     substitutions: [],
   };
 }
@@ -931,10 +935,18 @@ export function simulatePenaltyShootout(homeXI: Player[], awayXI: Player[]): { h
 
 // Simulate a full cup match with extra time and penalties
 export function simulateCupMatch(
-  home: Team, away: Team, homeXI: Player[], awayXI: Player[]
+  home: Team, away: Team, homeXI: Player[], awayXI: Player[],
+  opts: {
+    homeBench?: Player[];
+    awayBench?: Player[];
+    homeTactics?: SimTactics | null;
+    awayTactics?: SimTactics | null;
+    homeFormation?: FormationName;
+    awayFormation?: FormationName;
+  } = {},
 ): SimResult {
   // Simulate regular time (90 minutes)
-  const regularResult = simulateMatch(home, away, homeXI, awayXI);
+  const regularResult = simulateMatch(home, away, homeXI, awayXI, opts);
   
   // Check if it's a draw - if so, go to extra time
   if (regularResult.homeGoals === regularResult.awayGoals) {
@@ -946,15 +958,10 @@ export function simulateCupMatch(
     if (totalHome === totalAway) {
       const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
       
-      // Combine all results
+      // Combine all results, preserving lineups/formation/ratings/mvp from regular time
       return {
-        homeGoals: regularResult.homeGoals,
-        awayGoals: regularResult.awayGoals,
+        ...regularResult,
         events: [...regularResult.events, ...extraTimeResult.events],
-        cards: regularResult.cards,
-        injuries: regularResult.injuries,
-        xgHome: regularResult.xgHome,
-        xgAway: regularResult.xgAway,
         extraTime: {
           homeGoals: extraTimeResult.homeGoals,
           awayGoals: extraTimeResult.awayGoals,
@@ -969,13 +976,8 @@ export function simulateCupMatch(
     } else {
       // Match ended in extra time with a winner
       return {
-        homeGoals: regularResult.homeGoals,
-        awayGoals: regularResult.awayGoals,
+        ...regularResult,
         events: [...regularResult.events, ...extraTimeResult.events],
-        cards: regularResult.cards,
-        injuries: regularResult.injuries,
-        xgHome: regularResult.xgHome,
-        xgAway: regularResult.xgAway,
         extraTime: {
           homeGoals: extraTimeResult.homeGoals,
           awayGoals: extraTimeResult.awayGoals,

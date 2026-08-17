@@ -155,6 +155,17 @@ export function getTeamStyle(team: Team): {
   return { style, pressure, defenseLine };
 }
 
+/**
+ * Catálogo de formaciones típicas de un estilo de juego (equilibrado,
+ * defensivo u ofensivo). Es el mismo catálogo que usa el 11 ideal de
+ * /equipos, para que el motor de partido (jornadas, Champions, Copa)
+ * elija tácticas coherentes con la identidad real del equipo en vez de
+ * sortear entre las 24 formaciones sin criterio.
+ */
+export function formationsForStyle(style: PlayStyle): FormationName[] {
+  return FORMATIONS_BY_STYLE[style];
+}
+
 /* ------------------------------------------------------------------ orden */
 
 /**

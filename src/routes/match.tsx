@@ -9,7 +9,7 @@ import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import { MatchEvent, CardEvent, simulateExtraTime, simulatePenaltyShootout, type HighlightEvent } from "@/lib/simulation";
-import { accumulateStats, type MatchStats } from "@/lib/matchStats";
+import { accumulateStats, computePlayerRatings, type MatchStats } from "@/lib/matchStats";
 import { MatchStatsPanel } from "@/components/match/MatchStatsPanel";
 import { PlayerRatingsPanel } from "@/components/match/PlayerRatingsPanel";
 import { MATCH_TICK_MS, MATCH_START_DELAY_MS, EXTRA_TIME_TICK_MS, saveMatchSnapshot, loadMatchSnapshot, clearMatchSnapshot } from "@/lib/matchPlayback";
@@ -666,12 +666,72 @@ function MatchPage() {
     }
   }
 
+  /**
+   * Builds the formation, lineups, player ratings and MVP for a match the
+   * user just played live (Cup / UCL), so the post-match screen shows the
+   * same information as an AI-simulated match instead of leaving those
+   * fields empty.
+   */
+  function buildLiveMatchExtras(s: SaveGame, homeId: string, awayId: string) {
+    const homeData = getStartersWithFormation(s, homeId);
+    const awayData = getStartersWithFormation(s, awayId);
+
+    const events = allEventsRef.current || [];
+    const cards = allCardsRef.current || [];
+
+    const goals = events
+      .filter((e) => e.type === "goal" || e.type === "penalty_goal" || e.type === "free_kick_goal" || e.type === "own_goal")
+      .map((e) => ({
+        team: e.team,
+        scorerId: e.scorerId,
+        assistId: e.assistId,
+        ownGoal: e.type === "own_goal",
+      }));
+
+    const ratingCards = cards.map((c) => ({
+      team: c.team,
+      playerId: c.playerId,
+      cardType: c.cardType,
+      minute: c.minute,
+    }));
+
+    const minutesPlayed: Record<string, number> = {};
+    for (const p of [...homeData.players, ...awayData.players]) {
+      minutesPlayed[p.id] = 90;
+    }
+
+    const homeGoalsCount = goals.filter((g) => g.team === "home" && !g.ownGoal).length + goals.filter((g) => g.team === "away" && g.ownGoal).length;
+    const awayGoalsCount = goals.filter((g) => g.team === "away" && !g.ownGoal).length + goals.filter((g) => g.team === "home" && g.ownGoal).length;
+
+    const { ratings, mvp } = computePlayerRatings({
+      homeXI: homeData.players,
+      awayXI: awayData.players,
+      homeGoals: homeGoalsCount,
+      awayGoals: awayGoalsCount,
+      goals,
+      cards: ratingCards,
+      minutesPlayed,
+      homeSaves: 0,
+      awaySaves: 0,
+    });
+
+    return {
+      homeFormation: homeData.formation,
+      awayFormation: awayData.formation,
+      homeLineup: homeData.players,
+      awayLineup: awayData.players,
+      ratings,
+      mvp,
+    };
+  }
+
   function updateFixtureInStore(fixtureId: string, homeScore: number, awayScore: number, isCup: boolean = false, extraTimeData?: { homeGoals: number; awayGoals: number }, penaltyData?: { homeGoals: number; awayGoals: number }, isUCL: boolean = false) {
     console.log(`updateFixtureInStore called: fixtureId=${fixtureId}, homeScore=${homeScore}, awayScore=${awayScore}, isCup=${isCup}, isUCL=${isUCL}, extraTimeData=${JSON.stringify(extraTimeData)}, penaltyData=${JSON.stringify(penaltyData)}`);
 
     if (isUCL) {
       const s = loadSave();
       if (s && s.uclFixtures) {
+        const fx = s.uclFixtures.find((f) => f.id === fixtureId);
         // For UCL matches, homeGoals and awayGoals should be regular time only
         // extraTime.homeGoals and extraTime.awayGoals are the additional goals in extra time
         const result: any = {
@@ -683,6 +743,15 @@ function MatchPage() {
           xgHome: 0,
           xgAway: 0
         };
+
+        if (fx) {
+          try {
+            const extras = buildLiveMatchExtras(s, fx.homeId, fx.awayId);
+            Object.assign(result, extras);
+          } catch (err) {
+            console.error("Error building live match extras (UCL):", err);
+          }
+        }
 
         if (extraTimeData) {
           result.extraTime = {
@@ -716,6 +785,13 @@ function MatchPage() {
     } else if (isCup) {
       const s = loadSave();
       if (s) {
+        // Find the cup fixture across all leagues first, so we know home/away teams.
+        let cupFx: Fixture | undefined;
+        for (const fxs of Object.values(s.cupFixtures)) {
+          cupFx = fxs.find((f) => f.id === fixtureId);
+          if (cupFx) break;
+        }
+
         // For cup matches, homeGoals and awayGoals should be regular time only
         // extraTime.homeGoals and extraTime.awayGoals are the additional goals in extra time
         const result: any = {
@@ -727,6 +803,15 @@ function MatchPage() {
           xgHome: 0,
           xgAway: 0
         };
+
+        if (cupFx) {
+          try {
+            const extras = buildLiveMatchExtras(s, cupFx.homeId, cupFx.awayId);
+            Object.assign(result, extras);
+          } catch (err) {
+            console.error("Error building live match extras (Cup):", err);
+          }
+        }
 
         if (extraTimeData) {
           result.extraTime = {
