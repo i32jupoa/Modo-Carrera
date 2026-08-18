@@ -81,7 +81,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
-  const ready = enabled && typeof window !== "undefined" && isTransferSystemInitialized() && !!myTeamId;
+  const ready =
+    enabled && typeof window !== "undefined" && isTransferSystemInitialized() && !!myTeamId;
 
   // Las negociaciones las avanza `MarketNotifier` de forma global (también
   // con la pantalla de mercado cerrada) y sus novedades se muestran como
@@ -98,7 +99,10 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const deals = useMemo(() => (ready ? listUserDeals() : []), [ready, tick, currentDate]);
   const incoming = useMemo(() => deals.filter((d) => d.direction === "out"), [deals]);
   const outgoing = useMemo(() => deals.filter((d) => d.direction === "in"), [deals]);
-  const rumors = useMemo(() => (ready ? freshRumors(currentDate, 200) : []), [ready, currentDate, tick]);
+  const rumors = useMemo(
+    () => (ready ? freshRumors(currentDate, 200) : []),
+    [ready, currentDate, tick],
+  );
   // Historial completo de la ventana en curso (o de la última cerrada): la UI
   // lo usa al filtrar por un club concreto.
   const windowRumors = useMemo(
@@ -113,7 +117,10 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   // los datos — sólo lo que se pinta en pantalla (eso ya lo hace
   // `MarketFeed` al final, con su propio límite de renderizado).
   const history = useMemo(() => (ready ? listTransfers() : []), [ready, currentDate, tick]);
-  const summary = useMemo(() => (ready ? summarize(listTransfers()) : null), [ready, currentDate, tick]);
+  const summary = useMemo(
+    () => (ready ? summarize(listTransfers()) : null),
+    [ready, currentDate, tick],
+  );
 
   const commit = useCallback(
     (message?: string, error?: string) => {
@@ -158,7 +165,10 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         wageOffer,
         clauses,
       });
-      commit(result.ok ? "Oferta enviada. El club responderá en unos días." : undefined, result.reason);
+      commit(
+        result.ok ? "Oferta enviada. El club responderá en unos días." : undefined,
+        result.reason,
+      );
     },
     [myTeamId, currentDate, commit],
   );

@@ -1,9 +1,21 @@
 import { Team, teamById } from "@/data/teams";
 
-export function TeamBadge({ team, teamId, size = 36 }: { team?: Team; teamId?: string; size?: number }) {
+export function TeamBadge({
+  team,
+  teamId,
+  size = 36,
+}: {
+  team?: Team;
+  teamId?: string;
+  size?: number;
+}) {
   let t: Team | null = team ?? null;
   if (!t && teamId) {
-    try { t = teamById(teamId); } catch { t = null; }
+    try {
+      t = teamById(teamId);
+    } catch {
+      t = null;
+    }
   }
   if (!t) {
     return (

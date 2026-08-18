@@ -17,7 +17,11 @@
  * precio nunca se acerca al tope que impone la rampa.
  */
 
-import { daysIntoTransferWindow, transferWindowKey, transferWindowLengthDays } from "../transferWindows";
+import {
+  daysIntoTransferWindow,
+  transferWindowKey,
+  transferWindowLengthDays,
+} from "../transferWindows";
 import { BIG_SIGNING_PACING } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
 import { clamp, seededUnit } from "./random";

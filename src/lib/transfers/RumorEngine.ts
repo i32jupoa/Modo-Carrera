@@ -47,10 +47,10 @@ function publish(rumor: Rumor): Rumor | null {
   // suyas al día. El resto simplemente no se publica.
   if (publishedTodayBy(rumor.clubId, rumor.date) >= RUMOR_RULES.maxPerClubPerDay) return null;
   rumors.push(rumor);
-  if (rumors.length > RUMOR_RULES.maxStored) rumors.splice(0, rumors.length - RUMOR_RULES.maxStored);
+  if (rumors.length > RUMOR_RULES.maxStored)
+    rumors.splice(0, rumors.length - RUMOR_RULES.maxStored);
   return rumor;
 }
-
 
 // ============================================================================
 // GENERADORES
@@ -130,7 +130,12 @@ export function rumorSearching(clubId: string, group: PositionGroup, date: strin
 }
 
 /** Rumor de renovación en marcha o cerrada. */
-export function rumorRenewal(clubId: string, playerId: string, agreed: boolean, date: string): Rumor | null {
+export function rumorRenewal(
+  clubId: string,
+  playerId: string,
+  agreed: boolean,
+  date: string,
+): Rumor | null {
   const player = getPlayer(playerId);
   if (!player) return null;
   return publish({
@@ -200,8 +205,6 @@ export function rumorsSince(since: string, limit = 1000): Rumor[] {
     .filter((rumor) => rumor.date >= since)
     .slice(0, limit);
 }
-
-
 
 /** Vacía los rumores (al cargar otra partida). */
 export function resetRumors(): void {

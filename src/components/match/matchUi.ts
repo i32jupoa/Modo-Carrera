@@ -6,17 +6,13 @@ const BASE =
   "transition disabled:opacity-40 disabled:pointer-events-none focus-visible:outline-none " +
   "focus-visible:ring-2 focus-visible:ring-primary/60";
 
-export const btnPrimary =
-  `${BASE} h-11 px-6 text-sm font-black bg-primary text-primary-foreground glow-neon hover:brightness-110`;
+export const btnPrimary = `${BASE} h-11 px-6 text-sm font-black bg-primary text-primary-foreground glow-neon hover:brightness-110`;
 
-export const btnSecondary =
-  `${BASE} h-11 px-5 text-sm bg-card border border-border hover:border-accent`;
+export const btnSecondary = `${BASE} h-11 px-5 text-sm bg-card border border-border hover:border-accent`;
 
-export const btnGhost =
-  `${BASE} h-9 px-4 text-xs bg-transparent border border-border/70 text-muted-foreground hover:text-foreground hover:border-accent`;
+export const btnGhost = `${BASE} h-9 px-4 text-xs bg-transparent border border-border/70 text-muted-foreground hover:text-foreground hover:border-accent`;
 
-export const btnDanger =
-  `${BASE} h-11 px-5 text-sm bg-destructive/15 border border-destructive/50 text-destructive hover:bg-destructive/25`;
+export const btnDanger = `${BASE} h-11 px-5 text-sm bg-destructive/15 border border-destructive/50 text-destructive hover:bg-destructive/25`;
 
 export const segmentBase =
   "inline-flex items-center rounded-lg border border-border bg-card p-0.5 gap-0.5";

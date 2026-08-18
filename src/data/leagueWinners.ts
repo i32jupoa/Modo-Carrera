@@ -16,7 +16,11 @@ export const LEAGUE_WINNERS: Record<string, Record<string, SeasonWinners>> = {
     "24/25": { league: "LaLiga", champion: "FC Barcelona", cupWinner: "FC Barcelona" },
   },
   premier: {
-    "22/23": { league: "Premier League", champion: "Manchester City", cupWinner: "Manchester City" },
+    "22/23": {
+      league: "Premier League",
+      champion: "Manchester City",
+      cupWinner: "Manchester City",
+    },
     "23/24": { league: "Premier League", champion: "Manchester City", cupWinner: "Man Utd" },
     "24/25": { league: "Premier League", champion: "Liverpool", cupWinner: "Crystal Palace" },
   },

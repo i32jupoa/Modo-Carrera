@@ -37,7 +37,6 @@ function Index() {
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const initPlayers = usePlayersStore((s) => s.init);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const savedGames = useMemo(() => loadAllSaves(), [hasSave]);
 
   // Generar partículas solo en el cliente para evitar error de hidratación
@@ -83,22 +82,22 @@ function Index() {
       // Primero borrar cualquier dato persistente del mercado de localStorage
       // ANTES de limpiar el saveId, para borrar TODOS los mercados guardados
       clearAllTransferSaves();
-      
+
       // Limpiar el estado persistente del playersStore para evitar estado compartido
       localStorage.removeItem("fcsim:players:v1");
       // Limpiar la partida activa previa y resetear el playersStore en memoria
       setCurrentSaveId(null);
       usePlayersStore.getState().clear();
       usePlayersStore.getState().resetAllStats();
-      
+
       // Resetear completamente el sistema de transferencias y plantillas para nueva partida
       resetTransferSystem();
       resetMarketIndex();
       resetSquadReports();
-      
+
       // Resetear los overrides de club para que los fichajes no persistan entre partidas
       resetClubOverrides();
-      
+
       initPlayers();
       const s = newSave(id);
       setMyTeam(id);

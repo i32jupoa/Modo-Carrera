@@ -6,8 +6,6 @@ import { Fixture } from "@/lib/season";
 
 import { UCL_CALENDAR, UCL_START, UCLBracketSlot, UCLPhase } from "@/data/ucl";
 
-
-
 // ============================================================
 
 //  SWISS DRAW — SIMPLE VERSION (no country restrictions)
@@ -20,29 +18,19 @@ import { UCL_CALENDAR, UCL_START, UCLBracketSlot, UCLPhase } from "@/data/ucl";
 
 // ============================================================
 
-
-
 type Opponent = { teamId: string; isHome: boolean };
 
-
-
 function shuffle<T>(arr: T[]): T[] {
-
   const a = [...arr];
 
   for (let i = a.length - 1; i > 0; i--) {
-
     const j = Math.floor(Math.random() * (i + 1));
 
     [a[i], a[j]] = [a[j], a[i]];
-
   }
 
   return a;
-
 }
-
-
 
 /**
 
@@ -53,16 +41,12 @@ function shuffle<T>(arr: T[]): T[] {
  */
 
 function derange(arr: string[]): string[] {
-
   const n = arr.length;
 
   const offset = 1 + Math.floor(Math.random() * (n - 1));
 
   return arr.map((_, i) => arr[(i + offset) % n]);
-
 }
-
-
 
 /**
 
@@ -77,13 +61,11 @@ function derange(arr: string[]): string[] {
  */
 
 function pairPot(pot: string[]): { homeId: string; awayId: string }[] {
-
   const n = pot.length;
 
   // Try up to 100 shuffles to find a valid derangement with no self-match
 
   for (let attempt = 0; attempt < 100; attempt++) {
-
     const base = shuffle(pot);
 
     const der = derange(base);
@@ -93,7 +75,6 @@ function pairPot(pot: string[]): { homeId: string; awayId: string }[] {
     if (base.some((t, i) => t === der[i])) continue;
 
     return base.map((homeId, i) => ({ homeId, awayId: der[i] }));
-
   }
 
   // Fallback: guaranteed offset-1 derangement
@@ -101,10 +82,7 @@ function pairPot(pot: string[]): { homeId: string; awayId: string }[] {
   const base = shuffle(pot);
 
   return base.map((homeId, i) => ({ homeId, awayId: base[(i + 1) % n] }));
-
 }
-
-
 
 /**
 
@@ -118,15 +96,16 @@ function pairPot(pot: string[]): { homeId: string; awayId: string }[] {
 
  */
 
-export function runSwissDraw(participants: string[]): { assignments: Map<string, Opponent[]>, matrix: boolean[][], teamIndex: Map<string, number> } {
-
+export function runSwissDraw(participants: string[]): {
+  assignments: Map<string, Opponent[]>;
+  matrix: boolean[][];
+  teamIndex: Map<string, number>;
+} {
   const pots = assignUCLPots(participants);
 
   const assignments = new Map<string, Opponent[]>();
 
   for (const t of participants) assignments.set(t, []);
-
-
 
   // 36x36 matrix for visualization
 
@@ -136,10 +115,10 @@ export function runSwissDraw(participants: string[]): { assignments: Map<string,
 
   const matrix: boolean[][] = Array.from({ length: 36 }, () => Array(36).fill(false));
 
-
-
-  function bipartite2Regular(groupA: string[], groupB: string[]): { homeId: string; awayId: string }[] {
-
+  function bipartite2Regular(
+    groupA: string[],
+    groupB: string[],
+  ): { homeId: string; awayId: string }[] {
     const n = groupA.length;
 
     const pairs: { homeId: string; awayId: string }[] = [];
@@ -149,43 +128,31 @@ export function runSwissDraw(participants: string[]): { assignments: Map<string,
     const bShuf = shuffle(groupB);
 
     for (let i = 0; i < n; i++) {
-
       pairs.push({ homeId: aShuf[i], awayId: bShuf[i] });
-
     }
 
     const bDer = derange(bShuf);
 
     for (let i = 0; i < n; i++) {
-
       if (bDer[i] === bShuf[i]) {
-
         const j = (i + 1) % n;
 
         [bDer[i], bDer[j]] = [bDer[j], bDer[i]];
-
       }
 
       pairs.push({ homeId: bDer[i], awayId: aShuf[i] });
-
     }
 
     return pairs;
-
   }
-
-
 
   // Cross-pot pairings
 
   for (let pi = 0; pi < 4; pi++) {
-
     for (let pj = pi + 1; pj < 4; pj++) {
-
       const pairs = bipartite2Regular(pots[pi], pots[pj]);
 
       for (const { homeId, awayId } of pairs) {
-
         assignments.get(homeId)!.push({ teamId: awayId, isHome: true });
 
         assignments.get(awayId)!.push({ teamId: homeId, isHome: false });
@@ -197,23 +164,16 @@ export function runSwissDraw(participants: string[]): { assignments: Map<string,
         matrix[ia][ib] = true;
 
         matrix[ib][ia] = true;
-
       }
-
     }
-
   }
-
-
 
   // Within-pot pairings
 
   for (const pot of pots) {
-
     const pairs = pairPot(pot);
 
     for (const { homeId, awayId } of pairs) {
-
       assignments.get(homeId)!.push({ teamId: awayId, isHome: true });
 
       assignments.get(awayId)!.push({ teamId: homeId, isHome: false });
@@ -225,18 +185,11 @@ export function runSwissDraw(participants: string[]): { assignments: Map<string,
       matrix[ia][ib] = true;
 
       matrix[ib][ia] = true;
-
     }
-
   }
 
-
-
   return { assignments, matrix, teamIndex };
-
 }
-
-
 
 // ============================================================
 
@@ -256,11 +209,11 @@ export function assignmentsToFixtures(
   const allPairs: { homeId: string; awayId: string }[] = [];
   const seen = new Set<string>();
   const teamOpponentCount = new Map<string, number>();
-  
+
   for (const team of participants) {
     teamOpponentCount.set(team, 0);
   }
-  
+
   for (const [team, opps] of assignments) {
     for (const opp of opps) {
       if (opp.isHome) {
@@ -274,17 +227,22 @@ export function assignmentsToFixtures(
       }
     }
   }
-  
+
   // Log opponent counts for debugging
   console.log(`[assignmentsToFixtures] Total pairs: ${allPairs.length}`);
-  console.log(`[assignmentsToFixtures] Team opponent counts:`, 
-    Array.from(teamOpponentCount.entries()).map(([t, c]) => ({ team: t, count: c })).filter(t => t.count !== 8)
+  console.log(
+    `[assignmentsToFixtures] Team opponent counts:`,
+    Array.from(teamOpponentCount.entries())
+      .map(([t, c]) => ({ team: t, count: c }))
+      .filter((t) => t.count !== 8),
   );
 
   // Step 2: Use DFS-based maximum matching for each round
   // This guarantees finding a perfect matching if one exists
-  
-  function findPerfectMatching(pairs: { homeId: string; awayId: string }[]): { homeId: string; awayId: string }[] | null {
+
+  function findPerfectMatching(
+    pairs: { homeId: string; awayId: string }[],
+  ): { homeId: string; awayId: string }[] | null {
     // Build adjacency list
     const adj = new Map<string, string[]>();
     for (const team of participants) adj.set(team, []);
@@ -292,20 +250,20 @@ export function assignmentsToFixtures(
       adj.get(p.homeId)!.push(p.awayId);
       adj.get(p.awayId)!.push(p.homeId);
     }
-    
+
     // Shuffle adjacency lists for randomness
     for (const list of adj.values()) {
       shuffle(list);
     }
-    
+
     const match = new Map<string, string | null>();
     for (const team of participants) match.set(team, null);
-    
+
     function dfs(u: string, visited: Set<string>): boolean {
       for (const v of adj.get(u)!) {
         if (visited.has(v)) continue;
         visited.add(v);
-        
+
         const currentMatch = match.get(v);
         if (currentMatch === null || (currentMatch && dfs(currentMatch, visited))) {
           match.set(u, v);
@@ -315,7 +273,7 @@ export function assignmentsToFixtures(
       }
       return false;
     }
-    
+
     let matchingSize = 0;
     for (const team of participants) {
       if (match.get(team) === null) {
@@ -325,18 +283,18 @@ export function assignmentsToFixtures(
         }
       }
     }
-    
+
     // Check if we have a perfect matching (18 edges = 36 matched vertices)
     if (matchingSize !== 18) return null;
-    
+
     // Extract pairs from matching
     const result: { homeId: string; awayId: string }[] = [];
     const used = new Set<string>();
     for (const [u, v] of match.entries()) {
       if (v && !used.has(u) && !used.has(v)) {
         // Find the original pair
-        const pair = pairs.find(p => 
-          (p.homeId === u && p.awayId === v) || (p.homeId === v && p.awayId === u)
+        const pair = pairs.find(
+          (p) => (p.homeId === u && p.awayId === v) || (p.homeId === v && p.awayId === u),
         );
         if (pair) {
           result.push(pair);
@@ -345,10 +303,10 @@ export function assignmentsToFixtures(
         }
       }
     }
-    
+
     return result.length === 18 ? result : null;
   }
-  
+
   // Try to partition the 8-regular graph into 8 perfect matchings.
   // If any round fails to reach 18 matches, restart the partition with a fresh shuffle.
   let rounds: { homeId: string; awayId: string }[][] | null = null;
@@ -364,12 +322,15 @@ export function assignmentsToFixtures(
         if (matching && matching.length === 18) break;
         matching = null;
       }
-      if (!matching) { ok = false; break; }
-      const usedKeys = new Set(matching.map(m => `${m.homeId}__${m.awayId}`));
-      remainingPairs = remainingPairs.filter(p => !usedKeys.has(`${p.homeId}__${p.awayId}`));
+      if (!matching) {
+        ok = false;
+        break;
+      }
+      const usedKeys = new Set(matching.map((m) => `${m.homeId}__${m.awayId}`));
+      remainingPairs = remainingPairs.filter((p) => !usedKeys.has(`${p.homeId}__${p.awayId}`));
       tryRounds.push(matching);
     }
-    if (ok && tryRounds.length === 8 && tryRounds.every(r => r.length === 18)) {
+    if (ok && tryRounds.length === 8 && tryRounds.every((r) => r.length === 18)) {
       rounds = tryRounds;
     }
   }
@@ -395,13 +356,14 @@ export function assignmentsToFixtures(
   }
 
   // Log for debugging
-  const rmaFixtures = fixtures.filter(f => f.homeId === "rma" || f.awayId === "rma");
-  console.log(`[assignmentsToFixtures] rma fixtures:`, rmaFixtures.map(f => ({ round: f.round, homeId: f.homeId, awayId: f.awayId })));
+  const rmaFixtures = fixtures.filter((f) => f.homeId === "rma" || f.awayId === "rma");
+  console.log(
+    `[assignmentsToFixtures] rma fixtures:`,
+    rmaFixtures.map((f) => ({ round: f.round, homeId: f.homeId, awayId: f.awayId })),
+  );
 
   return fixtures;
 }
-
-
 
 // ============================================================
 
@@ -414,81 +376,65 @@ export function assignmentsToFixtures(
 // ============================================================
 
 export function drawUCLPlayoffs(
-
   rankedTeams: string[], // positions 0=1st…35=36th, only indices 8..23 used
-
 ): { homeId: string; awayId: string }[] {
-
   // slots 8-23 = 9th to 24th
 
-  const seeds = rankedTeams.slice(8, 16);   // 9–16 (home in leg 2)
+  const seeds = rankedTeams.slice(8, 16); // 9–16 (home in leg 2)
 
   const unseeded = rankedTeams.slice(16, 24); // 17–24
-
-
 
   // Pairing: seed i (0-indexed) vs unseeded[7-i] (mirror)
 
   const pairs: { homeId: string; awayId: string }[] = [];
 
-
-
   // Within each band, randomize which specific team faces which
 
-  const band0s = shuffle(seeds.slice(0, 2));   // 9,10
+  const band0s = shuffle(seeds.slice(0, 2)); // 9,10
 
   const band0u = shuffle(unseeded.slice(6, 8)); // 23,24
 
-  const band1s = shuffle(seeds.slice(2, 4));   // 11,12
+  const band1s = shuffle(seeds.slice(2, 4)); // 11,12
 
   const band1u = shuffle(unseeded.slice(4, 6)); // 21,22
 
-  const band2s = shuffle(seeds.slice(4, 6));   // 13,14
+  const band2s = shuffle(seeds.slice(4, 6)); // 13,14
 
   const band2u = shuffle(unseeded.slice(2, 4)); // 19,20
 
-  const band3s = shuffle(seeds.slice(6, 8));   // 15,16
+  const band3s = shuffle(seeds.slice(6, 8)); // 15,16
 
   const band3u = shuffle(unseeded.slice(0, 2)); // 17,18
 
-
-
-  const bands = [[band0s, band0u], [band1s, band1u], [band2s, band2u], [band3s, band3u]];
+  const bands = [
+    [band0s, band0u],
+    [band1s, band1u],
+    [band2s, band2u],
+    [band3s, band3u],
+  ];
 
   for (const [s, u] of bands) {
-
     pairs.push({ homeId: u[0], awayId: s[0] }); // leg 1: unseeded home
 
     pairs.push({ homeId: u[1], awayId: s[1] });
-
   }
 
-
-
   return pairs;
-
 }
 
-
-
 export function playoffPairsToFixtures(
-
   pairs: { homeId: string; awayId: string }[],
 
   leg1DayOffset: number,
 
   leg2DayOffset: number,
-
 ): Fixture[] {
-
   const fixtures: Fixture[] = [];
 
   for (let i = 0; i < pairs.length; i++) {
-
     const { homeId, awayId } = pairs[i];
 
     fixtures.push({
-
       id: `ucl-po-leg1-${i}`,
 
       competition: "ucl",
@@ -502,13 +448,11 @@ export function playoffPairsToFixtures(
       homeId,
 
       awayId,
-
     });
 
     // Leg 2: seed (away in leg 1) plays at home
 
     fixtures.push({
-
       id: `ucl-po-leg2-${i}`,
 
       competition: "ucl",
@@ -522,16 +466,11 @@ export function playoffPairsToFixtures(
       homeId: awayId,
 
       awayId: homeId,
-
     });
-
   }
 
   return fixtures;
-
 }
-
-
 
 // ============================================================
 
@@ -544,25 +483,23 @@ export function playoffPairsToFixtures(
 // ============================================================
 
 export function buildUCLBracket(
-
-  top8: string[],         // [1st, 2nd, ..., 8th]
+  top8: string[], // [1st, 2nd, ..., 8th]
 
   playoffWinners: string[], // 8 winners from playoffs, in seed order (best seed first)
 
   dayOffsets: {
+    r16Leg1: number;
+    r16Leg2: number;
 
-    r16Leg1: number; r16Leg2: number;
+    qfLeg1: number;
+    qfLeg2: number;
 
-    qfLeg1: number;  qfLeg2: number;
-
-    sfLeg1: number;  sfLeg2: number;
+    sfLeg1: number;
+    sfLeg2: number;
 
     final: number;
-
   },
-
 ): { fixtures: Fixture[]; bracket: UCLBracketSlot[] } {
-
   // Matchups: top8[i] vs playoffWinners[7-i] (best vs worst playoff winner)
 
   // Bracket halves: 0-3 = top half, 4-7 = bottom half
@@ -572,27 +509,19 @@ export function buildUCLBracket(
   const r16Pairs: { seed: string; winner: string }[] = [];
 
   for (let i = 0; i < 8; i++) {
-
     r16Pairs.push({ seed: top8[i], winner: playoffWinners[7 - i] });
-
   }
-
-
 
   const fixtures: Fixture[] = [];
 
   const bracket: UCLBracketSlot[] = [];
 
-
-
   // R16 (8 ties)
 
   for (let i = 0; i < 8; i++) {
-
     const { seed, winner } = r16Pairs[i];
 
     fixtures.push({
-
       id: `ucl-r16-${i}-leg1`,
 
       competition: "ucl",
@@ -606,11 +535,9 @@ export function buildUCLBracket(
       homeId: winner, // seed plays leg 2 at home
 
       awayId: seed,
-
     });
 
     fixtures.push({
-
       id: `ucl-r16-${i}-leg2`,
 
       competition: "ucl",
@@ -624,13 +551,9 @@ export function buildUCLBracket(
       homeId: seed,
 
       awayId: winner,
-
     });
 
-
-
     bracket.push({
-
       id: `R16-${i + 1}`,
 
       round: "r16",
@@ -644,19 +567,13 @@ export function buildUCLBracket(
       legTwoMatchday: dayOffsets.r16Leg2,
 
       isFinal: false,
-
     });
-
   }
-
-
 
   // QF, SF, Final slots (TBD — filled as rounds complete)
 
   for (let i = 0; i < 4; i++) {
-
     bracket.push({
-
       id: `QF-${i + 1}`,
 
       round: "qf",
@@ -670,15 +587,11 @@ export function buildUCLBracket(
       legTwoMatchday: dayOffsets.qfLeg2,
 
       isFinal: false,
-
     });
-
   }
 
   for (let i = 0; i < 2; i++) {
-
     bracket.push({
-
       id: `SF-${i + 1}`,
 
       round: "sf",
@@ -692,13 +605,10 @@ export function buildUCLBracket(
       legTwoMatchday: dayOffsets.sfLeg2,
 
       isFinal: false,
-
     });
-
   }
 
   bracket.push({
-
     id: "F",
 
     round: "final",
@@ -712,16 +622,10 @@ export function buildUCLBracket(
     legTwoMatchday: dayOffsets.final,
 
     isFinal: true,
-
   });
 
-
-
   return { fixtures, bracket };
-
 }
-
-
 
 // ============================================================
 
@@ -732,24 +636,17 @@ export function buildUCLBracket(
 // ============================================================
 
 export function getAggregateWinner(
-
   leg1: Fixture,
 
   leg2: Fixture,
-
 ): "leg2Home" | "leg2Away" | "extra" {
-
   if (!leg1.result || !leg2.result) return "extra";
-
-
 
   // leg2 homeId = team that was away in leg1
 
   const aggHome = (leg2.result.homeGoals ?? 0) + (leg1.result.awayGoals ?? 0);
 
   const aggAway = (leg2.result.awayGoals ?? 0) + (leg1.result.homeGoals ?? 0);
-
-
 
   // If there are penalties, determine winner from penalty shootout
   if (leg2.result.penalties) {
@@ -761,8 +658,14 @@ export function getAggregateWinner(
 
   // If there's extra time but no penalties, use extra time aggregate
   if (leg2.result.extraTime) {
-    const etHome = (leg2.result.homeGoals ?? 0) + (leg2.result.extraTime.homeGoals ?? 0) + (leg1.result.awayGoals ?? 0);
-    const etAway = (leg2.result.awayGoals ?? 0) + (leg2.result.extraTime.awayGoals ?? 0) + (leg1.result.homeGoals ?? 0);
+    const etHome =
+      (leg2.result.homeGoals ?? 0) +
+      (leg2.result.extraTime.homeGoals ?? 0) +
+      (leg1.result.awayGoals ?? 0);
+    const etAway =
+      (leg2.result.awayGoals ?? 0) +
+      (leg2.result.extraTime.awayGoals ?? 0) +
+      (leg1.result.homeGoals ?? 0);
     if (etHome > etAway) return "leg2Home";
     if (etAway > etHome) return "leg2Away";
   }
@@ -772,10 +675,7 @@ export function getAggregateWinner(
   if (aggAway > aggHome) return "leg2Away";
 
   return "extra"; // needs penalties/ET
-
 }
-
-
 
 // ============================================================
 
@@ -786,41 +686,29 @@ export function getAggregateWinner(
 // ============================================================
 
 export function createKnockoutFixtures(
-
   round: "qf" | "sf" | "final",
 
   winners: string[], // Ordered winners from previous round
 
   dayOffsets: {
-
     leg1: number;
 
     leg2: number;
-
   },
 
   existingFixtures: Fixture[],
-
 ): Fixture[] {
-
   const newFixtures: Fixture[] = [];
 
-
-
   if (round === "qf" && winners.length === 8) {
-
     // 4 QF ties: R16-1 winner vs R16-2 winner, R16-3 vs R16-4, etc.
 
     for (let i = 0; i < 4; i++) {
-
       const homeWinner = winners[i * 2];
 
       const awayWinner = winners[i * 2 + 1];
 
-
-
       newFixtures.push({
-
         id: `ucl-qf-${i}-leg1`,
 
         competition: "ucl",
@@ -834,13 +722,9 @@ export function createKnockoutFixtures(
         homeId: homeWinner,
 
         awayId: awayWinner,
-
       });
 
-
-
       newFixtures.push({
-
         id: `ucl-qf-${i}-leg2`,
 
         competition: "ucl",
@@ -854,25 +738,17 @@ export function createKnockoutFixtures(
         homeId: awayWinner,
 
         awayId: homeWinner,
-
       });
-
     }
-
   } else if (round === "sf" && winners.length === 4) {
-
     // 2 SF ties: QF-1 winner vs QF-2 winner, QF-3 vs QF-4
 
     for (let i = 0; i < 2; i++) {
-
       const homeWinner = winners[i * 2];
 
       const awayWinner = winners[i * 2 + 1];
 
-
-
       newFixtures.push({
-
         id: `ucl-sf-${i}-leg1`,
 
         competition: "ucl",
@@ -886,13 +762,9 @@ export function createKnockoutFixtures(
         homeId: homeWinner,
 
         awayId: awayWinner,
-
       });
 
-
-
       newFixtures.push({
-
         id: `ucl-sf-${i}-leg2`,
 
         competition: "ucl",
@@ -906,17 +778,12 @@ export function createKnockoutFixtures(
         homeId: awayWinner,
 
         awayId: homeWinner,
-
       });
-
     }
-
   } else if (round === "final" && winners.length === 2) {
-
     // Final is single leg
 
     newFixtures.push({
-
       id: `ucl-final`,
 
       competition: "ucl",
@@ -930,18 +797,11 @@ export function createKnockoutFixtures(
       homeId: winners[0],
 
       awayId: winners[1],
-
     });
-
   }
 
-
-
   return newFixtures;
-
 }
-
-
 
 // ============================================================
 
@@ -954,7 +814,6 @@ export function createKnockoutFixtures(
 // ============================================================
 
 export function advanceUCLBracket(
-
   fixtures: Fixture[],
 
   bracket: UCLBracketSlot[],
@@ -962,42 +821,36 @@ export function advanceUCLBracket(
   currentPhase: "r16" | "qf" | "sf",
 
   dayOffsets: {
+    qfLeg1: number;
+    qfLeg2: number;
 
-    qfLeg1: number; qfLeg2: number;
-
-    sfLeg1: number; sfLeg2: number;
+    sfLeg1: number;
+    sfLeg2: number;
 
     final: number;
-
   },
-
-): { fixtures: Fixture[]; bracket: UCLBracketSlot[]; nextPhase: "r16" | "qf" | "sf" | "final" | "done" } {
-
+): {
+  fixtures: Fixture[];
+  bracket: UCLBracketSlot[];
+  nextPhase: "r16" | "qf" | "sf" | "final" | "done";
+} {
   const updatedBracket = [...bracket];
 
   let updatedFixtures = [...fixtures];
 
-  let winners: string[] = [];
-
-
+  const winners: string[] = [];
 
   if (currentPhase === "r16") {
-
     // Determine R16 winners (8 ties)
 
     for (let i = 0; i < 8; i++) {
+      const leg1 = fixtures.find((f) => f.id === `ucl-r16-${i}-leg1`);
 
-      const leg1 = fixtures.find(f => f.id === `ucl-r16-${i}-leg1`);
-
-      const leg2 = fixtures.find(f => f.id === `ucl-r16-${i}-leg2`);
+      const leg2 = fixtures.find((f) => f.id === `ucl-r16-${i}-leg2`);
 
       if (!leg1?.result || !leg2?.result) {
-
         return { fixtures, bracket, nextPhase: "r16" }; // Not all matches complete
-
       }
-
-
 
       const winner = getAggregateWinner(leg1, leg2);
 
@@ -1007,18 +860,18 @@ export function advanceUCLBracket(
 
       // DO NOT update bracket slot - keep original teams immutable
       // The bracket should always show the original matchup, not the winner
-
     }
-
-
 
     // Create QF fixtures
 
-    const qfFixtures = createKnockoutFixtures("qf", winners, { leg1: dayOffsets.qfLeg1, leg2: dayOffsets.qfLeg2 }, updatedFixtures);
+    const qfFixtures = createKnockoutFixtures(
+      "qf",
+      winners,
+      { leg1: dayOffsets.qfLeg1, leg2: dayOffsets.qfLeg2 },
+      updatedFixtures,
+    );
 
     updatedFixtures = [...updatedFixtures, ...qfFixtures];
-
-
 
     // Fill QF bracket slots respecting bracket tree
     // R16-1 winner vs R16-2 winner → QF-1
@@ -1033,56 +886,45 @@ export function advanceUCLBracket(
     ];
 
     for (const matchup of qfMatchups) {
-      const qfSlot = updatedBracket.find(s => s.id === matchup.slotId);
+      const qfSlot = updatedBracket.find((s) => s.id === matchup.slotId);
       if (qfSlot) {
         qfSlot.homeId = winners[matchup.r16Indices[0]];
         qfSlot.awayId = winners[matchup.r16Indices[1]];
       }
     }
 
-
-
     return { fixtures: updatedFixtures, bracket: updatedBracket, nextPhase: "qf" };
-
   }
 
-
-
   if (currentPhase === "qf") {
-
     // Determine QF winners (4 ties)
 
     for (let i = 0; i < 4; i++) {
+      const leg1 = fixtures.find((f) => f.id === `ucl-qf-${i}-leg1`);
 
-      const leg1 = fixtures.find(f => f.id === `ucl-qf-${i}-leg1`);
-
-      const leg2 = fixtures.find(f => f.id === `ucl-qf-${i}-leg2`);
+      const leg2 = fixtures.find((f) => f.id === `ucl-qf-${i}-leg2`);
 
       if (!leg1?.result || !leg2?.result) {
-
         return { fixtures, bracket, nextPhase: "qf" }; // Not all matches complete
-
       }
-
-
 
       const winner = getAggregateWinner(leg1, leg2);
 
       const winnerId = winner === "leg2Home" ? leg2.homeId : leg2.awayId;
 
       winners.push(winnerId!);
-
     }
-
-
 
     // Create SF fixtures
 
-    const sfFixtures = createKnockoutFixtures("sf", winners, { leg1: dayOffsets.sfLeg1, leg2: dayOffsets.sfLeg2 }, updatedFixtures);
+    const sfFixtures = createKnockoutFixtures(
+      "sf",
+      winners,
+      { leg1: dayOffsets.sfLeg1, leg2: dayOffsets.sfLeg2 },
+      updatedFixtures,
+    );
 
     updatedFixtures = [...updatedFixtures, ...sfFixtures];
-
-
 
     // Fill SF bracket slots respecting bracket tree
     // QF-1 winner vs QF-2 winner → SF-1
@@ -1093,82 +935,61 @@ export function advanceUCLBracket(
     ];
 
     for (const matchup of sfMatchups) {
-      const sfSlot = updatedBracket.find(s => s.id === matchup.slotId);
+      const sfSlot = updatedBracket.find((s) => s.id === matchup.slotId);
       if (sfSlot) {
         sfSlot.homeId = winners[matchup.qfIndices[0]];
         sfSlot.awayId = winners[matchup.qfIndices[1]];
       }
     }
 
-
-
     return { fixtures: updatedFixtures, bracket: updatedBracket, nextPhase: "sf" };
-
   }
 
-
-
   if (currentPhase === "sf") {
-
     // Determine SF winners (2 ties)
 
     for (let i = 0; i < 2; i++) {
+      const leg1 = fixtures.find((f) => f.id === `ucl-sf-${i}-leg1`);
 
-      const leg1 = fixtures.find(f => f.id === `ucl-sf-${i}-leg1`);
-
-      const leg2 = fixtures.find(f => f.id === `ucl-sf-${i}-leg2`);
+      const leg2 = fixtures.find((f) => f.id === `ucl-sf-${i}-leg2`);
 
       if (!leg1?.result || !leg2?.result) {
-
         return { fixtures, bracket, nextPhase: "sf" }; // Not all matches complete
-
       }
-
-
 
       const winner = getAggregateWinner(leg1, leg2);
 
       const winnerId = winner === "leg2Home" ? leg2.homeId : leg2.awayId;
 
       winners.push(winnerId!);
-
     }
-
-
 
     // Create Final fixture
 
-    const finalFixtures = createKnockoutFixtures("final", winners, { leg1: dayOffsets.final, leg2: dayOffsets.final }, updatedFixtures);
+    const finalFixtures = createKnockoutFixtures(
+      "final",
+      winners,
+      { leg1: dayOffsets.final, leg2: dayOffsets.final },
+      updatedFixtures,
+    );
 
     updatedFixtures = [...updatedFixtures, ...finalFixtures];
 
-
-
     // Fill Final bracket slot
 
-    const finalSlot = updatedBracket.find(s => s.id === "F");
+    const finalSlot = updatedBracket.find((s) => s.id === "F");
 
     if (finalSlot) {
-
       finalSlot.homeId = winners[0];
 
       finalSlot.awayId = winners[1];
-
     }
 
-
-
     return { fixtures: updatedFixtures, bracket: updatedBracket, nextPhase: "final" };
-
   }
 
-
-
   return { fixtures, bracket, nextPhase: "done" };
-
 }
-
-
 
 // ============================================================
 
@@ -1182,10 +1003,14 @@ export type PlayoffRoute = "A" | "B" | "C" | "D";
 
 /** Play-off tie index (0–7) → R16 bracket slot id */
 export const PLAYOFF_INDEX_TO_R16_SLOT: Record<number, string> = {
-  6: "R16-1", 7: "R16-7",
-  4: "R16-3", 5: "R16-5",
-  2: "R16-4", 3: "R16-6",
-  0: "R16-2", 1: "R16-8",
+  6: "R16-1",
+  7: "R16-7",
+  4: "R16-3",
+  5: "R16-5",
+  2: "R16-4",
+  3: "R16-6",
+  0: "R16-2",
+  1: "R16-8",
 };
 
 export function r16FixtureIndexFromSlot(slotId: string): number {
@@ -1197,17 +1022,14 @@ export function isRealTeamId(id: string | null | undefined): id is string {
 }
 
 export interface PlayoffPair {
-
   route: PlayoffRoute;
 
-  seeded: string;    // 9-16
+  seeded: string; // 9-16
 
-  unseeded: string;  // 17-24
-
+  unseeded: string; // 17-24
 }
 
 export interface FullBracket {
-
   playoffPairs: PlayoffPair[];
 
   playoffFixtures: Fixture[];
@@ -1221,58 +1043,46 @@ export interface FullBracket {
   finalFixture: Fixture[];
 
   bracket: UCLBracketSlot[];
-
 }
 
-
-
 export function buildFullUCLBracket(
-
   rankedTeams: string[], // [1st, 2nd, ..., 36th] - full ranking from league phase
 
   dayOffsets: {
+    playoffLeg1: number;
+    playoffLeg2: number;
 
-    playoffLeg1: number; playoffLeg2: number;
+    r16Leg1: number;
+    r16Leg2: number;
 
-    r16Leg1: number; r16Leg2: number;
+    qfLeg1: number;
+    qfLeg2: number;
 
-    qfLeg1: number; qfLeg2: number;
-
-    sfLeg1: number; sfLeg2: number;
+    sfLeg1: number;
+    sfLeg2: number;
 
     final: number;
-
-  }
-
+  },
 ): FullBracket {
-
   const top8 = rankedTeams.slice(0, 8);
 
-  const playoffSeeds = rankedTeams.slice(8, 16);  // 9-16
+  const playoffSeeds = rankedTeams.slice(8, 16); // 9-16
 
   const playoffUnseeds = rankedTeams.slice(16, 24); // 17-24
 
-
-
   // Helper to shuffle array
 
-  const shuffle = <T,>(arr: T[]): T[] => {
-
+  const shuffle = <T>(arr: T[]): T[] => {
     const a = [...arr];
 
     for (let i = a.length - 1; i > 0; i--) {
-
       const j = Math.floor(Math.random() * (i + 1));
 
       [a[i], a[j]] = [a[j], a[i]];
-
     }
 
     return a;
-
   };
-
-
 
   // Create Playoff Routes with random draw within constraints
 
@@ -1300,10 +1110,7 @@ export function buildFullUCLBracket(
 
   const routeDUnseeds = shuffle(playoffUnseeds.slice(0, 2)); // 17, 18
 
-
-
   const playoffPairs: PlayoffPair[] = [
-
     { route: "A", seeded: routeASeeds[0], unseeded: routeAUnseeds[0] },
 
     { route: "A", seeded: routeASeeds[1], unseeded: routeAUnseeds[1] },
@@ -1319,10 +1126,7 @@ export function buildFullUCLBracket(
     { route: "D", seeded: routeDSeeds[0], unseeded: routeDUnseeds[0] },
 
     { route: "D", seeded: routeDSeeds[1], unseeded: routeDUnseeds[1] },
-
   ];
-
-
 
   // Create Playoff fixtures (seeded plays 2nd leg at home)
 
@@ -1331,9 +1135,7 @@ export function buildFullUCLBracket(
   const playoffSlots: UCLBracketSlot[] = [];
 
   playoffPairs.forEach((pair, i) => {
-
     playoffFixtures.push({
-
       id: `ucl-playoff-${i}-leg1`,
 
       competition: "ucl",
@@ -1347,11 +1149,9 @@ export function buildFullUCLBracket(
       homeId: pair.unseeded,
 
       awayId: pair.seeded,
-
     });
 
     playoffFixtures.push({
-
       id: `ucl-playoff-${i}-leg2`,
 
       competition: "ucl",
@@ -1365,13 +1165,9 @@ export function buildFullUCLBracket(
       homeId: pair.seeded,
 
       awayId: pair.unseeded,
-
     });
 
-
-
     playoffSlots.push({
-
       id: `PO-${i + 1}`,
 
       round: "playoff",
@@ -1385,12 +1181,8 @@ export function buildFullUCLBracket(
       legTwoMatchday: dayOffsets.playoffLeg2,
 
       isFinal: false,
-
     });
-
   });
-
-
 
   // Define bracket structure for R16 onwards
 
@@ -1404,29 +1196,23 @@ export function buildFullUCLBracket(
 
   // Route A winners → play vs 7th, 8th
 
-
-
   const r16Structure = [
+    { top8Rank: 0, route: "D", slotId: "R16-1" }, // 1st vs Route D winner
 
-    { top8Rank: 0, route: "D", slotId: "R16-1" },  // 1st vs Route D winner
+    { top8Rank: 7, route: "A", slotId: "R16-2" }, // 8th vs Route A winner
 
-    { top8Rank: 7, route: "A", slotId: "R16-2" },  // 8th vs Route A winner
+    { top8Rank: 3, route: "C", slotId: "R16-3" }, // 4th vs Route C winner
 
-    { top8Rank: 3, route: "C", slotId: "R16-3" },  // 4th vs Route C winner
+    { top8Rank: 4, route: "B", slotId: "R16-4" }, // 5th vs Route B winner
 
-    { top8Rank: 4, route: "B", slotId: "R16-4" },  // 5th vs Route B winner
+    { top8Rank: 2, route: "C", slotId: "R16-5" }, // 3rd vs Route C winner
 
-    { top8Rank: 2, route: "C", slotId: "R16-5" },  // 3rd vs Route C winner
+    { top8Rank: 5, route: "B", slotId: "R16-6" }, // 6th vs Route B winner
 
-    { top8Rank: 5, route: "B", slotId: "R16-6" },  // 6th vs Route B winner
+    { top8Rank: 1, route: "D", slotId: "R16-7" }, // 2nd vs Route D winner
 
-    { top8Rank: 1, route: "D", slotId: "R16-7" },  // 2nd vs Route D winner
-
-    { top8Rank: 6, route: "A", slotId: "R16-8" },  // 7th vs Route A winner
-
+    { top8Rank: 6, route: "A", slotId: "R16-8" }, // 7th vs Route A winner
   ];
-
-
 
   // Create R16 fixtures with placeholder for route winners
 
@@ -1434,24 +1220,18 @@ export function buildFullUCLBracket(
 
   const r16Slots: UCLBracketSlot[] = [];
 
-
-
   r16Structure.forEach((struct, i) => {
-
     const seedTeam = top8[struct.top8Rank];
 
     // Route winner will be determined after playoffs - use placeholder
 
     const routeWinner = `winner-route-${struct.route}-${i % 2 === 0 ? 1 : 2}`;
 
-
-
     // Leg1: Route winner plays home (they were unseeded in playoffs)
 
     // Leg2: Top 8 team plays home
 
     r16Fixtures.push({
-
       id: `ucl-r16-${i}-leg1`,
 
       competition: "ucl",
@@ -1465,11 +1245,9 @@ export function buildFullUCLBracket(
       homeId: routeWinner as string,
 
       awayId: seedTeam,
-
     });
 
     r16Fixtures.push({
-
       id: `ucl-r16-${i}-leg2`,
 
       competition: "ucl",
@@ -1483,13 +1261,9 @@ export function buildFullUCLBracket(
       homeId: seedTeam,
 
       awayId: routeWinner as string,
-
     });
 
-
-
     r16Slots.push({
-
       id: struct.slotId,
 
       round: "r16",
@@ -1503,12 +1277,8 @@ export function buildFullUCLBracket(
       legTwoMatchday: dayOffsets.r16Leg2,
 
       isFinal: false,
-
     });
-
   });
-
-
 
   // Create QF bracket (predefined from R16 winners)
 
@@ -1521,7 +1291,6 @@ export function buildFullUCLBracket(
   // QF4: R16-7 winner vs R16-8 winner
 
   const qfStructure = [
-
     { r16Slots: [0, 1], slotId: "QF-1" },
 
     { r16Slots: [2, 3], slotId: "QF-2" },
@@ -1529,27 +1298,18 @@ export function buildFullUCLBracket(
     { r16Slots: [4, 5], slotId: "QF-3" },
 
     { r16Slots: [6, 7], slotId: "QF-4" },
-
   ];
-
-
 
   const qfFixtures: Fixture[] = [];
 
   const qfSlots: UCLBracketSlot[] = [];
 
-
-
   qfStructure.forEach((struct, i) => {
-
     const placeholderHome = `winner-${r16Slots[struct.r16Slots[0]].id}`;
 
     const placeholderAway = `winner-${r16Slots[struct.r16Slots[1]].id}`;
 
-
-
     qfFixtures.push({
-
       id: `ucl-qf-${i}-leg1`,
 
       competition: "ucl",
@@ -1563,11 +1323,9 @@ export function buildFullUCLBracket(
       homeId: placeholderHome,
 
       awayId: placeholderAway,
-
     });
 
     qfFixtures.push({
-
       id: `ucl-qf-${i}-leg2`,
 
       competition: "ucl",
@@ -1581,13 +1339,9 @@ export function buildFullUCLBracket(
       homeId: placeholderAway,
 
       awayId: placeholderHome,
-
     });
 
-
-
     qfSlots.push({
-
       id: struct.slotId,
 
       round: "qf",
@@ -1601,12 +1355,8 @@ export function buildFullUCLBracket(
       legTwoMatchday: dayOffsets.qfLeg2,
 
       isFinal: false,
-
     });
-
   });
-
-
 
   // Create SF bracket
 
@@ -1615,31 +1365,21 @@ export function buildFullUCLBracket(
   // SF2: QF-3 winner vs QF-4 winner
 
   const sfStructure = [
-
     { qfSlots: [0, 1], slotId: "SF-1" },
 
     { qfSlots: [2, 3], slotId: "SF-2" },
-
   ];
-
-
 
   const sfFixtures: Fixture[] = [];
 
   const sfSlots: UCLBracketSlot[] = [];
 
-
-
   sfStructure.forEach((struct, i) => {
-
     const placeholderHome = `winner-${qfSlots[struct.qfSlots[0]].id}`;
 
     const placeholderAway = `winner-${qfSlots[struct.qfSlots[1]].id}`;
 
-
-
     sfFixtures.push({
-
       id: `ucl-sf-${i}-leg1`,
 
       competition: "ucl",
@@ -1653,11 +1393,9 @@ export function buildFullUCLBracket(
       homeId: placeholderHome,
 
       awayId: placeholderAway,
-
     });
 
     sfFixtures.push({
-
       id: `ucl-sf-${i}-leg2`,
 
       competition: "ucl",
@@ -1671,13 +1409,9 @@ export function buildFullUCLBracket(
       homeId: placeholderAway,
 
       awayId: placeholderHome,
-
     });
 
-
-
     sfSlots.push({
-
       id: struct.slotId,
 
       round: "sf",
@@ -1691,37 +1425,30 @@ export function buildFullUCLBracket(
       legTwoMatchday: dayOffsets.sfLeg2,
 
       isFinal: false,
-
     });
-
   });
-
-
 
   // Create Final fixture
 
-  const finalFixture: Fixture[] = [{
+  const finalFixture: Fixture[] = [
+    {
+      id: `ucl-final`,
 
-    id: `ucl-final`,
+      competition: "ucl",
 
-    competition: "ucl",
+      league: "premier",
 
-    league: "premier",
+      matchday: dayOffsets.final,
 
-    matchday: dayOffsets.final,
+      round: "Final",
 
-    round: "Final",
+      homeId: "winner-SF-1",
 
-    homeId: "winner-SF-1",
-
-    awayId: "winner-SF-2",
-
-  }];
-
-
+      awayId: "winner-SF-2",
+    },
+  ];
 
   const finalSlot: UCLBracketSlot = {
-
     id: "F",
 
     round: "final",
@@ -1735,15 +1462,11 @@ export function buildFullUCLBracket(
     legTwoMatchday: dayOffsets.final,
 
     isFinal: true,
-
   };
-
-
 
   // Combine all bracket slots
 
   const bracket: UCLBracketSlot[] = [
-
     ...playoffSlots,
 
     ...r16Slots,
@@ -1753,13 +1476,9 @@ export function buildFullUCLBracket(
     ...sfSlots,
 
     finalSlot,
-
   ];
 
-
-
   return {
-
     playoffPairs,
 
     playoffFixtures,
@@ -1773,12 +1492,8 @@ export function buildFullUCLBracket(
     finalFixture,
 
     bracket,
-
   };
-
 }
-
-
 
 // ============================================================
 
@@ -1789,201 +1504,131 @@ export function buildFullUCLBracket(
 // ============================================================
 
 export function updateBracketWithWinners(
-
   bracket: UCLBracketSlot[],
 
   fixtures: Fixture[],
 
-  phase: "playoff" | "r16" | "qf" | "sf"
-
+  phase: "playoff" | "r16" | "qf" | "sf",
 ): UCLBracketSlot[] {
-
   const updated = [...bracket];
 
-
-
   if (phase === "playoff") {
-
     // Update R16 slots with actual playoff winners
 
     for (let i = 0; i < 8; i++) {
+      const leg1 = fixtures.find((f) => f.id === `ucl-playoff-${i}-leg1`);
 
-      const leg1 = fixtures.find(f => f.id === `ucl-playoff-${i}-leg1`);
-
-      const leg2 = fixtures.find(f => f.id === `ucl-playoff-${i}-leg2`);
+      const leg2 = fixtures.find((f) => f.id === `ucl-playoff-${i}-leg2`);
 
       if (!leg1?.result || !leg2?.result) continue;
-
-
 
       const winner = getAggregateWinner(leg1, leg2);
 
       const winnerId = winner === "leg2Home" ? leg2.homeId : leg2.awayId;
-
-
 
       const r16SlotId = PLAYOFF_INDEX_TO_R16_SLOT[i];
 
-      const r16Slot = updated.find(s => s.id === r16SlotId);
+      const r16Slot = updated.find((s) => s.id === r16SlotId);
 
       if (r16Slot && winnerId) {
-
         r16Slot.awayId = winnerId;
-
       }
-
     }
-
   }
 
-
-
   if (phase === "r16") {
-
     // Update QF slots with R16 winners
 
     for (let i = 0; i < 8; i++) {
+      const leg1 = fixtures.find((f) => f.id === `ucl-r16-${i}-leg1`);
 
-      const leg1 = fixtures.find(f => f.id === `ucl-r16-${i}-leg1`);
-
-      const leg2 = fixtures.find(f => f.id === `ucl-r16-${i}-leg2`);
+      const leg2 = fixtures.find((f) => f.id === `ucl-r16-${i}-leg2`);
 
       if (!leg1?.result || !leg2?.result) continue;
-
-
 
       const winner = getAggregateWinner(leg1, leg2);
 
       const winnerId = winner === "leg2Home" ? leg2.homeId : leg2.awayId;
-
-
 
       // QF mapping: R16-1/2 → QF-1, R16-3/4 → QF-2, etc.
 
       const qfIndex = Math.floor(i / 2);
 
-      const qfSlot = updated.find(s => s.id === `QF-${qfIndex + 1}`);
+      const qfSlot = updated.find((s) => s.id === `QF-${qfIndex + 1}`);
 
       if (qfSlot && winnerId) {
-
         if (i % 2 === 0) {
-
           qfSlot.homeId = winnerId;
-
         } else {
-
           qfSlot.awayId = winnerId;
-
         }
-
       }
 
-
-
-      const r16Slot = updated.find(s => s.id === `R16-${i + 1}`);
+      const r16Slot = updated.find((s) => s.id === `R16-${i + 1}`);
 
       if (r16Slot && winnerId) {
-
         r16Slot.awayId = winnerId;
-
       }
-
     }
-
   }
 
-
-
   if (phase === "qf") {
-
     // Update SF slots with QF winners
 
     for (let i = 0; i < 4; i++) {
+      const leg1 = fixtures.find((f) => f.id === `ucl-qf-${i}-leg1`);
 
-      const leg1 = fixtures.find(f => f.id === `ucl-qf-${i}-leg1`);
-
-      const leg2 = fixtures.find(f => f.id === `ucl-qf-${i}-leg2`);
+      const leg2 = fixtures.find((f) => f.id === `ucl-qf-${i}-leg2`);
 
       if (!leg1?.result || !leg2?.result) continue;
-
-
 
       const winner = getAggregateWinner(leg1, leg2);
 
       const winnerId = winner === "leg2Home" ? leg2.homeId : leg2.awayId;
-
-
 
       // SF mapping: QF-1/2 → SF-1, QF-3/4 → SF-2
 
       const sfIndex = Math.floor(i / 2);
 
-      const sfSlot = updated.find(s => s.id === `SF-${sfIndex + 1}`);
+      const sfSlot = updated.find((s) => s.id === `SF-${sfIndex + 1}`);
 
       if (sfSlot && winnerId) {
-
         if (i % 2 === 0) {
-
           sfSlot.homeId = winnerId;
-
         } else {
-
           sfSlot.awayId = winnerId;
-
         }
-
       }
-
     }
-
   }
 
-
-
   if (phase === "sf") {
-
     // Update Final slot with SF winners
 
     for (let i = 0; i < 2; i++) {
+      const leg1 = fixtures.find((f) => f.id === `ucl-sf-${i}-leg1`);
 
-      const leg1 = fixtures.find(f => f.id === `ucl-sf-${i}-leg1`);
-
-      const leg2 = fixtures.find(f => f.id === `ucl-sf-${i}-leg2`);
+      const leg2 = fixtures.find((f) => f.id === `ucl-sf-${i}-leg2`);
 
       if (!leg1?.result || !leg2?.result) continue;
-
-
 
       const winner = getAggregateWinner(leg1, leg2);
 
       const winnerId = winner === "leg2Home" ? leg2.homeId : leg2.awayId;
 
-
-
-      const finalSlot = updated.find(s => s.id === "F");
+      const finalSlot = updated.find((s) => s.id === "F");
 
       if (finalSlot && winnerId) {
-
         if (i === 0) {
-
           finalSlot.homeId = winnerId;
-
         } else {
-
           finalSlot.awayId = winnerId;
-
         }
-
       }
-
     }
-
   }
 
-
-
   return updated;
-
 }
 
 /** After a play-off tie completes, wire the winner into the pre-drawn R16 fixtures. */
@@ -1995,10 +1640,9 @@ export function propagatePlayoffWinnerToR16Fixtures(
   const slotId = PLAYOFF_INDEX_TO_R16_SLOT[playoffIndex];
   if (!slotId) return fixtures;
   const r16Idx = r16FixtureIndexFromSlot(slotId);
-  return fixtures.map(f => {
+  return fixtures.map((f) => {
     if (f.id === `ucl-r16-${r16Idx}-leg1`) return { ...f, homeId: winnerId };
     if (f.id === `ucl-r16-${r16Idx}-leg2`) return { ...f, awayId: winnerId };
     return f;
   });
 }
-

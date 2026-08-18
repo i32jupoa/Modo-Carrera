@@ -23,7 +23,12 @@ import {
   resetSimulation,
   simulateUntil,
 } from "./MarketSimulation";
-import { applyTransferSnapshot, clearAllTransferSaves, loadTransferSave, saveTransferSystem } from "./Persistence";
+import {
+  applyTransferSnapshot,
+  clearAllTransferSaves,
+  loadTransferSave,
+  saveTransferSystem,
+} from "./Persistence";
 import type { MarketDayResult, MarketSimulationState } from "./types";
 
 export * from "./types";
@@ -100,7 +105,10 @@ export function simulateMarketForDate(date: string): MarketDayResult {
  * Carga la partida de mercado guardada si existe; si no, arranca una nueva.
  * Devuelve `true` cuando se ha restaurado una partida previa.
  */
-export function loadOrInitTransferSystem(date: string): { restored: boolean; state: MarketSimulationState } {
+export function loadOrInitTransferSystem(date: string): {
+  restored: boolean;
+  state: MarketSimulationState;
+} {
   const saved = loadTransferSave();
   if (saved && applyTransferSnapshot(saved)) {
     const state = getSimulationState() ?? initializeSimulation(date);

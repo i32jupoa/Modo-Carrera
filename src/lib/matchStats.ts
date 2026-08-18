@@ -10,15 +10,15 @@ function isGoalkeeper(positions: PosCode[]): boolean {
 }
 
 function isDefensive(positions: PosCode[]): boolean {
-  return positions.some(p => ["DFC", "LD", "LI", "CAD", "CAI"].includes(p));
+  return positions.some((p) => ["DFC", "LD", "LI", "CAD", "CAI"].includes(p));
 }
 
 function isMidfield(positions: PosCode[]): boolean {
-  return positions.some(p => ["MCD", "MC", "MCO", "MD", "MI"].includes(p));
+  return positions.some((p) => ["MCD", "MC", "MCO", "MD", "MI"].includes(p));
 }
 
 function isAttacking(positions: PosCode[]): boolean {
-  return positions.some(p => ["ED", "EI", "DC", "SD"].includes(p));
+  return positions.some((p) => ["ED", "EI", "DC", "SD"].includes(p));
 }
 
 export type TeamStats = {
@@ -74,15 +74,32 @@ const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(ma
 
 function emptyStats(): TeamStats {
   return {
-    possession: 50, shots: 0, shotsOnTarget: 0, corners: 0, fouls: 0,
-    offsides: 0, passes: 0, passesCompleted: 0, passAccuracy: 0, saves: 0, xg: 0,
+    possession: 50,
+    shots: 0,
+    shotsOnTarget: 0,
+    corners: 0,
+    fouls: 0,
+    offsides: 0,
+    passes: 0,
+    passesCompleted: 0,
+    passAccuracy: 0,
+    saves: 0,
+    xg: 0,
   };
 }
 
 function emptyDelta(minute: number, team: "home" | "away"): MinuteDelta {
   return {
-    minute, team, shot: 0, shotOnTarget: 0, corner: 0,
-    foul: 0, offside: 0, passes: 0, passesCompleted: 0, xg: 0,
+    minute,
+    team,
+    shot: 0,
+    shotOnTarget: 0,
+    corner: 0,
+    foul: 0,
+    offside: 0,
+    passes: 0,
+    passesCompleted: 0,
+    xg: 0,
   };
 }
 
@@ -115,8 +132,7 @@ export function buildMatchStats(input: StatsInput): MatchStats {
   away.xg = Math.round(input.xgAway * 100) / 100;
 
   // Possession derives from relative strength + relative xG, with noise.
-  const strengthShare =
-    input.homeStrength / Math.max(1, input.homeStrength + input.awayStrength);
+  const strengthShare = input.homeStrength / Math.max(1, input.homeStrength + input.awayStrength);
   const xgShare = input.xgHome / Math.max(0.1, input.xgHome + input.xgAway);
   const rawPossession = (strengthShare * 0.55 + xgShare * 0.45) * 100 + between(-6, 6);
   home.possession = Math.round(clamp(rawPossession, 28, 72));
@@ -129,9 +145,15 @@ export function buildMatchStats(input: StatsInput): MatchStats {
   away.shots = clamp(shotsFrom(input.xgAway, input.awayGoals), 2, 34);
 
   home.shotsOnTarget = clamp(
-    Math.max(input.homeGoals, Math.round(home.shots * between(0.3, 0.5))), input.homeGoals, home.shots);
+    Math.max(input.homeGoals, Math.round(home.shots * between(0.3, 0.5))),
+    input.homeGoals,
+    home.shots,
+  );
   away.shotsOnTarget = clamp(
-    Math.max(input.awayGoals, Math.round(away.shots * between(0.3, 0.5))), input.awayGoals, away.shots);
+    Math.max(input.awayGoals, Math.round(away.shots * between(0.3, 0.5))),
+    input.awayGoals,
+    away.shots,
+  );
 
   home.corners = clamp(Math.round(home.shots * between(0.35, 0.75)), 0, 18);
   away.corners = clamp(Math.round(away.shots * between(0.35, 0.75)), 0, 18);
@@ -229,10 +251,14 @@ export function buildMatchStats(input: StatsInput): MatchStats {
 }
 
 /** Accumulates the timeline up to (and including) a given minute. */
-export function accumulateStats(stats: MatchStats, minute: number): { home: TeamStats; away: TeamStats } {
+export function accumulateStats(
+  stats: MatchStats,
+  minute: number,
+): { home: TeamStats; away: TeamStats } {
   const home = emptyStats();
   const away = emptyStats();
-  home.xg = 0; away.xg = 0;
+  home.xg = 0;
+  away.xg = 0;
 
   for (const d of stats.timeline) {
     if (d.minute > minute) continue;
@@ -275,14 +301,22 @@ export type RatingInput = {
   homeGoals: number;
   awayGoals: number;
   goals: Array<{ team: "home" | "away"; scorerId: string; assistId?: string; ownGoal?: boolean }>;
-  cards: Array<{ team: "home" | "away"; playerId: string; cardType: "yellow" | "red"; minute: number }>;
+  cards: Array<{
+    team: "home" | "away";
+    playerId: string;
+    cardType: "yellow" | "red";
+    minute: number;
+  }>;
   minutesPlayed: Record<string, number>;
   homeSaves: number;
   awaySaves: number;
   penaltiesMissed?: Array<{ playerId: string }>;
 };
 
-export function computePlayerRatings(input: RatingInput): { ratings: PlayerRating[]; mvp: PlayerRating | null } {
+export function computePlayerRatings(input: RatingInput): {
+  ratings: PlayerRating[];
+  mvp: PlayerRating | null;
+} {
   const ratings: PlayerRating[] = [];
 
   const build = (xi: Player[], team: "home" | "away") => {
@@ -311,7 +345,13 @@ export function computePlayerRatings(input: RatingInput): { ratings: PlayerRatin
       r += ((p.rating - 72) / 100) * 1.2;
 
       // Attacking contributions.
-      const goalBonus = isAttacking(p.positions) ? 1.0 : isMidfield(p.positions) ? 1.25 : isDefensive(p.positions) ? 1.5 : 2.5;
+      const goalBonus = isAttacking(p.positions)
+        ? 1.0
+        : isMidfield(p.positions)
+          ? 1.25
+          : isDefensive(p.positions)
+            ? 1.5
+            : 2.5;
       r += goals * goalBonus;
       r += assists * 0.75;
 
@@ -333,7 +373,7 @@ export function computePlayerRatings(input: RatingInput): { ratings: PlayerRatin
 
       // Result and time on the pitch.
       r += resultMod;
-      if (minutes < 90) r -= (90 - minutes) / 90 * 0.35;
+      if (minutes < 90) r -= ((90 - minutes) / 90) * 0.35;
 
       // Small random spread for the intangibles.
       r += between(-0.35, 0.35);

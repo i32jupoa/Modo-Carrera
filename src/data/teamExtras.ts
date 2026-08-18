@@ -6,41 +6,45 @@ import { realRecentTrophies } from "./leagueWinners";
 const RIVAL_MAP: Record<string, string[]> = {
   "real madrid": ["FC Barcelona", "Atlético de Madrid"],
   "fc barcelona": ["Real Madrid", "Espanyol"],
-  "barcelona": ["Real Madrid", "Espanyol"],
+  barcelona: ["Real Madrid", "Espanyol"],
   "atletico de madrid": ["Real Madrid", "FC Barcelona"],
   "manchester united": ["Manchester City", "Liverpool", "Arsenal"],
   "manchester city": ["Manchester United", "Liverpool"],
-  "liverpool": ["Manchester United", "Everton", "Manchester City"],
-  "arsenal": ["Tottenham Hotspur", "Chelsea", "Manchester United"],
-  "chelsea": ["Tottenham Hotspur", "Arsenal", "Liverpool"],
+  liverpool: ["Manchester United", "Everton", "Manchester City"],
+  arsenal: ["Tottenham Hotspur", "Chelsea", "Manchester United"],
+  chelsea: ["Tottenham Hotspur", "Arsenal", "Liverpool"],
   "tottenham hotspur": ["Arsenal", "Chelsea"],
-  "inter": ["AC Milan", "Juventus"],
+  inter: ["AC Milan", "Juventus"],
   "ac milan": ["Inter", "Juventus"],
-  "juventus": ["Inter", "AC Milan", "Torino"],
+  juventus: ["Inter", "AC Milan", "Torino"],
   "as roma": ["Lazio", "Napoli"],
-  "lazio": ["AS Roma"],
-  "napoli": ["AS Roma", "Juventus"],
+  lazio: ["AS Roma"],
+  napoli: ["AS Roma", "Juventus"],
   "bayern munich": ["Borussia Dortmund"],
   "bayern münchen": ["Borussia Dortmund"],
   "borussia dortmund": ["Bayern München", "Schalke 04"],
-  "psg": ["Olympique de Marseille", "Olympique Lyonnais"],
+  psg: ["Olympique de Marseille", "Olympique Lyonnais"],
   "paris saint-germain": ["Olympique de Marseille", "Olympique Lyonnais"],
   "olympique de marseille": ["PSG", "Olympique Lyonnais"],
   "olympique lyonnais": ["AS Saint-Étienne", "Olympique de Marseille"],
-  "ajax": ["Feyenoord", "PSV"],
-  "feyenoord": ["Ajax", "PSV"],
-  "psv": ["Ajax", "Feyenoord"],
-  "porto": ["Benfica", "Sporting CP"],
-  "benfica": ["Porto", "Sporting CP"],
+  ajax: ["Feyenoord", "PSV"],
+  feyenoord: ["Ajax", "PSV"],
+  psv: ["Ajax", "Feyenoord"],
+  porto: ["Benfica", "Sporting CP"],
+  benfica: ["Porto", "Sporting CP"],
   "sporting cp": ["Benfica", "Porto"],
-  "celtic": ["Rangers"],
-  "rangers": ["Celtic"],
+  celtic: ["Rangers"],
+  rangers: ["Celtic"],
   "boca juniors": ["River Plate"],
   "river plate": ["Boca Juniors"],
 };
 
 function norm(s: string): string {
-  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }
 
 export function getRivals(team: Team): Team[] {
@@ -51,7 +55,12 @@ export function getRivals(team: Team): Team[] {
     const names = [extra.rival1, extra.rival2].filter(Boolean) as string[];
     const matches = names
       .map((n) => {
-        const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+        const norm = (s: string) =>
+          s
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9]/g, "");
         const target = norm(n);
         return all.find((t) => {
           const tn = norm(t.name);
@@ -72,8 +81,11 @@ export function getRivals(team: Team): Team[] {
   // Fallback: rivales de la misma liga con overall similar
   return all
     .filter((t) => t.league === team.league && t.id !== team.id)
-    .sort((a, b) => Math.abs((a.att + a.mid + a.def) - (team.att + team.mid + team.def))
-                 - Math.abs((b.att + b.mid + b.def) - (team.att + team.mid + team.def)))
+    .sort(
+      (a, b) =>
+        Math.abs(a.att + a.mid + a.def - (team.att + team.mid + team.def)) -
+        Math.abs(b.att + b.mid + b.def - (team.att + team.mid + team.def)),
+    )
     .slice(0, 3);
 }
 
@@ -105,7 +117,11 @@ export function getRecentHistory(team: Team): HistoryEntry[] {
     let position = Math.max(1, Math.min(20, basePos + variance));
     const trophies = real[s] ?? [];
     // Si gana la liga, position = 1
-    if (trophies.some((t) => /liga|premier|bundesliga|serie a|ligue 1|eredivisie|portugal|scottish/i.test(t))) {
+    if (
+      trophies.some((t) =>
+        /liga|premier|bundesliga|serie a|ligue 1|eredivisie|portugal|scottish/i.test(t),
+      )
+    ) {
       position = 1;
     }
     const goals = Math.max(6, Math.round(15 + (ov - 70) * 0.55 + ((seed >> i) & 11) - 5));

@@ -129,10 +129,10 @@ export function addSaveToMultiple(save: SaveGame) {
     console.error("No se encontró el equipo con id:", save.myTeamId);
     return;
   }
-  
+
   const saves = loadAllSaves();
   const now = new Date().toISOString();
-  
+
   const meta: SavedGameMeta = {
     id: crypto.randomUUID(),
     teamId: save.myTeamId,
@@ -143,7 +143,7 @@ export function addSaveToMultiple(save: SaveGame) {
     createdAt: now,
     lastPlayed: now,
   };
-  
+
   // Activar esta partida como la actual ANTES de persistir el snapshot
   setCurrentSaveId(meta.id);
 
@@ -179,7 +179,7 @@ export function deleteSave(id: string) {
     .catch(() => {
       /* si falla la importación no bloqueamos el borrado de la partida */
     });
-  const saves = loadAllSaves().filter(s => s.id !== id);
+  const saves = loadAllSaves().filter((s) => s.id !== id);
   saveMultipleSaves(saves);
   // Si era la partida activa, desactivarla y limpiar estado en memoria
   if (getCurrentSaveId() === id) {
@@ -203,9 +203,9 @@ export function loadSaveById(id: string): SaveGame | null {
 
 export function updateSaveLastPlayed(id: string) {
   if (typeof window === "undefined") return;
-  
+
   const saves = loadAllSaves();
-  const save = saves.find(s => s.id === id);
+  const save = saves.find((s) => s.id === id);
   if (save) {
     save.lastPlayed = new Date().toISOString();
     saveMultipleSaves(saves);
@@ -246,9 +246,7 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
   usePlayersStore.setState({
     loaded: true,
     myTeamId,
-    squad: validRosterIds
-      .map((id: string) => fcPlayerById(id))
-      .filter(Boolean),
+    squad: validRosterIds.map((id: string) => fcPlayerById(id)).filter(Boolean),
     currentDate: snap.currentDate,
     fixtures: snap.fixtures ?? [],
     stats: snap.stats ?? {},

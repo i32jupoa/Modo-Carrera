@@ -18,7 +18,8 @@ interface Props {
 }
 
 export function TypicalElevenPitch({ eleven, formation, className = "" }: Props) {
-  const coords = FORMATION_COORDINATES[formation as FormationName] ?? FORMATION_COORDINATES[FALLBACK];
+  const coords =
+    FORMATION_COORDINATES[formation as FormationName] ?? FORMATION_COORDINATES[FALLBACK];
   const layout = Object.keys(coords).map((k) => coords[k]);
 
   return (
@@ -67,7 +68,11 @@ export function TypicalElevenPitch({ eleven, formation, className = "" }: Props)
             <div
               key={`${slot.label}-${i}`}
               className="absolute flex w-[22%] flex-col items-center"
-              style={{ top: `${coord.top}%`, left: `${coord.left}%`, transform: "translate(-50%,-50%)" }}
+              style={{
+                top: `${coord.top}%`,
+                left: `${coord.left}%`,
+                transform: "translate(-50%,-50%)",
+              }}
             >
               <div className="relative">
                 <PlayerFace
@@ -84,7 +89,9 @@ export function TypicalElevenPitch({ eleven, formation, className = "" }: Props)
                   </span>
                 )}
               </div>
-              <span className={`mt-1 text-[0.58rem] font-black uppercase tracking-wide ${ROLE_TEXT[role]}`}>
+              <span
+                className={`mt-1 text-[0.58rem] font-black uppercase tracking-wide ${ROLE_TEXT[role]}`}
+              >
                 {slot.label}
               </span>
               <span className="max-w-full truncate text-[0.58rem] font-semibold leading-tight text-white/90">
@@ -99,7 +106,10 @@ export function TypicalElevenPitch({ eleven, formation, className = "" }: Props)
       <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
         {LEGEND.map((l) => (
           <span key={l.role} className="flex items-center gap-1.5 text-[0.62rem] font-semibold">
-            <span className={`h-2 w-2 rounded-full ${ROLE_TEXT[l.role]}`} style={{ backgroundColor: "currentColor" }} />
+            <span
+              className={`h-2 w-2 rounded-full ${ROLE_TEXT[l.role]}`}
+              style={{ backgroundColor: "currentColor" }}
+            />
             <span className={ROLE_TEXT[l.role]}>{l.label}</span>
           </span>
         ))}

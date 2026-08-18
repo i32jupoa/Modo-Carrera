@@ -20,14 +20,14 @@ interface LeagueLogoProps {
 
 export function LeagueLogo({ league, className = "", size = "sm", fallback }: LeagueLogoProps) {
   const [error, setError] = useState(false);
-  
+
   const sizeClasses = size === "sm" ? "w-6 h-6" : size === "md" ? "w-8 h-8" : "w-10 h-10";
   const logoUrl = getLeagueLogoUrl(league);
-  
+
   if (error) {
     return fallback || null; // Show fallback or hide if logo is missing
   }
-  
+
   return (
     <img
       src={logoUrl}

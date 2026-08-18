@@ -13,24 +13,24 @@ import type { Player } from "@/data/players";
 export function applySeasonEndProgressionToAll(
   players: Player[],
   seasonNumber: number,
-  teamId?: string
+  teamId?: string,
 ): Player[] {
-  return players.map(player => {
+  return players.map((player) => {
     if (!player.dynamicStats) return player;
-    
+
     const playerTeamId = teamId || player.teamId;
-    
+
     const updatedStats = applySeasonEndProgression(
       player.dynamicStats,
       player.age,
       player.positions,
       seasonNumber,
-      playerTeamId
+      playerTeamId,
     );
-    
+
     // Actualizar el OVR del jugador si cambió
     const newOVR = updatedStats.currentOVR;
-    
+
     return {
       ...player,
       rating: newOVR,
@@ -45,20 +45,20 @@ export function applySeasonEndProgressionToAll(
 export function applySeasonEndProgressionToPlayer(
   player: Player,
   seasonNumber: number,
-  teamId?: string
+  teamId?: string,
 ): Player {
   if (!player.dynamicStats) return player;
-  
+
   const playerTeamId = teamId || player.teamId;
-  
+
   const updatedStats = applySeasonEndProgression(
     player.dynamicStats,
     player.age,
     player.positions,
     seasonNumber,
-    playerTeamId
+    playerTeamId,
   );
-  
+
   return {
     ...player,
     rating: updatedStats.currentOVR,
@@ -71,7 +71,7 @@ export function applySeasonEndProgressionToPlayer(
  */
 export function addTrophyToPlayer(player: Player): Player {
   if (!player.dynamicStats) return player;
-  
+
   return {
     ...player,
     dynamicStats: {

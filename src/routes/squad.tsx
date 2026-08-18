@@ -77,7 +77,13 @@ function moodLabel(m: number) {
 function StatBar({ label, value }: { label: string; value: number }) {
   const v = Math.max(0, Math.min(99, value));
   const tone =
-    v >= 85 ? "bg-emerald-400" : v >= 75 ? "bg-primary" : v >= 60 ? "bg-yellow-400" : "bg-muted-foreground";
+    v >= 85
+      ? "bg-emerald-400"
+      : v >= 75
+        ? "bg-primary"
+        : v >= 60
+          ? "bg-yellow-400"
+          : "bg-muted-foreground";
   return (
     <div>
       <div className="flex items-center justify-between text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">
@@ -91,13 +97,7 @@ function StatBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-function PlayerCard({
-  p,
-  onClick,
-}: {
-  p: FcPlayer;
-  onClick: () => void;
-}) {
+function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
   const stats = usePlayersStore((s) => s.stats[String(p.ID)]);
   const pos = mapEaPosition(p.Position);
   const morale = stats?.morale ?? 70;
@@ -191,8 +191,10 @@ function SquadPage() {
     : "—";
   const totalValue = squad.reduce((s, p) => s + marketValueEuros(p), 0);
 
-  const selected = selectedId ? squad.find((p) => String(p.ID) === selectedId) ?? null : null;
-  const selectedStats = selected ? usePlayersStore.getState().stats[String(selected.ID)] : undefined;
+  const selected = selectedId ? (squad.find((p) => String(p.ID) === selectedId) ?? null) : null;
+  const selectedStats = selected
+    ? usePlayersStore.getState().stats[String(selected.ID)]
+    : undefined;
 
   function handleSell(p: FcPlayer) {
     const id = String(p.ID);
@@ -258,26 +260,36 @@ function SquadPage() {
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={56} />
             <div className="min-w-0">
               <h1 className="truncate text-xl font-black sm:text-2xl">{team.name}</h1>
-              <p className="text-xs text-muted-foreground">Mi Plantilla · {getLeagueName(team.league)}</p>
+              <p className="text-xs text-muted-foreground">
+                Mi Plantilla · {getLeagueName(team.league)}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-center">
-              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Jugadores</p>
+              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+                Jugadores
+              </p>
               <p className="scoreline text-lg font-black">{squad.length}</p>
             </div>
             <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-center">
-              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">OVR Medio</p>
+              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+                OVR Medio
+              </p>
               <p className="scoreline text-lg font-black text-primary">{avgOvr}</p>
             </div>
             <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-center">
               <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Valor</p>
-              <p className="scoreline text-lg font-black text-emerald-400">{formatEuro(totalValue)}</p>
+              <p className="scoreline text-lg font-black text-emerald-400">
+                {formatEuro(totalValue)}
+              </p>
             </div>
             <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2">
               <Wallet className="h-4 w-4 text-primary" />
               <div>
-                <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Saldo</p>
+                <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+                  Saldo
+                </p>
                 <p className="scoreline text-lg font-black text-primary">{formatEuro(budget)}</p>
               </div>
             </div>
@@ -307,8 +319,7 @@ function SquadPage() {
                       {POSITION_FULL[pos]}
                     </p>
                     <p className="text-[0.65rem] uppercase tracking-wider opacity-70">
-                      {players.length} jugadores ·{" "}
-                      OVR medio{" "}
+                      {players.length} jugadores · OVR medio{" "}
                       {(players.reduce((s, p) => s + p.OVR, 0) / players.length).toFixed(1)}
                     </p>
                   </div>
@@ -320,11 +331,7 @@ function SquadPage() {
                 </div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {players.map((p) => (
-                    <PlayerCard
-                      key={p.ID}
-                      p={p}
-                      onClick={() => setSelectedId(String(p.ID))}
-                    />
+                    <PlayerCard key={p.ID} p={p} onClick={() => setSelectedId(String(p.ID))} />
                   ))}
                 </div>
               </section>
@@ -336,158 +343,173 @@ function SquadPage() {
       {/* Player detail dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelectedId(null)}>
         <DialogContent className="max-w-lg p-0 overflow-hidden">
-          {selected && (() => {
-            const pos = mapEaPosition(selected.Position);
-            const morale = selectedStats?.morale ?? 70;
-            const mood = moodLabel(morale);
-            const injured = (selectedStats?.injuredUntil ?? 0) > 0;
-            const isListed = listed.has(String(selected.ID));
-            const value = marketValueEuros(selected);
-            return (
-              <>
-                <div className={`bg-gradient-to-br p-5 ${POSITION_ACCENT[pos]}`}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(null)}
-                    className="absolute right-3 top-3 rounded-full p-1 text-foreground/70 hover:bg-background/30"
-                    aria-label="Cerrar"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                  <DialogHeader className="space-y-3">
-                    <div className="flex items-center gap-4">
-                      <div className={`grid h-16 w-16 place-items-center rounded-xl border scoreline text-2xl font-black ${ovrTone(selected.OVR)}`}>
-                        {selected.OVR}
+          {selected &&
+            (() => {
+              const pos = mapEaPosition(selected.Position);
+              const morale = selectedStats?.morale ?? 70;
+              const mood = moodLabel(morale);
+              const injured = (selectedStats?.injuredUntil ?? 0) > 0;
+              const isListed = listed.has(String(selected.ID));
+              const value = marketValueEuros(selected);
+              return (
+                <>
+                  <div className={`bg-gradient-to-br p-5 ${POSITION_ACCENT[pos]}`}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(null)}
+                      className="absolute right-3 top-3 rounded-full p-1 text-foreground/70 hover:bg-background/30"
+                      aria-label="Cerrar"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                    <DialogHeader className="space-y-3">
+                      <div className="flex items-center gap-4">
+                        <div
+                          className={`grid h-16 w-16 place-items-center rounded-xl border scoreline text-2xl font-black ${ovrTone(selected.OVR)}`}
+                        >
+                          {selected.OVR}
+                        </div>
+                        <div className="min-w-0">
+                          <DialogTitle className="truncate text-xl font-black">
+                            {selected.Name}
+                          </DialogTitle>
+                          <DialogDescription className="text-xs uppercase tracking-wider">
+                            {POS_LABEL_ES[pos]} · {selected.Age} años · {selected.Position}
+                          </DialogDescription>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <DialogTitle className="truncate text-xl font-black">
-                          {selected.Name}
-                        </DialogTitle>
-                        <DialogDescription className="text-xs uppercase tracking-wider">
-                          {POS_LABEL_ES[pos]} · {selected.Age} años · {selected.Position}
-                        </DialogDescription>
-                      </div>
-                    </div>
-                  </DialogHeader>
-                </div>
-
-                <div className="space-y-5 p-5">
-                  {/* Mood / Stats summary */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
-                      <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Valor</p>
-                      <p className="scoreline text-sm font-black text-emerald-400">{formatEuro(value)}</p>
-                    </div>
-                    <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
-                      <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Goles</p>
-                      <p className="scoreline text-sm font-black text-primary">
-                        <Goal className="mr-1 inline h-3 w-3" />
-                        {selectedStats?.goals ?? 0}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
-                      <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Asist.</p>
-                      <p className="scoreline text-sm font-black text-accent">
-                        <Sparkles className="mr-1 inline h-3 w-3" />
-                        {selectedStats?.assists ?? 0}
-                      </p>
-                    </div>
+                    </DialogHeader>
                   </div>
 
-                  {/* Morale meter */}
-                  <div className="rounded-lg border border-border/60 bg-card/60 p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">
-                        Estado de ánimo
-                      </span>
-                      <span className={`flex items-center gap-1 text-sm font-bold ${mood.tone}`}>
-                        <mood.Icon className="h-4 w-4" />
-                        {mood.label}
-                      </span>
+                  <div className="space-y-5 p-5">
+                    {/* Mood / Stats summary */}
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
+                        <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+                          Valor
+                        </p>
+                        <p className="scoreline text-sm font-black text-emerald-400">
+                          {formatEuro(value)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
+                        <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+                          Goles
+                        </p>
+                        <p className="scoreline text-sm font-black text-primary">
+                          <Goal className="mr-1 inline h-3 w-3" />
+                          {selectedStats?.goals ?? 0}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
+                        <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+                          Asist.
+                        </p>
+                        <p className="scoreline text-sm font-black text-accent">
+                          <Sparkles className="mr-1 inline h-3 w-3" />
+                          {selectedStats?.assists ?? 0}
+                        </p>
+                      </div>
                     </div>
-                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted/40">
-                      <div
-                        className={`h-full ${
-                          morale >= 60 ? "bg-emerald-400" : morale >= 40 ? "bg-yellow-400" : "bg-destructive"
+
+                    {/* Morale meter */}
+                    <div className="rounded-lg border border-border/60 bg-card/60 p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">
+                          Estado de ánimo
+                        </span>
+                        <span className={`flex items-center gap-1 text-sm font-bold ${mood.tone}`}>
+                          <mood.Icon className="h-4 w-4" />
+                          {mood.label}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted/40">
+                        <div
+                          className={`h-full ${
+                            morale >= 60
+                              ? "bg-emerald-400"
+                              : morale >= 40
+                                ? "bg-yellow-400"
+                                : "bg-destructive"
+                          }`}
+                          style={{ width: `${Math.max(4, morale)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Six stats */}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                      <StatBar label="PAC" value={selected.PAC} />
+                      <StatBar label="SHO" value={selected.SHO} />
+                      <StatBar label="PAS" value={selected.PAS} />
+                      <StatBar label="DRI" value={selected.DRI} />
+                      <StatBar label="DEF" value={selected.DEF} />
+                      <StatBar label="PHY" value={selected.PHY} />
+                    </div>
+
+                    {/* Status flags */}
+                    {(injured || isListed) && (
+                      <div className="flex flex-wrap gap-2">
+                        {injured && (
+                          <span className="flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-wider text-destructive">
+                            <Activity className="h-3 w-3" />
+                            Lesionado
+                          </span>
+                        )}
+                        {isListed && (
+                          <span className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-wider text-amber-400">
+                            <Tag className="h-3 w-3" />
+                            En el mercado
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-3">
+                      <button
+                        type="button"
+                        onClick={() => handleRenew(selected)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-300 transition hover:bg-emerald-500/20"
+                      >
+                        <HeartHandshake className="h-4 w-4" />
+                        Renovar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleListed(selected)}
+                        disabled={!isMarketOpen}
+                        className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                          isListed
+                            ? "border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
+                            : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
                         }`}
-                        style={{ width: `${Math.max(4, morale)}%` }}
-                      />
+                      >
+                        <Tag className="h-4 w-4" />
+                        {isListed ? "Retirar" : "Mercado"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSell(selected)}
+                        disabled={squad.length <= 11 || !isMarketOpen}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive transition hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-40"
+                        title={squad.length <= 11 ? "Mínimo 11 jugadores" : "Vender al instante"}
+                      >
+                        <UserMinus className="h-4 w-4" />
+                        Vender
+                      </button>
                     </div>
+
+                    {!isMarketOpen && (
+                      <p className="flex items-center gap-1 text-[0.65rem] text-muted-foreground">
+                        <ShieldAlert className="h-3 w-3" />
+                        Mercado cerrado. Las operaciones se reanudarán en la próxima ventana.
+                      </p>
+                    )}
                   </div>
-
-                  {/* Six stats */}
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                    <StatBar label="PAC" value={selected.PAC} />
-                    <StatBar label="SHO" value={selected.SHO} />
-                    <StatBar label="PAS" value={selected.PAS} />
-                    <StatBar label="DRI" value={selected.DRI} />
-                    <StatBar label="DEF" value={selected.DEF} />
-                    <StatBar label="PHY" value={selected.PHY} />
-                  </div>
-
-                  {/* Status flags */}
-                  {(injured || isListed) && (
-                    <div className="flex flex-wrap gap-2">
-                      {injured && (
-                        <span className="flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-wider text-destructive">
-                          <Activity className="h-3 w-3" />
-                          Lesionado
-                        </span>
-                      )}
-                      {isListed && (
-                        <span className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-wider text-amber-400">
-                          <Tag className="h-3 w-3" />
-                          En el mercado
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-3">
-                    <button
-                      type="button"
-                      onClick={() => handleRenew(selected)}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-300 transition hover:bg-emerald-500/20"
-                    >
-                      <HeartHandshake className="h-4 w-4" />
-                      Renovar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleListed(selected)}
-                      disabled={!isMarketOpen}
-                      className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                        isListed
-                          ? "border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
-                          : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
-                      }`}
-                    >
-                      <Tag className="h-4 w-4" />
-                      {isListed ? "Retirar" : "Mercado"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSell(selected)}
-                      disabled={squad.length <= 11 || !isMarketOpen}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive transition hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-40"
-                      title={squad.length <= 11 ? "Mínimo 11 jugadores" : "Vender al instante"}
-                    >
-                      <UserMinus className="h-4 w-4" />
-                      Vender
-                    </button>
-                  </div>
-
-                  {!isMarketOpen && (
-                    <p className="flex items-center gap-1 text-[0.65rem] text-muted-foreground">
-                      <ShieldAlert className="h-3 w-3" />
-                      Mercado cerrado. Las operaciones se reanudarán en la próxima ventana.
-                    </p>
-                  )}
-                </div>
-              </>
-            );
-          })()}
+                </>
+              );
+            })()}
         </DialogContent>
       </Dialog>
     </div>

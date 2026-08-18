@@ -18,7 +18,9 @@ export default function StadiumRevealLoader({
 }) {
   const [phase, setPhase] = useState(0);
   const [progress, setProgress] = useState(0);
-  const [particles, setParticles] = useState<Array<{id: number, x: number, y: number, size: number, delay: number}>>([]);
+  const [particles, setParticles] = useState<
+    Array<{ id: number; x: number; y: number; size: number; delay: number }>
+  >([]);
   const color = teamColor || "#6366f1";
 
   useEffect(() => {
@@ -123,13 +125,30 @@ export default function StadiumRevealLoader({
         ))}
         {/* césped */}
         <ellipse cx="200" cy="180" rx="140" ry="35" fill="url(#grass)" />
-        <ellipse cx="200" cy="180" rx="140" ry="35" fill="none" stroke="#ffffff" strokeOpacity="0.4" strokeWidth="1" />
+        <ellipse
+          cx="200"
+          cy="180"
+          rx="140"
+          ry="35"
+          fill="none"
+          stroke="#ffffff"
+          strokeOpacity="0.4"
+          strokeWidth="1"
+        />
         <line x1="200" y1="150" x2="200" y2="210" stroke="#ffffff" strokeOpacity="0.4" />
         <circle cx="200" cy="180" r="14" fill="none" stroke="#ffffff" strokeOpacity="0.4" />
         {/* focos con efecto de luz */}
         {[60, 200, 340].map((x, i) => (
           <g key={i}>
-            <ellipse cx={x} cy="110" rx="30" ry="50" fill="url(#spotlight)" className="animate-pulse" style={{ animationDelay: `${i * 0.3}s` }} />
+            <ellipse
+              cx={x}
+              cy="110"
+              rx="30"
+              ry="50"
+              fill="url(#spotlight)"
+              className="animate-pulse"
+              style={{ animationDelay: `${i * 0.3}s` }}
+            />
             <line x1={x} y1="40" x2={x} y2="110" stroke="#444" strokeWidth="3" />
             <circle
               cx={x}
@@ -147,7 +166,15 @@ export default function StadiumRevealLoader({
         {/* Bandera del equipo */}
         <g transform="translate(320, 60)">
           <line x1="0" y1="0" x2="0" y2="50" stroke="#666" strokeWidth="2" />
-          <rect x="0" y="0" width="30" height="20" fill={color} className="animate-pulse" style={{ animationDuration: "2s" }} />
+          <rect
+            x="0"
+            y="0"
+            width="30"
+            height="20"
+            fill={color}
+            className="animate-pulse"
+            style={{ animationDuration: "2s" }}
+          />
         </g>
       </svg>
 
@@ -160,14 +187,15 @@ export default function StadiumRevealLoader({
             Bienvenido a {teamName}
           </div>
         )}
-        <div className="text-sm uppercase tracking-[0.3em] text-white/60 mb-6">
-          {PHASES[phase]}
-        </div>
+        <div className="text-sm uppercase tracking-[0.3em] text-white/60 mb-6">{PHASES[phase]}</div>
 
         <div className="w-[min(80vw,400px)] h-2 mx-auto rounded-full bg-white/10 overflow-hidden">
           <div
             className="h-full transition-all duration-300"
-            style={{ background: `linear-gradient(90deg, ${color}, #ffffff)`, width: `${progress}%` }}
+            style={{
+              background: `linear-gradient(90deg, ${color}, #ffffff)`,
+              width: `${progress}%`,
+            }}
           />
         </div>
         <div className="text-xs text-white/40 mt-3">{progress}%</div>

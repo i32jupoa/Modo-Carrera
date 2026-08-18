@@ -26,9 +26,21 @@ export type PosCode =
   | "SD";
 
 export const ALL_POS_CODES: PosCode[] = [
-  "GK", "DFC", "LD", "LI", "CAD", "CAI",
-  "MCD", "MC", "MCO", "MD", "MI",
-  "ED", "EI", "SD", "DC",
+  "GK",
+  "DFC",
+  "LD",
+  "LI",
+  "CAD",
+  "CAI",
+  "MCD",
+  "MC",
+  "MCO",
+  "MD",
+  "MI",
+  "ED",
+  "EI",
+  "SD",
+  "DC",
 ];
 
 /** Nombre largo (ES) de cada demarcación. */
@@ -52,25 +64,55 @@ export const POS_NAME: Record<PosCode, string> = {
 
 /** Alias (EA/inglés/español) → demarcación canónica. */
 const ALIASES: Record<string, PosCode> = {
-  GK: "GK", POR: "GK", PT: "GK",
-  CB: "DFC", LCB: "DFC", RCB: "DFC", SW: "DFC", DFC: "DFC",
-  RB: "LD", RFB: "LD", LD: "LD",
-  LB: "LI", LFB: "LI", LI: "LI",
-  RWB: "CAD", CAD: "CAD",
-  LWB: "CAI", CAI: "CAI",
-  CDM: "MCD", MCD: "MCD", DM: "MCD",
-  CM: "MC", MC: "MC",
-  CAM: "MCO", MCO: "MCO", AM: "MCO",
-  RM: "MD", MD: "MD",
-  LM: "MI", MI: "MI",
-  RW: "ED", RF: "ED", ED: "ED",
-  LW: "EI", LF: "EI", EI: "EI",
-  ST: "DC", CS: "DC", LS: "DC", RS: "DC", DC: "DC",
-  CF: "SD", SD: "SD",
+  GK: "GK",
+  POR: "GK",
+  PT: "GK",
+  CB: "DFC",
+  LCB: "DFC",
+  RCB: "DFC",
+  SW: "DFC",
+  DFC: "DFC",
+  RB: "LD",
+  RFB: "LD",
+  LD: "LD",
+  LB: "LI",
+  LFB: "LI",
+  LI: "LI",
+  RWB: "CAD",
+  CAD: "CAD",
+  LWB: "CAI",
+  CAI: "CAI",
+  CDM: "MCD",
+  MCD: "MCD",
+  DM: "MCD",
+  CM: "MC",
+  MC: "MC",
+  CAM: "MCO",
+  MCO: "MCO",
+  AM: "MCO",
+  RM: "MD",
+  MD: "MD",
+  LM: "MI",
+  MI: "MI",
+  RW: "ED",
+  RF: "ED",
+  ED: "ED",
+  LW: "EI",
+  LF: "EI",
+  EI: "EI",
+  ST: "DC",
+  CS: "DC",
+  LS: "DC",
+  RS: "DC",
+  DC: "DC",
+  CF: "SD",
+  SD: "SD",
 };
 
 export function toPosCode(raw: string): PosCode | null {
-  const key = String(raw ?? "").trim().toUpperCase();
+  const key = String(raw ?? "")
+    .trim()
+    .toUpperCase();
   if (!key) return null;
   return ALIASES[key] ?? null;
 }
@@ -187,10 +229,10 @@ export function calculatePositionSimilarity(pos1: PosCode, pos2: PosCode): numbe
  */
 export function calculateVersatilityBonus(positions: PosCode[]): number {
   if (positions.length <= 1) return 1.0;
-  
+
   let totalDiversity = 0;
   let comparisons = 0;
-  
+
   // Comparar cada par de posiciones
   for (let i = 0; i < positions.length; i++) {
     for (let j = i + 1; j < positions.length; j++) {
@@ -201,12 +243,12 @@ export function calculateVersatilityBonus(positions: PosCode[]): number {
       comparisons++;
     }
   }
-  
+
   if (comparisons === 0) return 1.0;
-  
+
   const avgDiversity = totalDiversity / comparisons;
   // Bonus máximo de 15% para jugadores muy versátiles
-  const bonus = 1 + (avgDiversity * 0.15);
-  
+  const bonus = 1 + avgDiversity * 0.15;
+
   return Math.min(bonus, 1.15);
 }

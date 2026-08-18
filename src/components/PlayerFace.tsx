@@ -8,9 +8,7 @@ export function roleFromPosition(pos: string): PosRole {
   if (["GK", "POR"].includes(p)) return "GK";
   if (["CB", "RB", "LB", "RWB", "LWB", "DFC", "LD", "LI", "CAD", "CAI", "DEF"].includes(p))
     return "DEF";
-  if (
-    ["CDM", "CM", "CAM", "RM", "LM", "MCD", "MC", "MCO", "MD", "MI", "MID"].includes(p)
-  )
+  if (["CDM", "CM", "CAM", "RM", "LM", "MCD", "MC", "MCO", "MD", "MI", "MID"].includes(p))
     return "MID";
   return "ATT";
 }

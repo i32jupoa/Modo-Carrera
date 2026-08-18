@@ -19,7 +19,9 @@ import {
   marketValueEuros,
   mapEaPosition,
   POS_LABEL_ES,
-  FcPlayer, clubOfPlayer } from "@/store/playersStore";
+  FcPlayer,
+  clubOfPlayer,
+} from "@/store/playersStore";
 import { Search, Wallet, UserPlus, Filter, X } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
@@ -135,7 +137,7 @@ function applyFilters(
   filters: FilterState,
   inRoster: Set<string>,
   searchQuery: string,
-  teamAverages: Record<string, number>
+  teamAverages: Record<string, number>,
 ): FcPlayer[] {
   return players.filter((p) => {
     const id = String(p.ID);
@@ -147,8 +149,7 @@ function applyFilters(
     if (searchQuery && !p.Name.toLowerCase().includes(searchQuery)) return false;
 
     // Position filter
-    if (filters.position !== "all" && mapEaPosition(p.Position) !== filters.position)
-      return false;
+    if (filters.position !== "all" && mapEaPosition(p.Position) !== filters.position) return false;
 
     // Price filter
     if (filters.price !== "all") {
@@ -440,7 +441,9 @@ function TransfersPage() {
         <div className="panel-glow px-4 py-3 flex items-center gap-3 min-w-[200px]">
           <Wallet className="h-5 w-5 text-primary shrink-0" />
           <div>
-            <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Presupuesto</p>
+            <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+              Presupuesto
+            </p>
             <p className="text-xl font-black scoreline text-primary">{formatEuro(budget)}</p>
           </div>
         </div>
@@ -537,19 +540,25 @@ function TransfersPage() {
                   label="Precio"
                   value={filters.price}
                   options={PRICE_OPTIONS}
-                  onChange={(value) => setFilters((prev) => ({ ...prev, price: value as PriceBracket }))}
+                  onChange={(value) =>
+                    setFilters((prev) => ({ ...prev, price: value as PriceBracket }))
+                  }
                 />
                 <SelectField
                   label="Edad"
                   value={filters.age}
                   options={AGE_OPTIONS}
-                  onChange={(value) => setFilters((prev) => ({ ...prev, age: value as AgeBracket }))}
+                  onChange={(value) =>
+                    setFilters((prev) => ({ ...prev, age: value as AgeBracket }))
+                  }
                 />
                 <SelectField
                   label="Media"
                   value={filters.rating}
                   options={RATING_OPTIONS}
-                  onChange={(value) => setFilters((prev) => ({ ...prev, rating: value as RatingBracket }))}
+                  onChange={(value) =>
+                    setFilters((prev) => ({ ...prev, rating: value as RatingBracket }))
+                  }
                 />
 
                 <div className="space-y-1.5">
@@ -622,13 +631,17 @@ function TransfersPage() {
                   label="Ordenar por"
                   value={filters.sortField}
                   options={SORT_FIELD_OPTIONS}
-                  onChange={(value) => setFilters((prev) => ({ ...prev, sortField: value as SortField }))}
+                  onChange={(value) =>
+                    setFilters((prev) => ({ ...prev, sortField: value as SortField }))
+                  }
                 />
                 <SelectField
                   label="Dirección"
                   value={filters.sortOrder}
                   options={SORT_ORDER_OPTIONS}
-                  onChange={(value) => setFilters((prev) => ({ ...prev, sortOrder: value as SortOrder }))}
+                  onChange={(value) =>
+                    setFilters((prev) => ({ ...prev, sortOrder: value as SortOrder }))
+                  }
                 />
               </div>
             </div>
@@ -695,7 +708,9 @@ function TransfersPage() {
                     </div>
                     <div className="flex items-center justify-between gap-2 p-3 mt-auto">
                       <div>
-                        <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
+                        <p className="text-[0.6rem] uppercase text-muted-foreground">
+                          Valor de mercado
+                        </p>
                         <p className="font-black scoreline text-primary">{formatEuro(cost)}</p>
                       </div>
                       <button
@@ -811,7 +826,9 @@ function SelectField<T extends string>({
 }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">{label}</label>
+      <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}

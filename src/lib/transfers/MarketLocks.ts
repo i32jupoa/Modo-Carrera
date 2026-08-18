@@ -251,7 +251,12 @@ export function resetMarketLocks(): void {
  * cerrado dentro de la ventana activa vuelve a bloquear a su jugador.
  */
 export function rebuildLocks(
-  records: readonly { playerId: string; toClubId: string; fromClubId?: string | null; date: string }[],
+  records: readonly {
+    playerId: string;
+    toClubId: string;
+    fromClubId?: string | null;
+    date: string;
+  }[],
   windowKeyOf: (date: string) => string,
 ): void {
   settled.clear();

@@ -15,7 +15,12 @@ import { INSULTING_OFFER_RATIO, LOAN_RULES, MARKET_TIMING, WAGE_RULES } from "./
 import { getClubProfile } from "./ClubStrategy";
 import { needsToSell } from "./BudgetManager";
 import { getPlayer } from "./PlayerIndex";
-import { calculateMarketValuation, isInsultingOffer, rateOffer, valuePlayer } from "./MarketValuation";
+import {
+  calculateMarketValuation,
+  isInsultingOffer,
+  rateOffer,
+  valuePlayer,
+} from "./MarketValuation";
 import { clamp, seededUnit } from "./random";
 import type {
   MarketValuation,
@@ -157,8 +162,7 @@ export function generateCounterOffer(
   valuation: MarketValuation | null | undefined,
   round = 0,
 ): number {
-  const val =
-    valuation ?? calculateMarketValuation({ marketValue: amount, age: 26, ovr: 75 });
+  const val = valuation ?? calculateMarketValuation({ marketValue: amount, age: 26, ovr: 75 });
   const concession = Math.min(0.25, round * 0.07);
   const target = val.idealPrice * (1 - concession);
   const counter = Math.max(val.minimumPrice, Math.min(val.maximumPrice, target));
@@ -269,10 +273,7 @@ export function decideImprovement(
 ): ImprovementDecision {
   const profile = getClubProfile(offer.buyerClubId);
   const asked = response.counterAmount;
-  const ceiling = Math.min(
-    budgetCeiling,
-    valuation.maximumPrice * profile.buyingWillingness,
-  );
+  const ceiling = Math.min(budgetCeiling, valuation.maximumPrice * profile.buyingWillingness);
 
   if (asked > ceiling) {
     return {
@@ -315,7 +316,10 @@ export function decideImprovement(
 }
 
 /** Aplica una mejora a la oferta y avanza la ronda. */
-export function applyImprovement(offer: TransferOffer, decision: ImprovementDecision): TransferOffer {
+export function applyImprovement(
+  offer: TransferOffer,
+  decision: ImprovementDecision,
+): TransferOffer {
   offer.amount = decision.amount;
   offer.clauses = decision.clauses;
   offer.status = "pending";

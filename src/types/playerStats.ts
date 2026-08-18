@@ -37,19 +37,19 @@ export interface DynamicPlayerStats {
   seasonCleanSheets: number;
   seasonAverageRating: number;
   seasonTrophies: number; // Trofeos ganados esta temporada
-  
+
   // Estadísticas mensuales para progresión sutil
   monthlyStats: MonthlyStats[];
-  
+
   // Progresión/regresión
   currentOVR: number; // OVR dinámico actual
   baseOVR: number; // OVR base del JSON
   potentialOVR: number; // Potencial dinámico ajustado
-  
+
   // Historial de rendimiento
   formHistory: number[]; // Últimos 10 ratings
   careerSeasons: SeasonStats[];
-  
+
   // Estado de progresión
   lastProgressionMonth: number;
   lastProgressionYear: number;

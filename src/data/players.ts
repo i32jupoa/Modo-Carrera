@@ -1,7 +1,17 @@
 import { Team, TEAMS, teamById, findTeamStrict } from "./teams";
 import playersData from "./playersData";
-import { buildPositions, canPlayPosition, isNaturalFor, playerPosCodes, toPosCode, calculateVersatilityBonus, type PosCode } from "@/lib/positions";
+import {
+  buildPositions,
+  canPlayPosition,
+  isNaturalFor,
+  playerPosCodes,
+  toPosCode,
+  calculateVersatilityBonus,
+  type PosCode,
+} from "@/lib/positions";
 import type { DynamicPlayerStats } from "@/types/playerStats";
+
+export type Position = "GK" | "DEF" | "MID" | "FWD";
 
 export type Player = {
   id: string;
@@ -119,7 +129,16 @@ function ageCurveMultiplier(age: number): number {
 }
 
 const TOP_LEAGUES = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
-const MID_LEAGUES = new Set(["laliga2", "championship", "serieb", "bundesliga2", "ligue2", "ligaportugal", "eredivisie", "roshnsaudileague"]);
+const MID_LEAGUES = new Set([
+  "laliga2",
+  "championship",
+  "serieb",
+  "bundesliga2",
+  "ligue2",
+  "ligaportugal",
+  "eredivisie",
+  "roshnsaudileague",
+]);
 
 /** Peso económico de la liga: las cinco grandes europeas no sufren
  *  penalización; las ligas "medias" pierden algo de valor; el resto, más. */
@@ -138,9 +157,9 @@ function teamValueMultiplier(teamAvgRating: number): number {
 
 // Generate transfermarkt-style value string
 export function formatMarketValue(valueM: number): string {
-  if (valueM >= 100) return `€${(valueM).toFixed(0)}M`;
-  if (valueM >= 10) return `€${(valueM).toFixed(1)}M`;
-  if (valueM >= 1) return `€${(valueM).toFixed(2)}M`;
+  if (valueM >= 100) return `€${valueM.toFixed(0)}M`;
+  if (valueM >= 10) return `€${valueM.toFixed(1)}M`;
+  if (valueM >= 1) return `€${valueM.toFixed(2)}M`;
   return `€${Math.round(valueM * 1000)}K`;
 }
 
@@ -161,13 +180,13 @@ export function marketValueFor(
   isStar = false,
   teamAvgRating = 75,
   positions?: PosCode[],
-  dynamicOVR?: number
+  dynamicOVR?: number,
 ): { value: number; explanation: string } {
-
   // Use dynamic OVR if provided, otherwise use static rating
   const effectiveRating = dynamicOVR || rating;
-  
-  if (effectiveRating < 55) return { value: 0.05, explanation: "Jugador amateur sin valor de mercado" };
+
+  if (effectiveRating < 55)
+    return { value: 0.05, explanation: "Jugador amateur sin valor de mercado" };
 
   const posCode = getPosCode(pos);
   const cap = POSITION_VALUE_CAP[posCode] || 150;
@@ -203,7 +222,7 @@ export function marketValueFor(
   // Determinar tipo de posición basado en PosCode
   const isDefensive = ["GK", "DFC", "LD", "LI", "CAD", "CAI", "MCD"].includes(posCode);
   const isAttacking = ["ED", "EI", "DC", "SD", "MCO", "MD", "MI"].includes(posCode);
-  
+
   if (isAttacking) reasons.push("posición ofensiva");
   else if (isDefensive) reasons.push("posición defensiva");
   else reasons.push("posición mixta");
@@ -222,7 +241,12 @@ export function marketValueFor(
 }
 
 // Legacy function for backwards compatibility
-export function legacyMarketValueFor(rating: number, age: number, pos = "MID", teamAvgRating = 75): number {
+export function legacyMarketValueFor(
+  rating: number,
+  age: number,
+  pos = "MID",
+  teamAvgRating = 75,
+): number {
   const result = marketValueFor(rating, age, pos, "", "", 0, 0, 0, false, teamAvgRating);
   return result.value;
 }
@@ -237,7 +261,6 @@ function findTeamIdForPlayer(jsonTeamName: string, jsonLeagueName?: string): str
   return team ? team.id : "free_agent";
 }
 
-
 let cachedSquads: Record<string, Player[]> | null = null;
 const CACHE_VERSION = 14; // Added discount logging for debugging
 
@@ -251,15 +274,15 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
   // if (cachedSquads) return cachedSquads;
 
   const map: Record<string, Player[]> = {};
-  
+
   // Inicializamos las listas de todos los equipos registrados en el sistema
-  TEAMS.forEach(t => {
+  TEAMS.forEach((t) => {
     map[t.id] = [];
   });
   map["free_agent"] = [];
 
   const dataArray = Array.isArray(playersData) ? playersData : [];
-  
+
   // PASO 1: Primero recolectamos todos los jugadores sin calcular valores de mercado
   const rawPlayers: Array<{
     id: string;
@@ -273,28 +296,27 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
     rawData: any;
     idx: number;
   }> = [];
-  
+
   const teamRatings: Record<string, number[]> = {};
-  
+
   dataArray.forEach((p: any, idx: number) => {
     const rating = p.OVR || p.rating || 70;
     const age = p.Age || p.age || 24;
     const pos = p.Position || p.position || "MID";
     const jsonTeamName = p.Team || p.Club || p.team || p.club || "";
     const jsonLeagueName = p.League || p.league || "";
-    
+
     const teamId = findTeamIdForPlayer(jsonTeamName, jsonLeagueName);
     const team = teamId === "free_agent" ? null : teamById(teamId);
     const leagueId = team?.league || "";
     const effectiveTeamId = map[teamId] ? teamId : "free_agent";
 
-    
     // Acumulamos ratings por equipo para calcular la media
     if (!teamRatings[effectiveTeamId]) {
       teamRatings[effectiveTeamId] = [];
     }
     teamRatings[effectiveTeamId].push(rating);
-    
+
     rawPlayers.push({
       id: p.ID ? String(p.ID) : `p-${idx}`,
       name: p.Name || p.name || "Jugador",
@@ -305,44 +327,45 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
       pos,
       cardImage: p.card || p.cardImage || p.PhotoUrl || "",
       rawData: p,
-      idx
+      idx,
     });
   });
-  
+
   // Calculamos la media de cada equipo
   const teamAverages: Record<string, number> = {};
   for (const [tid, ratings] of Object.entries(teamRatings)) {
-    teamAverages[tid] = ratings.length > 0 
-      ? Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length)
-      : 75;
+    teamAverages[tid] =
+      ratings.length > 0 ? Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length) : 75;
   }
-  
+
   // PASO 2: Calculamos valores de mercado con las medias de equipo reales
   rawPlayers.forEach((rp) => {
     const teamAvgRating = teamAverages[rp.teamId] || 75;
-    
+
     // Use dynamic OVR if available, otherwise use static rating
     const dynamicOVR = dynamicStatsMap?.[rp.id]?.dynamicStats?.currentOVR;
     const effectiveRating = dynamicOVR || rp.rating;
-    
+
     const playerPositions = buildPositions(
       rp.rawData?.Position ?? rp.pos,
       rp.rawData?.["Alternative positions"],
     );
-    
+
     const marketValueResult = marketValueFor(
-      effectiveRating, 
-      rp.age, 
+      effectiveRating,
+      rp.age,
       rp.pos,
       rp.teamId,
       rp.leagueId,
-      0, 0, 0,
+      0,
+      0,
+      0,
       false,
       teamAvgRating,
       playerPositions,
-      dynamicOVR
+      dynamicOVR,
     );
-    
+
     const playerObj: Player = {
       id: rp.id,
       name: rp.name,
@@ -361,7 +384,7 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
       injuredUntil: 0,
       morale: 70,
       formHistory: [],
-      cardImage: rp.cardImage
+      cardImage: rp.cardImage,
     };
 
     if (map[rp.teamId]) {
@@ -375,11 +398,23 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
   // relleno: la plantilla inicial de cada equipo es exactamente la que
   // aparece en la base de datos.
   const positionOrder: Record<PosCode, number> = {
-    GK: 0, DFC: 1, LD: 2, LI: 3, CAD: 4, CAI: 5,
-    MCD: 6, MC: 7, MCO: 8, MD: 9, MI: 10,
-    ED: 11, EI: 12, SD: 13, DC: 14,
+    GK: 0,
+    DFC: 1,
+    LD: 2,
+    LI: 3,
+    CAD: 4,
+    CAI: 5,
+    MCD: 6,
+    MC: 7,
+    MCO: 8,
+    MD: 9,
+    MI: 10,
+    ED: 11,
+    EI: 12,
+    SD: 13,
+    DC: 14,
   };
-  TEAMS.forEach(t => {
+  TEAMS.forEach((t) => {
     if (map[t.id]) {
       map[t.id].sort((a, b) => {
         const aPos = a.positions[0] || "MC";
@@ -388,7 +423,6 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
       });
     }
   });
-
 
   cachedSquads = map;
   return map;
@@ -405,7 +439,17 @@ export function generateSquad(team: Team, dynamicStatsMap?: Record<string, any>)
  * (gk, lb, cb1, cb2, rb, cm1..cm3, lw, st, rw).
  */
 const DEFAULT_LINEUP_SLOTS: PosCode[] = [
-  "GK", "LI", "DFC", "DFC", "LD", "MC", "MC", "MC", "EI", "DC", "ED",
+  "GK",
+  "LI",
+  "DFC",
+  "DFC",
+  "LD",
+  "MC",
+  "MC",
+  "MC",
+  "EI",
+  "DC",
+  "ED",
 ];
 
 export function defaultLineup(squad: Player[], unavailable: Set<string> = new Set()): string[] {

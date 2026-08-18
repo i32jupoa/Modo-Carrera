@@ -43,7 +43,10 @@ function getLeaguesFromTeams(): FilterOption<LeagueId | "all">[] {
   ];
 }
 
-function getTeamsForLeague(league: LeagueId | "all", allTeams: ReturnType<typeof getAllTeams>): FilterOption<string>[] {
+function getTeamsForLeague(
+  league: LeagueId | "all",
+  allTeams: ReturnType<typeof getAllTeams>,
+): FilterOption<string>[] {
   if (league === "all") return [{ value: "all", label: "Todos los equipos" }];
   const teams = allTeams.filter((t) => t.league === league);
   return [
@@ -69,7 +72,10 @@ function InjuriesPage() {
 
   useEffect(() => {
     const s = loadSave();
-    if (!s) { navigate({ to: "/" }); return; }
+    if (!s) {
+      navigate({ to: "/" });
+      return;
+    }
     setSave(s);
   }, [navigate]);
 
@@ -120,7 +126,7 @@ function InjuriesPage() {
   const leagueOptions = useMemo(() => getLeaguesFromTeams(), []);
   const teamOptions = useMemo(
     () => getTeamsForLeague(filters.league, allTeams),
-    [filters.league, allTeams]
+    [filters.league, allTeams],
   );
 
   const resetFilters = () => {
@@ -203,22 +209,30 @@ function InjuriesPage() {
       {/* Summary tiles */}
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div className="rounded-xl border border-border/60 bg-card/60 p-3">
-          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">En enfermería</p>
+          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+            En enfermería
+          </p>
           <p className="scoreline text-2xl font-black text-destructive">{summary.total}</p>
         </div>
         <div className="rounded-xl border border-border/60 bg-card/60 p-3">
-          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Lesión grave</p>
+          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+            Lesión grave
+          </p>
           <p className="scoreline text-2xl font-black text-orange-400">
             <AlertTriangle className="mr-1 inline h-4 w-4" />
             {summary.severe}
           </p>
         </div>
         <div className="rounded-xl border border-border/60 bg-card/60 p-3">
-          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Lesión leve</p>
+          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+            Lesión leve
+          </p>
           <p className="scoreline text-2xl font-black text-yellow-300">{summary.light}</p>
         </div>
         <div className="rounded-xl border border-border/60 bg-card/60 p-3">
-          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Baja media</p>
+          <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+            Baja media
+          </p>
           <p className="scoreline text-2xl font-black text-primary">
             <Clock className="mr-1 inline h-4 w-4" />
             {summary.avg}j
@@ -251,7 +265,9 @@ function InjuriesPage() {
               </label>
               <div className="flex gap-2">
                 <button
-                  onClick={() => setFilters((f) => ({ ...f, myTeam: true, league: "all", team: "all" }))}
+                  onClick={() =>
+                    setFilters((f) => ({ ...f, myTeam: true, league: "all", team: "all" }))
+                  }
                   className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold border transition ${
                     filters.myTeam
                       ? "bg-primary text-primary-foreground border-primary"
@@ -297,7 +313,10 @@ function InjuriesPage() {
                         <span>{opt.label}</span>
                       ) : (
                         <div className="flex items-center gap-2">
-                          <LeagueLogo league={LEAGUES[opt.value as LeagueId]?.name || ""} size="sm" />
+                          <LeagueLogo
+                            league={LEAGUES[opt.value as LeagueId]?.name || ""}
+                            size="sm"
+                          />
                           <span>{LEAGUES[opt.value as LeagueId]?.name || opt.label}</span>
                         </div>
                       )}
@@ -314,9 +333,7 @@ function InjuriesPage() {
               </label>
               <select
                 value={filters.team}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, team: e.target.value }))
-                }
+                onChange={(e) => setFilters((prev) => ({ ...prev, team: e.target.value }))}
                 disabled={filters.league === "all" && filters.team === "all"}
                 className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -341,9 +358,7 @@ function InjuriesPage() {
             {filters.myTeam ? "Plantilla 100% sana." : "Sin lesionados registrados todavía."}
           </p>
           {activeFiltersCount > 0 && (
-            <p className="text-xs text-muted-foreground mt-2">
-              Prueba a ajustar los filtros
-            </p>
+            <p className="text-xs text-muted-foreground mt-2">Prueba a ajustar los filtros</p>
           )}
         </div>
       ) : (
@@ -358,13 +373,13 @@ function InjuriesPage() {
             const tone = severe
               ? "border-destructive/50 from-destructive/15"
               : moderate
-              ? "border-orange-500/40 from-orange-500/10"
-              : "border-yellow-500/40 from-yellow-500/10";
+                ? "border-orange-500/40 from-orange-500/10"
+                : "border-yellow-500/40 from-yellow-500/10";
             const accent = severe
               ? "text-destructive"
               : moderate
-              ? "text-orange-400"
-              : "text-yellow-300";
+                ? "text-orange-400"
+                : "text-yellow-300";
             const totalDuration = Math.max(out, 4);
             const recoveryPct = Math.max(
               0,
@@ -375,11 +390,7 @@ function InjuriesPage() {
                 key={p.id}
                 className={`grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-xl border bg-gradient-to-r to-transparent p-3 ${tone}`}
               >
-                <TeamLogo
-                  teamName={team.name}
-                  leagueName={getLeagueName(team.league)}
-                  size={40}
-                />
+                <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={40} />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate font-bold">{p.name}</span>
@@ -391,9 +402,7 @@ function InjuriesPage() {
                     <Activity className={`h-3 w-3 ${accent}`} />
                     <span className="capitalize">{p.injuryReason ?? "lesión muscular"}</span>
                     <span>·</span>
-                    <span>
-                      {severe ? "Grave" : moderate ? "Moderada" : "Leve"}
-                    </span>
+                    <span>{severe ? "Grave" : moderate ? "Moderada" : "Leve"}</span>
                   </div>
                   <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
                     <div

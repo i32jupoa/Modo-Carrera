@@ -8,27 +8,45 @@ function ratingColor(r: number) {
 }
 
 export function PlayerRatingsPanel({
-  ratings, mvp, homeName, awayName,
-}: { ratings: PlayerRating[]; mvp?: PlayerRating | null; homeName: string; awayName: string }) {
+  ratings,
+  mvp,
+  homeName,
+  awayName,
+}: {
+  ratings: PlayerRating[];
+  mvp?: PlayerRating | null;
+  homeName: string;
+  awayName: string;
+}) {
   if (!ratings || ratings.length === 0) return null;
   const render = (team: "home" | "away", title: string) => (
     <div className="space-y-1">
       <h4 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{title}</h4>
-      {ratings.filter((r) => r.team === team).sort((a, b) => b.rating - a.rating).map((r) => (
-        <div key={r.playerId} className="flex items-center justify-between gap-2 rounded-lg border border-border px-2 py-1 text-sm">
-          <span className="truncate">
-            <span className="mr-1 text-xs text-muted-foreground">{r.position}</span>
-            {r.playerName}
-            {r.goals > 0 && <span className="ml-1">{"⚽".repeat(Math.min(r.goals, 4))}</span>}
-            {r.assists > 0 && <span className="ml-1 text-xs text-muted-foreground">{r.assists}A</span>}
-            {r.red && <span className="ml-1">🟥</span>}
-            {!r.red && r.yellow > 0 && <span className="ml-1">🟨</span>}
-          </span>
-          <span className={`rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${ratingColor(r.rating)}`}>
-            {r.rating.toFixed(1)}
-          </span>
-        </div>
-      ))}
+      {ratings
+        .filter((r) => r.team === team)
+        .sort((a, b) => b.rating - a.rating)
+        .map((r) => (
+          <div
+            key={r.playerId}
+            className="flex items-center justify-between gap-2 rounded-lg border border-border px-2 py-1 text-sm"
+          >
+            <span className="truncate">
+              <span className="mr-1 text-xs text-muted-foreground">{r.position}</span>
+              {r.playerName}
+              {r.goals > 0 && <span className="ml-1">{"⚽".repeat(Math.min(r.goals, 4))}</span>}
+              {r.assists > 0 && (
+                <span className="ml-1 text-xs text-muted-foreground">{r.assists}A</span>
+              )}
+              {r.red && <span className="ml-1">🟥</span>}
+              {!r.red && r.yellow > 0 && <span className="ml-1">🟨</span>}
+            </span>
+            <span
+              className={`rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${ratingColor(r.rating)}`}
+            >
+              {r.rating.toFixed(1)}
+            </span>
+          </div>
+        ))}
     </div>
   );
   return (

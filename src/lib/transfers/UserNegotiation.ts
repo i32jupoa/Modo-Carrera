@@ -11,17 +11,18 @@
  */
 
 import { getClubProfile, getAllClubProfiles } from "./ClubStrategy";
-import { maxSpend, maxWageOffer, needsToSell, registerSale, registerSigning } from "./BudgetManager";
+import {
+  maxSpend,
+  maxWageOffer,
+  needsToSell,
+  registerSale,
+  registerSigning,
+} from "./BudgetManager";
 import { getClubPlayers, getPlayer, updatePlayer } from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
 import { askingPrice, isAvailable, valuePlayer } from "./MarketValuation";
 import { decideOnMove, wageDemand, wantsOut } from "./PlayerDecision";
-import {
-  competitionFor,
-  dropInterest,
-  registerInterest,
-  sellerShouldWait,
-} from "./BidWar";
+import { competitionFor, dropInterest, registerInterest, sellerShouldWait } from "./BidWar";
 import {
   createTransferOffer,
   decideImprovement,
@@ -192,7 +193,11 @@ export interface ScoutingReport {
 }
 
 /** Datos que la UI muestra antes de lanzar una oferta. */
-export function scoutPlayer(playerId: string, userClubId: string, date: string): ScoutingReport | null {
+export function scoutPlayer(
+  playerId: string,
+  userClubId: string,
+  date: string,
+): ScoutingReport | null {
   const player = getPlayer(playerId);
   if (!player) return null;
   const cacheKey = cacheKeyFor(date);
@@ -284,7 +289,8 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   });
 
   // La cláusula pagada se resuelve al día siguiente; el resto, en 1-3 días.
-  const instant = player.contract.releaseClause > 0 && offer.amount >= player.contract.releaseClause;
+  const instant =
+    player.contract.releaseClause > 0 && offer.amount >= player.contract.releaseClause;
   const days = instant ? 1 : seededInt(1, 3, offer.id, player.id, input.date);
 
   const deal: UserDeal = {
@@ -365,7 +371,11 @@ export function acceptClubDemand(dealId: string, date: string): SubmitOfferResul
 }
 
 /** Mejora la ficha ofrecida al jugador durante la fase de condiciones. */
-export function improvePlayerTerms(dealId: string, wageOffer: number, date: string): SubmitOfferResult {
+export function improvePlayerTerms(
+  dealId: string,
+  wageOffer: number,
+  date: string,
+): SubmitOfferResult {
   const deal = deals.get(dealId);
   if (!deal || deal.stage !== "player-terms") {
     return { ok: false, reason: "No hay negociación de ficha abierta." };
@@ -562,7 +572,13 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
   // Con varios pretendientes y sin urgencia, el vendedor deja correr los días.
   const urgent = needsToSell(deal.otherClubId);
   if (
-    sellerShouldWait(deal.playerId, deal.otherClubId, offerWorth(deal.offer), deal.valuation.expectedPrice, urgent)
+    sellerShouldWait(
+      deal.playerId,
+      deal.otherClubId,
+      offerWorth(deal.offer),
+      deal.valuation.expectedPrice,
+      urgent,
+    )
   ) {
     deal.stage = "club-waiting";
     deal.clubMessage = `Hay ${competition} club(es) más interesados: el ${deal.otherClubId} espera antes de decidir.`;
@@ -837,8 +853,7 @@ export function acceptIncomingOffer(dealId: string, date: string): IncomingRespo
     cacheKey: cacheKeyFor(date),
     deadlineDay: deadlineToday(date),
   });
-  const reluctant =
-    decision.verdict === "rejected-project" || decision.verdict === "rejected-wage";
+  const reluctant = decision.verdict === "rejected-project" || decision.verdict === "rejected-wage";
   deal.playerMessage = reluctant
     ? `${decision.message} Aun así, el club ha decidido su salida.`
     : decision.message;
@@ -972,7 +987,12 @@ export function resetUserDeals(): void {
 }
 
 /** Registra manualmente ingresos/gastos del club del usuario en el motor. */
-export function syncUserFinances(userClubId: string, fee: number, wage: number, sold: boolean): void {
+export function syncUserFinances(
+  userClubId: string,
+  fee: number,
+  wage: number,
+  sold: boolean,
+): void {
   if (sold) registerSale(userClubId, fee, wage);
   else registerSigning(userClubId, fee, wage);
 }

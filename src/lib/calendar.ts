@@ -23,7 +23,11 @@ export function fmtMonth(d: Date): string {
 }
 
 export function sameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 
 export function monthDays(year: number, month: number): Date[] {
@@ -32,10 +36,12 @@ export function monthDays(year: number, month: number): Date[] {
   const last = new Date(year, month + 1, 0);
   // start from Monday before/on the first
   const startWeekday = (first.getDay() + 6) % 7; // 0 = Mon
-  const start = new Date(first); start.setDate(first.getDate() - startWeekday);
+  const start = new Date(first);
+  start.setDate(first.getDate() - startWeekday);
   // build a full grid (42 cells, 6 rows)
   for (let i = 0; i < 42; i++) {
-    const d = new Date(start); d.setDate(start.getDate() + i);
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
     out.push(d);
     if (i >= 34 && d > last) break;
   }
@@ -45,5 +51,10 @@ export function monthDays(year: number, month: number): Date[] {
 export const COMP_COLORS = {
   league: { bg: "bg-primary/20", border: "border-primary/40", text: "text-primary", label: "Liga" },
   cup: { bg: "bg-accent/20", border: "border-accent/40", text: "text-accent", label: "Copa" },
-  ucl: { bg: "bg-purple-500/20", border: "border-purple-500/40", text: "text-purple-300", label: "UCL" },
+  ucl: {
+    bg: "bg-purple-500/20",
+    border: "border-purple-500/40",
+    text: "text-purple-300",
+    label: "UCL",
+  },
 } as const;

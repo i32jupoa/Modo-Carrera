@@ -31,10 +31,7 @@ export function buildFullLeagueSchedule(league: LeagueId): ScheduleFixture[] {
   return rawToSchedule(raw, dates);
 }
 
-export function buildUserLeagueSchedule(
-  myTeamId: string,
-  league: LeagueId,
-): ScheduleFixture[] {
+export function buildUserLeagueSchedule(myTeamId: string, league: LeagueId): ScheduleFixture[] {
   return buildFullLeagueSchedule(league).filter(
     (f) => f.homeTeam === myTeamId || f.awayTeam === myTeamId,
   );
@@ -46,9 +43,7 @@ export function mergeScheduleWithPlayed(
   existing: ScheduleFixture[],
   league: LeagueId,
 ): ScheduleFixture[] {
-  const played = new Map(
-    existing.filter((f) => f.isPlayed).map((f) => [f.id, f]),
-  );
+  const played = new Map(existing.filter((f) => f.isPlayed).map((f) => [f.id, f]));
   let merged = full.map((f) => {
     const prev = played.get(f.id);
     if (!prev) return f;
@@ -65,13 +60,8 @@ export function mergeScheduleWithPlayed(
   return merged;
 }
 
-export function userFixtures(
-  fixtures: ScheduleFixture[],
-  myTeamId: string,
-): ScheduleFixture[] {
-  return fixtures.filter(
-    (f) => f.homeTeam === myTeamId || f.awayTeam === myTeamId,
-  );
+export function userFixtures(fixtures: ScheduleFixture[], myTeamId: string): ScheduleFixture[] {
+  return fixtures.filter((f) => f.homeTeam === myTeamId || f.awayTeam === myTeamId);
 }
 
 export function scheduleFixturesByDate(
@@ -86,11 +76,7 @@ export function scheduleFixturesByDate(
   return map;
 }
 
-export function opponentLabel(
-  fixture: ScheduleFixture,
-  myTeamId: string,
-): string {
-  const oppId =
-    fixture.homeTeam === myTeamId ? fixture.awayTeam : fixture.homeTeam;
+export function opponentLabel(fixture: ScheduleFixture, myTeamId: string): string {
+  const oppId = fixture.homeTeam === myTeamId ? fixture.awayTeam : fixture.homeTeam;
   return teamById(oppId).short;
 }

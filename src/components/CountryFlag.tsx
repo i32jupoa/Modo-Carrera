@@ -18,13 +18,13 @@ interface CountryFlagProps {
 
 export function CountryFlag({ country, className = "", size = "sm" }: CountryFlagProps) {
   const [error, setError] = useState(false);
-  
+
   const sizeClasses = size === "sm" ? "w-5 h-4" : "w-6 h-4";
-  
+
   if (error) {
     return null; // Hide image if flag is missing
   }
-  
+
   return (
     <img
       src={getFlagUrl(country)}

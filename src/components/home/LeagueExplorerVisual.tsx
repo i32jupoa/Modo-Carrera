@@ -28,7 +28,9 @@ export default function LeagueExplorerVisual({
 
             <div className="flex items-center gap-4">
               <span className="text-xs text-muted-foreground">{leagues.length} ligas</span>
-              <span className="text-muted-foreground text-lg">{openCountry === country ? "▲" : "▼"}</span>
+              <span className="text-muted-foreground text-lg">
+                {openCountry === country ? "▲" : "▼"}
+              </span>
             </div>
           </button>
 
@@ -51,7 +53,9 @@ export default function LeagueExplorerVisual({
                       <LeagueLogo league={lg.name} size="sm" />
                       <div className="flex-1 text-left">
                         <div className="font-bold">{lg.name}</div>
-                        <div className="text-xs text-white/50">{country} • {lg.teams?.length ?? "—"} equipos</div>
+                        <div className="text-xs text-white/50">
+                          {country} • {lg.teams?.length ?? "—"} equipos
+                        </div>
                       </div>
 
                       <div className="text-xs text-muted-foreground">Explorar</div>

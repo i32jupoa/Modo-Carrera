@@ -34,14 +34,20 @@ import {
   type Pressure,
   type DefenseLine,
 } from "@/lib/teamTactics";
-import { Shield, Swords, Scale, ChevronsDown, ChevronsUp, Minus, Crown, Goal, Flag, CornerDownRight, CalendarClock } from "lucide-react";
 import {
-  loadLive,
-  saveLive,
-  subLimits,
-  isFreeWindow,
-  type LiveMatchState,
-} from "@/lib/liveMatch";
+  Shield,
+  Swords,
+  Scale,
+  ChevronsDown,
+  ChevronsUp,
+  Minus,
+  Crown,
+  Goal,
+  Flag,
+  CornerDownRight,
+  CalendarClock,
+} from "lucide-react";
+import { loadLive, saveLive, subLimits, isFreeWindow, type LiveMatchState } from "@/lib/liveMatch";
 import { btnPrimary, btnSecondary, infoChip } from "@/components/match/matchUi";
 
 // Demarcación exacta que exige cada hueco del 11 titular (GK, DFC, MI, ED...).
@@ -93,7 +99,7 @@ function LineupPage() {
   const fromMatch = routerState?.fromMatch === true;
 
   // Extract match metadata from router state (if passed from season or match page)
-  const matchType = routerState?.matchType as 'LEAGUE' | 'CUP' | 'UCL' | undefined;
+  const matchType = routerState?.matchType as "LEAGUE" | "CUP" | "UCL" | undefined;
   const cupRound = routerState?.cupRound as string | undefined;
   const fixtureId = routerState?.fixtureId as string | undefined;
   const returningFromLineupEdit = routerState?.returningFromLineupEdit === true;
@@ -104,7 +110,10 @@ function LineupPage() {
 
   useEffect(() => {
     const s = loadSave();
-    if (!s) { navigate({ to: "/" }); return; }
+    if (!s) {
+      navigate({ to: "/" });
+      return;
+    }
     setSave(s);
 
     if (liveMode) {
@@ -118,16 +127,16 @@ function LineupPage() {
         return;
       }
     }
-    
+
     // Initialize lineup from save
     const savedLineup = s.lineups[s.myTeamId] ?? [];
     if (savedLineup.length > 0) {
       setStartingXI(savedLineup.slice(0, 11));
       const squad = getSimSquad(s.myTeamId);
-      const benchPlayers = squad.filter(p => !savedLineup.includes(p.id)).map(p => p.id);
+      const benchPlayers = squad.filter((p) => !savedLineup.includes(p.id)).map((p) => p.id);
       setBench(benchPlayers);
     }
-    
+
     // Initialize formation from save
     const savedFormation = s.formations[s.myTeamId] ?? "Táctica 4-3-3";
     setSelectedFormation(savedFormation as FormationName);
@@ -155,8 +164,8 @@ function LineupPage() {
     if (!save || startingXI.length === 0) return;
     if (processedForMdRef.current === leagueMd) return;
 
-    const injuredPlayers = squad.filter(p => 
-      startingXI.includes(p.id) && p.injuredUntil > leagueMd
+    const injuredPlayers = squad.filter(
+      (p) => startingXI.includes(p.id) && p.injuredUntil > leagueMd,
     );
 
     if (injuredPlayers.length > 0) {
@@ -164,19 +173,23 @@ function LineupPage() {
       let newBench = [...bench];
 
       // Process each injured player
-      injuredPlayers.forEach(injuredPlayer => {
+      injuredPlayers.forEach((injuredPlayer) => {
         // Find a healthy replacement from bench with compatible position
-        const healthyBench = squad.filter(p => 
-          newBench.includes(p.id) && p.injuredUntil <= leagueMd && 
-          p.positions.some(pos => injuredPlayer.positions.includes(pos))
+        const healthyBench = squad.filter(
+          (p) =>
+            newBench.includes(p.id) &&
+            p.injuredUntil <= leagueMd &&
+            p.positions.some((pos) => injuredPlayer.positions.includes(pos)),
         );
-        
+
         if (healthyBench.length > 0) {
           const replacement = healthyBench[0];
-          newStartingXI = newStartingXI.map(id => id === injuredPlayer.id ? replacement.id : id);
-          newBench = newBench.map(id => id === replacement.id ? injuredPlayer.id : id);
+          newStartingXI = newStartingXI.map((id) =>
+            id === injuredPlayer.id ? replacement.id : id,
+          );
+          newBench = newBench.map((id) => (id === replacement.id ? injuredPlayer.id : id));
         } else {
-          newStartingXI = newStartingXI.filter(id => id !== injuredPlayer.id);
+          newStartingXI = newStartingXI.filter((id) => id !== injuredPlayer.id);
           newBench = [...newBench, injuredPlayer.id];
         }
       });
@@ -186,10 +199,12 @@ function LineupPage() {
       processedForMdRef.current = leagueMd;
 
       // Auto-save lineup exactly as if the user clicked Guardar
-      if (save && newStartingXI.filter(id => id && id.trim() !== "").length === 11) {
+      if (save && newStartingXI.filter((id) => id && id.trim() !== "").length === 11) {
         const suspensions = save.suspensions[save.myTeamId] ?? [];
-        const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
-        const filteredXI = newStartingXI.filter(id => !suspendedPlayerIds.has(id));
+        const suspendedPlayerIds = new Set(
+          suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+        );
+        const filteredXI = newStartingXI.filter((id) => !suspendedPlayerIds.has(id));
         const next = setLineup(save, save.myTeamId, filteredXI);
         const nextWithFormation = setFormation(next, save.myTeamId, selectedFormation);
         saveSave(nextWithFormation);
@@ -207,10 +222,12 @@ function LineupPage() {
     if (suspensionProcessedForMdRef.current === leagueMd) return;
 
     const suspensions = save.suspensions[save.myTeamId] ?? [];
-    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
-    
-    const suspendedPlayers = squad.filter(p => 
-      startingXI.includes(p.id) && suspendedPlayerIds.has(p.id)
+    const suspendedPlayerIds = new Set(
+      suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    );
+
+    const suspendedPlayers = squad.filter(
+      (p) => startingXI.includes(p.id) && suspendedPlayerIds.has(p.id),
     );
 
     if (suspendedPlayers.length > 0) {
@@ -218,21 +235,24 @@ function LineupPage() {
       let newBench = [...bench];
 
       // Process each suspended player
-      suspendedPlayers.forEach(suspendedPlayer => {
+      suspendedPlayers.forEach((suspendedPlayer) => {
         // Find a healthy replacement from bench (not injured or suspended)
-        const healthyBench = squad.filter(p => 
-          newBench.includes(p.id) && 
-          p.injuredUntil <= leagueMd && 
-          !suspendedPlayerIds.has(p.id) &&
-          p.positions.some(pos => suspendedPlayer.positions.includes(pos))
+        const healthyBench = squad.filter(
+          (p) =>
+            newBench.includes(p.id) &&
+            p.injuredUntil <= leagueMd &&
+            !suspendedPlayerIds.has(p.id) &&
+            p.positions.some((pos) => suspendedPlayer.positions.includes(pos)),
         );
-        
+
         if (healthyBench.length > 0) {
           const replacement = healthyBench[0];
-          newStartingXI = newStartingXI.map(id => id === suspendedPlayer.id ? replacement.id : id);
-          newBench = newBench.map(id => id === replacement.id ? suspendedPlayer.id : id);
+          newStartingXI = newStartingXI.map((id) =>
+            id === suspendedPlayer.id ? replacement.id : id,
+          );
+          newBench = newBench.map((id) => (id === replacement.id ? suspendedPlayer.id : id));
         } else {
-          newStartingXI = newStartingXI.filter(id => id !== suspendedPlayer.id);
+          newStartingXI = newStartingXI.filter((id) => id !== suspendedPlayer.id);
           newBench = [...newBench, suspendedPlayer.id];
         }
       });
@@ -242,8 +262,8 @@ function LineupPage() {
       suspensionProcessedForMdRef.current = leagueMd;
 
       // Auto-save lineup exactly as if the user clicked Guardar
-      if (save && newStartingXI.filter(id => id && id.trim() !== "").length === 11) {
-        const filteredXI = newStartingXI.filter(id => !suspendedPlayerIds.has(id));
+      if (save && newStartingXI.filter((id) => id && id.trim() !== "").length === 11) {
+        const filteredXI = newStartingXI.filter((id) => !suspendedPlayerIds.has(id));
         const next = setLineup(save, save.myTeamId, filteredXI);
         const nextWithFormation = setFormation(next, save.myTeamId, selectedFormation);
         saveSave(nextWithFormation);
@@ -255,16 +275,16 @@ function LineupPage() {
   }, [save, squad, startingXI, bench, leagueMd, selectedFormation]);
 
   const startingPlayers = useMemo(() => {
-    return startingXI.map(id => squad.find(p => p.id === id));
+    return startingXI.map((id) => squad.find((p) => p.id === id));
   }, [startingXI, squad]);
 
   const benchPlayers = useMemo(() => {
-    return bench.map(id => squad.find(p => p.id === id)).filter(Boolean);
+    return bench.map((id) => squad.find((p) => p.id === id)).filter(Boolean);
   }, [bench, squad]);
 
   // Count only valid, non-null players in starting XI
   const activeStartersCount = useMemo(() => {
-    return startingXI.filter(id => id && id.trim() !== "").length;
+    return startingXI.filter((id) => id && id.trim() !== "").length;
   }, [startingXI]);
 
   const isLineupComplete = activeStartersCount === 11;
@@ -293,7 +313,7 @@ function LineupPage() {
     // startingXI maintains the correct order as built in handleFormationChange
     positionKeys.forEach((posKey, index) => {
       if (index < startingXI.length && startingXI[index]) {
-        const player = squad.find(p => p.id === startingXI[index]);
+        const player = squad.find((p) => p.id === startingXI[index]);
         if (player) {
           positions[posKey] = player;
         }
@@ -347,9 +367,7 @@ function LineupPage() {
     if (!save) return null;
     const myId = save.myTeamId;
     const all = save.fixtures[save.myLeague] ?? [];
-    const upcoming = all.find(
-      (f) => !f.result && (f.homeId === myId || f.awayId === myId),
-    );
+    const upcoming = all.find((f) => !f.result && (f.homeId === myId || f.awayId === myId));
     if (!upcoming) return null;
     const isHome = upcoming.homeId === myId;
     const rivalId = isHome ? upcoming.awayId : upcoming.homeId;
@@ -375,43 +393,43 @@ function LineupPage() {
       // Both players are on the pitch - internal swap
       if (startingXI.includes(selectedPlayer) && startingXI.includes(playerId)) {
         // Validate pitch-to-pitch swap
-        const player1 = squad.find(p => p.id === selectedPlayer);
-        const player2 = squad.find(p => p.id === playerId);
-        
+        const player1 = squad.find((p) => p.id === selectedPlayer);
+        const player2 = squad.find((p) => p.id === playerId);
+
         if (!player1 || !player2) {
           setSelectedPlayer(null);
           return;
         }
-        
+
         // Get position keys for both players
         const posKey1 = getPlayerPositionKey(selectedPlayer);
         const posKey2 = getPlayerPositionKey(playerId);
-        
+
         if (!posKey1 || !posKey2) {
           setSelectedPlayer(null);
           return;
         }
-        
+
         // Get required roles for both positions
         const slot1 = getSlotCodeForKey(posKey1);
         const slot2 = getSlotCodeForKey(posKey2);
-        
+
         // Validate that player2 can play in player1's position
         if (!canPlayInSlot(player2, slot1)) {
           toast.error(invalidPositionMessage(player2, slot1));
           setSelectedPlayer(null);
           return;
         }
-        
+
         // Validate that player1 can play in player2's position
         if (!canPlayInSlot(player1, slot2)) {
           toast.error(invalidPositionMessage(player1, slot2));
           setSelectedPlayer(null);
           return;
         }
-        
+
         // Swap positions in startingXI array
-        setStartingXI(prev => {
+        setStartingXI((prev) => {
           const newStarting = [...prev];
           const idx1 = newStarting.indexOf(selectedPlayer);
           const idx2 = newStarting.indexOf(playerId);
@@ -430,9 +448,9 @@ function LineupPage() {
   }
 
   function handleBenchPlayerClick(playerId: string) {
-    const player = squad.find(p => p.id === playerId);
+    const player = squad.find((p) => p.id === playerId);
     if (!player) return;
-    
+
     // Check if player is injured
     if (player.injuredUntil > leagueMd) {
       toast.error(`${player.name} está lesionado y no puede jugar.`);
@@ -441,11 +459,15 @@ function LineupPage() {
 
     // Check if player is suspended
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
-    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    const suspendedPlayerIds = new Set(
+      suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    );
     if (suspendedPlayerIds.has(player.id)) {
-      const suspension = suspensions.find(s => s.playerId === player.id);
+      const suspension = suspensions.find((s) => s.playerId === player.id);
       const matchdays = suspension?.matchdaysRemaining || 0;
-      toast.error(`${player.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y no puede jugar.`);
+      toast.error(
+        `${player.name} está suspendido por ${matchdays} partido${matchdays > 1 ? "s" : ""} y no puede jugar.`,
+      );
       return;
     }
 
@@ -458,7 +480,7 @@ function LineupPage() {
       handlePitchToBenchSwap(selectedPlayer, playerId);
     } else {
       // Both are on bench - swap bench positions
-      setBench(prev => {
+      setBench((prev) => {
         const newBench = [...prev];
         const idx1 = newBench.indexOf(selectedPlayer);
         const idx2 = newBench.indexOf(playerId);
@@ -483,7 +505,9 @@ function LineupPage() {
     const outIds = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
     const changes = Math.min(outIds.length, inIds.length);
     if (live.subsUsed + changes + 1 > limits.maxSubs) {
-      toast.error(`No te quedan cambios disponibles (${live.subsUsed + changes}/${limits.maxSubs}).`);
+      toast.error(
+        `No te quedan cambios disponibles (${live.subsUsed + changes}/${limits.maxSubs}).`,
+      );
       setSelectedPlayer(null);
       return true;
     }
@@ -496,12 +520,11 @@ function LineupPage() {
   }
 
   function handlePitchToBenchSwap(pitchPlayerId: string, benchPlayerId: string) {
-    const pitchPlayer = squad.find(p => p.id === pitchPlayerId);
-    const benchPlayer = squad.find(p => p.id === benchPlayerId);
+    const pitchPlayer = squad.find((p) => p.id === pitchPlayerId);
+    const benchPlayer = squad.find((p) => p.id === benchPlayerId);
 
     if (!pitchPlayer || !benchPlayer) return;
     if (liveSubBlocked(benchPlayerId)) return;
-
 
     // Check if bench player is injured
     if (benchPlayer.injuredUntil > leagueMd) {
@@ -512,11 +535,15 @@ function LineupPage() {
 
     // Check if bench player is suspended
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
-    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    const suspendedPlayerIds = new Set(
+      suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    );
     if (suspendedPlayerIds.has(benchPlayer.id)) {
-      const suspension = suspensions.find(s => s.playerId === benchPlayer.id);
+      const suspension = suspensions.find((s) => s.playerId === benchPlayer.id);
       const matchdays = suspension?.matchdaysRemaining || 0;
-      toast.error(`${benchPlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y no puede jugar.`);
+      toast.error(
+        `${benchPlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? "s" : ""} y no puede jugar.`,
+      );
       setSelectedPlayer(null);
       return;
     }
@@ -536,13 +563,13 @@ function LineupPage() {
     }
 
     // Perform the swap
-    setStartingXI(prev => prev.map(id => id === pitchPlayerId ? benchPlayerId : id));
-    setBench(prev => prev.map(id => id === benchPlayerId ? pitchPlayerId : id));
+    setStartingXI((prev) => prev.map((id) => (id === pitchPlayerId ? benchPlayerId : id)));
+    setBench((prev) => prev.map((id) => (id === benchPlayerId ? pitchPlayerId : id)));
     setSelectedPlayer(null);
   }
 
   function handlePitchToEmptySwap(playerId: string, emptyPosKey: string) {
-    const player = squad.find(p => p.id === playerId);
+    const player = squad.find((p) => p.id === playerId);
     if (!player) return;
 
     // Check if player is injured
@@ -554,11 +581,15 @@ function LineupPage() {
 
     // Check if player is suspended
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
-    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    const suspendedPlayerIds = new Set(
+      suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    );
     if (suspendedPlayerIds.has(player.id)) {
-      const suspension = suspensions.find(s => s.playerId === player.id);
+      const suspension = suspensions.find((s) => s.playerId === player.id);
       const matchdays = suspension?.matchdaysRemaining || 0;
-      toast.error(`${player.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y no puede jugar.`);
+      toast.error(
+        `${player.name} está suspendido por ${matchdays} partido${matchdays > 1 ? "s" : ""} y no puede jugar.`,
+      );
       setSelectedPlayer(null);
       return;
     }
@@ -582,7 +613,7 @@ function LineupPage() {
     const currentPlayerPosIndex = formationPositions.indexOf(currentPlayerPosKey);
 
     // Swap: move player to empty position, make old position empty
-    setStartingXI(prev => {
+    setStartingXI((prev) => {
       const newStarting = [...prev];
       newStarting[emptyPosIndex] = playerId;
       newStarting[currentPlayerPosIndex] = "";
@@ -593,10 +624,9 @@ function LineupPage() {
   }
 
   function handleBenchToPitchSwap(benchPlayerId: string, pitchTarget: string) {
-    const benchPlayer = squad.find(p => p.id === benchPlayerId);
+    const benchPlayer = squad.find((p) => p.id === benchPlayerId);
     if (!benchPlayer) return;
     if (liveSubBlocked(benchPlayerId)) return;
-
 
     // Check if player is injured
     if (benchPlayer.injuredUntil > leagueMd) {
@@ -606,11 +636,15 @@ function LineupPage() {
 
     // Check if player is suspended
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
-    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+    const suspendedPlayerIds = new Set(
+      suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    );
     if (suspendedPlayerIds.has(benchPlayer.id)) {
-      const suspension = suspensions.find(s => s.playerId === benchPlayer.id);
+      const suspension = suspensions.find((s) => s.playerId === benchPlayer.id);
       const matchdays = suspension?.matchdaysRemaining || 0;
-      toast.error(`${benchPlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? 's' : ''} y no puede jugar.`);
+      toast.error(
+        `${benchPlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? "s" : ""} y no puede jugar.`,
+      );
       return;
     }
 
@@ -642,19 +676,19 @@ function LineupPage() {
       // Empty position - add player to startingXI at the correct index
       const posIndex = formationPositions.indexOf(posKey);
       const newStartingXI = [...startingXI];
-      
+
       // Ensure array is long enough
       while (newStartingXI.length < posIndex) {
         newStartingXI.push("");
       }
-      
+
       newStartingXI[posIndex] = benchPlayerId;
       setStartingXI(newStartingXI);
-      setBench(prev => prev.filter(id => id !== benchPlayerId));
+      setBench((prev) => prev.filter((id) => id !== benchPlayerId));
     } else {
       // Swap with existing player
-      setStartingXI(prev => prev.map(id => id === pitchTarget ? benchPlayerId : id));
-      setBench(prev => prev.map(id => id === benchPlayerId ? pitchTarget : id));
+      setStartingXI((prev) => prev.map((id) => (id === pitchTarget ? benchPlayerId : id)));
+      setBench((prev) => prev.map((id) => (id === benchPlayerId ? pitchTarget : id)));
     }
     setSelectedPlayer(null);
   }
@@ -665,12 +699,14 @@ function LineupPage() {
       toast.error("Plantilla incompleta. Faltan jugadores titulares.");
       return;
     }
-    
+
     // Filter out suspended players from the lineup before saving
     const suspensions = save.suspensions[save.myTeamId] ?? [];
-    const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
-    const filteredStartingXI = startingXI.filter(playerId => !suspendedPlayerIds.has(playerId));
-    
+    const suspendedPlayerIds = new Set(
+      suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    );
+    const filteredStartingXI = startingXI.filter((playerId) => !suspendedPlayerIds.has(playerId));
+
     const next = setLineup(save, save.myTeamId, filteredStartingXI);
     const nextWithFormation = setFormation(next, save.myTeamId, selectedFormation);
     saveSave(nextWithFormation);
@@ -699,8 +735,7 @@ function LineupPage() {
         });
 
       const chosen =
-        pick((codes) => isNaturalFor(codes, slot)) ??
-        pick((codes) => canPlayPosition(codes, slot));
+        pick((codes) => isNaturalFor(codes, slot)) ?? pick((codes) => canPlayPosition(codes, slot));
 
       if (chosen) {
         availableIds.splice(availableIds.indexOf(chosen), 1);
@@ -762,12 +797,18 @@ function LineupPage() {
           </div>
           <div className="flex items-center gap-2">
             <div className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-center">
-              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">OVR del 11</p>
+              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+                OVR del 11
+              </p>
               <p className="scoreline text-2xl font-black text-primary">{avgOvrXI || "—"}</p>
             </div>
             <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-center">
-              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Química</p>
-              <p className={`scoreline text-2xl font-black ${chemistry >= 85 ? "text-emerald-400" : chemistry >= 60 ? "text-yellow-300" : "text-destructive"}`}>
+              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
+                Química
+              </p>
+              <p
+                className={`scoreline text-2xl font-black ${chemistry >= 85 ? "text-emerald-400" : chemistry >= 60 ? "text-yellow-300" : "text-destructive"}`}
+              >
                 {xiPlayers.length ? `${chemistry}%` : "—"}
               </p>
             </div>
@@ -778,13 +819,18 @@ function LineupPage() {
               onChange={(e) => handleFormationChange(e.target.value as FormationName)}
               className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold transition hover:border-primary/60"
             >
-              {ALL_FORMATIONS.map(f => (
-                <option key={f} value={f}>{f}</option>
+              {ALL_FORMATIONS.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
               ))}
             </select>
             {!fromSeason && !fromMatch && (
-              <button onClick={save_} disabled={!isLineupComplete}
-                className="rounded-lg bg-primary px-5 py-2 text-sm font-bold text-primary-foreground glow-neon disabled:opacity-40 disabled:glow-cyan-0">
+              <button
+                onClick={save_}
+                disabled={!isLineupComplete}
+                className="rounded-lg bg-primary px-5 py-2 text-sm font-bold text-primary-foreground glow-neon disabled:opacity-40 disabled:glow-cyan-0"
+              >
                 Guardar
               </button>
             )}
@@ -793,12 +839,16 @@ function LineupPage() {
         <div className="border-t border-border/40 bg-background/40 px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${
-                isLineupComplete
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                  : "border-destructive/40 bg-destructive/10 text-destructive"
-              }`}>
-                <span className={`h-2 w-2 rounded-full ${isLineupComplete ? "bg-emerald-400" : "bg-destructive"}`} />
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${
+                  isLineupComplete
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-destructive/40 bg-destructive/10 text-destructive"
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${isLineupComplete ? "bg-emerald-400" : "bg-destructive"}`}
+                />
                 Titulares {activeStartersCount}/11
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-3 py-1 text-xs font-bold text-muted-foreground">
@@ -808,7 +858,9 @@ function LineupPage() {
                 Edad media {avgAgeXI}
               </span>
               {!isLineupComplete && (
-                <span className="text-xs font-bold text-destructive">La plantilla no está completa.</span>
+                <span className="text-xs font-bold text-destructive">
+                  La plantilla no está completa.
+                </span>
               )}
             </div>
             <div className="scoreline text-xl font-black text-primary sm:text-2xl">
@@ -834,7 +886,9 @@ function LineupPage() {
           <div className="flex items-center gap-3">
             <TeamLogo
               teamName={nextMatch.rival.name}
-              leagueName={LEAGUES[nextMatch.rival.league as LeagueId]?.name || nextMatch.rival.league}
+              leagueName={
+                LEAGUES[nextMatch.rival.league as LeagueId]?.name || nextMatch.rival.league
+              }
               size={48}
             />
             <span className="scoreline text-lg font-black text-muted-foreground">
@@ -858,7 +912,9 @@ function LineupPage() {
 
               if (player) {
                 const suspensions = save?.suspensions[save.myTeamId] ?? [];
-                const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+                const suspendedPlayerIds = new Set(
+                  suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+                );
                 const isSuspended = suspendedPlayerIds.has(player.id);
                 return (
                   <PlayerNode
@@ -900,7 +956,7 @@ function LineupPage() {
                     style={{
                       top: `${coords.top}%`,
                       left: `${coords.left}%`,
-                      transform: 'translate(-50%, -50%)',
+                      transform: "translate(-50%, -50%)",
                     }}
                   >
                     <div
@@ -927,7 +983,9 @@ function LineupPage() {
               if (!player) return null;
               const isInjured = player.injuredUntil > leagueMd;
               const suspensions = save?.suspensions[save.myTeamId] ?? [];
-              const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+              const suspendedPlayerIds = new Set(
+                suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+              );
               const isSuspended = suspendedPlayerIds.has(player.id);
               const isUnavailable = isInjured || isSuspended;
               return (
@@ -939,8 +997,8 @@ function LineupPage() {
                     isUnavailable
                       ? "opacity-40 cursor-not-allowed border-border bg-destructive/10"
                       : selectedPlayer === player.id
-                      ? "border-primary bg-primary/10 glow-cyan"
-                      : "border-border bg-card hover:border-primary/60"
+                        ? "border-primary bg-primary/10 glow-cyan"
+                        : "border-border bg-card hover:border-primary/60"
                   }`}
                 >
                   <div className="relative">
@@ -964,15 +1022,18 @@ function LineupPage() {
                           {player.injuredUntil - leagueMd}p
                         </span>
                       )}
-                      {isSuspended && (() => {
-                        const susp = save?.suspensions[save.myTeamId]?.find(s => s.playerId === player.id);
-                        return (
-                          <span className="text-xs text-destructive flex items-center gap-1">
-                            <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
-                            {susp?.matchdaysRemaining ?? 0}p
-                          </span>
-                        );
-                      })()}
+                      {isSuspended &&
+                        (() => {
+                          const susp = save?.suspensions[save.myTeamId]?.find(
+                            (s) => s.playerId === player.id,
+                          );
+                          return (
+                            <span className="text-xs text-destructive flex items-center gap-1">
+                              <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
+                              {susp?.matchdaysRemaining ?? 0}p
+                            </span>
+                          );
+                        })()}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {posLabelOf(player)} · {player.age}a · {player.goals}G {player.assists}A
@@ -987,85 +1048,86 @@ function LineupPage() {
       </div>
 
       {/* Tactics panel */}
-      <TacticsPanel
-        tactics={tactics}
-        updateTactics={updateTactics}
-        xiPlayers={xiPlayers as any}
-      />
+      <TacticsPanel tactics={tactics} updateTactics={updateTactics} xiPlayers={xiPlayers as any} />
 
-      {liveMode && live && (() => {
-        const limits = subLimits(live.isExtraTime);
-        const outIds = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
-        const inIds = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
-        const changes = Math.min(outIds.length, inIds.length);
-        const free = isFreeWindow(live.phase);
-        const overSubs = live.subsUsed + changes > limits.maxSubs;
-        const overWindows = changes > 0 && !free && live.windowsUsed >= limits.maxWindows;
-        const blocked = overSubs || overWindows || !isLineupComplete;
-        return (
-          <div className="panel mt-8 p-5">
-            <div className="flex flex-wrap items-center gap-2 mb-4">
-              <span className={infoChip}>Partido en pausa · {live.minute}'</span>
-              <span className={infoChip}>Cambios {live.subsUsed + changes}/{limits.maxSubs}</span>
-              <span className={infoChip}>
-                Ventanas {live.windowsUsed + (changes > 0 && !free ? 1 : 0)}/{limits.maxWindows}
-              </span>
-              {free && <span className={infoChip}>Descanso · no gasta ventana</span>}
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">
-              Cambia la táctica libremente. Si mueves jugadores del banquillo al once se contarán como
-              sustituciones. Al volver, el partido sigue exactamente en el minuto {live.minute}.
-            </p>
-            {overSubs && (
-              <p className="text-xs text-destructive mb-3">
-                Has superado el límite de sustituciones permitidas.
+      {liveMode &&
+        live &&
+        (() => {
+          const limits = subLimits(live.isExtraTime);
+          const outIds = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
+          const inIds = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
+          const changes = Math.min(outIds.length, inIds.length);
+          const free = isFreeWindow(live.phase);
+          const overSubs = live.subsUsed + changes > limits.maxSubs;
+          const overWindows = changes > 0 && !free && live.windowsUsed >= limits.maxWindows;
+          const blocked = overSubs || overWindows || !isLineupComplete;
+          return (
+            <div className="panel mt-8 p-5">
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <span className={infoChip}>Partido en pausa · {live.minute}'</span>
+                <span className={infoChip}>
+                  Cambios {live.subsUsed + changes}/{limits.maxSubs}
+                </span>
+                <span className={infoChip}>
+                  Ventanas {live.windowsUsed + (changes > 0 && !free ? 1 : 0)}/{limits.maxWindows}
+                </span>
+                {free && <span className={infoChip}>Descanso · no gasta ventana</span>}
+              </div>
+              <p className="text-xs text-muted-foreground mb-4">
+                Cambia la táctica libremente. Si mueves jugadores del banquillo al once se contarán
+                como sustituciones. Al volver, el partido sigue exactamente en el minuto{" "}
+                {live.minute}.
               </p>
-            )}
-            {overWindows && (
-              <p className="text-xs text-destructive mb-3">
-                No te quedan ventanas de cambio: solo puedes ajustar la táctica.
-              </p>
-            )}
-            <div className="flex justify-end">
-              <button
-                disabled={blocked}
-                className={btnPrimary}
-                onClick={() => {
-                  const nextBench = bench.filter((id) => !startingXI.includes(id));
-                  const stamina = { ...(live.stamina || {}) };
-                  const subs = [...(live.subs || [])];
-                  for (let i = 0; i < changes; i++) {
-                    stamina[inIds[i]] = 100;
-                    subs.push({
-                      minute: live.minute,
-                      outId: outIds[i],
-                      outName: squad.find((p) => p.id === outIds[i])?.name ?? outIds[i],
-                      inId: inIds[i],
-                      inName: squad.find((p) => p.id === inIds[i])?.name ?? inIds[i],
+              {overSubs && (
+                <p className="text-xs text-destructive mb-3">
+                  Has superado el límite de sustituciones permitidas.
+                </p>
+              )}
+              {overWindows && (
+                <p className="text-xs text-destructive mb-3">
+                  No te quedan ventanas de cambio: solo puedes ajustar la táctica.
+                </p>
+              )}
+              <div className="flex justify-end">
+                <button
+                  disabled={blocked}
+                  className={btnPrimary}
+                  onClick={() => {
+                    const nextBench = bench.filter((id) => !startingXI.includes(id));
+                    const stamina = { ...(live.stamina || {}) };
+                    const subs = [...(live.subs || [])];
+                    for (let i = 0; i < changes; i++) {
+                      stamina[inIds[i]] = 100;
+                      subs.push({
+                        minute: live.minute,
+                        outId: outIds[i],
+                        outName: squad.find((p) => p.id === outIds[i])?.name ?? outIds[i],
+                        inId: inIds[i],
+                        inName: squad.find((p) => p.id === inIds[i])?.name ?? inIds[i],
+                      });
+                    }
+                    saveLive({
+                      ...live,
+                      lineup: startingXI,
+                      bench: nextBench,
+                      formation: selectedFormation,
+                      stamina,
+                      subs,
+                      subsUsed: live.subsUsed + changes,
+                      windowsUsed: live.windowsUsed + (changes > 0 && !free ? 1 : 0),
                     });
-                  }
-                  saveLive({
-                    ...live,
-                    lineup: startingXI,
-                    bench: nextBench,
-                    formation: selectedFormation,
-                    stamina,
-                    subs,
-                    subsUsed: live.subsUsed + changes,
-                    windowsUsed: live.windowsUsed + (changes > 0 && !free ? 1 : 0),
-                  });
-                  navigate({
-                    to: "/match",
-                    state: { resumeLive: true, fixtureId: live.fixtureId } as any,
-                  });
-                }}
-              >
-                Volver al partido ({live.minute}') →
-              </button>
+                    navigate({
+                      to: "/match",
+                      state: { resumeLive: true, fixtureId: live.fixtureId } as any,
+                    });
+                  }}
+                >
+                  Volver al partido ({live.minute}') →
+                </button>
+              </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
 
       {!liveMode && (fromSeason || fromMatch) && (
         <div className="mt-8 flex justify-end">
@@ -1075,12 +1137,16 @@ function LineupPage() {
                 toast.error("Plantilla incompleta. Faltan jugadores titulares.");
                 return;
               }
-              
+
               // Filter out suspended players from the lineup before passing to match
               const suspensions = save?.suspensions[save.myTeamId] ?? [];
-              const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
-              const filteredStartingXI = startingXI.filter(playerId => !suspendedPlayerIds.has(playerId));
-              
+              const suspendedPlayerIds = new Set(
+                suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+              );
+              const filteredStartingXI = startingXI.filter(
+                (playerId) => !suspendedPlayerIds.has(playerId),
+              );
+
               // Pass temporary lineup to match engine via router state
               // This allows one-off changes for this specific match only
               // Also forward ALL match metadata (matchType, cupRound, fixtureId) for correct post-match simulation
@@ -1090,7 +1156,7 @@ function LineupPage() {
                 state: {
                   matchLineup: filteredStartingXI,
                   matchFormation: selectedFormation,
-                  matchType: matchType || 'LEAGUE',  // Default to LEAGUE if undefined
+                  matchType: matchType || "LEAGUE", // Default to LEAGUE if undefined
                   cupRound,
                   fixtureId,
                   returningFromLineupEdit: returningFromLineupEdit,
@@ -1098,7 +1164,9 @@ function LineupPage() {
               });
             }}
             disabled={!isLineupComplete}
-            className={isLineupComplete ? btnPrimary : `${btnSecondary} opacity-40 pointer-events-none`}
+            className={
+              isLineupComplete ? btnPrimary : `${btnSecondary} opacity-40 pointer-events-none`
+            }
           >
             Iniciar Partido →
           </button>
@@ -1123,9 +1191,27 @@ function TacticsPanel({
   xiPlayers: XiPlayer[];
 }) {
   const styles: { id: PlayStyle; label: string; icon: any; tone: string; desc: string }[] = [
-    { id: "defensive", label: "Defensivo", icon: Shield, tone: "border-sky-500/40 bg-sky-500/10 text-sky-300", desc: "Bloque bajo, contragolpe" },
-    { id: "balanced", label: "Equilibrado", icon: Scale, tone: "border-primary/40 bg-primary/10 text-primary", desc: "Posesión y control" },
-    { id: "offensive", label: "Ofensivo", icon: Swords, tone: "border-rose-500/40 bg-rose-500/10 text-rose-300", desc: "Presión arriba, ataque directo" },
+    {
+      id: "defensive",
+      label: "Defensivo",
+      icon: Shield,
+      tone: "border-sky-500/40 bg-sky-500/10 text-sky-300",
+      desc: "Bloque bajo, contragolpe",
+    },
+    {
+      id: "balanced",
+      label: "Equilibrado",
+      icon: Scale,
+      tone: "border-primary/40 bg-primary/10 text-primary",
+      desc: "Posesión y control",
+    },
+    {
+      id: "offensive",
+      label: "Ofensivo",
+      icon: Swords,
+      tone: "border-rose-500/40 bg-rose-500/10 text-rose-300",
+      desc: "Presión arriba, ataque directo",
+    },
   ];
   const pressureOpts: { id: Pressure; label: string; icon: any }[] = [
     { id: "low", label: "Baja", icon: ChevronsDown },
@@ -1194,7 +1280,9 @@ function TacticsPanel({
                 type="button"
                 onClick={() => updateTactics({ style: s.id })}
                 className={`flex items-center gap-3 rounded-xl border-2 p-3 text-left transition ${
-                  active ? `${s.tone} ring-2 ring-current/40` : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/40"
+                  active
+                    ? `${s.tone} ring-2 ring-current/40`
+                    : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/40"
                 }`}
               >
                 <s.icon className="h-5 w-5" />
@@ -1223,7 +1311,9 @@ function TacticsPanel({
                   type="button"
                   onClick={() => updateTactics({ pressure: o.id })}
                   className={`flex flex-col items-center gap-1 rounded-lg border-2 py-2 text-xs font-bold transition ${
-                    active ? "border-primary bg-primary/10 text-primary" : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/40"
+                    active
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/40"
                   }`}
                 >
                   <o.icon className="h-4 w-4" />
@@ -1246,7 +1336,9 @@ function TacticsPanel({
                   type="button"
                   onClick={() => updateTactics({ defenseLine: o.id })}
                   className={`flex flex-col items-center gap-1 rounded-lg border-2 py-2 text-xs font-bold transition ${
-                    active ? "border-accent bg-accent/10 text-accent" : "border-border/60 bg-card/60 text-muted-foreground hover:border-accent/40"
+                    active
+                      ? "border-accent bg-accent/10 text-accent"
+                      : "border-border/60 bg-card/60 text-muted-foreground hover:border-accent/40"
                   }`}
                 >
                   <o.icon className="h-4 w-4" />

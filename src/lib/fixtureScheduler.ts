@@ -21,11 +21,7 @@ function matchdayFriday(matchday: number): string {
   return addDaysToIso(LEAGUE_MD1_FRIDAY, (matchday - 1) * 7);
 }
 
-function teamCanPlay(
-  teamId: string,
-  dateIso: string,
-  lastPlayed: Map<string, string>,
-): boolean {
+function teamCanPlay(teamId: string, dateIso: string, lastPlayed: Map<string, string>): boolean {
   const last = lastPlayed.get(teamId);
   if (!last) return true;
   return daysBetween(last, dateIso) >= MIN_REST_DAYS;
@@ -96,10 +92,7 @@ export function assignFixtureDates(
   return dates;
 }
 
-export function rawToSchedule(
-  raw: Fixture[],
-  dates: Map<string, string>,
-): ScheduleFixture[] {
+export function rawToSchedule(raw: Fixture[], dates: Map<string, string>): ScheduleFixture[] {
   return raw.map((f) => ({
     id: f.id,
     date: dates.get(f.id) ?? matchdayFriday(f.matchday),
@@ -118,9 +111,7 @@ export function rescheduleUnplayedFixtures(
   fixtures: ScheduleFixture[],
   raw: Fixture[],
 ): ScheduleFixture[] {
-  const unplayedIds = new Set(
-    fixtures.filter((f) => !f.isPlayed).map((f) => f.id),
-  );
+  const unplayedIds = new Set(fixtures.filter((f) => !f.isPlayed).map((f) => f.id));
   const rawUnplayed = raw.filter((f) => unplayedIds.has(f.id));
   if (rawUnplayed.length === 0) return fixtures;
 
@@ -159,13 +150,9 @@ export function rescheduleUnplayedFixtures(
   );
 }
 
-export function scheduleNeedsRealisticDates(
-  fixtures: ScheduleFixture[],
-): boolean {
+export function scheduleNeedsRealisticDates(fixtures: ScheduleFixture[]): boolean {
   const sample = fixtures.filter((f) => !f.isPlayed).slice(0, 40);
   if (sample.length === 0) return false;
-  const weekdays = new Set(
-    sample.map((f) => parseDateOnly(f.date).getDay()),
-  );
+  const weekdays = new Set(sample.map((f) => parseDateOnly(f.date).getDay()));
   return weekdays.size <= 1;
 }

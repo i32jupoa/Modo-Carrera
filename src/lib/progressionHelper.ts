@@ -1,6 +1,6 @@
 /**
  * Helper functions for integrating player progression into the game flow.
- * 
+ *
  * NOTE: These functions are placeholders for future integration.
  * The actual integration points need to be identified in the game flow
  * where dates advance and seasons end.
@@ -20,16 +20,16 @@ export function applyMonthlyProgressionToPlayer(
   player: Player,
   dynamicStats: DynamicPlayerStats,
   currentMonth: number,
-  currentYear: number
+  currentYear: number,
 ): { updatedStats: DynamicPlayerStats; newOVR: number } {
   const updatedStats = applyMonthlyProgression(
     dynamicStats,
     player.age,
     player.positions,
     currentMonth,
-    currentYear
+    currentYear,
   );
-  
+
   return {
     updatedStats,
     newOVR: updatedStats.currentOVR,
@@ -43,16 +43,16 @@ export function applyMonthlyProgressionToPlayer(
 export function applySeasonEndProgressionToPlayer(
   player: Player,
   dynamicStats: DynamicPlayerStats,
-  seasonNumber: number
+  seasonNumber: number,
 ): { updatedStats: DynamicPlayerStats; newOVR: number } {
   const updatedStats = applySeasonEndProgression(
     dynamicStats,
     player.age,
     player.positions,
     seasonNumber,
-    player.teamId
+    player.teamId,
   );
-  
+
   return {
     updatedStats,
     newOVR: updatedStats.currentOVR,

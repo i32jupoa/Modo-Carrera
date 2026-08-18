@@ -41,7 +41,7 @@ const TEAM_STYLES: Record<string, PlayStyle> = {
   "Atlético de Madrid": "defensive",
   "CA Osasuna": "defensive",
   "CD Leganés": "defensive",
-  "Celta": "offensive",
+  Celta: "offensive",
   "Cádiz CF": "defensive",
   "D. Alavés": "defensive",
   "FC Barcelona": "offensive",
@@ -61,31 +61,31 @@ const TEAM_STYLES: Record<string, PlayStyle> = {
   // Italia - Serie A
   "AS Roma": "offensive",
   "Bergamo Calcio": "offensive",
-  "Bologna": "offensive",
-  "Cagliari": "defensive",
-  "Como": "offensive",
-  "Empoli": "defensive",
-  "Fiorentina": "offensive",
-  "Genoa": "defensive",
+  Bologna: "offensive",
+  Cagliari: "defensive",
+  Como: "offensive",
+  Empoli: "defensive",
+  Fiorentina: "offensive",
+  Genoa: "defensive",
   "Hellas Verona": "defensive",
-  "Juventus": "offensive",
-  "Latium": "offensive",
-  "Lecce": "defensive",
+  Juventus: "offensive",
+  Latium: "offensive",
+  Lecce: "defensive",
   "Milano FC": "offensive",
-  "Monza": "balanced",
-  "Parma": "offensive",
-  "Pisa": "balanced",
+  Monza: "balanced",
+  Parma: "offensive",
+  Pisa: "balanced",
   "SSC Napoli": "offensive",
-  "Torino": "defensive",
-  "Udinese": "defensive",
-  "Venezia": "defensive",
+  Torino: "defensive",
+  Udinese: "defensive",
+  Venezia: "defensive",
   // Italia - Serie B
   "Lombardia FC": "balanced",
   // Alemania - Bundesliga
   "Borussia Dortmund": "offensive",
   "FC Bayern München": "offensive",
-  "Frankfurt": "offensive",
-  "Leverkusen": "offensive",
+  Frankfurt: "offensive",
+  Leverkusen: "offensive",
   "M'gladbach": "offensive",
   "RB Leipzig": "offensive",
   "SC Freiburg": "offensive",
@@ -95,35 +95,35 @@ const TEAM_STYLES: Record<string, PlayStyle> = {
   // Francia - Ligue 1
   "AS Monaco": "offensive",
   "LOSC Lille": "offensive",
-  "OL": "offensive",
-  "OM": "offensive",
+  OL: "offensive",
+  OM: "offensive",
   "Paris SG": "offensive",
   "RC Lens": "offensive",
   "Stade Brestois 29": "offensive",
   "Stade Rennais FC": "offensive",
   "Toulouse FC": "offensive",
   // Inglaterra - Premier League
-  "Arsenal": "offensive",
+  Arsenal: "offensive",
   "Aston Villa": "offensive",
-  "Brentford": "offensive",
-  "Brighton": "offensive",
-  "Chelsea": "offensive",
-  "Fulham": "offensive",
-  "Ipswich": "offensive",
-  "Liverpool": "offensive",
+  Brentford: "offensive",
+  Brighton: "offensive",
+  Chelsea: "offensive",
+  Fulham: "offensive",
+  Ipswich: "offensive",
+  Liverpool: "offensive",
   "Man Utd": "offensive",
   "Manchester City": "offensive",
-  "Spurs": "offensive",
+  Spurs: "offensive",
   "West Ham": "offensive",
-  "Wolves": "offensive",
+  Wolves: "offensive",
   // Países Bajos - Eredivisie
-  "AZ": "offensive",
-  "Ajax": "offensive",
+  AZ: "offensive",
+  Ajax: "offensive",
   "FC Twente": "offensive",
   "FC Utrecht": "offensive",
-  "Feyenoord": "offensive",
+  Feyenoord: "offensive",
   "N.E.C. Nijmegen": "offensive",
-  "PSV": "offensive",
+  PSV: "offensive",
   // Portugal - Primeira Liga
   "FC Famalicão": "offensive",
   "FC Porto": "offensive",
@@ -268,7 +268,13 @@ export function estimateTactics(team: Team): EstimatedTactics {
   else if (style === "defensive" || team.def < 70) defenseLine = "low";
 
   const formation =
-    style === "offensive" ? (ov >= 84 ? "4-3-3" : "4-2-3-1") : style === "defensive" ? "4-4-2" : "4-2-3-1";
+    style === "offensive"
+      ? ov >= 84
+        ? "4-3-3"
+        : "4-2-3-1"
+      : style === "defensive"
+        ? "4-4-2"
+        : "4-2-3-1";
 
   return { style, pressure, defenseLine, formation };
 }
@@ -322,7 +328,8 @@ export function formationSlots(formation: string): Slot[] {
     const def = SLOT_DEFS[slotKeyBase(key)];
     if (def) return def;
     const role = coords[key].role;
-    const group: PosGroup = role === "GK" ? "POR" : role === "DEF" ? "DEF" : role === "MID" ? "MED" : "DEL";
+    const group: PosGroup =
+      role === "GK" ? "POR" : role === "DEF" ? "DEF" : role === "MID" ? "MED" : "DEL";
     return { label: role, natural: [], adaptable: [], group };
   });
 }
@@ -339,24 +346,24 @@ export function estimatedEleven(formation: string, squad: FcPlayer[]): ElevenSlo
   const slots = formationSlots(formation);
   if (!slots.length) return [];
   const used = new Set<number>();
-  
+
   // Convertir etiquetas de slot a PosCode del sistema de posiciones
   const slotToPosCode: Record<string, PosCode> = {
-    "POR": "GK",
-    "DFC": "DFC",
-    "LI": "LI",
-    "LD": "LD",
-    "CAI": "CAI",
-    "CAD": "CAD",
-    "MCD": "MCD",
-    "MC": "MC",
-    "MCO": "MCO",
-    "MI": "MI",
-    "MD": "MD",
-    "EI": "EI",
-    "ED": "ED",
-    "DC": "DC",
-    "SD": "SD",
+    POR: "GK",
+    DFC: "DFC",
+    LI: "LI",
+    LD: "LD",
+    CAI: "CAI",
+    CAD: "CAD",
+    MCD: "MCD",
+    MC: "MC",
+    MCO: "MCO",
+    MI: "MI",
+    MD: "MD",
+    EI: "EI",
+    ED: "ED",
+    DC: "DC",
+    SD: "SD",
   };
 
   return slots.map((slot) => {
@@ -370,12 +377,15 @@ export function estimatedEleven(formation: string, squad: FcPlayer[]): ElevenSlo
     }
 
     // Obtener jugadores que pueden jugar en la posición requerida
-    const candidates = squad.filter((p) => !used.has(p.ID)).map((p) => {
-      const codes = buildPositions(p.Position, p["Alternative positions"]);
-      const isPrimary = codes[0] === requiredPos; // La primera posición es la principal
-      const canPlay = codes.includes(requiredPos) || canPlayPosition(codes, requiredPos);
-      return { player: p, isPrimary, canPlay };
-    }).filter((c) => c.canPlay);
+    const candidates = squad
+      .filter((p) => !used.has(p.ID))
+      .map((p) => {
+        const codes = buildPositions(p.Position, p["Alternative positions"]);
+        const isPrimary = codes[0] === requiredPos; // La primera posición es la principal
+        const canPlay = codes.includes(requiredPos) || canPlayPosition(codes, requiredPos);
+        return { player: p, isPrimary, canPlay };
+      })
+      .filter((c) => c.canPlay);
 
     if (candidates.length === 0) {
       return { label: slot.label, player: null, natural: false };
@@ -425,10 +435,10 @@ export function bestFormationForSquad(squad: FcPlayer[], team: Team): FormationN
   // Usar estilo específico del CSV si existe, si no usar estimateTactics
   const style = TEAM_STYLES[team.name] || estimateTactics(team).style;
   const candidateFormations = FORMATIONS_BY_STYLE[style];
-  
+
   let best: FormationName = candidateFormations[0] || "Táctica 4-2-3-1 (2)";
   let bestScore = -Infinity;
-  
+
   for (const formation of candidateFormations) {
     const score = elevenScore(estimatedEleven(formation, squad));
     if (score > bestScore) {
@@ -438,4 +448,3 @@ export function bestFormationForSquad(squad: FcPlayer[], team: Team): FormationN
   }
   return best;
 }
-

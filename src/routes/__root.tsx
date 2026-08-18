@@ -81,10 +81,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "FC SIM — Simulador de fútbol realista" },
-      { name: "description", content: "Simula temporadas completas en las 5 grandes ligas europeas con ratings reales de equipos y plantillas." },
+      {
+        name: "description",
+        content:
+          "Simula temporadas completas en las 5 grandes ligas europeas con ratings reales de equipos y plantillas.",
+      },
       { name: "author", content: "FC SIM" },
       { property: "og:title", content: "FC SIM — Simulador de fútbol" },
-      { property: "og:description", content: "Elige tu equipo, vive cada partido y conquista la liga." },
+      {
+        property: "og:description",
+        content: "Elige tu equipo, vive cada partido y conquista la liga.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
@@ -92,7 +99,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap",
+      },
       { rel: "stylesheet", href: appCss },
     ],
   }),

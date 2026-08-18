@@ -58,7 +58,11 @@ export function wageDemand(playerId: string, toClubId: string | null): number {
 // ============================================================================
 
 /** Minutos esperados en el club de destino (0..1). */
-export function expectedPlayingTime(player: MarketPlayer, toClubId: string, cacheKey: string): number {
+export function expectedPlayingTime(
+  player: MarketPlayer,
+  toClubId: string,
+  cacheKey: string,
+): number {
   const report = getSquadReport(toClubId, cacheKey);
   if (report.size === 0) return 0.9;
   const gap = player.ovr - report.startingRating;
@@ -126,7 +130,7 @@ export function desireToLeave(playerId: string, cacheKey: string): number {
   if (player.age >= SQUAD_LIMITS.veteranAge && minutes < 0.4) desire += 0.15;
 
   desire -= p.loyalty * 0.3;
-  desire += seededRange(-0.05, 0.05, player.id, "leave") ;
+  desire += seededRange(-0.05, 0.05, player.id, "leave");
 
   return clamp(desire, 0, 1);
 }
@@ -166,7 +170,10 @@ export function decideOnMove(input: MoveDecisionInput): PlayerDecision {
   // En una cesión el jugador conserva su contrato: no exige subida, sólo que
   // se le respete la ficha que ya tiene.
   const required = input.loan
-    ? Math.max(WAGE_RULES.minimumWage, getPlayer(input.playerId)?.contract.wage ?? WAGE_RULES.minimumWage)
+    ? Math.max(
+        WAGE_RULES.minimumWage,
+        getPlayer(input.playerId)?.contract.wage ?? WAGE_RULES.minimumWage,
+      )
     : wageDemand(input.playerId, input.toClubId);
 
   if (!player) {
@@ -189,10 +196,7 @@ export function decideOnMove(input: MoveDecisionInput): PlayerDecision {
 
   // El peso del dinero depende de la codicia; el del proyecto, de la ambición.
   const moneyScore = clamp(normalize(wageRatio, 0.75, 1.4), 0, 1);
-  let score =
-    appeal * (0.5 - p.greed * 0.15) +
-    moneyScore * (0.28 + p.greed * 0.22) +
-    leave * 0.22;
+  let score = appeal * (0.5 - p.greed * 0.15) + moneyScore * (0.28 + p.greed * 0.22) + leave * 0.22;
 
   if (input.loan) {
     // Una cesión no es dejar el club: lo que pesa son los minutos, y bajar de
@@ -254,7 +258,11 @@ export interface RenewalDecision {
 }
 
 /** ¿Aceptaría el jugador renovar con su club actual? */
-export function decideOnRenewal(playerId: string, cacheKey: string, offeredWage?: number): RenewalDecision {
+export function decideOnRenewal(
+  playerId: string,
+  cacheKey: string,
+  offeredWage?: number,
+): RenewalDecision {
   const player = getPlayer(playerId);
   if (!player || !player.clubId) {
     return {
@@ -272,7 +280,11 @@ export function decideOnRenewal(playerId: string, cacheKey: string, offeredWage?
       (1 + player.personality.greed * 0.15),
   );
   const byAge = CONTRACT_RULES.yearsByAge.find((entry) => player.age <= entry.maxAge);
-  const yearsRequested = clamp(byAge ? byAge.years : CONTRACT_RULES.minYears, CONTRACT_RULES.minYears, CONTRACT_RULES.maxYears);
+  const yearsRequested = clamp(
+    byAge ? byAge.years : CONTRACT_RULES.minYears,
+    CONTRACT_RULES.minYears,
+    CONTRACT_RULES.maxYears,
+  );
 
   if (player.age > CONTRACT_RULES.maxRenewalAge && player.ovr < 82) {
     return {

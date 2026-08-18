@@ -44,16 +44,10 @@ export function applyFixtureResult(
   );
 }
 
-export function unplayedOnDate(
-  fixtures: ScheduleFixture[],
-  iso: string,
-): ScheduleFixture[] {
+export function unplayedOnDate(fixtures: ScheduleFixture[], iso: string): ScheduleFixture[] {
   return fixtures.filter((f) => f.date === iso && !f.isPlayed);
 }
 
-export function involvesTeam(
-  fixture: ScheduleFixture,
-  teamId: string,
-): boolean {
+export function involvesTeam(fixture: ScheduleFixture, teamId: string): boolean {
   return fixture.homeTeam === teamId || fixture.awayTeam === teamId;
 }

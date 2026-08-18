@@ -95,7 +95,11 @@ const LEGEND_NAMES = new Set([
 ]);
 
 function norm(s: string) {
-  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }
 
 function poolForDifficulty(d: Difficulty) {
@@ -180,10 +184,7 @@ export default function RandomPickModal({
           </p>
 
           {!showCandidates ? (
-            <div
-              key="diffs"
-              className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3 animate-fade-in"
-            >
+            <div key="diffs" className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3 animate-fade-in">
               {DIFFICULTIES.map((d) => {
                 const count = poolForDifficulty(d.id).length;
                 return (
@@ -211,10 +212,7 @@ export default function RandomPickModal({
               })}
             </div>
           ) : (
-            <div
-              key="picks"
-              className="mt-6 animate-fade-in"
-            >
+            <div key="picks" className="mt-6 animate-fade-in">
               {candidates.length === 0 ? (
                 <div className="rounded-xl p-6 border border-white/10 bg-white/[0.03] text-center text-white/70">
                   No hay equipos para esta dificultad.
@@ -245,18 +243,12 @@ export default function RandomPickModal({
                       <div className="text-[11px] text-white/55 mb-2 truncate">{t.city}</div>
                       <div className="flex items-center justify-between text-[11px]">
                         <div className="flex items-center gap-1.5 text-white/70">
-                          <LeagueLogo
-                            league={LEAGUES[t.league]?.name ?? t.league}
-                            size="sm"
-                          />
+                          <LeagueLogo league={LEAGUES[t.league]?.name ?? t.league} size="sm" />
                           <span className="truncate max-w-[120px]">
                             {LEAGUES[t.league]?.name ?? t.league}
                           </span>
                         </div>
-                        <span
-                          className="font-black text-base"
-                          style={{ color: t.color || "#fff" }}
-                        >
+                        <span className="font-black text-base" style={{ color: t.color || "#fff" }}>
                           {overall(t)}
                         </span>
                       </div>

@@ -18,15 +18,15 @@ function isGoalkeeper(positions: PosCode[]): boolean {
 }
 
 function isDefensive(positions: PosCode[]): boolean {
-  return positions.some(p => ["DFC", "LD", "LI", "CAD", "CAI"].includes(p));
+  return positions.some((p) => ["DFC", "LD", "LI", "CAD", "CAI"].includes(p));
 }
 
 function isMidfield(positions: PosCode[]): boolean {
-  return positions.some(p => ["MCD", "MC", "MCO", "MD", "MI"].includes(p));
+  return positions.some((p) => ["MCD", "MC", "MCO", "MD", "MI"].includes(p));
 }
 
 function isAttacking(positions: PosCode[]): boolean {
-  return positions.some(p => ["ED", "EI", "DC", "SD"].includes(p));
+  return positions.some((p) => ["ED", "EI", "DC", "SD"].includes(p));
 }
 
 /**
@@ -36,21 +36,22 @@ function isAttacking(positions: PosCode[]): boolean {
  */
 export type SimTactics = Partial<TeamTactics>;
 
-function rand(): number { return Math.random(); }
-
+function rand(): number {
+  return Math.random();
+}
 
 // Weighted scorer pick considering position and OVR for fast simulation
 function fastPickScorerWeighted(xi: Player[]): Player {
   const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   if (candidates.length === 0) return xi[0];
-  
+
   // Weight = position factor * (rating / 70) to favor high-OVR players
   const weights = candidates.map((p) => {
     const posFactor = isAttacking(p.positions) ? 5 : isMidfield(p.positions) ? 2 : 0.5;
     const ratingFactor = p.rating / 70; // Normalize around 70
     return posFactor * ratingFactor;
   });
-  
+
   const total = weights.reduce((a, b) => a + b, 0);
   let r = rand() * total;
   for (let i = 0; i < candidates.length; i++) {
@@ -65,14 +66,14 @@ function fastPickAssister(xi: Player[], scorerId: string): Player | null {
   if (rand() > 0.75) return null; // 75% of goals have an assist
   const candidates = xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions));
   if (candidates.length === 0) return null;
-  
+
   // Weight toward midfielders and high-OVR players
   const weights = candidates.map((p) => {
     const posFactor = isMidfield(p.positions) ? 3 : isAttacking(p.positions) ? 2 : 1;
     const ratingFactor = p.rating / 70;
     return posFactor * ratingFactor;
   });
-  
+
   const total = weights.reduce((a, b) => a + b, 0);
   let r = rand() * total;
   for (let i = 0; i < candidates.length; i++) {
@@ -84,8 +85,12 @@ function fastPickAssister(xi: Player[], scorerId: string): Player | null {
 
 function poisson(lambda: number): number {
   const L = Math.exp(-lambda);
-  let k = 0; let p = 1;
-  do { k++; p *= rand(); } while (p > L);
+  let k = 0;
+  let p = 1;
+  do {
+    k++;
+    p *= rand();
+  } while (p > L);
   return k - 1;
 }
 
@@ -101,38 +106,45 @@ export function calculateActiveOVR(activePlayers: Player[]): number {
 // Calculate attack strength from XI (forwards and midfielders weighted)
 function calculateAttackStrength(xi: Player[]): number {
   if (xi.length === 0) return 65;
-  const forwards = xi.filter(p => isAttacking(p.positions));
-  const mids = xi.filter(p => isMidfield(p.positions));
-  const defenders = xi.filter(p => isDefensive(p.positions));
-  
+  const forwards = xi.filter((p) => isAttacking(p.positions));
+  const mids = xi.filter((p) => isMidfield(p.positions));
+  const defenders = xi.filter((p) => isDefensive(p.positions));
+
   // Attack is heavily weighted by forwards (70%), midfielders (25%), defenders (5%)
-  const fwdAvg = forwards.length > 0 ? forwards.reduce((s, p) => s + p.rating, 0) / forwards.length : 0;
+  const fwdAvg =
+    forwards.length > 0 ? forwards.reduce((s, p) => s + p.rating, 0) / forwards.length : 0;
   const midAvg = mids.length > 0 ? mids.reduce((s, p) => s + p.rating, 0) / mids.length : 0;
-  const defAvg = defenders.length > 0 ? defenders.reduce((s, p) => s + p.rating, 0) / defenders.length : 0;
-  
-  return (fwdAvg * 0.7) + (midAvg * 0.25) + (defAvg * 0.05);
+  const defAvg =
+    defenders.length > 0 ? defenders.reduce((s, p) => s + p.rating, 0) / defenders.length : 0;
+
+  return fwdAvg * 0.7 + midAvg * 0.25 + defAvg * 0.05;
 }
 
 // Calculate defense strength from XI (defenders and goalkeepers weighted)
 function calculateDefenseStrength(xi: Player[]): number {
   if (xi.length === 0) return 65;
-  const goalkeepers = xi.filter(p => isGoalkeeper(p.positions));
-  const defenders = xi.filter(p => isDefensive(p.positions));
-  const mids = xi.filter(p => isMidfield(p.positions));
-  
+  const goalkeepers = xi.filter((p) => isGoalkeeper(p.positions));
+  const defenders = xi.filter((p) => isDefensive(p.positions));
+  const mids = xi.filter((p) => isMidfield(p.positions));
+
   // Defense is heavily weighted by defenders (60%), goalkeepers (25%), midfielders (15%)
-  const gkAvg = goalkeepers.length > 0 ? goalkeepers.reduce((s, p) => s + p.rating, 0) / goalkeepers.length : 0;
-  const defAvg = defenders.length > 0 ? defenders.reduce((s, p) => s + p.rating, 0) / defenders.length : 0;
+  const gkAvg =
+    goalkeepers.length > 0 ? goalkeepers.reduce((s, p) => s + p.rating, 0) / goalkeepers.length : 0;
+  const defAvg =
+    defenders.length > 0 ? defenders.reduce((s, p) => s + p.rating, 0) / defenders.length : 0;
   const midAvg = mids.length > 0 ? mids.reduce((s, p) => s + p.rating, 0) / mids.length : 0;
-  
-  return (defAvg * 0.6) + (gkAvg * 0.25) + (midAvg * 0.15);
+
+  return defAvg * 0.6 + gkAvg * 0.25 + midAvg * 0.15;
 }
 
 // Team form factor from XI's average morale+form (0.85 - 1.15)
 function teamMomentum(xi: Player[]): number {
   if (xi.length === 0) return 1;
   const sum = xi.reduce((s, p) => {
-    const formAvg = p.formHistory.length === 0 ? 5 : p.formHistory.reduce((a, b) => a + b, 0) / p.formHistory.length;
+    const formAvg =
+      p.formHistory.length === 0
+        ? 5
+        : p.formHistory.reduce((a, b) => a + b, 0) / p.formHistory.length;
     return s + (p.morale * 0.5 + formAvg * 10 * 0.5);
   }, 0);
   const avg = sum / xi.length; // 0-100 scale
@@ -157,32 +169,31 @@ export function expectedGoals(
   const homeDef = (calculateDefenseStrength(homeXI) || 65) * hMod.defense;
   const awayAtt = (calculateAttackStrength(awayXI) || 65) * aMod.attack;
   const awayDef = (calculateDefenseStrength(awayXI) || 65) * aMod.defense;
-  
+
   const homeDiff = homeAtt - awayDef;
   const awayDiff = awayAtt - homeDef;
   const mh = teamMomentum(homeXI);
   const ma = teamMomentum(awayXI);
-  
+
   // Progressive weight for OVR difference - every 2 points has increasingly pronounced effect
   // Uses quadratic scaling for more dramatic impact at higher differences
-  const homeProgressiveFactor = 0.10 + (Math.abs(homeDiff) / 100) * 0.15;
-  const awayProgressiveFactor = 0.10 + (Math.abs(awayDiff) / 100) * 0.15;
-  
+  const homeProgressiveFactor = 0.1 + (Math.abs(homeDiff) / 100) * 0.15;
+  const awayProgressiveFactor = 0.1 + (Math.abs(awayDiff) / 100) * 0.15;
+
   const baseHome = 1.3 + homeDiff * homeProgressiveFactor + HOME_ADVANTAGE;
   const baseAway = 1.3 + awayDiff * awayProgressiveFactor;
-  
+
   // Add randomness factor to allow for upsets (David vs Goliath scenarios)
   // Uses normal distribution with higher variance to enable surprises
   const homeRandom = (rand() - 0.5) * 0.8; // ±0.4 variance
   const awayRandom = (rand() - 0.5) * 0.8;
-  
+
   // Apply momentum and randomness
   const lh = Math.max(0.3, (baseHome + homeRandom) * mh);
   const la = Math.max(0.3, (baseAway + awayRandom) * ma);
-  
+
   return { lh, la };
 }
-
 
 export type MatchEvent = {
   minute: number;
@@ -206,7 +217,6 @@ export type MatchEvent = {
    */
   detail?: string;
 };
-
 
 /** Non-scoring highlights: saves, woodwork, VAR, missed penalties, forced subs. */
 export type HighlightType =
@@ -282,7 +292,7 @@ export type SimResult = {
   penalties?: {
     homeGoals: number;
     awayGoals: number;
-    shootout: Array<{ team: 'home' | 'away'; scored: boolean; playerId?: string }>;
+    shootout: Array<{ team: "home" | "away"; scored: boolean; playerId?: string }>;
   };
   homeLineup?: Player[];
   awayLineup?: Player[];
@@ -295,7 +305,10 @@ function pickScorer(xi: Player[]): Player {
   const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   const weights = candidates.map((p) => {
     const posBonus = isAttacking(p.positions) ? 5 : isMidfield(p.positions) ? 1.6 : 0.4;
-    const formAvg = p.formHistory.length === 0 ? 5 : p.formHistory.reduce((a, b) => a + b, 0) / p.formHistory.length;
+    const formAvg =
+      p.formHistory.length === 0
+        ? 5
+        : p.formHistory.reduce((a, b) => a + b, 0) / p.formHistory.length;
     const formMul = 0.7 + (formAvg / 10) * 0.6; // 0.7..1.3
     return Math.pow(p.rating / 70, 2) * posBonus * formMul;
   });
@@ -324,8 +337,14 @@ function weightedPick<T>(items: T[], weights: number[]): T {
 }
 
 const INJURY_REASONS = [
-  "lesión muscular", "esguince de tobillo", "contractura", "lesión de rodilla",
-  "fractura", "rotura fibrilar", "sobrecarga", "golpe en el partido",
+  "lesión muscular",
+  "esguince de tobillo",
+  "contractura",
+  "lesión de rodilla",
+  "fractura",
+  "rotura fibrilar",
+  "sobrecarga",
+  "golpe en el partido",
 ];
 
 function maybeInjury(
@@ -343,8 +362,8 @@ function maybeInjury(
   // profile is available and the injury happens before the 88th minute.
   const candidates = bench.filter((p) => p.id !== victim.id);
   // Check if positions overlap (at least one common position)
-  const samePos = candidates.filter((p) => 
-    p.positions.some(pos => victim.positions.includes(pos))
+  const samePos = candidates.filter((p) =>
+    p.positions.some((pos) => victim.positions.includes(pos)),
   );
   const replacement = (samePos.length > 0 ? samePos : candidates)
     .slice()
@@ -391,7 +410,9 @@ export function generateTacticalSubs(
 
   const desired = 2 + Math.floor(rand() * 2); // 2-3 subs, like a real match
   const n = Math.min(desired, availableOut.length, availableIn.length);
-  const minutes = Array.from({ length: n }, () => 55 + Math.floor(rand() * 31)).sort((a, b) => a - b);
+  const minutes = Array.from({ length: n }, () => 55 + Math.floor(rand() * 31)).sort(
+    (a, b) => a - b,
+  );
 
   // Tired/weaker starters tend to come off first.
   const outPool = [...availableOut].sort((a, b) => a.rating - b.rating);
@@ -404,7 +425,9 @@ export function generateTacticalSubs(
     if (!playerOut) break;
     const candidatesIn = availableIn.filter((p) => !usedIn.has(p.id));
     if (candidatesIn.length === 0) break;
-    const samePos = candidatesIn.filter((p) => p.positions.some((pos) => playerOut.positions.includes(pos)));
+    const samePos = candidatesIn.filter((p) =>
+      p.positions.some((pos) => playerOut.positions.includes(pos)),
+    );
     const pool = samePos.length > 0 ? samePos : candidatesIn;
     const playerIn = pool.slice().sort((a, b) => b.rating - a.rating)[0];
 
@@ -426,7 +449,10 @@ export function generateTacticalSubs(
 // Ultra-fast simulation for bulk matchdays (no detailed events, just results)
 // NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatchFast(
-  home: Team, away: Team, homeXI: Player[], awayXI: Player[],
+  home: Team,
+  away: Team,
+  homeXI: Player[],
+  awayXI: Player[],
   opts: {
     homeBench?: Player[];
     awayBench?: Player[];
@@ -451,28 +477,36 @@ export function simulateMatchFast(
   // Minimal events - with weighted scorer selection and assists
   // Stats are recorded later by applyMatchToStats to avoid duplicates
   const events: MatchEvent[] = [];
-  
+
   // Home team goals
   for (let i = 0; i < homeGoals; i++) {
     const scorer = fastPickScorerWeighted(homeXI);
     const assister = fastPickAssister(homeXI, scorer.id);
-    
+
     events.push({
-      minute: goalMinute(), team: "home", type: "goal",
-      scorerId: scorer.id, scorerName: scorer.name,
-      assistId: assister?.id, assistName: assister?.name,
+      minute: goalMinute(),
+      team: "home",
+      type: "goal",
+      scorerId: scorer.id,
+      scorerName: scorer.name,
+      assistId: assister?.id,
+      assistName: assister?.name,
     });
   }
-  
+
   // Away team goals
   for (let i = 0; i < awayGoals; i++) {
     const scorer = fastPickScorerWeighted(awayXI);
     const assister = fastPickAssister(awayXI, scorer.id);
-    
+
     events.push({
-      minute: goalMinute(), team: "away", type: "goal",
-      scorerId: scorer.id, scorerName: scorer.name,
-      assistId: assister?.id, assistName: assister?.name,
+      minute: goalMinute(),
+      team: "away",
+      type: "goal",
+      scorerId: scorer.id,
+      scorerName: scorer.name,
+      assistId: assister?.id,
+      assistName: assister?.name,
     });
   }
 
@@ -482,19 +516,29 @@ export function simulateMatchFast(
   // so the chronicle of other teams' matches isn't empty of bookings.
   const cards: CardEvent[] = [];
   const CARD_REASONS = [
-    "entrada dura", "juego peligroso", "protestar", "cortar un contragolpe", "agarrón",
+    "entrada dura",
+    "juego peligroso",
+    "protestar",
+    "cortar un contragolpe",
+    "agarrón",
   ];
   function simulateTeamCardsFast(xi: Player[], team: "home" | "away") {
     for (const player of xi) {
-      const base =
-        isGoalkeeper(player.positions) ? 0.015 :
-        isDefensive(player.positions) ? 0.08 :
-        isMidfield(player.positions) ? 0.065 : 0.035;
+      const base = isGoalkeeper(player.positions)
+        ? 0.015
+        : isDefensive(player.positions)
+          ? 0.08
+          : isMidfield(player.positions)
+            ? 0.065
+            : 0.035;
       if (rand() >= base) continue;
       cards.push({
         minute: 8 + Math.floor(rand() * 80),
-        team, playerId: player.id, playerName: player.name,
-        cardType: "yellow", isSecondYellow: false,
+        team,
+        playerId: player.id,
+        playerName: player.name,
+        cardType: "yellow",
+        isSecondYellow: false,
         reason: CARD_REASONS[Math.floor(rand() * CARD_REASONS.length)],
       });
     }
@@ -514,8 +558,10 @@ export function simulateMatchFast(
     for (let i = 0; i < count; i++) {
       highlights.push({
         minute: 3 + Math.floor(rand() * 85),
-        team, type: "save",
-        playerId: gk.id, playerName: gk.name,
+        team,
+        type: "save",
+        playerId: gk.id,
+        playerName: gk.name,
         detail: rand() < 0.35 ? "¡Paradón!" : "Buena intervención",
       });
     }
@@ -530,8 +576,10 @@ export function simulateMatchFast(
     const p = candidates[Math.floor(rand() * candidates.length)];
     highlights.push({
       minute: 3 + Math.floor(rand() * 85),
-      team, type: "woodwork",
-      playerId: p.id, playerName: p.name,
+      team,
+      type: "woodwork",
+      playerId: p.id,
+      playerName: p.name,
       detail: rand() < 0.5 ? "¡Al palo!" : "¡Al travesaño!",
     });
   };
@@ -546,7 +594,13 @@ export function simulateMatchFast(
   ].sort((a, b) => a.minute - b.minute);
 
   return {
-    homeGoals, awayGoals, events, cards, injuries: [], xgHome: lh, xgAway: la,
+    homeGoals,
+    awayGoals,
+    events,
+    cards,
+    injuries: [],
+    xgHome: lh,
+    xgAway: la,
     highlights,
     homeLineup: homeXI,
     awayLineup: awayXI,
@@ -559,7 +613,10 @@ export function simulateMatchFast(
 // Detailed simulation with events and injuries
 // NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatch(
-  home: Team, away: Team, homeXI: Player[], awayXI: Player[],
+  home: Team,
+  away: Team,
+  homeXI: Player[],
+  awayXI: Player[],
   opts: {
     homeBench?: Player[];
     awayBench?: Player[];
@@ -589,7 +646,6 @@ export function simulateMatch(
     return xi.find((p) => p.id === id) ?? null;
   };
 
-
   // -------------------------------------------------------------------------
   // 1. Cards. Rates are per-player and per-match, calibrated so a typical game
   //    ends with ~2-4 yellows in total and a red card only now and then.
@@ -599,12 +655,15 @@ export function simulateMatch(
   let awayRedCards = 0;
 
   const CARD_REASONS = [
-    "entrada dura", "juego peligroso", "protestar", "cortar un contragolpe",
-    "agarrón", "perder tiempo", "falta táctica",
+    "entrada dura",
+    "juego peligroso",
+    "protestar",
+    "cortar un contragolpe",
+    "agarrón",
+    "perder tiempo",
+    "falta táctica",
   ];
-  const RED_REASONS = [
-    "entrada muy dura", "mano en el área", "última falta", "conducta violenta",
-  ];
+  const RED_REASONS = ["entrada muy dura", "mano en el área", "última falta", "conducta violenta"];
 
   function simulateTeamCards(xi: Player[], team: "home" | "away"): number {
     let reds = 0;
@@ -613,18 +672,24 @@ export function simulateMatch(
     for (const player of xi) {
       // Defenders and defensive midfielders commit more fouls than keepers.
       const base =
-        (isGoalkeeper(player.positions) ? 0.02 :
-        isDefensive(player.positions) ? 0.115 :
-        isMidfield(player.positions) ? 0.095 : 0.055) * aggression;
-
+        (isGoalkeeper(player.positions)
+          ? 0.02
+          : isDefensive(player.positions)
+            ? 0.115
+            : isMidfield(player.positions)
+              ? 0.095
+              : 0.055) * aggression;
 
       // Direct red card: rare (~0.35% per player => ~4% per team per match).
       if (rand() < 0.0035) {
         reds++;
         cards.push({
           minute: 15 + Math.floor(rand() * 75),
-          team, playerId: player.id, playerName: player.name,
-          cardType: "red", isSecondYellow: false,
+          team,
+          playerId: player.id,
+          playerName: player.name,
+          cardType: "red",
+          isSecondYellow: false,
           reason: RED_REASONS[Math.floor(rand() * RED_REASONS.length)],
         });
         continue;
@@ -635,21 +700,27 @@ export function simulateMatch(
       const firstMinute = 8 + Math.floor(rand() * 75);
       cards.push({
         minute: firstMinute,
-        team, playerId: player.id, playerName: player.name,
-        cardType: "yellow", isSecondYellow: false,
+        team,
+        playerId: player.id,
+        playerName: player.name,
+        cardType: "yellow",
+        isSecondYellow: false,
         reason: CARD_REASONS[Math.floor(rand() * CARD_REASONS.length)],
       });
 
       // Contextual second yellow: only booked players can get one, it becomes
       // more likely the earlier the first yellow arrived and for defenders.
       const timeLeft = Math.max(0, 90 - firstMinute) / 90;
-      const secondYellowChance = 0.10 * timeLeft * (isDefensive(player.positions) ? 1.4 : 1);
+      const secondYellowChance = 0.1 * timeLeft * (isDefensive(player.positions) ? 1.4 : 1);
       if (rand() < secondYellowChance) {
         reds++;
         cards.push({
           minute: Math.min(90, firstMinute + 5 + Math.floor(rand() * (90 - firstMinute))),
-          team, playerId: player.id, playerName: player.name,
-          cardType: "red", isSecondYellow: true,
+          team,
+          playerId: player.id,
+          playerName: player.name,
+          cardType: "red",
+          isSecondYellow: true,
           reason: "doble amarilla",
         });
       }
@@ -690,9 +761,14 @@ export function simulateMatch(
     return xi.map((p) => ({ ...p, rating: p.rating * (p.id === captainId ? 1.03 : 1.008) }));
   }
 
-  const adjustedHomeXI = withCaptainBoost(timeWeightedXI(homeXI, homeRedCardedPlayers), homeTactics);
-  const adjustedAwayXI = withCaptainBoost(timeWeightedXI(awayXI, awayRedCardedPlayers), awayTactics);
-
+  const adjustedHomeXI = withCaptainBoost(
+    timeWeightedXI(homeXI, homeRedCardedPlayers),
+    homeTactics,
+  );
+  const adjustedAwayXI = withCaptainBoost(
+    timeWeightedXI(awayXI, awayRedCardedPlayers),
+    awayTactics,
+  );
 
   // -------------------------------------------------------------------------
   // 2. Goals. `expectedGoals` already carries its own variance, so we sample a
@@ -700,7 +776,12 @@ export function simulateMatch(
   //    (which used to flatten every result towards a random draw).
   // -------------------------------------------------------------------------
   const { lh, la } = expectedGoals(
-    home, away, adjustedHomeXI, adjustedAwayXI, homeTactics, awayTactics,
+    home,
+    away,
+    adjustedHomeXI,
+    adjustedAwayXI,
+    homeTactics,
+    awayTactics,
   );
 
   const homeGoalsRaw = poisson(lh);
@@ -715,16 +796,18 @@ export function simulateMatch(
       return expMin === undefined || expMin > minute;
     });
 
-  const homeGoalMinutes = Array.from({ length: homeGoalsRaw }, () => goalMinute()).sort((a, b) => a - b);
-  const awayGoalMinutes = Array.from({ length: awayGoalsRaw }, () => goalMinute()).sort((a, b) => a - b);
+  const homeGoalMinutes = Array.from({ length: homeGoalsRaw }, () => goalMinute()).sort(
+    (a, b) => a - b,
+  );
+  const awayGoalMinutes = Array.from({ length: awayGoalsRaw }, () => goalMinute()).sort(
+    (a, b) => a - b,
+  );
 
   const finalHomeGoalMinutes: number[] = [];
   const finalAwayGoalMinutes: number[] = [];
   const penaltiesMissed: Array<{ playerId: string }> = [];
 
-  const FOUL_REASONS = [
-    "derriba", "hace falta sobre", "agarra a", "pisa a", "comete mano ante",
-  ];
+  const FOUL_REASONS = ["derriba", "hace falta sobre", "agarra a", "pisa a", "comete mano ante"];
 
   function buildGoal(
     minute: number,
@@ -737,12 +820,17 @@ export function simulateMatch(
 
     // 6% of goals are actually own goals by a defender of the other team.
     if (defendXI.length > 0 && rand() < 0.06) {
-      const defenders = defendXI.filter((p) => isDefensive(p.positions) || isGoalkeeper(p.positions));
+      const defenders = defendXI.filter(
+        (p) => isDefensive(p.positions) || isGoalkeeper(p.positions),
+      );
       const pool = defenders.length > 0 ? defenders : defendXI;
       const unlucky = pool[Math.floor(rand() * pool.length)];
       events.push({
-        minute, team, type: "own_goal",
-        scorerId: unlucky.id, scorerName: unlucky.name,
+        minute,
+        team,
+        type: "own_goal",
+        scorerId: unlucky.id,
+        scorerName: unlucky.name,
       });
       return true;
     }
@@ -756,7 +844,9 @@ export function simulateMatch(
       const taker =
         designated(attackXI, tactics, "penaltyTakerId") ??
         (takers.length > 0
-          ? takers.slice().sort((a, b) => b.rating - a.rating)[Math.floor(rand() * Math.min(3, takers.length))]
+          ? takers.slice().sort((a, b) => b.rating - a.rating)[
+              Math.floor(rand() * Math.min(3, takers.length))
+            ]
           : attackXI[0]);
 
       // Which rival player gave the penalty away.
@@ -771,8 +861,11 @@ export function simulateMatch(
 
       if (rand() < 0.78) {
         events.push({
-          minute, team, type: "penalty_goal",
-          scorerId: taker.id, scorerName: taker.name,
+          minute,
+          team,
+          type: "penalty_goal",
+          scorerId: taker.id,
+          scorerName: taker.name,
           detail: conceded,
         });
         return true;
@@ -780,11 +873,12 @@ export function simulateMatch(
       penaltiesMissed.push({ playerId: taker.id });
       const keeper = defendXI.find((p) => isGoalkeeper(p.positions));
       highlights.push({
-        minute, team, type: "penalty_missed",
-        playerId: taker.id, playerName: taker.name,
-        detail: keeper
-          ? `${conceded} — lo falla, para ${keeper.name}`
-          : `${conceded} — lo falla`,
+        minute,
+        team,
+        type: "penalty_missed",
+        playerId: taker.id,
+        playerName: taker.name,
+        detail: keeper ? `${conceded} — lo falla, para ${keeper.name}` : `${conceded} — lo falla`,
       });
       return false;
     }
@@ -794,9 +888,15 @@ export function simulateMatch(
     if (rand() < 0.07) {
       const scorer = pickScorer(attackXI);
       highlights.push({
-        minute, team, type: "var_disallowed",
-        playerId: scorer.id, playerName: scorer.name,
-        detail: rand() < 0.6 ? "Gol anulado por fuera de juego (VAR)" : "Gol anulado por falta previa (VAR)",
+        minute,
+        team,
+        type: "var_disallowed",
+        playerId: scorer.id,
+        playerName: scorer.name,
+        detail:
+          rand() < 0.6
+            ? "Gol anulado por fuera de juego (VAR)"
+            : "Gol anulado por falta previa (VAR)",
       });
       return false;
     }
@@ -806,8 +906,11 @@ export function simulateMatch(
     if (rand() < 0.06) {
       const shooter = fkTaker ?? pickScorer(attackXI);
       events.push({
-        minute, team, type: "free_kick_goal",
-        scorerId: shooter.id, scorerName: shooter.name,
+        minute,
+        team,
+        type: "free_kick_goal",
+        scorerId: shooter.id,
+        scorerName: shooter.name,
         detail: "Falta directa",
       });
       return true;
@@ -820,14 +923,17 @@ export function simulateMatch(
     const fromCorner = !!cornerTaker && cornerTaker.id !== scorer.id && rand() < 0.22;
     const assister = fromCorner ? cornerTaker : pickAssister(attackXI, scorer.id);
     events.push({
-      minute, team, type: "goal",
-      scorerId: scorer.id, scorerName: scorer.name,
-      assistId: assister?.id, assistName: assister?.name,
+      minute,
+      team,
+      type: "goal",
+      scorerId: scorer.id,
+      scorerName: scorer.name,
+      assistId: assister?.id,
+      assistName: assister?.name,
       detail: fromCorner ? "A la salida de un córner" : undefined,
     });
     return true;
   }
-
 
   for (const minute of homeGoalMinutes) {
     const attack = activeAt(homeXI, homeRedCardedPlayers, minute);
@@ -851,10 +957,16 @@ export function simulateMatch(
   const homeAvailableForInjury = homeXI.filter((p) => !homeRedCardedPlayers.has(p.id));
   const awayAvailableForInjury = awayXI.filter((p) => !awayRedCardedPlayers.has(p.id));
   const homeInj = maybeInjury(
-    homeAvailableForInjury.length > 0 ? homeAvailableForInjury : homeXI, "home", homeBench);
+    homeAvailableForInjury.length > 0 ? homeAvailableForInjury : homeXI,
+    "home",
+    homeBench,
+  );
   if (homeInj) injuries.push(homeInj);
   const awayInj = maybeInjury(
-    awayAvailableForInjury.length > 0 ? awayAvailableForInjury : awayXI, "away", awayBench);
+    awayAvailableForInjury.length > 0 ? awayAvailableForInjury : awayXI,
+    "away",
+    awayBench,
+  );
   if (awayInj) injuries.push(awayInj);
 
   for (const inj of injuries) {
@@ -884,11 +996,14 @@ export function simulateMatch(
   const homeStrength = calculateActiveOVR(homeXI);
   const awayStrength = calculateActiveOVR(awayXI);
   const stats = buildMatchStats({
-    xgHome: lh, xgAway: la,
-    homeGoals, awayGoals,
+    xgHome: lh,
+    xgAway: la,
+    homeGoals,
+    awayGoals,
     homeGoalMinutes: finalHomeGoalMinutes,
     awayGoalMinutes: finalAwayGoalMinutes,
-    homeStrength, awayStrength,
+    homeStrength,
+    awayStrength,
   });
 
   // -------------------------------------------------------------------------
@@ -903,8 +1018,10 @@ export function simulateMatch(
     for (let i = 0; i < shown; i++) {
       highlights.push({
         minute: 3 + Math.floor(rand() * 85),
-        team, type: "save",
-        playerId: gk.id, playerName: gk.name,
+        team,
+        type: "save",
+        playerId: gk.id,
+        playerName: gk.name,
         detail: rand() < 0.35 ? "¡Paradón!" : "Buena intervención",
       });
     }
@@ -919,8 +1036,10 @@ export function simulateMatch(
     const p = candidates[Math.floor(rand() * candidates.length)];
     highlights.push({
       minute: 3 + Math.floor(rand() * 85),
-      team, type: "woodwork",
-      playerId: p.id, playerName: p.name,
+      team,
+      type: "woodwork",
+      playerId: p.id,
+      playerName: p.name,
       detail: rand() < 0.5 ? "¡Al palo!" : "¡Al travesaño!",
     });
   };
@@ -941,7 +1060,10 @@ export function simulateMatch(
   }
 
   const { ratings, mvp } = computePlayerRatings({
-    homeXI, awayXI, homeGoals, awayGoals,
+    homeXI,
+    awayXI,
+    homeGoals,
+    awayGoals,
     goals: events.map((e) => ({
       team: e.team,
       scorerId: e.scorerId,
@@ -949,7 +1071,10 @@ export function simulateMatch(
       ownGoal: e.type === "own_goal",
     })),
     cards: cards.map((c) => ({
-      team: c.team, playerId: c.playerId, cardType: c.cardType, minute: c.minute,
+      team: c.team,
+      playerId: c.playerId,
+      cardType: c.cardType,
+      minute: c.minute,
     })),
     minutesPlayed,
     homeSaves: stats.home.saves,
@@ -966,9 +1091,17 @@ export function simulateMatch(
   ].sort((a, b) => a.minute - b.minute);
 
   return {
-    homeGoals, awayGoals, events, cards, injuries,
-    xgHome: lh, xgAway: la,
-    highlights, stats, ratings, mvp,
+    homeGoals,
+    awayGoals,
+    events,
+    cards,
+    injuries,
+    xgHome: lh,
+    xgAway: la,
+    highlights,
+    stats,
+    ratings,
+    mvp,
     homeLineup: homeXI,
     awayLineup: awayXI,
     homeFormation,
@@ -978,107 +1111,130 @@ export function simulateMatch(
 }
 
 // Simulate extra time (90-120 minutes) - lower intensity than regular time
-export function simulateExtraTime(home: Team, away: Team, homeXI: Player[], awayXI: Player[]): { homeGoals: number; awayGoals: number; events: MatchEvent[] } {
+export function simulateExtraTime(
+  home: Team,
+  away: Team,
+  homeXI: Player[],
+  awayXI: Player[],
+): { homeGoals: number; awayGoals: number; events: MatchEvent[] } {
   const { lh, la } = expectedGoals(home, away, homeXI, awayXI);
   // Extra time has lower xG (players are tired)
   const etXGHome = lh * 0.4;
   const etXGAway = la * 0.4;
-  
+
   const homeGoals = poisson(etXGHome);
   const awayGoals = poisson(etXGAway);
-  
+
   const events: MatchEvent[] = [];
-  
+
   // Generate events for extra time (minutes 91-120)
   for (let i = 0; i < homeGoals; i++) {
     const scorer = pickScorer(homeXI);
     const assister = fastPickAssister(homeXI, scorer.id);
     events.push({
-      minute: Math.floor(rand() * 30) + 91, team: "home", type: "goal",
-      scorerId: scorer.id, scorerName: scorer.name,
-      assistId: assister?.id, assistName: assister?.name,
+      minute: Math.floor(rand() * 30) + 91,
+      team: "home",
+      type: "goal",
+      scorerId: scorer.id,
+      scorerName: scorer.name,
+      assistId: assister?.id,
+      assistName: assister?.name,
     });
   }
   for (let i = 0; i < awayGoals; i++) {
     const scorer = pickScorer(awayXI);
     const assister = fastPickAssister(awayXI, scorer.id);
     events.push({
-      minute: Math.floor(rand() * 30) + 91, team: "away", type: "goal",
-      scorerId: scorer.id, scorerName: scorer.name,
-      assistId: assister?.id, assistName: assister?.name,
+      minute: Math.floor(rand() * 30) + 91,
+      team: "away",
+      type: "goal",
+      scorerId: scorer.id,
+      scorerName: scorer.name,
+      assistId: assister?.id,
+      assistName: assister?.name,
     });
   }
   events.sort((a, b) => a.minute - b.minute);
-  
+
   return { homeGoals, awayGoals, events };
 }
 
 // Simulate penalty shootout (ABAB format, 5 rounds, sudden death)
-export function simulatePenaltyShootout(homeXI: Player[], awayXI: Player[]): { homeGoals: number; awayGoals: number; shootout: Array<{ team: 'home' | 'away'; scored: boolean; playerId?: string }> } {
-  const shootout: Array<{ team: 'home' | 'away'; scored: boolean; playerId?: string }> = [];
-  
+export function simulatePenaltyShootout(
+  homeXI: Player[],
+  awayXI: Player[],
+): {
+  homeGoals: number;
+  awayGoals: number;
+  shootout: Array<{ team: "home" | "away"; scored: boolean; playerId?: string }>;
+} {
+  const shootout: Array<{ team: "home" | "away"; scored: boolean; playerId?: string }> = [];
+
   // Get penalty takers (field players + GK, sorted by rating)
   const homeTakers = [...homeXI].sort((a, b) => b.rating - a.rating);
   const awayTakers = [...awayXI].sort((a, b) => b.rating - a.rating);
-  
+
   // Penalty success rate: 50% for each team (as requested)
   const getPenaltySuccess = () => rand() < 0.5;
-  
+
   let homeGoals = 0;
   let awayGoals = 0;
   let homeTakerIndex = 0;
   let awayTakerIndex = 0;
-  
+
   // First 5 rounds (ABAB format)
   for (let round = 0; round < 5; round++) {
     // Home team penalty
     const homeTaker = homeTakers[homeTakerIndex % homeTakers.length];
     const homeScored = getPenaltySuccess();
-    shootout.push({ team: 'home', scored: homeScored, playerId: homeTaker.id });
+    shootout.push({ team: "home", scored: homeScored, playerId: homeTaker.id });
     if (homeScored) homeGoals++;
     homeTakerIndex++;
-    
+
     // Check if away team can still catch up
     const maxAwayPossible = awayGoals + (5 - round);
     if (homeGoals > maxAwayPossible) break;
-    
+
     // Away team penalty
     const awayTaker = awayTakers[awayTakerIndex % awayTakers.length];
     const awayScored = getPenaltySuccess();
-    shootout.push({ team: 'away', scored: awayScored, playerId: awayTaker.id });
+    shootout.push({ team: "away", scored: awayScored, playerId: awayTaker.id });
     if (awayScored) awayGoals++;
     awayTakerIndex++;
-    
+
     // Check if home team can still catch up
     const maxHomePossible = homeGoals + (5 - round - 1);
     if (awayGoals > maxHomePossible) break;
   }
-  
+
   // Sudden death if still tied after 5 rounds
   while (homeGoals === awayGoals) {
     // Home team penalty
     const homeTaker = homeTakers[homeTakerIndex % homeTakers.length];
     const homeScored = getPenaltySuccess();
-    shootout.push({ team: 'home', scored: homeScored, playerId: homeTaker.id });
+    shootout.push({ team: "home", scored: homeScored, playerId: homeTaker.id });
     if (homeScored) homeGoals++;
     homeTakerIndex++;
-    
+
     if (homeGoals !== awayGoals) break;
-    
+
     // Away team penalty
     const awayTaker = awayTakers[awayTakerIndex % awayTakers.length];
     const awayScored = getPenaltySuccess();
-    shootout.push({ team: 'away', scored: awayScored, playerId: awayTaker.id });
+    shootout.push({ team: "away", scored: awayScored, playerId: awayTaker.id });
     if (awayScored) awayGoals++;
     awayTakerIndex++;
   }
-  
+
   return { homeGoals, awayGoals, shootout };
 }
 
 // Simulate a full cup match with extra time and penalties
 export function simulateCupMatch(
-  home: Team, away: Team, homeXI: Player[], awayXI: Player[],
+  home: Team,
+  away: Team,
+  homeXI: Player[],
+  awayXI: Player[],
   opts: {
     homeBench?: Player[];
     awayBench?: Player[];
@@ -1090,17 +1246,17 @@ export function simulateCupMatch(
 ): SimResult {
   // Simulate regular time (90 minutes)
   const regularResult = simulateMatch(home, away, homeXI, awayXI, opts);
-  
+
   // Check if it's a draw - if so, go to extra time
   if (regularResult.homeGoals === regularResult.awayGoals) {
     const extraTimeResult = simulateExtraTime(home, away, homeXI, awayXI);
     const totalHome = regularResult.homeGoals + extraTimeResult.homeGoals;
     const totalAway = regularResult.awayGoals + extraTimeResult.awayGoals;
-    
+
     // If still tied after extra time, go to penalties
     if (totalHome === totalAway) {
       const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
-      
+
       // Combine all results, preserving lineups/formation/ratings/mvp from regular time
       return {
         ...regularResult,
@@ -1108,13 +1264,13 @@ export function simulateCupMatch(
         extraTime: {
           homeGoals: extraTimeResult.homeGoals,
           awayGoals: extraTimeResult.awayGoals,
-          events: extraTimeResult.events
+          events: extraTimeResult.events,
         },
         penalties: {
           homeGoals: penaltyResult.homeGoals,
           awayGoals: penaltyResult.awayGoals,
-          shootout: penaltyResult.shootout
-        }
+          shootout: penaltyResult.shootout,
+        },
       };
     } else {
       // Match ended in extra time with a winner
@@ -1124,8 +1280,8 @@ export function simulateCupMatch(
         extraTime: {
           homeGoals: extraTimeResult.homeGoals,
           awayGoals: extraTimeResult.awayGoals,
-          events: extraTimeResult.events
-        }
+          events: extraTimeResult.events,
+        },
       };
     }
   } else {

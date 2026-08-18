@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo } from "react";
 
 interface TeamLogoProps {
   teamName: string;
@@ -7,10 +7,10 @@ interface TeamLogoProps {
   className?: string;
 }
 
-type LogoState = 'png' | 'svg' | 'fallback';
+type LogoState = "png" | "svg" | "fallback";
 
-export function TeamLogo({ teamName, leagueName, size = 32, className = '' }: TeamLogoProps) {
-  const [logoState, setLogoState] = useState<LogoState>('png');
+export function TeamLogo({ teamName, leagueName, size = 32, className = "" }: TeamLogoProps) {
+  const [logoState, setLogoState] = useState<LogoState>("png");
   const [hasError, setHasError] = useState(false);
 
   // Generate consistent background color based on team name
@@ -25,11 +25,15 @@ export function TeamLogo({ teamName, leagueName, size = 32, className = '' }: Te
 
   // Get initials (first 2-3 letters)
   const initials = useMemo(() => {
-    const words = teamName.split(/\s+/).filter(w => w.length > 0);
+    const words = teamName.split(/\s+/).filter((w) => w.length > 0);
     if (words.length === 1) {
       return words[0].substring(0, 3).toUpperCase();
     }
-    return words.slice(0, 2).map(w => w[0]).join('').toUpperCase();
+    return words
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase();
   }, [teamName]);
 
   // Build src based on current state
@@ -37,11 +41,11 @@ export function TeamLogo({ teamName, leagueName, size = 32, className = '' }: Te
     // URI encode both leagueName and teamName to handle spaces correctly
     const encodedLeague = encodeURIComponent(leagueName);
     const encodedTeam = encodeURIComponent(teamName);
-    
+
     switch (logoState) {
-      case 'png':
+      case "png":
         return `/logos/${encodedLeague}/${encodedTeam}.png`;
-      case 'svg':
+      case "svg":
         return `/logos/${encodedLeague}/${encodedTeam}.svg`;
       default:
         return null;
@@ -51,18 +55,18 @@ export function TeamLogo({ teamName, leagueName, size = 32, className = '' }: Te
   const handleError = () => {
     if (hasError) return;
     setHasError(true);
-    
+
     // Try next extension (png -> svg -> fallback)
-    if (logoState === 'png') {
-      setLogoState('svg');
+    if (logoState === "png") {
+      setLogoState("svg");
       setHasError(false);
-    } else if (logoState === 'svg') {
-      setLogoState('fallback');
+    } else if (logoState === "svg") {
+      setLogoState("fallback");
     }
   };
 
   // Fallback placeholder component
-  if (logoState === 'fallback') {
+  if (logoState === "fallback") {
     return (
       <div
         className={`flex items-center justify-center rounded-md font-bold text-white ${className}`}

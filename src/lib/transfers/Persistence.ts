@@ -113,7 +113,10 @@ function hasStorage(): boolean {
 export function saveTransferSystem(): boolean {
   if (!hasStorage()) return false;
   try {
-    window.localStorage.setItem(storageKeyForActiveSave(), JSON.stringify(snapshotTransferSystem()));
+    window.localStorage.setItem(
+      storageKeyForActiveSave(),
+      JSON.stringify(snapshotTransferSystem()),
+    );
     return true;
   } catch (error) {
     console.warn("[transfers] no se pudo guardar el mercado:", (error as Error)?.message);

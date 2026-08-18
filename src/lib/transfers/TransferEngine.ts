@@ -464,7 +464,11 @@ export function buildShortlist(
   // ligas menores sólo porque acaba de perder a varios titulares seguidos en
   // la misma ventana.
   const minOvr = Math.round(
-    Math.max(58, report.startingRating - 4, reputationOvrFloor(profile) - REPUTATION_OVR_FLOOR.shortlistSlack),
+    Math.max(
+      58,
+      report.startingRating - 4,
+      reputationOvrFloor(profile) - REPUTATION_OVR_FLOOR.shortlistSlack,
+    ),
   );
   const maxOvr = Math.round(
     clamp(report.startingRating + 6 + profile.reputation * 4, minOvr + 2, 99),
@@ -498,34 +502,40 @@ export function buildShortlist(
     if (!isAvailable(player.id, options.cacheKey, buyerContext)) continue;
     if (isPursuitOnCooldown(clubId, player.id, options.cacheKey)) continue;
     if (!playerImprovesSquad(report, player, options.lenient)) continue;
-    
+
     // Verificar compatibilidad de posición específica para laterales
     // Un lateral izquierdo no puede cubrir un hueco de lateral derecho a menos que tenga posiciones alternativas
     if (need.group === "FB") {
       const playerPositions = playerPosCodes(player);
       // Si el jugador es lateral izquierdo (LI o CAI) y no puede jugar de lateral derecho (LD o CAD), descartar
-      const isLeftBackOnly = playerPositions.some(p => p === "LI" || p === "CAI") && 
-                            !playerPositions.some(p => p === "LD" || p === "CAD");
+      const isLeftBackOnly =
+        playerPositions.some((p) => p === "LI" || p === "CAI") &&
+        !playerPositions.some((p) => p === "LD" || p === "CAD");
       // Si el jugador es lateral derecho (LD o CAD) y no puede jugar de lateral izquierdo (LI o CAI), descartar
-      const isRightBackOnly = playerPositions.some(p => p === "LD" || p === "CAD") && 
-                             !playerPositions.some(p => p === "LI" || p === "CAI");
-      
+      const isRightBackOnly =
+        playerPositions.some((p) => p === "LD" || p === "CAD") &&
+        !playerPositions.some((p) => p === "LI" || p === "CAI");
+
       // Si el club necesita específicamente un lateral derecho y el jugador solo juega de izquierdo, descartar
       // (y viceversa). Esta es una simplificación; en una implementación completa se necesitaría
       // rastrear qué lateral específico se necesita (derecho o izquierdo)
       if (isLeftBackOnly || isRightBackOnly) {
         // Solo descartar si el club ya tiene el otro lateral cubierto
         const squad = getClubPlayers(clubId);
-        const hasLeftBack = squad.some(p => playerPosCodes(p).some(pos => pos === "LI" || pos === "CAI"));
-        const hasRightBack = squad.some(p => playerPosCodes(p).some(pos => pos === "LD" || pos === "CAD"));
-        
+        const hasLeftBack = squad.some((p) =>
+          playerPosCodes(p).some((pos) => pos === "LI" || pos === "CAI"),
+        );
+        const hasRightBack = squad.some((p) =>
+          playerPosCodes(p).some((pos) => pos === "LD" || pos === "CAD"),
+        );
+
         // Si el jugador es solo lateral izquierdo y el club ya tiene laterales izquierdos, descartar
         if (isLeftBackOnly && hasLeftBack) continue;
         // Si el jugador es solo lateral derecho y el club ya tiene laterales derechos, descartar
         if (isRightBackOnly && hasRightBack) continue;
       }
     }
-    
+
     // No más de N traspasos con el mismo vendedor en la misma ventana: evita
     // que un rival se lleve dos o tres titulares del mismo club de golpe.
     if (
@@ -698,7 +708,11 @@ export function pursueTarget(
   // una oferta que el usuario acepte explícitamente.
   const userClubId = getUserClubId();
   if (userClubId && player.clubId === userClubId && clubId !== userClubId) {
-    return fail("unavailable", `${player.name} pertenece a tu club: no se puede fichar sin tu acuerdo.`, null);
+    return fail(
+      "unavailable",
+      `${player.name} pertenece a tu club: no se puede fichar sin tu acuerdo.`,
+      null,
+    );
   }
   const buyerContext = {
     clubId,
@@ -716,7 +730,11 @@ export function pursueTarget(
   if (player.clubId) {
     const sellerReport = getSquadReport(player.clubId, cacheKey);
     if (sellerReport.size <= SQUAD_LIMITS.minSquadSize) {
-      return fail("unavailable", `${teamById(player.clubId).name} no puede quedarse sin efectivos.`, null);
+      return fail(
+        "unavailable",
+        `${teamById(player.clubId).name} no puede quedarse sin efectivos.`,
+        null,
+      );
     }
     // Eliminada la restricción de "no vender hasta reforzarse" para permitir más fichajes de estrellas
     // El jugador no es un descarte claro de plantilla (no está en las listas
@@ -1183,8 +1201,7 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
   const urgentOnly = report.size >= SQUAD_LIMITS.maxSquadSize;
   // Un club al que le faltan jugadores ficha aunque tenga que hacer caja: la
   // prioridad es mantener una plantilla completa, no el balance.
-  const understaffed =
-    report.size < SQUAD_LIMITS.minSquadSize + 4 || windowDeficit(clubId) > 0;
+  const understaffed = report.size < SQUAD_LIMITS.minSquadSize + 4 || windowDeficit(clubId) > 0;
   // Tampoco se congela del todo si el club sigue por debajo de su cupo
   // mínimo de fichajes de la ventana (`belowMinimum`, calculado por la
   // simulación diaria): antes este corte era total —ni siquiera una
@@ -1245,7 +1262,11 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
  * vendedor que pueda bloquear la operación, así que sirve para que ningún
  * equipo termine el mercado completamente parado.
  */
-export function signBestFreeAgent(clubId: string, date: string, desperate = false): TransferRecord | null {
+export function signBestFreeAgent(
+  clubId: string,
+  date: string,
+  desperate = false,
+): TransferRecord | null {
   const report = getSquadReport(clubId, date);
   if (report.size >= SQUAD_LIMITS.maxSquadSize) return null;
 
@@ -1286,13 +1307,14 @@ export function signBestFreeAgent(clubId: string, date: string, desperate = fals
     // top: el mercado de libres apenas tiene nombres de su categoría) fallaba
     // este intento SIEMPRE, ventana tras ventana, y terminaba el mercado sin
     // fichar a nadie aunque estuviera obligado a hacerlo.
-    const gap = desperate ? MARKET_TIMING.freeAgentMaxOvrGap + 25 : MARKET_TIMING.freeAgentMaxOvrGap;
-    const slack = desperate ? REPUTATION_OVR_FLOOR.freeAgentSlack + 20 : REPUTATION_OVR_FLOOR.freeAgentSlack;
+    const gap = desperate
+      ? MARKET_TIMING.freeAgentMaxOvrGap + 25
+      : MARKET_TIMING.freeAgentMaxOvrGap;
+    const slack = desperate
+      ? REPUTATION_OVR_FLOOR.freeAgentSlack + 20
+      : REPUTATION_OVR_FLOOR.freeAgentSlack;
     const ceilingOvr = report.startingRating + 1;
-    const floorOvr = Math.max(
-      ceilingOvr - gap,
-      reputationOvrFloor(profile) - slack,
-    );
+    const floorOvr = Math.max(ceilingOvr - gap, reputationOvrFloor(profile) - slack);
     const options = getFreeAgents()
       .filter(
         (player) =>

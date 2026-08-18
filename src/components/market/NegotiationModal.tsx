@@ -52,7 +52,11 @@ export function NegotiationModal({
               {ovr} media · {age} años · {clubName}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -61,7 +65,10 @@ export function NegotiationModal({
           <div className="grid grid-cols-2 gap-2 text-xs">
             <Info label="Valor de mercado" value={formatEuro(report.valuation.marketValue)} />
             <Info label="Precio de salida" value={formatEuro(report.askingPrice)} />
-            <Info label="Horquilla del club" value={`${formatEuro(report.valuation.minimumPrice)} – ${formatEuro(report.valuation.idealPrice)}`} />
+            <Info
+              label="Horquilla del club"
+              value={`${formatEuro(report.valuation.minimumPrice)} – ${formatEuro(report.valuation.idealPrice)}`}
+            />
             <Info label="Techo estimado" value={formatEuro(report.valuation.maximumPrice)} />
             <Info label="Ficha que pide" value={`${formatEuro(report.wageDemand)}/año`} />
             <Info label="Contrato" value={`${report.contractYearsLeft} temporada(s)`} />
@@ -101,8 +108,11 @@ export function NegotiationModal({
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Presupuesto disponible: <span className="text-foreground font-bold">{formatEuro(budget)}</span>
-          {overBudget && <span className="text-destructive"> · oferta por encima del presupuesto</span>}
+          Presupuesto disponible:{" "}
+          <span className="text-foreground font-bold">{formatEuro(budget)}</span>
+          {overBudget && (
+            <span className="text-destructive"> · oferta por encima del presupuesto</span>
+          )}
         </p>
 
         <div className="flex gap-2">
@@ -120,7 +130,11 @@ export function NegotiationModal({
           >
             Enviar oferta
           </button>
-          <button type="button" onClick={onClose} className="flex-1 bg-secondary py-2 rounded-lg font-bold">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 bg-secondary py-2 rounded-lg font-bold"
+          >
             Cancelar
           </button>
         </div>
@@ -154,7 +168,9 @@ function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">{label}</label>
+      <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </label>
       <input
         type="number"
         min={0}

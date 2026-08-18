@@ -1,5 +1,14 @@
 // @ts-nocheck
-import { LeagueId, TEAMS, teamById, teamsByLeague, LEAGUES, LEAGUES_BY_COUNTRY, getAllTeams, type Team } from "@/data/teams";
+import {
+  LeagueId,
+  TEAMS,
+  teamById,
+  teamsByLeague,
+  LEAGUES,
+  LEAGUES_BY_COUNTRY,
+  getAllTeams,
+  type Team,
+} from "@/data/teams";
 import { Fixture } from "@/lib/season";
 
 /* ============================================================
@@ -11,24 +20,29 @@ import { Fixture } from "@/lib/season";
 // Legacy static schedule — kept for backward compatibility only.
 // New scheduling uses getCupStructureForCountry() which anchors to league matchdays.
 // Offsets from CUP_START (2025-07-07). Draw = Monday between two league matchdays, Match = Wednesday (+2).
-export const CUP_SCHEDULE: { matchday: number; round: string; size: number; drawMatchday: number }[] = [
-  { drawMatchday: 96,  matchday: 98,  round: "R32",    size: 64 }, // Draw Mon between J9-J10,  Match Wed
-  { drawMatchday: 145, matchday: 147, round: "R16",    size: 32 }, // Draw Mon between J16-J17, Match Wed
-  { drawMatchday: 173, matchday: 175, round: "Octavos",size: 16 }, // Draw Mon between J20-J21, Match Wed
-  { drawMatchday: 208, matchday: 210, round: "QF",     size: 8  }, // Draw Mon between J25-J26, Match Wed
-  { drawMatchday: 236, matchday: 238, round: "SF",     size: 4  }, // Draw Mon between J29-J30, Match Wed
-  { drawMatchday: 264, matchday: 266, round: "Final",  size: 2  }, // Draw Mon between J33-J34, Match Wed
+export const CUP_SCHEDULE: {
+  matchday: number;
+  round: string;
+  size: number;
+  drawMatchday: number;
+}[] = [
+  { drawMatchday: 96, matchday: 98, round: "R32", size: 64 }, // Draw Mon between J9-J10,  Match Wed
+  { drawMatchday: 145, matchday: 147, round: "R16", size: 32 }, // Draw Mon between J16-J17, Match Wed
+  { drawMatchday: 173, matchday: 175, round: "Octavos", size: 16 }, // Draw Mon between J20-J21, Match Wed
+  { drawMatchday: 208, matchday: 210, round: "QF", size: 8 }, // Draw Mon between J25-J26, Match Wed
+  { drawMatchday: 236, matchday: 238, round: "SF", size: 4 }, // Draw Mon between J29-J30, Match Wed
+  { drawMatchday: 264, matchday: 266, round: "Final", size: 2 }, // Draw Mon between J33-J34, Match Wed
 ];
 
 /**
  * Power of 2 Bracket Algorithm
  * Calculates preliminary round and bye distribution to ensure main bracket is a perfect power of 2
- * 
+ *
  * RULES:
  * 1. Worst teams (lower divisions) play preliminary round
  * 2. Best teams (higher divisions) receive bye (skip prelim)
  * 3. All subsequent draws are 100% random (no pots, no seeding)
- * 
+ *
  * @param teams - Array of teams to calculate bracket for
  * @returns Object with preliminary teams, bye teams, target bracket size, and round name
  */
@@ -41,11 +55,11 @@ export function calculateCupBracket(teams: Team[]): {
   firstRoundName: string;
 } {
   const N = teams.length;
-  
+
   // Find the highest power of 2 that is <= N (Target Bracket Size T)
   // T = 2^floor(log2(N))
   const T = Math.pow(2, Math.floor(Math.log2(N)));
-  
+
   // If N = T, no preliminary round needed
   if (N === T) {
     return {
@@ -54,19 +68,19 @@ export function calculateCupBracket(teams: Team[]): {
       targetBracketSize: T,
       preliminaryCount: 0,
       byeCount: N,
-      firstRoundName: getRoundNameForSize(T)
+      firstRoundName: getRoundNameForSize(T),
     };
   }
-  
+
   // Calculate teams to eliminate to reach T
   const E = N - T;
-  
+
   // Calculate teams in preliminary round (always even)
   const P = E * 2;
-  
+
   // Calculate teams with bye
   const B = N - P;
-  
+
   // Sort teams by division/reputation (best teams first - higher tier = lower tier number)
   const sortedTeams = [...teams].sort((a, b) => {
     // Sort by league tier (lower tier number = better division)
@@ -74,30 +88,30 @@ export function calculateCupBracket(teams: Team[]): {
     const bLeague = LEAGUES[b.league as LeagueId];
     const aTier = aLeague?.tier ?? 999;
     const bTier = bLeague?.tier ?? 999;
-    
+
     if (aTier !== bTier) {
       return aTier - bTier; // Lower tier number = better (comes first)
     }
-    
+
     // If same tier, sort by overall rating (higher = better)
-    const aOvr = (a.att + a.mid + a.def);
-    const bOvr = (b.att + b.mid + b.def);
+    const aOvr = a.att + a.mid + a.def;
+    const bOvr = b.att + b.mid + b.def;
     return bOvr - aOvr;
   });
-  
+
   // Top B teams (best teams) receive bye (skip prelim)
   const byeTeams = sortedTeams.slice(0, B);
-  
+
   // Bottom P teams (worst teams) go to preliminary round
   const preliminaryTeams = sortedTeams.slice(B);
-  
+
   return {
     preliminaryTeams,
     byeTeams,
     targetBracketSize: T,
     preliminaryCount: P,
     byeCount: B,
-    firstRoundName: getRoundNameForSize(T)
+    firstRoundName: getRoundNameForSize(T),
   };
 }
 
@@ -112,19 +126,26 @@ export function calculateCupBracket(teams: Team[]): {
  */
 function getRoundNameForSize(size: number): string {
   switch (size) {
-    case 64: return "R32"; // 32avos de Final
-    case 32: return "R16"; // 16avos de Final
-    case 16: return "Octavos"; // Octavos de Final
-    case 8: return "QF"; // Cuartos de Final
-    case 4: return "SF"; // Semifinales
-    case 2: return "Final";
-    default: return "Unknown";
+    case 64:
+      return "R32"; // 32avos de Final
+    case 32:
+      return "R16"; // 16avos de Final
+    case 16:
+      return "Octavos"; // Octavos de Final
+    case 8:
+      return "QF"; // Cuartos de Final
+    case 4:
+      return "SF"; // Semifinales
+    case 2:
+      return "Final";
+    default:
+      return "Unknown";
   }
 }
 
 // Calculate total teams in a country (sum of all teams from all leagues)
 export function getTotalTeamsInCountry(country: string): number {
-  const countryLeagues = Object.values(LEAGUES).filter(lg => lg.country === country);
+  const countryLeagues = Object.values(LEAGUES).filter((lg) => lg.country === country);
   let total = 0;
   for (const league of countryLeagues) {
     total += teamsByLeague(league.id as LeagueId).length;
@@ -133,17 +154,17 @@ export function getTotalTeamsInCountry(country: string): number {
 }
 
 // Generate dynamic cup structure based on total teams in country
-export function getCupStructureForCountry(country: string): { 
+export function getCupStructureForCountry(country: string): {
   schedule: { matchday: number; round: string; size: number; drawMatchday: number }[];
   preliminaryTeams: number;
   mainBracketSize: number;
 } {
   const totalTeams = getTotalTeamsInCountry(country);
-  
+
   // Determine the main bracket size based on total teams
   // R32 = 64 teams, R16 = 32 teams, Octavos = 16 teams, QF = 8 teams, SF = 4 teams, Final = 2 teams
   let mainBracketSize: number;
-  
+
   if (totalTeams >= 64) {
     mainBracketSize = 64; // Start at R32 (64 teams)
   } else if (totalTeams >= 32) {
@@ -157,7 +178,7 @@ export function getCupStructureForCountry(country: string): {
   } else {
     mainBracketSize = 2; // Start at Final (2 teams)
   }
-  
+
   // Calculate how many teams need to be eliminated in preliminary round
   // Teams in prelim = (totalTeams - mainBracketSize) * 2
   // Winners from prelim = (totalTeams - mainBracketSize)
@@ -165,12 +186,12 @@ export function getCupStructureForCountry(country: string): {
   // Total bracket = winners + direct teams = mainBracketSize
   const teamsToEliminate = totalTeams - mainBracketSize;
   let preliminaryTeams = 0;
-  
+
   if (teamsToEliminate > 0) {
     // To eliminate X teams, we need 2X teams in preliminary round (half will advance)
     preliminaryTeams = teamsToEliminate * 2;
   }
-  
+
   // Schedule anchored to league matchdays.
   // LEAGUE_MD1_FRIDAY = 2025-08-15, CUP_START = 2025-07-07 → offset = (md-1)*7 + 39 days to reach jornada-md friday.
   // Draw day = Monday between jornada N and N+1 → offset = 39 + (N-1)*7 + 1 = 40 + (N-1)*7
@@ -185,21 +206,22 @@ export function getCupStructureForCountry(country: string): {
   // SF           J29–J30         236          238
   // Final        J33–J34         264          266
 
-  const ROUND_CALENDAR: { name: string; size: number; drawOffset: number; matchOffset: number }[] = [
-    { name: "Preliminar", size: 0,  drawOffset: 61,  matchOffset: 63  },
-    { name: "R32",        size: 64, drawOffset: 96,  matchOffset: 98  },
-    { name: "R16",        size: 32, drawOffset: 145, matchOffset: 147 },
-    { name: "Octavos",    size: 16, drawOffset: 173, matchOffset: 175 },
-    { name: "QF",         size: 8,  drawOffset: 208, matchOffset: 210 },
-    { name: "SF",         size: 4,  drawOffset: 236, matchOffset: 238 },
-    { name: "Final",      size: 2,  drawOffset: 264, matchOffset: 266 },
-  ];
+  const ROUND_CALENDAR: { name: string; size: number; drawOffset: number; matchOffset: number }[] =
+    [
+      { name: "Preliminar", size: 0, drawOffset: 61, matchOffset: 63 },
+      { name: "R32", size: 64, drawOffset: 96, matchOffset: 98 },
+      { name: "R16", size: 32, drawOffset: 145, matchOffset: 147 },
+      { name: "Octavos", size: 16, drawOffset: 173, matchOffset: 175 },
+      { name: "QF", size: 8, drawOffset: 208, matchOffset: 210 },
+      { name: "SF", size: 4, drawOffset: 236, matchOffset: 238 },
+      { name: "Final", size: 2, drawOffset: 264, matchOffset: 266 },
+    ];
 
   const schedule: { matchday: number; round: string; size: number; drawMatchday: number }[] = [];
 
   // Add preliminary round if needed
   if (preliminaryTeams > 0) {
-    const entry = ROUND_CALENDAR.find(r => r.name === "Preliminar")!;
+    const entry = ROUND_CALENDAR.find((r) => r.name === "Preliminar")!;
     schedule.push({
       round: "Preliminar",
       size: preliminaryTeams,
@@ -225,8 +247,10 @@ export function getCupStructureForCountry(country: string): {
 }
 
 // Generate dynamic cup schedule based on actual bracket size (legacy function)
-export function getCupScheduleForSize(teamCount: number): { matchday: number; round: string; size: number; drawMatchday: number }[] {
-  let rounds: { matchday: number; round: string; size: number; drawMatchday: number }[] = [];
+export function getCupScheduleForSize(
+  teamCount: number,
+): { matchday: number; round: string; size: number; drawMatchday: number }[] {
+  const rounds: { matchday: number; round: string; size: number; drawMatchday: number }[] = [];
   if (teamCount >= 32) rounds.push({ matchday: 2, round: "R32", size: 32, drawMatchday: 1 });
   if (teamCount >= 16) rounds.push({ matchday: 6, round: "R16", size: 16, drawMatchday: 5 });
   if (teamCount >= 8) rounds.push({ matchday: 10, round: "QF", size: 8, drawMatchday: 9 });
@@ -235,29 +259,34 @@ export function getCupScheduleForSize(teamCount: number): { matchday: number; ro
   return rounds;
 }
 
-export function initCup(country: string): { fixtures: Fixture[]; participants: string[]; preliminaryParticipants: string[]; structure: ReturnType<typeof getCupStructureForCountry> } {
+export function initCup(country: string): {
+  fixtures: Fixture[];
+  participants: string[];
+  preliminaryParticipants: string[];
+  structure: ReturnType<typeof getCupStructureForCountry>;
+} {
   // Get all teams for this country
-  const allTeams = getAllTeams().filter(t => {
+  const allTeams = getAllTeams().filter((t) => {
     const league = LEAGUES[t.league as LeagueId];
     return league?.country === country;
   });
-  
+
   // Use the power of 2 bracket algorithm
   // This automatically selects worst teams for prelim and best teams for bye
   const bracket = calculateCupBracket(allTeams);
-  
+
   // Get cup structure for this country
   const structure = getCupStructureForCountry(country);
-  
+
   // Extract team IDs from bracket calculation
-  const preliminaryParticipants = bracket.preliminaryTeams.map(t => t.id);
-  const mainBracketParticipants = bracket.byeTeams.map(t => t.id);
-  
+  const preliminaryParticipants = bracket.preliminaryTeams.map((t) => t.id);
+  const mainBracketParticipants = bracket.byeTeams.map((t) => t.id);
+
   return {
     fixtures: [],
     participants: mainBracketParticipants,
     preliminaryParticipants,
-    structure
+    structure,
   };
 }
 
@@ -304,23 +333,50 @@ export type UCLStanding = {
   points: number;
 };
 
-export function initUCL(): { fixtures: Fixture[]; groups: UCLGroup[]; standings: Record<string, UCLStanding[]> } {
-  const ovr = (id: string) => { const t = teamById(id); return t.att + t.mid + t.def; };
-  
+export function initUCL(): {
+  fixtures: Fixture[];
+  groups: UCLGroup[];
+  standings: Record<string, UCLStanding[]>;
+} {
+  const ovr = (id: string) => {
+    const t = teamById(id);
+    return t.att + t.mid + t.def;
+  };
+
   // Dynamic UCL pool: get top 4 teams from each European league, then take top 32 overall
-  const europeanLeagues = Object.keys(LEAGUES).filter(lg => {
+  const europeanLeagues = Object.keys(LEAGUES).filter((lg) => {
     const country = LEAGUES[lg]?.country || "";
-    return ["España", "Inglaterra", "Italia", "Alemania", "Francia", "Portugal", "Países Bajos",
-            "Turquía", "Bélgica", "Polonia", "Suiza", "Dinamarca", "Suecia", "Noruega",
-            "Austria", "Escocia", "Rumanía"].includes(country);
+    return [
+      "España",
+      "Inglaterra",
+      "Italia",
+      "Alemania",
+      "Francia",
+      "Portugal",
+      "Países Bajos",
+      "Turquía",
+      "Bélgica",
+      "Polonia",
+      "Suiza",
+      "Dinamarca",
+      "Suecia",
+      "Noruega",
+      "Austria",
+      "Escocia",
+      "Rumanía",
+    ].includes(country);
   }) as LeagueId[];
-  
+
   let pool: string[] = [];
   for (const lg of europeanLeagues) {
-    const top = teamsByLeague(lg).slice().sort((a, b) => ovr(b.id) - ovr(a.id)).slice(0, 4).map(t => t.id);
+    const top = teamsByLeague(lg)
+      .slice()
+      .sort((a, b) => ovr(b.id) - ovr(a.id))
+      .slice(0, 4)
+      .map((t) => t.id);
     pool.push(...top);
   }
-  
+
   // If not enough teams from European leagues, fill with best overall teams
   if (pool.length < 32) {
     const allTeams = getAllTeams().sort((a, b) => ovr(b.id) - ovr(a.id));
@@ -330,13 +386,18 @@ export function initUCL(): { fixtures: Fixture[]; groups: UCLGroup[]; standings:
       if (!existing.has(t.id)) pool.push(t.id);
     }
   }
-  
+
   // Trim to 32 and deduplicate
   pool = pool.slice(0, 32);
 
   // Pot-based seeding: pot 1 = top 8, pot 2 = next 8, etc.
   const sorted = pool.slice().sort((a, b) => ovr(b) - ovr(a));
-  const pots = [sorted.slice(0, 8), sorted.slice(8, 16), sorted.slice(16, 24), sorted.slice(24, 32)];
+  const pots = [
+    sorted.slice(0, 8),
+    sorted.slice(8, 16),
+    sorted.slice(16, 24),
+    sorted.slice(24, 32),
+  ];
 
   // 8 groups: pick 1 from each pot in round-robin order
   const groups: UCLGroup[] = [];
@@ -351,23 +412,31 @@ export function initUCL(): { fixtures: Fixture[]; groups: UCLGroup[]; standings:
     const [a, b, c, d] = g.teamIds;
     const pairs: [string, string, number][] = [
       // MD 1: a-b, c-d
-      [a, b, 0], [c, d, 0],
+      [a, b, 0],
+      [c, d, 0],
       // MD 2: a-c, d-b
-      [a, c, 1], [d, b, 1],
+      [a, c, 1],
+      [d, b, 1],
       // MD 3: b-c, a-d
-      [b, c, 2], [a, d, 2],
+      [b, c, 2],
+      [a, d, 2],
       // Reverse (MD 4..6)
-      [b, a, 3], [d, c, 3],
-      [c, a, 4], [b, d, 4],
-      [c, b, 5], [d, a, 5],
+      [b, a, 3],
+      [d, c, 3],
+      [c, a, 4],
+      [b, d, 4],
+      [c, b, 5],
+      [d, a, 5],
     ];
     for (const [home, away, mdIdx] of pairs) {
       fixtures.push({
         id: `ucl-G${g.id}-${UCL_GROUP_MDS[mdIdx]}-${home}-${away}`,
-        competition: "ucl", league: teamById(home).league,
+        competition: "ucl",
+        league: teamById(home).league,
         matchday: UCL_GROUP_MDS[mdIdx],
         round: `Grupo ${g.id}`,
-        homeId: home, awayId: away,
+        homeId: home,
+        awayId: away,
       });
     }
   }
@@ -375,7 +444,15 @@ export function initUCL(): { fixtures: Fixture[]; groups: UCLGroup[]; standings:
   const standings: Record<string, UCLStanding[]> = {};
   for (const g of groups) {
     standings[g.id] = g.teamIds.map((id) => ({
-      teamId: id, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, gd: 0, points: 0,
+      teamId: id,
+      played: 0,
+      won: 0,
+      drawn: 0,
+      lost: 0,
+      gf: 0,
+      ga: 0,
+      gd: 0,
+      points: 0,
     }));
   }
 
@@ -391,8 +468,14 @@ export function applyUCLResult(standings: UCLStanding[], f: Fixture): UCLStandin
       const d = homeGoals === awayGoals ? 1 : 0;
       const l = homeGoals < awayGoals ? 1 : 0;
       return {
-        ...s, played: s.played + 1, won: s.won + w, drawn: s.drawn + d, lost: s.lost + l,
-        gf: s.gf + homeGoals, ga: s.ga + awayGoals, gd: s.gd + (homeGoals - awayGoals),
+        ...s,
+        played: s.played + 1,
+        won: s.won + w,
+        drawn: s.drawn + d,
+        lost: s.lost + l,
+        gf: s.gf + homeGoals,
+        ga: s.ga + awayGoals,
+        gd: s.gd + (homeGoals - awayGoals),
         points: s.points + w * 3 + d,
       };
     }
@@ -401,8 +484,14 @@ export function applyUCLResult(standings: UCLStanding[], f: Fixture): UCLStandin
       const d = homeGoals === awayGoals ? 1 : 0;
       const l = awayGoals < homeGoals ? 1 : 0;
       return {
-        ...s, played: s.played + 1, won: s.won + w, drawn: s.drawn + d, lost: s.lost + l,
-        gf: s.gf + awayGoals, ga: s.ga + homeGoals, gd: s.gd + (awayGoals - homeGoals),
+        ...s,
+        played: s.played + 1,
+        won: s.won + w,
+        drawn: s.drawn + d,
+        lost: s.lost + l,
+        gf: s.gf + awayGoals,
+        ga: s.ga + homeGoals,
+        gd: s.gd + (awayGoals - homeGoals),
         points: s.points + w * 3 + d,
       };
     }
@@ -415,7 +504,10 @@ export function sortUCLStandings(s: UCLStanding[]): UCLStanding[] {
 }
 
 /** After group stage: take top 2 from each group, build R16 bracket. */
-export function buildUCLKnockout(groups: UCLGroup[], standings: Record<string, UCLStanding[]>): Fixture[] {
+export function buildUCLKnockout(
+  groups: UCLGroup[],
+  standings: Record<string, UCLStanding[]>,
+): Fixture[] {
   // Get qualifiers
   const winners: Record<string, string> = {};
   const runners: Record<string, string> = {};
@@ -426,16 +518,23 @@ export function buildUCLKnockout(groups: UCLGroup[], standings: Record<string, U
   }
   // Bracket: A1 vs B2, B1 vs A2, C1 vs D2, D1 vs C2, E1 vs F2, F1 vs E2, G1 vs H2, H1 vs G2
   const pairs: [string, string][] = [
-    [winners.A, runners.B], [winners.B, runners.A],
-    [winners.C, runners.D], [winners.D, runners.C],
-    [winners.E, runners.F], [winners.F, runners.E],
-    [winners.G, runners.H], [winners.H, runners.G],
+    [winners.A, runners.B],
+    [winners.B, runners.A],
+    [winners.C, runners.D],
+    [winners.D, runners.C],
+    [winners.E, runners.F],
+    [winners.F, runners.E],
+    [winners.G, runners.H],
+    [winners.H, runners.G],
   ];
   return pairs.map(([home, away], i) => ({
-    id: `ucl-R16-${i}`, competition: "ucl" as const,
+    id: `ucl-R16-${i}`,
+    competition: "ucl" as const,
     league: teamById(home).league,
-    matchday: UCL_KO_SCHEDULE[0].matchday, round: "R16",
-    homeId: home, awayId: away,
+    matchday: UCL_KO_SCHEDULE[0].matchday,
+    round: "R16",
+    homeId: home,
+    awayId: away,
   }));
 }
 
@@ -443,9 +542,9 @@ function seedKnockout(ids: string[]): string[] {
   const n = ids.length;
   const out: string[] = [];
   // Safe pairing: high seeds vs low seeds
-  for (let i = 0; i < Math.floor(n / 2); i++) { 
-    out.push(ids[i]); 
-    out.push(ids[n - 1 - i]); 
+  for (let i = 0; i < Math.floor(n / 2); i++) {
+    out.push(ids[i]);
+    out.push(ids[n - 1 - i]);
   }
   return out;
 }
@@ -462,17 +561,21 @@ export function buildNextKORound(
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  
+
   const fixtures: Fixture[] = [];
   for (let i = 0; i < shuffled.length; i += 2) {
-    const id = comp === "cup"
-      ? `cup-${league}-${scheduleStep.round}-${i}`
-      : `ucl-${scheduleStep.round}-${i}`;
+    const id =
+      comp === "cup"
+        ? `cup-${league}-${scheduleStep.round}-${i}`
+        : `ucl-${scheduleStep.round}-${i}`;
     fixtures.push({
-      id, competition: comp,
+      id,
+      competition: comp,
       league: comp === "cup" ? (league as LeagueId) : teamById(shuffled[i]).league,
-      matchday: scheduleStep.matchday, round: scheduleStep.round,
-      homeId: shuffled[i], awayId: shuffled[i + 1],
+      matchday: scheduleStep.matchday,
+      round: scheduleStep.round,
+      homeId: shuffled[i],
+      awayId: shuffled[i + 1],
     });
   }
   return fixtures;

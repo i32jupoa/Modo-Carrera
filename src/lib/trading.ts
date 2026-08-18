@@ -4,9 +4,9 @@ import { Player } from "@/data/players";
 export type Offer = {
   id: string;
   playerId: string;
-  fromTeamId: string;  // team making the offer
-  toTeamId: string;    // team receiving
-  amount: number;      // millions €
+  fromTeamId: string; // team making the offer
+  toTeamId: string; // team receiving
+  amount: number; // millions €
   direction: "incoming" | "outgoing"; // incoming = AI offering for our player
   status: "pending" | "accepted" | "rejected" | "countered";
   counterAmount?: number;
@@ -53,8 +53,13 @@ export function generateIncomingOffers(args: {
       if (budgets[bidder.id] < amount) continue;
       offers.push({
         id: `offer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        playerId: p.id, fromTeamId: bidder.id, toTeamId: myTeamId,
-        amount, direction: "incoming", status: "pending", createdMatchday: matchday,
+        playerId: p.id,
+        fromTeamId: bidder.id,
+        toTeamId: myTeamId,
+        amount,
+        direction: "incoming",
+        status: "pending",
+        createdMatchday: matchday,
       });
     }
   }
@@ -64,18 +69,27 @@ export function generateIncomingOffers(args: {
     if (transferList.has(p.id)) continue;
     if (p.rating < 84) continue;
     if (Math.random() > 0.04) continue;
-    const bidder = pickBidder(p, otherTeams.filter((t) => {
-      const tov = (t.att + t.mid + t.def) / 3;
-      return tov >= 80; // only big clubs lowball stars
-    }), budgets);
+    const bidder = pickBidder(
+      p,
+      otherTeams.filter((t) => {
+        const tov = (t.att + t.mid + t.def) / 3;
+        return tov >= 80; // only big clubs lowball stars
+      }),
+      budgets,
+    );
     if (!bidder) continue;
     const offerMult = 0.7 + Math.random() * 0.5; // lower since unsolicited
     const amount = Math.round(p.marketValue * offerMult * 10) / 10;
     if (budgets[bidder.id] < amount) continue;
     offers.push({
       id: `offer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      playerId: p.id, fromTeamId: bidder.id, toTeamId: myTeamId,
-      amount, direction: "incoming", status: "pending", createdMatchday: matchday,
+      playerId: p.id,
+      fromTeamId: bidder.id,
+      toTeamId: myTeamId,
+      amount,
+      direction: "incoming",
+      status: "pending",
+      createdMatchday: matchday,
     });
   }
   return offers;
@@ -114,12 +128,16 @@ export function evaluateOutgoingOffer(args: {
   return {
     accepted: accept,
     reason: accept
-      ? ratio >= 1.2 ? "Oferta muy por encima del valor de mercado"
-        : prestigeGap >= 3 ? "Salto de categoría para el jugador"
-        : "Oferta razonable"
-      : ratio < 0.8 ? "Oferta muy por debajo del valor"
-        : player.rating >= 85 ? "Pieza intransferible del proyecto"
-        : "El club rechaza la oferta",
+      ? ratio >= 1.2
+        ? "Oferta muy por encima del valor de mercado"
+        : prestigeGap >= 3
+          ? "Salto de categoría para el jugador"
+          : "Oferta razonable"
+      : ratio < 0.8
+        ? "Oferta muy por debajo del valor"
+        : player.rating >= 85
+          ? "Pieza intransferible del proyecto"
+          : "El club rechaza la oferta",
   };
 }
 

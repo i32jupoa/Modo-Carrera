@@ -1,12 +1,7 @@
 // Live match state: everything needed to freeze a match mid-play, let the user
 // edit the lineup / tactics, and resume at the exact same minute.
 
-export type LivePhase =
-  | "playing"
-  | "halftime"
-  | "et_break"
-  | "et_playing"
-  | "et_halftime";
+export type LivePhase = "playing" | "halftime" | "et_break" | "et_playing" | "et_halftime";
 
 export type LiveSub = {
   minute: number;
@@ -103,7 +98,10 @@ export function canSubstitute(
     return { ok: false, reason: `Sin cambios disponibles (${state.subsUsed}/${maxSubs})` };
   }
   if (!isFreeWindow(state.phase) && state.windowsUsed >= maxWindows) {
-    return { ok: false, reason: `Sin ventanas de cambio disponibles (${state.windowsUsed}/${maxWindows})` };
+    return {
+      ok: false,
+      reason: `Sin ventanas de cambio disponibles (${state.windowsUsed}/${maxWindows})`,
+    };
   }
   return { ok: true };
 }
@@ -118,7 +116,8 @@ function baseDrain(position: string): number {
   // instead of draining a player almost completely.
   if (["GK", "POR"].includes(p)) return 0.08;
   if (["CB", "DFC", "RB", "LB", "LD", "LI", "DEF"].includes(p)) return 0.27;
-  if (["CDM", "MCD", "CM", "MC", "CAM", "MCO", "RM", "LM", "MD", "MI", "MID"].includes(p)) return 0.38;
+  if (["CDM", "MCD", "CM", "MC", "CAM", "MCO", "RM", "LM", "MD", "MI", "MID"].includes(p))
+    return 0.38;
   return 0.32;
 }
 
@@ -135,7 +134,6 @@ export function drainPerMinute(
   const mult = pressure === "high" ? 1.12 : pressure === "low" ? 0.9 : 1;
   return baseDrain(position) * mult * staminaMult;
 }
-
 
 /** Effective rating penalty caused by fatigue (0 when fresh). */
 export function fatiguePenalty(stamina: number): number {

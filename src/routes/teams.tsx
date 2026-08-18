@@ -138,7 +138,10 @@ function TeamsPage() {
   const teamResults = useMemo(() => {
     if (q.length < 2) return [];
     return getAllTeams()
-      .filter((t) => norm(t.name).includes(q) || norm(t.short || "").includes(q) || norm(t.city).includes(q))
+      .filter(
+        (t) =>
+          norm(t.name).includes(q) || norm(t.short || "").includes(q) || norm(t.city).includes(q),
+      )
       .sort((a, b) => overall(b) - overall(a))
       .slice(0, 8);
   }, [q]);
@@ -158,13 +161,14 @@ function TeamsPage() {
   const teamSquad = useMemo(() => {
     if (!selectedTeam) return [];
     return squadForTeam(selectedTeam.id);
-  }, [selectedTeam, clubOverrides]);
+  }, [selectedTeam]);
 
   const isUserTeam = !!save && selectedTeam?.id === save.myTeamId;
 
   // Dibujo que mejor encaja con la plantilla, entre las formaciones típicas del estilo del equipo.
   const bestFormation = useMemo(
-    () => (selectedTeam && teamSquad.length ? bestFormationForSquad(teamSquad, selectedTeam) : null),
+    () =>
+      selectedTeam && teamSquad.length ? bestFormationForSquad(teamSquad, selectedTeam) : null,
     [teamSquad, selectedTeam],
   );
 
@@ -176,9 +180,21 @@ function TeamsPage() {
     const formation = bestFormation ?? est.formation;
     if (isUserTeam) {
       const real = loadTactics(selectedTeam.id);
-      return { ...est, formation, style: real.style, pressure: real.pressure, defenseLine: real.defenseLine };
+      return {
+        ...est,
+        formation,
+        style: real.style,
+        pressure: real.pressure,
+        defenseLine: real.defenseLine,
+      };
     }
-    return { ...est, formation, style: teamStyle.style, pressure: teamStyle.pressure, defenseLine: teamStyle.defenseLine };
+    return {
+      ...est,
+      formation,
+      style: teamStyle.style,
+      pressure: teamStyle.pressure,
+      defenseLine: teamStyle.defenseLine,
+    };
   }, [selectedTeam, isUserTeam, bestFormation]);
 
   const eleven = useMemo(() => {
@@ -284,7 +300,9 @@ function TeamsPage() {
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold truncate">{p.Name}</div>
-                        <div className="text-[0.65rem] text-muted-foreground truncate">{p.Team}</div>
+                        <div className="text-[0.65rem] text-muted-foreground truncate">
+                          {p.Team}
+                        </div>
                       </div>
                       <span className="text-sm font-black scoreline">{p.OVR}</span>
                     </button>
@@ -388,7 +406,11 @@ function TeamsPage() {
                     </div>
                     <div
                       className={`text-xl font-black scoreline ${
-                        ov >= 85 ? "text-primary" : ov >= 78 ? "text-accent" : "text-muted-foreground"
+                        ov >= 85
+                          ? "text-primary"
+                          : ov >= 78
+                            ? "text-accent"
+                            : "text-muted-foreground"
                       }`}
                     >
                       {ov}
@@ -463,12 +485,10 @@ function TeamsPage() {
 
           {/* Tabs */}
           <div className="flex gap-1 mb-4 border-b border-border/60">
-            {(
-              [
-                { id: "squad" as PanelTab, label: "Plantilla" },
-                { id: "tactics" as PanelTab, label: "Táctica y 11 tipo" },
-              ]
-            ).map((t) => (
+            {[
+              { id: "squad" as PanelTab, label: "Plantilla" },
+              { id: "tactics" as PanelTab, label: "Táctica y 11 tipo" },
+            ].map((t) => (
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
@@ -634,7 +654,9 @@ function TeamsPage() {
                             {stats.assists}
                           </td>
                           <td className="py-2 px-1 text-center font-bold">{goalContributions}</td>
-                          <td className="py-2 px-1 text-center text-yellow-500">{stats.yellowCards}</td>
+                          <td className="py-2 px-1 text-center text-yellow-500">
+                            {stats.yellowCards}
+                          </td>
                           <td className="py-2 px-1 text-center text-red-500">{stats.redCards}</td>
                           <td className="py-2 px-1 text-center font-semibold">{status}</td>
                           {canOffer && (
@@ -655,9 +677,11 @@ function TeamsPage() {
                 </table>
               </div>
               <p className="text-[0.65rem] text-muted-foreground mt-3">
-                Orden por posición · PJ = Partidos Jugados · Contrib. = Goles + Asistencias · TA/TR =
-                tarjetas · Estado: S = Sancionado, I = Lesionado, j = jornadas restantes
-                {!isMarketOpen && !isUserTeam && " · el mercado está cerrado, no puedes ofertar ahora"}
+                Orden por posición · PJ = Partidos Jugados · Contrib. = Goles + Asistencias · TA/TR
+                = tarjetas · Estado: S = Sancionado, I = Lesionado, j = jornadas restantes
+                {!isMarketOpen &&
+                  !isUserTeam &&
+                  " · el mercado está cerrado, no puedes ofertar ahora"}
               </p>
             </>
           )}

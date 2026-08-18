@@ -2,7 +2,12 @@ import React from "react";
 import { TeamLogo } from "@/components/TeamLogo";
 import { MapPin } from "lucide-react";
 import { overall, LEAGUES } from "@/data/teams";
-import { getTeamCategory, getTeamDifficulty, CATEGORY_COLORS, DIFFICULTY_COLORS } from "@/lib/utils";
+import {
+  getTeamCategory,
+  getTeamDifficulty,
+  CATEGORY_COLORS,
+  DIFFICULTY_COLORS,
+} from "@/lib/utils";
 
 export default function ClubCardPremium({
   team,
@@ -26,11 +31,11 @@ export default function ClubCardPremium({
   const difficulty = getTeamDifficulty(ov);
   const catCol = CATEGORY_COLORS[category];
   const difCol = DIFFICULTY_COLORS[difficulty];
-  
+
   // Usar color del equipo para fondo personalizado
   const teamColor = team.color || "#1a1a2e";
   const bgStyle = {
-    background: `linear-gradient(135deg, ${teamColor}20 0%, ${teamColor}10 50%, transparent 100%)`
+    background: `linear-gradient(135deg, ${teamColor}20 0%, ${teamColor}10 50%, transparent 100%)`,
   };
 
   return (
@@ -51,7 +56,11 @@ export default function ClubCardPremium({
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-3">
               <div className="team-logo-wrapper">
-                <TeamLogo teamName={team.name} leagueName={LEAGUES[team.league]?.name ?? team.league} size={56} />
+                <TeamLogo
+                  teamName={team.name}
+                  leagueName={LEAGUES[team.league]?.name ?? team.league}
+                  size={56}
+                />
               </div>
 
               <div>
@@ -67,16 +76,28 @@ export default function ClubCardPremium({
           </div>
 
           <div className="grid grid-cols-3 gap-2 mb-3">
-            {[{ label: "ATA", value: team.att, pct: attPct }, { label: "MED", value: team.mid, pct: midPct }, { label: "DEF", value: team.def, pct: defPct }].map((s, i) => (
-              <div key={s.label} className="relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.02] backdrop-blur-xl p-2.5">
-                <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-1.5">{s.label}</div>
+            {[
+              { label: "ATA", value: team.att, pct: attPct },
+              { label: "MED", value: team.mid, pct: midPct },
+              { label: "DEF", value: team.def, pct: defPct },
+            ].map((s, i) => (
+              <div
+                key={s.label}
+                className="relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.02] backdrop-blur-xl p-2.5"
+              >
+                <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-1.5">
+                  {s.label}
+                </div>
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="text-lg font-black text-white">{s.value}</div>
                   <div className="text-xs text-white/50">{s.pct}%</div>
                 </div>
 
                 <div className="w-full h-1.5 rounded-full bg-white/[0.03] overflow-hidden">
-                  <div className="h-1.5 bg-gradient-to-r from-primary to-accent transition-all duration-800" style={{ width: `${s.pct}%`, transitionDelay: `${i * 0.06}s` }} />
+                  <div
+                    className="h-1.5 bg-gradient-to-r from-primary to-accent transition-all duration-800"
+                    style={{ width: `${s.pct}%`, transitionDelay: `${i * 0.06}s` }}
+                  />
                 </div>
               </div>
             ))}
@@ -85,19 +106,30 @@ export default function ClubCardPremium({
           <div className="mb-3">
             <div className="text-xs text-white/40 mb-1.5">Nivel del club</div>
             <div className="w-full h-2.5 rounded-full bg-white/[0.03] overflow-hidden">
-              <div className="h-2.5 bg-gradient-to-r from-accent to-primary transition-all duration-1000" style={{ width: `${level}%` }} />
+              <div
+                className="h-2.5 bg-gradient-to-r from-accent to-primary transition-all duration-1000"
+                style={{ width: `${level}%` }}
+              />
             </div>
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="text-white/50">Clasificación</span>
-              <span className={`font-semibold px-2 py-0.5 rounded-full text-[0.7rem] ${catCol.bg} ${catCol.text}`}>{category}</span>
+              <span
+                className={`font-semibold px-2 py-0.5 rounded-full text-[0.7rem] ${catCol.bg} ${catCol.text}`}
+              >
+                {category}
+              </span>
             </div>
 
             <div className="flex items-center justify-between text-xs">
               <span className="text-white/50">Dificultad</span>
-              <span className={`font-semibold px-2 py-0.5 rounded-full text-[0.7rem] ${difCol.bg} ${difCol.text}`}>{difficulty}</span>
+              <span
+                className={`font-semibold px-2 py-0.5 rounded-full text-[0.7rem] ${difCol.bg} ${difCol.text}`}
+              >
+                {difficulty}
+              </span>
             </div>
           </div>
         </div>

@@ -13,22 +13,22 @@ import type { Player } from "@/data/players";
 export function applyMonthlyProgressionToAll(
   players: Player[],
   currentMonth: number,
-  currentYear: number
+  currentYear: number,
 ): Player[] {
-  return players.map(player => {
+  return players.map((player) => {
     if (!player.dynamicStats) return player;
-    
+
     const updatedStats = applyMonthlyProgression(
       player.dynamicStats,
       player.age,
       player.positions,
       currentMonth,
-      currentYear
+      currentYear,
     );
-    
+
     // Actualizar el OVR del jugador si cambió
     const newOVR = updatedStats.currentOVR;
-    
+
     return {
       ...player,
       rating: newOVR,
@@ -43,18 +43,18 @@ export function applyMonthlyProgressionToAll(
 export function applyMonthlyProgressionToPlayer(
   player: Player,
   currentMonth: number,
-  currentYear: number
+  currentYear: number,
 ): Player {
   if (!player.dynamicStats) return player;
-  
+
   const updatedStats = applyMonthlyProgression(
     player.dynamicStats,
     player.age,
     player.positions,
     currentMonth,
-    currentYear
+    currentYear,
   );
-  
+
   return {
     ...player,
     rating: updatedStats.currentOVR,

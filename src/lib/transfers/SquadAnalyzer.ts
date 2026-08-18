@@ -11,7 +11,13 @@ import { IDEAL_SQUAD_SHAPE, SQUAD_LIMITS } from "./constants";
 import { recentCoreLossOvr, recentCoreSigningOvr } from "./MarketLocks";
 import { getClubPlayers, onSquadChanged } from "./PlayerIndex";
 import { clamp } from "./random";
-import { POSITION_GROUPS, type MarketPlayer, type PositionGroup, type SquadNeed, type SquadReport } from "./types";
+import {
+  POSITION_GROUPS,
+  type MarketPlayer,
+  type PositionGroup,
+  type SquadNeed,
+  type SquadReport,
+} from "./types";
 
 function emptyByGroup<T>(value: T): Record<PositionGroup, T> {
   return {
@@ -71,7 +77,7 @@ function computeUrgency(
   // queda, más urgente (y más "crítica") se vuelve la necesidad.
   const dropSeverity = clamp((recentLossOvr - Math.max(quality, squadRating - 8)) / 12, 0, 1);
   const reactiveUrgency = clamp(0.55 + dropSeverity * 0.35, 0.55, 0.95);
-  
+
   // Si el club acaba de fichar un jugador de calidad en esta posición,
   // reducir la urgencia para evitar fichajes duplicados, pero solo si el
   // fichaje es de nivel igual o mejor que la pérdida
@@ -80,12 +86,16 @@ function computeUrgency(
     // El fichaje reciente es de nivel igual o mejor que la pérdida
     return Math.max(baseUrgency * 0.3, 0); // Reducir significativamente la urgencia
   }
-  
+
   return Math.max(baseUrgency, reactiveUrgency);
 }
 
 /** ¿Debería el club poner a este jugador en la lista de transferibles? */
-function isTransferable(player: MarketPlayer, startingRating: number, countInGroup: number): boolean {
+function isTransferable(
+  player: MarketPlayer,
+  startingRating: number,
+  countInGroup: number,
+): boolean {
   const shape = IDEAL_SQUAD_SHAPE[player.group];
   if (player.contract.yearsLeft <= 0) return true;
   if (player.age >= SQUAD_LIMITS.veteranAge && player.ovr < startingRating - 2) return true;
@@ -125,7 +135,13 @@ export function analyzeSquad(clubId: string): SquadReport {
     countByGroup[group] = players.length;
     ratingByGroup[group] = Math.round(average(players.map((p) => p.ovr)) * 10) / 10;
 
-    const urgency = computeUrgency(clubId, group, players, startingRating, recentCoreLossOvr(clubId, group));
+    const urgency = computeUrgency(
+      clubId,
+      group,
+      players,
+      startingRating,
+      recentCoreLossOvr(clubId, group),
+    );
     if (urgency > 0.15) {
       needs.push({
         group,
@@ -144,7 +160,8 @@ export function analyzeSquad(clubId: string): SquadReport {
   const loanables: string[] = [];
   for (const player of squad) {
     if (isLoanable(player, startingRating)) loanables.push(player.id);
-    else if (isTransferable(player, startingRating, countByGroup[player.group])) transferables.push(player.id);
+    else if (isTransferable(player, startingRating, countByGroup[player.group]))
+      transferables.push(player.id);
   }
 
   return {

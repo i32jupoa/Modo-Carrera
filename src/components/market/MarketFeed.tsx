@@ -129,9 +129,11 @@ export function MarketFeed({
 
   const leagueOptions = useMemo(
     () =>
-      Object.values(LEAGUES).sort((a, b) =>
-        a.name.localeCompare(b.name, "es"),
-      ) as { id: string; name: string; flag: string }[],
+      Object.values(LEAGUES).sort((a, b) => a.name.localeCompare(b.name, "es")) as {
+        id: string;
+        name: string;
+        flag: string;
+      }[],
     [],
   );
 
@@ -199,7 +201,6 @@ export function MarketFeed({
     return sorted.slice(0, limit);
   }, [baseHistory, historySort, minFee, noFilter]);
 
-
   const filteredRumors = useMemo(() => {
     if (noFilter) return rumors;
     // Al filtrar se lee el histórico completo de la ventana (los rumores
@@ -234,7 +235,9 @@ export function MarketFeed({
     <div className="space-y-4">
       {/* Filtros del feed */}
       <div className="panel p-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs uppercase tracking-wider text-muted-foreground mr-1">Filtrar por</span>
+        <span className="text-xs uppercase tracking-wider text-muted-foreground mr-1">
+          Filtrar por
+        </span>
         <Select
           value={scope}
           onValueChange={(value) => {

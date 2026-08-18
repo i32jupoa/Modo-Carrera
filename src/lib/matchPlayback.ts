@@ -16,7 +16,9 @@ export type MatchSnapshot = {
 };
 
 export function saveMatchSnapshot(snap: MatchSnapshot) {
-  try { sessionStorage.setItem(KEY, JSON.stringify(snap)); } catch {}
+  try {
+    sessionStorage.setItem(KEY, JSON.stringify(snap));
+  } catch {}
 }
 
 export function loadMatchSnapshot(fixtureId: string): MatchSnapshot | null {
@@ -25,9 +27,13 @@ export function loadMatchSnapshot(fixtureId: string): MatchSnapshot | null {
     if (!raw) return null;
     const snap = JSON.parse(raw) as MatchSnapshot;
     return snap.fixtureId === fixtureId ? snap : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export function clearMatchSnapshot() {
-  try { sessionStorage.removeItem(KEY); } catch {}
+  try {
+    sessionStorage.removeItem(KEY);
+  } catch {}
 }

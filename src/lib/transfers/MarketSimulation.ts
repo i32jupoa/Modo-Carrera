@@ -302,11 +302,9 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
   });
 }
 
-
 // ============================================================================
 // DÍA DE MERCADO
 // ============================================================================
-
 
 /** Acciones que puede tomar un club en su turno diario. */
 function runClubDay(
@@ -426,7 +424,9 @@ function runClubDay(
     // de agotarse el primer día.
     const burst = state.window === "summer" ? BALANCE.summerSigningBurst : 1;
     const baseSignings = state.deadlineDay
-      ? (profile.aggression > 0.6 ? 5 : 3)
+      ? profile.aggression > 0.6
+        ? 5
+        : 3
       : deficit > 0
         ? Math.min(deficit + 1, 3)
         : hasCriticalReactiveNeed

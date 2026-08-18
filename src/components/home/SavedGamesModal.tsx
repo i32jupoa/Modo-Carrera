@@ -11,7 +11,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Trash2, Play, Calendar, Trophy, AlertTriangle } from "lucide-react";
-import { loadAllSaves, deleteSave, loadSaveById, updateSaveLastPlayed, type SavedGameMeta } from "@/lib/savedGames";
+import {
+  loadAllSaves,
+  deleteSave,
+  loadSaveById,
+  updateSaveLastPlayed,
+  type SavedGameMeta,
+} from "@/lib/savedGames";
 import { LEAGUES } from "@/data/teams";
 import { usePlayersStore } from "@/store/playersStore";
 
@@ -68,10 +74,10 @@ export default function SavedGamesModal({
 
   function formatDate(dateString: string): string {
     const date = new Date(dateString);
-    return date.toLocaleDateString('es-ES', { 
-      day: '2-digit', 
-      month: 'short', 
-      year: 'numeric' 
+    return date.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
     });
   }
 
@@ -85,9 +91,7 @@ export default function SavedGamesModal({
               Partidas guardadas
             </div>
           </div>
-          <h2 className="text-2xl md:text-3xl font-black text-white mb-2">
-            Tus carreras
-          </h2>
+          <h2 className="text-2xl md:text-3xl font-black text-white mb-2">Tus carreras</h2>
           <p className="text-sm text-white/55 mb-6">
             Selecciona una partida para continuar o elimina las que ya no necesites.
           </p>
@@ -174,7 +178,8 @@ export default function SavedGamesModal({
               </AlertDialogTitle>
             </div>
             <AlertDialogDescription className="text-white/70 text-base">
-              ¿Estás seguro de que quieres eliminar esta partida guardada? Esta acción no se puede deshacer.
+              ¿Estás seguro de que quieres eliminar esta partida guardada? Esta acción no se puede
+              deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-3">

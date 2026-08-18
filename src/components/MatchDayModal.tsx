@@ -41,19 +41,17 @@ export function MatchDayModal() {
 
   useEffect(() => {
     if (!myTeamId || pending) return;
-    
+
     // Check league fixtures first
     const onDay = unplayedOnDate(fixtures, currentDate);
     const today = onDay.find((f) => involvesTeam(f, myTeamId));
-    
+
     if (today && !dismissedMatchIds.includes(today.id)) {
       const store = usePlayersStore.getState();
       let nextFixtures = store.fixtures;
       for (const f of onDay) {
         if (f.id === today.id) continue;
-        const scores = simulateScheduleFixture(f, (teamId, md) =>
-          store.getSimXI(teamId, [], md),
-        );
+        const scores = simulateScheduleFixture(f, (teamId, md) => store.getSimXI(teamId, [], md));
         nextFixtures = applyFixtureResult(nextFixtures, f.id, scores);
       }
       usePlayersStore.setState({
@@ -63,24 +61,24 @@ export function MatchDayModal() {
       });
       return;
     }
-    
+
     // Check cup fixtures if no league match today
     if (save) {
       const cupStart = new Date("2025-07-07T00:00:00Z");
-      
+
       // Check cup fixtures
       for (const lg of Object.keys(save.cupFixtures)) {
         const cupList = save.cupFixtures[lg as LeagueId];
         if (!cupList) continue;
-        
+
         for (const f of cupList) {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
-          
+
           // Calculate cup match date: matchday = day offset from July 7th
           const cupMatchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
           const cupMatchDateIso = toDateOnly(cupMatchDate);
-          
+
           if (cupMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
               pendingUserMatch: {
@@ -92,7 +90,7 @@ export function MatchDayModal() {
                 homeScore: null,
                 awayScore: null,
                 competition: "cup" as const,
-                matchday: f.matchday
+                matchday: f.matchday,
               },
               lastUserMatchResult: null,
             });
@@ -100,18 +98,18 @@ export function MatchDayModal() {
           }
         }
       }
-      
+
       // Check UCL fixtures
       if (save.uclFixtures) {
         const uclStart = new Date(UCL_START + "T00:00:00Z");
         for (const f of save.uclFixtures) {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
-          
+
           // UCL matchday = absolute day offset from UCL_START
           const uclMatchDate = new Date(uclStart.getTime() + f.matchday * 86400000);
           const uclMatchDateIso = toDateOnly(uclMatchDate);
-          
+
           if (uclMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
               pendingUserMatch: {
@@ -123,7 +121,7 @@ export function MatchDayModal() {
                 homeScore: null,
                 awayScore: null,
                 competition: "ucl" as const,
-                matchday: f.matchday
+                matchday: f.matchday,
               },
               lastUserMatchResult: null,
             });
@@ -147,19 +145,10 @@ export function MatchDayModal() {
   const myTeam = isHome ? home : away;
   const rival = isHome ? away : home;
 
-  const played =
-    live.isPlayed && live.homeScore != null && live.awayScore != null;
+  const played = live.isPlayed && live.homeScore != null && live.awayScore != null;
 
-  const myGoals = played
-    ? isHome
-      ? live.homeScore!
-      : live.awayScore!
-    : null;
-  const rivalGoals = played
-    ? isHome
-      ? live.awayScore!
-      : live.homeScore!
-    : null;
+  const myGoals = played ? (isHome ? live.homeScore! : live.awayScore!) : null;
+  const rivalGoals = played ? (isHome ? live.awayScore! : live.homeScore!) : null;
 
   const scorers = lastUserMatchResult?.events ?? [];
 
@@ -175,8 +164,8 @@ export function MatchDayModal() {
     if (pending) {
       dismissMatch(pending.id);
       // Determine match type from pending match
-      const matchType = pending.competition === "cup" ? "CUP" : 
-                       pending.competition === "ucl" ? "UCL" : "LEAGUE";
+      const matchType =
+        pending.competition === "cup" ? "CUP" : pending.competition === "ucl" ? "UCL" : "LEAGUE";
       const cupRound = pending.competition === "cup" ? `R${pending.matchday}` : undefined;
       navigate({ to: "/match", state: { matchType, cupRound } as any });
     }
@@ -249,7 +238,10 @@ export function MatchDayModal() {
               </p>
               <ul className="space-y-1 text-xs">
                 {scorers.map((ev, i) => (
-                  <li key={`${ev.scorerId}-${ev.minute}-${i}`} className="flex justify-between gap-2">
+                  <li
+                    key={`${ev.scorerId}-${ev.minute}-${i}`}
+                    className="flex justify-between gap-2"
+                  >
                     <span>
                       <span className="text-muted-foreground">{ev.minute}&apos;</span>{" "}
                       {ev.scorerName}

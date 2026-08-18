@@ -31,12 +31,12 @@ const PRIORITY_COUNTRIES = ["España", "Inglaterra", "Italia", "Alemania", "Fran
 type Tab = "scorers" | "assisters" | "cleansheets" | "motm" | "yellows" | "reds";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "scorers",     label: "Goleadores",  icon: "" },
-  { id: "assisters",   label: "Asistentes",  icon: "" },
+  { id: "scorers", label: "Goleadores", icon: "" },
+  { id: "assisters", label: "Asistentes", icon: "" },
   { id: "cleansheets", label: "Porterías 0", icon: "" },
-  { id: "motm",        label: "MVP",         icon: "" },
-  { id: "yellows",     label: "Amarillas",   icon: "" },
-  { id: "reds",        label: "Rojas",       icon: "" },
+  { id: "motm", label: "MVP", icon: "" },
+  { id: "yellows", label: "Amarillas", icon: "" },
+  { id: "reds", label: "Rojas", icon: "" },
 ];
 
 export const Route = createFileRoute("/scorers")({ component: ScorersPage });
@@ -54,7 +54,10 @@ function ScorersPage() {
 
   useEffect(() => {
     const s = loadSave();
-    if (!s) { navigate({ to: "/" }); return; }
+    if (!s) {
+      navigate({ to: "/" });
+      return;
+    }
     setSave(s);
   }, [navigate]);
 
@@ -68,22 +71,46 @@ function ScorersPage() {
   const allCountries = useMemo(() => {
     const all = Object.keys(LEAGUES_BY_COUNTRY);
     return [
-      ...PRIORITY_COUNTRIES.filter(c => all.includes(c)),
-      ...all.filter(c => !PRIORITY_COUNTRIES.includes(c)).sort(),
+      ...PRIORITY_COUNTRIES.filter((c) => all.includes(c)),
+      ...all.filter((c) => !PRIORITY_COUNTRIES.includes(c)).sort(),
     ];
   }, []);
 
   const leagueArg = competition === "league" && league !== "all" ? (league as LeagueId) : undefined;
   const cupCountryArg = competition === "cup" && cupCountry !== "all" ? cupCountry : undefined;
 
-  const scorers   = useMemo(() => save && ready ? selectTopScorers(leagueArg, 30, competition, cupCountryArg) : [], [save, ready, competition, league, cupCountry]);
-  const assisters = useMemo(() => save && ready ? selectTopAssisters(leagueArg, 30, competition, cupCountryArg) : [], [save, ready, competition, league, cupCountry]);
-  const cleansheets = useMemo(() => save && ready ? selectTopCleanSheets(leagueArg, 30, competition) : [], [save, ready, competition, league]);
-  const motm      = useMemo(() => save && ready ? selectTopMotm(leagueArg, 30, competition) : [], [save, ready, competition, league]);
-  const yellows   = useMemo(() => save && ready ? selectTopYellowCards(league !== "all" ? (league as LeagueId) : undefined, 30) : [], [save, ready, league]);
-  const reds      = useMemo(() => save && ready ? selectTopRedCards(league !== "all" ? (league as LeagueId) : undefined, 30) : [], [save, ready, league]);
+  const scorers = useMemo(
+    () => (save && ready ? selectTopScorers(leagueArg, 30, competition, cupCountryArg) : []),
+    [save, ready, competition, leagueArg, cupCountryArg],
+  );
+  const assisters = useMemo(
+    () => (save && ready ? selectTopAssisters(leagueArg, 30, competition, cupCountryArg) : []),
+    [save, ready, competition, leagueArg, cupCountryArg],
+  );
+  const cleansheets = useMemo(
+    () => (save && ready ? selectTopCleanSheets(leagueArg, 30, competition) : []),
+    [save, ready, competition, leagueArg],
+  );
+  const motm = useMemo(
+    () => (save && ready ? selectTopMotm(leagueArg, 30, competition) : []),
+    [save, ready, competition, leagueArg],
+  );
+  const yellows = useMemo(
+    () =>
+      save && ready
+        ? selectTopYellowCards(league !== "all" ? (league as LeagueId) : undefined, 30)
+        : [],
+    [save, ready, league],
+  );
+  const reds = useMemo(
+    () =>
+      save && ready
+        ? selectTopRedCards(league !== "all" ? (league as LeagueId) : undefined, 30)
+        : [],
+    [save, ready, league],
+  );
 
-  const currentTab = TABS.find(t => t.id === tab)!;
+  const currentTab = TABS.find((t) => t.id === tab)!;
 
   if (!save) return null;
   if (loading) {
@@ -107,7 +134,8 @@ function ScorersPage() {
             onClick={() => setTab(t.id)}
             className={`px-4 py-2 transition ${tab === t.id ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:bg-muted"}`}
           >
-            <span className="mr-1.5">{t.icon}</span>{t.label}
+            <span className="mr-1.5">{t.icon}</span>
+            {t.label}
           </button>
         ))}
       </div>
@@ -116,7 +144,14 @@ function ScorersPage() {
       <div className="flex flex-wrap gap-3">
         {/* Competition filter — only for scorers/assisters */}
         {!isCardTab && (
-          <Select value={competition} onValueChange={(v) => { setCompetition(v as "all"|"league"|"cup"|"ucl"); setLeague("all"); setCupCountry("all"); }}>
+          <Select
+            value={competition}
+            onValueChange={(v) => {
+              setCompetition(v as "all" | "league" | "cup" | "ucl");
+              setLeague("all");
+              setCupCountry("all");
+            }}
+          >
             <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Competición" />
             </SelectTrigger>
@@ -171,32 +206,84 @@ function ScorersPage() {
       </div>
 
       {/* Lists */}
-      {tab === "scorers" && <ScorerList players={scorers} emptyMsg="Aún no hay goles registrados." />}
-      {tab === "assisters" && <AssisterList players={assisters} emptyMsg="Aún no hay asistencias registradas." />}
-      {tab === "cleansheets" && <SimpleList players={cleansheets} valueKey="cleanSheets" label="porterías a 0" color="text-emerald-400" emptyMsg="Aún no hay porterías a 0 registradas." />}
-      {tab === "motm" && <SimpleList players={motm} valueKey="motm" label="MVP" color="text-primary" emptyMsg="Aún no hay MVPs registrados." />}
-      {tab === "yellows" && <CardList players={yellows} mainKey="yellowCards" secondaryKey="redCards" mainLabel="Amarillas" secondaryLabel="Rojas" color="text-yellow-400" emptyMsg="Aún no hay tarjetas amarillas registradas." />}
-      {tab === "reds" && <CardList players={reds} mainKey="redCards" secondaryKey="yellowCards" mainLabel="Rojas" secondaryLabel="Amarillas" color="text-red-500" emptyMsg="Aún no hay tarjetas rojas registradas." />}
+      {tab === "scorers" && (
+        <ScorerList players={scorers} emptyMsg="Aún no hay goles registrados." />
+      )}
+      {tab === "assisters" && (
+        <AssisterList players={assisters} emptyMsg="Aún no hay asistencias registradas." />
+      )}
+      {tab === "cleansheets" && (
+        <SimpleList
+          players={cleansheets}
+          valueKey="cleanSheets"
+          label="porterías a 0"
+          color="text-emerald-400"
+          emptyMsg="Aún no hay porterías a 0 registradas."
+        />
+      )}
+      {tab === "motm" && (
+        <SimpleList
+          players={motm}
+          valueKey="motm"
+          label="MVP"
+          color="text-primary"
+          emptyMsg="Aún no hay MVPs registrados."
+        />
+      )}
+      {tab === "yellows" && (
+        <CardList
+          players={yellows}
+          mainKey="yellowCards"
+          secondaryKey="redCards"
+          mainLabel="Amarillas"
+          secondaryLabel="Rojas"
+          color="text-yellow-400"
+          emptyMsg="Aún no hay tarjetas amarillas registradas."
+        />
+      )}
+      {tab === "reds" && (
+        <CardList
+          players={reds}
+          mainKey="redCards"
+          secondaryKey="yellowCards"
+          mainLabel="Rojas"
+          secondaryLabel="Amarillas"
+          color="text-red-500"
+          emptyMsg="Aún no hay tarjetas rojas registradas."
+        />
+      )}
     </div>
   );
 }
 
 function ScorerList({ players, emptyMsg }: { players: any[]; emptyMsg: string }) {
-  if (players.length === 0) return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
+  if (players.length === 0)
+    return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
   return (
     <div className="panel divide-y divide-border/40">
       {players.map((p, i) => {
         const team = teamById(p.teamId);
         return (
-          <div key={p.id} className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3">
-            <span className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>{i + 1}</span>
+          <div
+            key={p.id}
+            className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+          >
+            <span
+              className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}
+            >
+              {i + 1}
+            </span>
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
-              <div className="text-xs text-muted-foreground">{team.name} · {p.assists} asist.</div>
+              <div className="text-xs text-muted-foreground">
+                {team.name} · {p.assists} asist.
+              </div>
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
-            <div className="text-2xl font-black scoreline text-primary w-10 text-right">{p.goals}</div>
+            <div className="text-2xl font-black scoreline text-primary w-10 text-right">
+              {p.goals}
+            </div>
           </div>
         );
       })}
@@ -205,21 +292,33 @@ function ScorerList({ players, emptyMsg }: { players: any[]; emptyMsg: string })
 }
 
 function AssisterList({ players, emptyMsg }: { players: any[]; emptyMsg: string }) {
-  if (players.length === 0) return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
+  if (players.length === 0)
+    return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
   return (
     <div className="panel divide-y divide-border/40">
       {players.map((p, i) => {
         const team = teamById(p.teamId);
         return (
-          <div key={p.id} className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3">
-            <span className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>{i + 1}</span>
+          <div
+            key={p.id}
+            className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+          >
+            <span
+              className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}
+            >
+              {i + 1}
+            </span>
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
-              <div className="text-xs text-muted-foreground">{team.name} · {p.goals} goles</div>
+              <div className="text-xs text-muted-foreground">
+                {team.name} · {p.goals} goles
+              </div>
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
-            <div className="text-2xl font-black scoreline text-primary w-10 text-right">{p.assists}</div>
+            <div className="text-2xl font-black scoreline text-primary w-10 text-right">
+              {p.assists}
+            </div>
           </div>
         );
       })}
@@ -227,7 +326,15 @@ function AssisterList({ players, emptyMsg }: { players: any[]; emptyMsg: string 
   );
 }
 
-function CardList({ players, mainKey, secondaryKey, mainLabel, secondaryLabel, color, emptyMsg }: {
+function CardList({
+  players,
+  mainKey,
+  secondaryKey,
+  mainLabel,
+  secondaryLabel,
+  color,
+  emptyMsg,
+}: {
   players: any[];
   mainKey: string;
   secondaryKey: string;
@@ -236,21 +343,33 @@ function CardList({ players, mainKey, secondaryKey, mainLabel, secondaryLabel, c
   color: string;
   emptyMsg: string;
 }) {
-  if (players.length === 0) return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
+  if (players.length === 0)
+    return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
   return (
     <div className="panel divide-y divide-border/40">
       {players.map((p, i) => {
         const team = teamById(p.teamId);
         return (
-          <div key={p.id} className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3">
-            <span className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>{i + 1}</span>
+          <div
+            key={p.id}
+            className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+          >
+            <span
+              className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}
+            >
+              {i + 1}
+            </span>
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
-              <div className="text-xs text-muted-foreground">{team.name} · {p[secondaryKey]} {secondaryLabel}</div>
+              <div className="text-xs text-muted-foreground">
+                {team.name} · {p[secondaryKey]} {secondaryLabel}
+              </div>
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
-            <div className={`text-2xl font-black scoreline ${color} w-10 text-right`}>{p[mainKey]}</div>
+            <div className={`text-2xl font-black scoreline ${color} w-10 text-right`}>
+              {p[mainKey]}
+            </div>
           </div>
         );
       })}
@@ -258,24 +377,46 @@ function CardList({ players, mainKey, secondaryKey, mainLabel, secondaryLabel, c
   );
 }
 
-function SimpleList({ players, valueKey, label, color, emptyMsg }: {
-  players: any[]; valueKey: string; label: string; color: string; emptyMsg: string;
+function SimpleList({
+  players,
+  valueKey,
+  label,
+  color,
+  emptyMsg,
+}: {
+  players: any[];
+  valueKey: string;
+  label: string;
+  color: string;
+  emptyMsg: string;
 }) {
-  if (players.length === 0) return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
+  if (players.length === 0)
+    return <p className="text-sm text-muted-foreground text-center py-12">{emptyMsg}</p>;
   return (
     <div className="panel divide-y divide-border/40">
       {players.map((p, i) => {
         const team = teamById(p.teamId);
         return (
-          <div key={p.id} className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3">
-            <span className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>{i + 1}</span>
+          <div
+            key={p.id}
+            className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+          >
+            <span
+              className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}
+            >
+              {i + 1}
+            </span>
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
-              <div className="text-xs text-muted-foreground">{team.name} · {label}</div>
+              <div className="text-xs text-muted-foreground">
+                {team.name} · {label}
+              </div>
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
-            <div className={`text-2xl font-black scoreline ${color} w-10 text-right`}>{p[valueKey]}</div>
+            <div className={`text-2xl font-black scoreline ${color} w-10 text-right`}>
+              {p[valueKey]}
+            </div>
           </div>
         );
       })}

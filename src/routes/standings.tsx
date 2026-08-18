@@ -43,7 +43,6 @@ function StandingsPage() {
     setViewLeague(leagueParam || s.myLeague);
   }, [navigate, leagueParam]);
 
-  
   // Generate stats on-demand when league changes
   useEffect(() => {
     if (viewLeague) {
@@ -59,10 +58,7 @@ function StandingsPage() {
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
         <div>
-          <Link
-            to="/season"
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
+          <Link to="/season" className="text-sm text-muted-foreground hover:text-foreground">
             ← Temporada
           </Link>
           <h1 className="text-2xl font-black mt-2">Clasificación</h1>
@@ -86,10 +82,7 @@ function StandingsPage() {
               ))}
             </SelectContent>
           </Select>
-          <Link
-            to="/fixtures"
-            className="text-xs font-semibold text-primary hover:underline"
-          >
+          <Link to="/fixtures" className="text-xs font-semibold text-primary hover:underline">
             Ver calendario de jornadas →
           </Link>
         </div>
@@ -105,19 +98,41 @@ function StandingsPage() {
   );
 }
 
-function StandingsTable({ standings, myTeamId, highlight }: { standings: ReturnType<typeof getSortedStandings>; myTeamId: string; highlight?: string }) {
+function StandingsTable({
+  standings,
+  myTeamId,
+  highlight,
+}: {
+  standings: ReturnType<typeof getSortedStandings>;
+  myTeamId: string;
+  highlight?: string;
+}) {
   return (
     <div className="text-xs">
       <div className="grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
-        <span>#</span><span>Equipo</span><span className="text-center">PJ</span><span className="text-center">V</span><span className="text-center">E</span><span className="text-center">D</span><span className="text-center">GF</span><span className="text-center">GC</span><span className="text-center">DG</span><span className="text-center">Pts</span>
+        <span>#</span>
+        <span>Equipo</span>
+        <span className="text-center">PJ</span>
+        <span className="text-center">V</span>
+        <span className="text-center">E</span>
+        <span className="text-center">D</span>
+        <span className="text-center">GF</span>
+        <span className="text-center">GC</span>
+        <span className="text-center">DG</span>
+        <span className="text-center">Pts</span>
       </div>
       {standings.map((s, i) => {
         const t = teamById(s.teamId);
         const isMe = s.teamId === myTeamId;
         const isHighlighted = !!highlight && s.teamId === highlight && !isMe;
         const zoneColor =
-          i < 4 ? "border-l-primary" : i < 6 ? "border-l-accent" :
-          i >= standings.length - 3 ? "border-l-destructive" : "border-l-transparent";
+          i < 4
+            ? "border-l-primary"
+            : i < 6
+              ? "border-l-accent"
+              : i >= standings.length - 3
+                ? "border-l-destructive"
+                : "border-l-transparent";
         return (
           <div
             key={s.teamId}
@@ -140,7 +155,8 @@ function StandingsTable({ standings, myTeamId, highlight }: { standings: ReturnT
         );
       })}
       <p className="text-[0.65rem] text-muted-foreground mt-3 leading-relaxed">
-        <span className="text-primary">●</span> Europa · <span className="text-destructive">●</span> Descenso
+        <span className="text-primary">●</span> Europa · <span className="text-destructive">●</span>{" "}
+        Descenso
       </p>
     </div>
   );

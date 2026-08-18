@@ -68,7 +68,7 @@ interface PlayerNodeProps {
 
 // Helper to truncate name to surname or first word
 function getShortName(name: string): string {
-  const parts = name.trim().split(' ');
+  const parts = name.trim().split(" ");
   if (parts.length === 1) return name;
   // Return last name (surname) or first name if it's short
   const lastName = parts[parts.length - 1];
@@ -83,7 +83,7 @@ function getShortName(name: string): string {
 export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerNodeProps) {
   const shortName = getShortName(player.name);
   const isUnavailable = player.injured || player.suspended;
-  
+
   return (
     <button
       onClick={onClick}
@@ -91,14 +91,14 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
         isSelected
           ? "scale-110 drop-shadow-[0_0_6px_hsl(var(--primary))]"
           : isUnavailable
-          ? "opacity-60"
-          : "hover:scale-105"
+            ? "opacity-60"
+            : "hover:scale-105"
       }`}
       style={{
         top: `${coordinates.top}%`,
         left: `${coordinates.left}%`,
       }}
-      title={`${player.name} (${player.rating}) - ${[player.slotLabel, ...(player.otherPositions ?? [])].filter(Boolean).join(' · ') || player.position}${player.injured ? ' - Lesionado' : ''}${player.suspended ? ' - Suspendido' : ''}`}
+      title={`${player.name} (${player.rating}) - ${[player.slotLabel, ...(player.otherPositions ?? [])].filter(Boolean).join(" · ") || player.position}${player.injured ? " - Lesionado" : ""}${player.suspended ? " - Suspendido" : ""}`}
       disabled={isUnavailable}
     >
       <span className="relative">
@@ -127,10 +127,16 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
         </span>
       )}
       {player.injured && (
-        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-orange-400" title="Lesionado" />
+        <span
+          className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-orange-400"
+          title="Lesionado"
+        />
       )}
       {player.suspended && (
-        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500" title="Suspendido" />
+        <span
+          className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500"
+          title="Suspendido"
+        />
       )}
     </button>
   );

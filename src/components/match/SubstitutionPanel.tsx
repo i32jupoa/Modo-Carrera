@@ -43,7 +43,6 @@ export function SubstitutionPanel({
   const windowAvailable = freeWindow || pairs.length > 0 || windowsUsed < maxWindows;
   const canAddMore = remaining > 0 && windowAvailable;
 
-
   function pickIn(inId: string) {
     if (!pendingOut || !canAddMore) return;
     setPairs((prev) => [...prev, { outId: pendingOut, inId }]);
@@ -72,7 +71,9 @@ export function SubstitutionPanel({
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">
-        <span className={infoChip}>Cambios {subsUsed + pairs.length}/{maxSubs}</span>
+        <span className={infoChip}>
+          Cambios {subsUsed + pairs.length}/{maxSubs}
+        </span>
         <span className={infoChip}>
           Ventanas {windowsUsed + (pairs.length > 0 && !freeWindow ? 1 : 0)}/{maxWindows}
         </span>
@@ -102,7 +103,9 @@ export function SubstitutionPanel({
 
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-2">En el campo</div>
+          <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-2">
+            En el campo
+          </div>
           <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
             {onPitch.map((p) => {
               const disabled =
@@ -126,13 +129,17 @@ export function SubstitutionPanel({
                       role={roleFromPosition(p.position)}
                       size={26}
                     />
-                    <span className="text-[0.6rem] font-bold text-muted-foreground w-8">{p.position}</span>
+                    <span className="text-[0.6rem] font-bold text-muted-foreground w-8">
+                      {p.position}
+                    </span>
                     <span className="truncate text-xs font-semibold">{p.name}</span>
                     <span className="scoreline text-xs tabular-nums text-muted-foreground">
                       {Math.round(stamina[p.id] ?? 100)}%
                     </span>
                   </div>
-                  <div className="mt-1.5"><StaminaBar value={stamina[p.id] ?? 100} /></div>
+                  <div className="mt-1.5">
+                    <StaminaBar value={stamina[p.id] ?? 100} />
+                  </div>
                 </button>
               );
             })}
@@ -140,7 +147,9 @@ export function SubstitutionPanel({
         </div>
 
         <div>
-          <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-2">Banquillo</div>
+          <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-2">
+            Banquillo
+          </div>
           {!canAddMore && (
             <p className="text-xs text-destructive mb-2">
               {remaining <= 0
@@ -168,7 +177,9 @@ export function SubstitutionPanel({
                     role={roleFromPosition(p.position)}
                     size={26}
                   />
-                  <span className="text-[0.6rem] font-bold text-muted-foreground w-8">{p.position}</span>
+                  <span className="text-[0.6rem] font-bold text-muted-foreground w-8">
+                    {p.position}
+                  </span>
                   <span className="truncate text-xs font-semibold">{p.name}</span>
                   <span className="scoreline text-xs tabular-nums text-muted-foreground">
                     {p.rating ?? ""}

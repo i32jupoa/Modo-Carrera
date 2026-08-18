@@ -31,41 +31,41 @@ export function generateLeagueFixtures(league: LeagueId): Fixture[] {
   const teams = teamsByLeague(league);
   const ids = teams.map((t) => t.id);
   const n = ids.length;
-  
+
   // Handle odd number of teams by adding a bye
   if (n % 2 !== 0) {
     ids.push("__BYE__");
   }
-  
+
   const numTeams = ids.length;
   const rounds = numTeams - 1;
   const matchesPerRound = numTeams / 2;
 
   const fixtures: Fixture[] = [];
-  
+
   // Create a copy of the team array for rotation
   let teamArray = ids.slice();
-  
+
   // Generate first half of the season (rounds 1 to N-1)
   for (let round = 0; round < rounds; round++) {
     const roundFixtures: Fixture[] = [];
-    
+
     // Pair teams for this round using circle method
     for (let i = 0; i < matchesPerRound; i++) {
       const team1 = teamArray[i];
       const team2 = teamArray[numTeams - 1 - i];
-      
+
       // Skip bye teams
       if (team1 === "__BYE__" || team2 === "__BYE__") {
         continue;
       }
-      
+
       // Alternate home/away to ensure better distribution
       // For even rounds, invert the home/away assignment
       const isEvenRound = round % 2 === 0;
       const home = isEvenRound ? team1 : team2;
       const away = isEvenRound ? team2 : team1;
-      
+
       roundFixtures.push({
         id: `${league}-r${round + 1}-${home}-${away}`,
         competition: "league",
@@ -75,14 +75,14 @@ export function generateLeagueFixtures(league: LeagueId): Fixture[] {
         awayId: away,
       });
     }
-    
+
     fixtures.push(...roundFixtures);
-    
+
     // Rotate the array for the next round (keep first team fixed, rotate others)
     // Standard circle method: first element stays, rest rotate
     teamArray = [teamArray[0], teamArray[numTeams - 1], ...teamArray.slice(1, numTeams - 1)];
   }
-  
+
   // Generate second half of the season as perfect mirror of first half
   // Each fixture from the first half is duplicated with inverted home/away
   const firstHalfFixtures = fixtures.slice();
@@ -92,8 +92,8 @@ export function generateLeagueFixtures(league: LeagueId): Fixture[] {
       competition: "league",
       league: f.league,
       matchday: f.matchday + rounds,
-      homeId: f.awayId,  // Inverted: away becomes home
-      awayId: f.homeId,  // Inverted: home becomes away
+      homeId: f.awayId, // Inverted: away becomes home
+      awayId: f.homeId, // Inverted: home becomes away
     });
   }
 
@@ -103,8 +103,14 @@ export function generateLeagueFixtures(league: LeagueId): Fixture[] {
 export function emptyStandings(league: LeagueId): Standing[] {
   return teamsByLeague(league).map((t) => ({
     teamId: t.id,
-    played: 0, won: 0, drawn: 0, lost: 0,
-    gf: 0, ga: 0, gd: 0, points: 0,
+    played: 0,
+    won: 0,
+    drawn: 0,
+    lost: 0,
+    gf: 0,
+    ga: 0,
+    gd: 0,
+    points: 0,
   }));
 }
 
@@ -118,8 +124,13 @@ export function applyResult(standings: Standing[], f: Fixture): Standing[] {
       const lost = homeGoals < awayGoals ? 1 : 0;
       return {
         ...s,
-        played: s.played + 1, won: s.won + won, drawn: s.drawn + drawn, lost: s.lost + lost,
-        gf: s.gf + homeGoals, ga: s.ga + awayGoals, gd: s.gd + (homeGoals - awayGoals),
+        played: s.played + 1,
+        won: s.won + won,
+        drawn: s.drawn + drawn,
+        lost: s.lost + lost,
+        gf: s.gf + homeGoals,
+        ga: s.ga + awayGoals,
+        gd: s.gd + (homeGoals - awayGoals),
         points: s.points + won * 3 + drawn,
       };
     }
@@ -129,8 +140,13 @@ export function applyResult(standings: Standing[], f: Fixture): Standing[] {
       const lost = awayGoals < homeGoals ? 1 : 0;
       return {
         ...s,
-        played: s.played + 1, won: s.won + won, drawn: s.drawn + drawn, lost: s.lost + lost,
-        gf: s.gf + awayGoals, ga: s.ga + homeGoals, gd: s.gd + (awayGoals - homeGoals),
+        played: s.played + 1,
+        won: s.won + won,
+        drawn: s.drawn + drawn,
+        lost: s.lost + lost,
+        gf: s.gf + awayGoals,
+        ga: s.ga + homeGoals,
+        gd: s.gd + (awayGoals - homeGoals),
         points: s.points + won * 3 + drawn,
       };
     }

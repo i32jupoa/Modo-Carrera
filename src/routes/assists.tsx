@@ -30,15 +30,15 @@ function AssistsPage() {
 
   useEffect(() => {
     const s = loadSave();
-    if (!s) { navigate({ to: "/" }); return; }
+    if (!s) {
+      navigate({ to: "/" });
+      return;
+    }
     setSave(s);
   }, [navigate]);
 
   const assisters = useMemo(
-    () =>
-      save && ready
-        ? selectTopAssisters(league === "all" ? undefined : league, 30)
-        : [],
+    () => (save && ready ? selectTopAssisters(league === "all" ? undefined : league, 30) : []),
     [save, ready, league],
   );
 
@@ -74,21 +74,34 @@ function AssistsPage() {
       </div>
 
       {assisters.length === 0 ? (
-        <p className="text-sm text-muted-foreground text-center py-12">Aún no hay asistencias registradas.</p>
+        <p className="text-sm text-muted-foreground text-center py-12">
+          Aún no hay asistencias registradas.
+        </p>
       ) : (
         <div className="panel divide-y divide-border/40">
           {assisters.map((p, i) => {
             const team = teamById(p.teamId);
             return (
-              <div key={p.id} className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3">
-                <span className={`text-sm font-black ${i < 3 ? "text-accent" : "text-muted-foreground"}`}>{i + 1}</span>
+              <div
+                key={p.id}
+                className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+              >
+                <span
+                  className={`text-sm font-black ${i < 3 ? "text-accent" : "text-muted-foreground"}`}
+                >
+                  {i + 1}
+                </span>
                 <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
                 <div className="min-w-0">
                   <div className="font-bold truncate">{p.name}</div>
-                  <div className="text-xs text-muted-foreground">{team.name} · {p.goals} goles</div>
+                  <div className="text-xs text-muted-foreground">
+                    {team.name} · {p.goals} goles
+                  </div>
                 </div>
                 <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
-                <div className="text-2xl font-black scoreline text-accent w-10 text-right">{p.assists}</div>
+                <div className="text-2xl font-black scoreline text-accent w-10 text-right">
+                  {p.assists}
+                </div>
               </div>
             );
           })}

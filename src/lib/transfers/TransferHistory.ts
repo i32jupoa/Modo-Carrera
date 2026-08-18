@@ -34,13 +34,13 @@ export function recordTransfer(record: TransferRecord): TransferRecord {
   lockPlayer(record.playerId);
   registerArrival(record.toClubId);
   registerDeparture(record.fromClubId);
-  
+
   // Registrar fichaje de nivel para evitar duplicados en la misma posición
   const player = getPlayer(record.playerId);
   if (player && record.type === "permanent") {
     registerCoreSigning(record.toClubId, player.group, player.ovr, player.name);
   }
-  
+
   pushInto(byPlayer, record.playerId, record);
   if (record.fromClubId) pushInto(byClub, record.fromClubId, record);
   pushInto(byClub, record.toClubId, record);
@@ -120,7 +120,8 @@ export function describeTransfer(record: TransferRecord): string {
   const from = record.fromClubId ? (teamById(record.fromClubId)?.name ?? record.fromClubId) : null;
   const fee = formatFee(record.fee, record.type);
   if (!from) return `${record.playerName} firma por el ${to} como agente libre.`;
-  if (record.type.startsWith("loan")) return `${record.playerName} sale cedido del ${from} al ${to}.`;
+  if (record.type.startsWith("loan"))
+    return `${record.playerName} sale cedido del ${from} al ${to}.`;
   return `${record.playerName} pasa del ${from} al ${to} por ${fee}.`;
 }
 

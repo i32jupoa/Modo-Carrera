@@ -63,7 +63,10 @@ export function seededInt(min: number, max: number, ...parts: Array<string | num
 }
 
 /** Elige un elemento de la lista de forma determinista. */
-export function seededPick<T>(items: readonly T[], ...parts: Array<string | number>): T | undefined {
+export function seededPick<T>(
+  items: readonly T[],
+  ...parts: Array<string | number>
+): T | undefined {
   if (items.length === 0) return undefined;
   return items[Math.min(items.length - 1, Math.floor(seededUnit(...parts) * items.length))];
 }

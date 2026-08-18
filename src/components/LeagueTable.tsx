@@ -32,15 +32,9 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
     return "laliga";
   }, [league, myTeamId]);
 
-  const teamIds = useMemo(
-    () => teamsByLeague(resolvedLeague).map((t) => t.id),
-    [resolvedLeague],
-  );
+  const teamIds = useMemo(() => teamsByLeague(resolvedLeague).map((t) => t.id), [resolvedLeague]);
 
-  const rows = useMemo(
-    () => computeLeagueStandings(fixtures, teamIds),
-    [fixtures, teamIds],
-  );
+  const rows = useMemo(() => computeLeagueStandings(fixtures, teamIds), [fixtures, teamIds]);
 
   return (
     <section
@@ -106,9 +100,7 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
                   <td className="py-2 pr-3">
                     <div className="flex items-center gap-2 min-w-0">
                       <TeamBadge team={team} size={26} />
-                      <span
-                        className={`font-semibold truncate ${isMe ? "text-primary" : ""}`}
-                      >
+                      <span className={`font-semibold truncate ${isMe ? "text-primary" : ""}`}>
                         {team.name}
                       </span>
                     </div>
@@ -123,11 +115,7 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
                   <td className="py-2 text-center tabular-nums">{row.ga}</td>
                   <td
                     className={`py-2 text-center tabular-nums font-semibold ${
-                      row.gd > 0
-                        ? "text-emerald-400"
-                        : row.gd < 0
-                          ? "text-destructive"
-                          : ""
+                      row.gd > 0 ? "text-emerald-400" : row.gd < 0 ? "text-destructive" : ""
                     }`}
                   >
                     {row.gd > 0 ? `+${row.gd}` : row.gd}

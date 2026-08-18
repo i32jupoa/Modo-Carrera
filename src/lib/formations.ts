@@ -1,9 +1,9 @@
 /**
  * Formation Coordinate System
- * 
+ *
  * Each formation maps 11 positions to CSS top/left percentages on a portrait-oriented pitch.
  * Coordinates are percentages from top-left (0,0) to bottom-right (100,100).
- * 
+ *
  * Pitch orientation: Portrait (vertical), goal at top and bottom
  */
 
@@ -398,7 +398,7 @@ export function slotPosCode(posKey: string): PosCode {
 // Get coordinates for a specific position in a formation
 export function getPositionCoordinates(
   formation: FormationName,
-  positionKey: string
+  positionKey: string,
 ): PositionCoordinate | undefined {
   return FORMATION_COORDINATES[formation][positionKey];
 }

@@ -55,7 +55,12 @@ function createAmbient(ctx: AudioContext) {
       master.gain.cancelScheduledValues(ctx.currentTime);
       master.gain.setTargetAtTime(0, ctx.currentTime, 0.4);
       setTimeout(() => {
-        try { o1.stop(); o2.stop(); lfo.stop(); noise.stop(); } catch {}
+        try {
+          o1.stop();
+          o2.stop();
+          lfo.stop();
+          noise.stop();
+        } catch {}
       }, 600);
     },
   };
@@ -75,7 +80,8 @@ export default function SoundAmbient() {
     if (typeof window === "undefined") return;
     if (on) {
       try {
-        if (!ctxRef.current) ctxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        if (!ctxRef.current)
+          ctxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
         if (ctxRef.current.state === "suspended") ctxRef.current.resume();
         ambientRef.current = createAmbient(ctxRef.current);
         localStorage.setItem("dynasty:ambient", "on");

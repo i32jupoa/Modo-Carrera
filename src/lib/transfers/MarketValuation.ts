@@ -25,7 +25,6 @@ import { wantsOut } from "./PlayerDecision";
 import { clamp, seededUnit } from "./random";
 import { GLOBAL_MAX_VALUE_M } from "@/data/players";
 
-
 export interface ValuationContext {
   playerId?: string;
   /** Valor de mercado base en euros. */
@@ -57,7 +56,11 @@ export interface ValuationContext {
  * precio de negociación nunca se dispara muy por encima del valor mostrado en
  * el buscador, por muchos factores que se acumulen a la vez.
  */
-function negotiationIntensity(ctx: ValuationContext, isStar: boolean, isWorldClass: boolean): number {
+function negotiationIntensity(
+  ctx: ValuationContext,
+  isStar: boolean,
+  isWorldClass: boolean,
+): number {
   let score = 0;
 
   // Proyección/edad: los jóvenes con recorrido tensan algo la negociación,
@@ -196,7 +199,6 @@ export function rateOffer(
 // VALORACIÓN CONECTADA AL ÍNDICE REAL
 // ============================================================================
 
-
 export interface PlayerValuationOptions {
   /** Clubes interesados además del comprador. */
   competition?: number;
@@ -226,7 +228,10 @@ export function isKeyPlayer(playerId: string, cacheKey = "static"): boolean {
  * estatus en la plantilla, la dureza negociadora de su club y la situación
  * económica del vendedor. La cláusula de rescisión, si existe, marca el techo.
  */
-export function valuePlayer(playerId: string, options: PlayerValuationOptions = {}): MarketValuation {
+export function valuePlayer(
+  playerId: string,
+  options: PlayerValuationOptions = {},
+): MarketValuation {
   const player = getPlayer(playerId);
   if (!player) {
     return calculateMarketValuation({ playerId, marketValue: 0, age: 26, ovr: 70 });
@@ -257,7 +262,8 @@ export function valuePlayer(playerId: string, options: PlayerValuationOptions = 
   const rawToughness = player.clubId ? getClubProfile(player.clubId).sellingToughness : 0.9;
   const toughness = clamp(1 + (clamp(rawToughness, 0.7, 1.6) - 1) * 0.15, 0.95, 1.09);
   const hardCeiling = GLOBAL_MAX_VALUE_M * 1_000_000;
-  const scale = (n: number) => Math.min(Math.max(50_000, Math.round((n * toughness) / 50_000) * 50_000), hardCeiling);
+  const scale = (n: number) =>
+    Math.min(Math.max(50_000, Math.round((n * toughness) / 50_000) * 50_000), hardCeiling);
 
   const scaled: MarketValuation = {
     ...valuation,
@@ -267,7 +273,11 @@ export function valuePlayer(playerId: string, options: PlayerValuationOptions = 
     // Techo absoluto: como mucho 1.5x el valor de mercado mostrado (y nunca
     // por encima del techo global del juego), pase lo que pase con la
     // competencia, la dureza del club o el estatus del jugador.
-    maximumPrice: Math.min(scale(valuation.maximumPrice), Math.round(player.value * 1.5), hardCeiling),
+    maximumPrice: Math.min(
+      scale(valuation.maximumPrice),
+      Math.round(player.value * 1.5),
+      hardCeiling,
+    ),
     listPrice: scale(valuation.listPrice),
   };
 

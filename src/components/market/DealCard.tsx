@@ -48,11 +48,15 @@ export function DealCard({
 }: Props) {
   const [amount, setAmount] = useState(Math.round(deal.offer.amount / 100_000) / 10);
   const [wage, setWage] = useState(Math.round(deal.offer.wageOffer / 100_000) / 10);
-  const [demand, setDemand] = useState(Math.round((deal.valuation.idealPrice || deal.offer.amount) / 100_000) / 10);
+  const [demand, setDemand] = useState(
+    Math.round((deal.valuation.idealPrice || deal.offer.amount) / 100_000) / 10,
+  );
   const closed = deal.stage === "completed" || deal.stage === "failed";
 
   return (
-    <article className={`panel p-4 space-y-3 border ${STAGE_TONE[deal.stage] ?? "border-border/60"}`}>
+    <article
+      className={`panel p-4 space-y-3 border ${STAGE_TONE[deal.stage] ?? "border-border/60"}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-bold truncate">{deal.playerName}</p>
@@ -77,7 +81,10 @@ export function DealCard({
           <Cell label="Variables" value={formatEuro(deal.offer.clauses.addOns)} />
         )}
         {deal.offer.clauses.sellOnPercent > 0 && (
-          <Cell label="Futura venta" value={`${Math.round(deal.offer.clauses.sellOnPercent * 100)}%`} />
+          <Cell
+            label="Futura venta"
+            value={`${Math.round(deal.offer.clauses.sellOnPercent * 100)}%`}
+          />
         )}
       </div>
 
@@ -91,10 +98,16 @@ export function DealCard({
             <NumberInput label="Ficha (M €)" value={wage} onChange={setWage} step={0.1} />
           </div>
           <div className="flex flex-wrap gap-2">
-            <Action label={`Igualar ${formatEuro(deal.clubDemand)}`} onClick={() => onAcceptDemand(deal.id)} primary />
+            <Action
+              label={`Igualar ${formatEuro(deal.clubDemand)}`}
+              onClick={() => onAcceptDemand(deal.id)}
+              primary
+            />
             <Action
               label="Mejorar oferta"
-              onClick={() => onImprove(deal.id, Math.round(amount * 1_000_000), Math.round(wage * 1_000_000))}
+              onClick={() =>
+                onImprove(deal.id, Math.round(amount * 1_000_000), Math.round(wage * 1_000_000))
+              }
             />
             <Action label="Retirarse" onClick={() => onAbandon(deal.id)} />
           </div>
@@ -116,7 +129,11 @@ export function DealCard({
       {!closed && deal.stage === "player-terms" && (
         <div className="flex flex-wrap items-end gap-2">
           <NumberInput label="Ficha ofrecida (M €)" value={wage} onChange={setWage} step={0.1} />
-          <Action label="Ofrecer ficha" primary onClick={() => onImproveWage(deal.id, Math.round(wage * 1_000_000))} />
+          <Action
+            label="Ofrecer ficha"
+            primary
+            onClick={() => onImproveWage(deal.id, Math.round(wage * 1_000_000))}
+          />
           <Action label="Abandonar" onClick={() => onAbandon(deal.id)} />
         </div>
       )}
@@ -136,20 +153,27 @@ export function DealCard({
         <div className="flex flex-wrap items-end gap-2">
           <Action label="Aceptar venta" primary onClick={() => onAcceptIncoming(deal.id)} />
           <NumberInput label="Pedir (M €)" value={demand} onChange={setDemand} />
-          <Action label="Contraofertar" onClick={() => onCounterIncoming(deal.id, Math.round(demand * 1_000_000))} />
+          <Action
+            label="Contraofertar"
+            onClick={() => onCounterIncoming(deal.id, Math.round(demand * 1_000_000))}
+          />
           <Action label="Rechazar" onClick={() => onRejectIncoming(deal.id)} />
         </div>
       )}
 
       {!closed && deal.stage === "waiting-club" && (
         <div className="flex flex-wrap gap-2">
-          <span className="text-xs text-muted-foreground">Respuesta prevista: {deal.respondsOn}</span>
+          <span className="text-xs text-muted-foreground">
+            Respuesta prevista: {deal.respondsOn}
+          </span>
           <Action label="Retirar oferta" onClick={() => onAbandon(deal.id)} />
         </div>
       )}
 
       <details className="text-xs">
-        <summary className="cursor-pointer text-muted-foreground">Historial de la negociación</summary>
+        <summary className="cursor-pointer text-muted-foreground">
+          Historial de la negociación
+        </summary>
         <ul className="mt-2 space-y-1">
           {deal.log.map((entry, index) => (
             <li key={`${entry.date}-${index}`} className="text-muted-foreground">

@@ -1,12 +1,31 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
-  Home, Trophy, Users, ClipboardList, Activity,
-  Repeat, Calendar, CalendarDays, Globe, Shield, ChevronRight, Award, Swords,
+  Home,
+  Trophy,
+  Users,
+  ClipboardList,
+  Activity,
+  Repeat,
+  Calendar,
+  CalendarDays,
+  Globe,
+  Shield,
+  ChevronRight,
+  Award,
+  Swords,
 } from "lucide-react";
 import {
-  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
-  SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
-  SidebarHeader, SidebarFooter, useSidebar,
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarHeader,
+  SidebarFooter,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { loadSave } from "@/lib/store";
 import { loadAllSaves, loadSaveById } from "@/lib/savedGames";
@@ -34,9 +53,7 @@ const COMPETICIONES: Item[] = [
   { title: "Champions League", url: "/ucl", icon: Award },
 ];
 
-const ESTADISTICAS: Item[] = [
-  { title: "Rankings", url: "/scorers", icon: Award },
-];
+const ESTADISTICAS: Item[] = [{ title: "Rankings", url: "/scorers", icon: Award }];
 
 const MUNDO: Item[] = [
   { title: "Equipos", url: "/teams", icon: Globe },
@@ -55,7 +72,7 @@ export function AppSidebar() {
     console.log("AppSidebar useEffect ejecutado, pathname:", pathname);
     // Verificar si estamos en la página principal
     const isHomePage = pathname === "/";
-    
+
     if (isHomePage) {
       // En la página principal, bloquear todo
       setTeamName(null);
@@ -114,10 +131,30 @@ export function AppSidebar() {
       <SidebarContent>
         {hasSave ? (
           <>
-            <NavGroup label="Principal" items={PRINCIPAL} collapsed={collapsed} isActive={isActive} />
-            <NavGroup label="Mi equipo" items={MI_EQUIPO} collapsed={collapsed} isActive={isActive} />
-            <NavGroup label="Competiciones" items={COMPETICIONES} collapsed={collapsed} isActive={isActive} />
-            <NavGroup label="Estadísticas" items={ESTADISTICAS} collapsed={collapsed} isActive={isActive} />
+            <NavGroup
+              label="Principal"
+              items={PRINCIPAL}
+              collapsed={collapsed}
+              isActive={isActive}
+            />
+            <NavGroup
+              label="Mi equipo"
+              items={MI_EQUIPO}
+              collapsed={collapsed}
+              isActive={isActive}
+            />
+            <NavGroup
+              label="Competiciones"
+              items={COMPETICIONES}
+              collapsed={collapsed}
+              isActive={isActive}
+            />
+            <NavGroup
+              label="Estadísticas"
+              items={ESTADISTICAS}
+              collapsed={collapsed}
+              isActive={isActive}
+            />
             <NavGroup
               label="Mundo"
               items={MUNDO}
@@ -182,7 +219,11 @@ function NotificationDots({
 }
 
 function NavGroup({
-  label, items, collapsed, isActive, badges,
+  label,
+  items,
+  collapsed,
+  isActive,
+  badges,
 }: {
   label: string;
   items: Item[];
