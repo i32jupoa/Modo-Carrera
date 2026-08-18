@@ -1976,11 +1976,48 @@ const DETAILED_MATCHES_KEPT = 6;
 function slimResult(result: any, keepDetail: boolean): any {
   if (!result) return result;
   if (keepDetail) return result;
-  const { highlights, stats, ratings, mvp, extraTime, ...rest } = result;
-  const slimExtra = extraTime
-    ? { homeGoals: extraTime.homeGoals, awayGoals: extraTime.awayGoals, events: extraTime.events ?? [] }
+
+  // Los partidos de otros equipos también deben poder abrirse en Jornadas,
+  // Champions y Copa con una crónica coherente. Antes se eliminaban `highlights`
+  // al guardar, por lo que desaparecían paradones, palos y cambios forzados.
+  // Conservamos solo el detalle ligero que necesita la UI: eventos, tarjetas,
+  // highlights, sustituciones, XI y formación. Se siguen descartando las
+  // estadísticas pesadas y las notas/rating completas para no volver a llenar
+  // localStorage.
+  const {
+    stats,
+    ratings,
+    mvp,
+    extraTime,
+    ...rest
+  } = result;
+
+  const compactHighlights = Array.isArray(rest.highlights)
+    ? rest.highlights.map((h: any) => ({
+        minute: h.minute,
+        team: h.team,
+        type: h.type,
+        playerId: h.playerId,
+        playerName: h.playerName,
+        detail: h.detail,
+      }))
     : undefined;
-  return slimExtra ? { ...rest, extraTime: slimExtra } : rest;
+
+  const slimExtra = extraTime
+    ? {
+        homeGoals: extraTime.homeGoals,
+        awayGoals: extraTime.awayGoals,
+        events: extraTime.events ?? [],
+        highlights: extraTime.highlights ?? [],
+      }
+    : undefined;
+
+  const compact = {
+    ...rest,
+    ...(compactHighlights ? { highlights: compactHighlights } : {}),
+  };
+
+  return slimExtra ? { ...compact, extraTime: slimExtra } : compact;
 }
 
 function slimFixtures(list: any[] | undefined, myTeamId: string, detailedIds: Set<string>): any[] {
@@ -3381,91 +3418,44 @@ export function getStartersWithFormation(
 
 
 
-  if (lineup.length === 0 || options?.randomFormation) {
+  // Solo el equipo del usuario tiene una alineación persistente.
+  // Los equipos CPU deben generar su XI desde la plantilla ACTUAL de la partida,
+  // para que los fichajes, lesiones y sanciones se reflejen inmediatamente.
+  const isUserTeam = teamId === save.myTeamId;
 
+  if (!isUserTeam || lineup.length === 0 || options?.randomFormation) {
+    const existingFormation = options?.randomFormation
+      ? undefined
+      : (save.formations[teamId] as FormationName | undefined);
 
+    const { ids: autoIds, formation } = generateCPUXI(
+      squad,
+      unavailable,
+      team,
+      existingFormation,
+    );
 
-
-
-
-
-    // Always regenerate formation based on team style (ignore saved formation to ensure it respects current style)
-    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, undefined);
-
-    // Always update the saved formation to the current style-based one
-    save.formations[teamId] = formation;
-
-
-
-
-
-
+    if (!save.formations[teamId]) save.formations[teamId] = formation;
 
     const players = autoIds
-
-
-
-
-
-
-
       .map(id => store.getSimPlayer(id))
-
-
-
-
-
-
-
       .filter((p): p is Player => !!p)
-
-
-
-
-
-
-
       .slice(0, 11);
 
-
-
-
-
-
-
-    return { players, formation: save.formations[teamId] as FormationName || formation };
-
-
-
-
-
-
-
+    return {
+      players,
+      formation: save.formations[teamId] as FormationName || formation,
+    };
   }
 
-
-
-
-
-
-
+  // El usuario sí conserva su alineación manual.
   const filteredLineup = lineup.filter(playerId => !unavailable.has(playerId));
-
-
-
-
-
-
-
   const players = store.getSimXI(teamId, filteredLineup, md);
 
-
-
-
-
-
-
-  return { players, formation: (save.formations[teamId] as FormationName) || "Táctica 4-4-2" };
+  return {
+    players,
+    formation: (save.formations[teamId] as FormationName) || "Táctica 4-4-2",
+  };
 
 
 
@@ -3643,63 +3633,32 @@ export function getStarters(save: SaveGame, teamId: string): Player[] {
 
 
 
-  // CPU teams (no saved lineup): auto-generate XI from squad with a formation based on team style
+  // La alineación guardada solo pertenece al usuario. Los equipos CPU deben
+  // regenerar su XI a partir de su plantilla actual, nunca reutilizar el XI
+  // inicial creado por buildDefaultLineups(), porque los fichajes lo invalidan.
+  const isUserTeam = teamId === save.myTeamId;
 
+  if (!isUserTeam || lineup.length === 0) {
+    const existingFormation = save.formations[teamId] as FormationName | undefined;
+    const { ids: autoIds, formation } = generateCPUXI(
+      squad,
+      unavailable,
+      team,
+      existingFormation,
+    );
 
-
-  if (lineup.length === 0) {
-
-
-
-    // Generate formation based on team style (ignore saved formation to ensure it respects current style)
-
-
-
-    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, undefined);
-
-
-
-    // Always update the saved formation to the current style-based one
-    save.formations[teamId] = formation;
-
-
+    if (!save.formations[teamId]) {
+      save.formations[teamId] = formation;
+    }
 
     return autoIds
-
-
-
       .map(id => store.getSimPlayer(id))
-
-
-
       .filter((p): p is Player => !!p)
-
-
-
       .slice(0, 11);
-
-
-
   }
 
-
-
-
-
-
-
-  // Teams with a saved lineup: respect it strictly, only exclude unavailable players
-
-
-
+  // El usuario sí conserva su alineación manual.
   const filteredLineup = lineup.filter(playerId => !unavailable.has(playerId));
-
-
-
-
-
-
-
   return store.getSimXI(teamId, filteredLineup, md);
 
 
@@ -3723,6 +3682,36 @@ export function getStarters(save: SaveGame, teamId: string): Player[] {
 
 
 
+
+/**
+ * Returns realistic bench players for a team: squad members not already in
+ * the starting XI and not injured/suspended, best-rated first. Used so that
+ * in-match substitutions bring on real players instead of inventing IDs.
+ */
+export function getBenchForTeam(save: SaveGame, teamId: string, xi: Player[]): Player[] {
+  const store = usePlayersStore.getState();
+  store.init();
+
+  const team = teamById(teamId);
+  if (!team) return [];
+
+  const lg = team.league;
+  const md = save.currentMatchday[lg] ?? 1;
+
+  const suspensions = save.suspensions[teamId] ?? [];
+  const suspendedPlayerIds = new Set(suspensions.filter(s => s.matchdaysRemaining > 0).map(s => s.playerId));
+
+  const squad = store.getSimSquad(teamId);
+  const injuredIds = new Set(squad.filter(p => p.injuredUntil > md).map(p => p.id));
+  const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
+
+  const xiIds = new Set(xi.map(p => p.id));
+
+  return squad
+    .filter(p => !xiIds.has(p.id) && !unavailable.has(p.id))
+    .sort((a, b) => b.rating - a.rating)
+    .slice(0, 7);
+}
 
 export function squadOf(_save: SaveGame, teamId: string): Player[] {
 
@@ -4953,17 +4942,30 @@ function simulateFixtureInline(save: SaveGame, fixture: Fixture, fast = false, i
 
   const homeFormationForSim = (save.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2";
   const awayFormationForSim = (save.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2";
+  const homeBenchForSim = getBenchForTeam(save, fixture.homeId, homeXI);
+  const awayBenchForSim = getBenchForTeam(save, fixture.awayId, awayXI);
 
   const result = isCup
     ? simulateCupMatch(home, away, homeXI, awayXI, {
+        homeBench: homeBenchForSim,
+        awayBench: awayBenchForSim,
         homeTactics: loadTactics(fixture.homeId),
         awayTactics: loadTactics(fixture.awayId),
         homeFormation: homeFormationForSim,
         awayFormation: awayFormationForSim,
       })
     : fast
-      ? simulateMatchFast(home, away, homeXI, awayXI)
+      ? simulateMatchFast(home, away, homeXI, awayXI, {
+          homeBench: homeBenchForSim,
+          awayBench: awayBenchForSim,
+          homeTactics: loadTactics(fixture.homeId),
+          awayTactics: loadTactics(fixture.awayId),
+          homeFormation: homeFormationForSim,
+          awayFormation: awayFormationForSim,
+        })
       : simulateMatch(home, away, homeXI, awayXI, {
+          homeBench: homeBenchForSim,
+          awayBench: awayBenchForSim,
           homeTactics: loadTactics(fixture.homeId),
           awayTactics: loadTactics(fixture.awayId),
           homeFormation: homeFormationForSim,
@@ -7387,6 +7389,8 @@ export async function simulateRemainingCupMatches(save: SaveGame, currentRound: 
 
 
           result = simulateMatch(home, away, homeXI, awayXI, {
+            homeBench: getBenchForTeam(next, f.homeId, homeXI),
+            awayBench: getBenchForTeam(next, f.awayId, awayXI),
             homeTactics: loadTactics(fixture.homeId),
             awayTactics: loadTactics(fixture.awayId),
             homeFormation: (next.formations[f.homeId] as FormationName | undefined) || "Táctica 4-4-2",
@@ -12195,6 +12199,8 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
         } else {
 
           result = simulateMatch(home, away, homeXI, awayXI, {
+            homeBench: getBenchForTeam(next, fixture.homeId, homeXI),
+            awayBench: getBenchForTeam(next, fixture.awayId, awayXI),
             homeTactics: loadTactics(fixture.homeId),
             awayTactics: loadTactics(fixture.awayId),
             homeFormation: (next.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2",
@@ -12207,16 +12213,24 @@ export async function advanceMatchdayLayered(save: SaveGame, onProgress?: (proce
 
       } else {
 
-        // FAST SIMULATION for other VIP leagues + stats/injuries
+        // FAST, pero detallada: incluso los partidos de otros equipos deben
+        // guardar XI, formación, goleadores, asistencias, tarjetas, paradones,
+        // palos y sustituciones para que la pantalla de crónica sea completa.
+        const homeData = getStartersWithFormation(next, fixture.homeId);
+        const awayData = getStartersWithFormation(next, fixture.awayId);
+        const hXI = homeData.players;
+        const aXI = awayData.players;
 
-        result = generateFakeMatchResult(home, away);
-
-        const hXI = selectMatchPlayers(store.getSimSquad(home.id));
-
-        const aXI = selectMatchPlayers(store.getSimSquad(away.id));
+        result = simulateMatchFast(home, away, hXI, aXI, {
+          homeBench: getBenchForTeam(next, fixture.homeId, hXI),
+          awayBench: getBenchForTeam(next, fixture.awayId, aXI),
+          homeTactics: loadTactics(fixture.homeId),
+          awayTactics: loadTactics(fixture.awayId),
+          homeFormation: homeData.formation,
+          awayFormation: awayData.formation,
+        });
 
         hXI.forEach(p => store.recordAppearance(p.id));
-
         aXI.forEach(p => store.recordAppearance(p.id));
 
         recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league]);

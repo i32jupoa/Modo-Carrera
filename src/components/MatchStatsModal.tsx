@@ -61,15 +61,12 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
     }));
   };
 
-  const homeRatings = (result.ratings || []).filter(r => {
-    const player = store.getSimPlayer(r.playerId);
-    return player?.teamId === fixture.homeId;
-  });
-
-  const awayRatings = (result.ratings || []).filter(r => {
-    const player = store.getSimPlayer(r.playerId);
-    return player?.teamId === fixture.awayId;
-  });
+  // Los eventos históricos pertenecen al equipo que aparece en el partido,
+  // no al club actual del jugador. Esto es imprescindible después de un
+  // traspaso: un jugador que hoy está en PSG puede seguir teniendo una nota
+  // válida de un partido anterior con Barcelona.
+  const homeRatings = (result.ratings || []).filter(r => r.team === "home");
+  const awayRatings = (result.ratings || []).filter(r => r.team === "away");
 
   // Get players who played the match - use lineup data if available, otherwise use ratings, otherwise generate basic lineup
   const getBasicLineup = (teamId: string): { players: Player[]; formation: FormationName } => {
@@ -77,7 +74,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
       const { players, formation } = getStartersWithFormation(save, teamId);
       return { players, formation };
     }
-    // Fallback if save is not available - use getSimSquad which handles transfers via CLUB_OVERRIDES
+    // Fallback if save is not available
     const getSimSquad = usePlayersStore.getState().getSimSquad;
     const squad = getSimSquad(teamId);
     // Sort by rating and take top 11
@@ -85,27 +82,15 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   };
 
   const homeLineupData = (result.homeLineup && result.homeLineup.length > 0)
-    ? { 
-        players: result.homeLineup, 
-        formation: (result.homeFormation || "Táctica 4-4-2") as FormationName 
-      }
+    ? { players: result.homeLineup, formation: (result.homeFormation || "Táctica 4-4-2") as FormationName }
     : homeRatings.length > 0
-    ? { 
-        players: homeRatings.map(r => store.getSimPlayer(r.playerId)).filter((p): p is Player => p !== undefined), 
-        formation: (result.homeFormation || "Táctica 4-4-2") as FormationName 
-      }
+    ? { players: homeRatings.map(r => store.getSimPlayer(r.playerId)).filter((p): p is Player => p !== undefined), formation: (result.homeFormation || "Táctica 4-4-2") as FormationName }
     : getBasicLineup(fixture.homeId);
 
   const awayLineupData = (result.awayLineup && result.awayLineup.length > 0)
-    ? { 
-        players: result.awayLineup, 
-        formation: (result.awayFormation || "Táctica 4-4-2") as FormationName 
-      }
+    ? { players: result.awayLineup, formation: (result.awayFormation || "Táctica 4-4-2") as FormationName }
     : awayRatings.length > 0
-    ? { 
-        players: awayRatings.map(r => store.getSimPlayer(r.playerId)).filter((p): p is Player => p !== undefined), 
-        formation: (result.awayFormation || "Táctica 4-4-2") as FormationName 
-      }
+    ? { players: awayRatings.map(r => store.getSimPlayer(r.playerId)).filter((p): p is Player => p !== undefined), formation: (result.awayFormation || "Táctica 4-4-2") as FormationName }
     : getBasicLineup(fixture.awayId);
 
   const homePlayers = homeLineupData.players;
@@ -126,26 +111,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   const awayGoals = (result.events || []).filter(e => e.type === "goal" && e.team === "away");
 
   // Get cards by team
-  const homeCards = (result.cards || []).filter(c => {
-    const player = store.getSimPlayer(c.playerId);
-    return player?.teamId === fixture.homeId;
-  });
-
-  const awayCards = (result.cards || []).filter(c => {
-    const player = store.getSimPlayer(c.playerId);
-    return player?.teamId === fixture.awayId;
-  });
+  // Igual para tarjetas y lesiones: usar el equipo registrado en el evento
+  // evita que un fichaje posterior cambie retrospectivamente el partido.
+  const homeCards = (result.cards || []).filter(c => c.team === "home");
+  const awayCards = (result.cards || []).filter(c => c.team === "away");
 
   // Get injuries by team
-  const homeInjuries = (result.injuries || []).filter(i => {
-    const player = store.getSimPlayer(i.playerId);
-    return player?.teamId === fixture.homeId;
-  });
-
-  const awayInjuries = (result.injuries || []).filter(i => {
-    const player = store.getSimPlayer(i.playerId);
-    return player?.teamId === fixture.awayId;
-  });
+  const homeInjuries = (result.injuries || []).filter(i => i.team === "home");
+  const awayInjuries = (result.injuries || []).filter(i => i.team === "away");
 
   const getLeagueName = (leagueId: string): string => {
     return LEAGUES[leagueId]?.name || leagueId;
@@ -154,13 +127,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   // Highlight types to keep in chronicle (like match.tsx)
   const KEEP: Record<string, { icon: string; label: string }> = {
     woodwork: { icon: "🥅", label: "Al palo" },
-    post: { icon: "🥅", label: "Al palo" },
     penalty_missed: { icon: "❌", label: "Penalti fallado" },
     var_disallowed: { icon: "📺", label: "Gol anulado (VAR)" },
     injury: { icon: "🚑", label: "Lesión" },
     forced_sub: { icon: "🔁", label: "Cambio forzado" },
     save: { icon: "🧤", label: "Parada" },
-    chance: { icon: "⚡", label: "Ocasión clara" },
   };
 
   // Combine all match events chronologically for the chronicle (like match.tsx)
@@ -189,161 +160,119 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
 
   // Generate basic events for chronicle if no events exist (for old simulated matches)
   const generateBasicEvents = () => {
-    // Always generate highlights and substitutions if they don't exist in result
-    const hasHighlights = (result.highlights || []).length > 0;
-    const hasSubstitutions = (result.substitutions || []).length > 0;
+    if ((result.events || []).length > 0) return chronicleEvents;
     
-    // Start with existing chronicle events (goals, cards, existing highlights/subs)
-    const basicEvents = [...chronicleEvents];
+    const basicEvents = [];
+    const goals = result.homeGoals + result.awayGoals;
     
-    // Generate goal events based on score only if no goals exist
-    const hasGoals = (result.events || []).some(e => e.type === "goal" || e.type === "penalty_goal" || e.type === "free_kick_goal");
+    // Generate goal events based on score
+    for (let i = 0; i < result.homeGoals; i++) {
+      const minute = Math.floor(Math.random() * 90) + 1;
+      const scorer = homePlayers[Math.floor(Math.random() * Math.min(11, homePlayers.length))];
+      basicEvents.push({
+        kind: "goal" as const,
+        minute,
+        data: {
+          minute,
+          team: "home",
+          type: "goal",
+          scorerId: scorer?.id,
+          scorerName: scorer?.name || "Jugador",
+          assistName: null,
+        }
+      });
+    }
     
-    if (!hasGoals && homePlayers.length > 0 && awayPlayers.length > 0) {
-      for (let i = 0; i < result.homeGoals; i++) {
-        const minute = Math.floor(Math.random() * 90) + 1;
-        const scorer = homePlayers[Math.floor(Math.random() * Math.min(11, homePlayers.length))];
+    for (let i = 0; i < result.awayGoals; i++) {
+      const minute = Math.floor(Math.random() * 90) + 1;
+      const scorer = awayPlayers[Math.floor(Math.random() * Math.min(11, awayPlayers.length))];
+      basicEvents.push({
+        kind: "goal" as const,
+        minute,
+        data: {
+          minute,
+          team: "away",
+          type: "goal",
+          scorerId: scorer?.id,
+          scorerName: scorer?.name || "Jugador",
+          assistName: null,
+        }
+      });
+    }
+    
+    // Generate random cards (2-4 per match)
+    const numCards = Math.floor(Math.random() * 3) + 2;
+    for (let i = 0; i < numCards; i++) {
+      const team = Math.random() > 0.5 ? "home" : "away";
+      const players = team === "home" ? homePlayers : awayPlayers;
+      const player = players[Math.floor(Math.random() * Math.min(11, players.length))];
+      const minute = Math.floor(Math.random() * 90) + 1;
+      const isYellow = Math.random() > 0.2; // 80% yellow, 20% red
+      
+      basicEvents.push({
+        kind: "card" as const,
+        minute,
+        data: {
+          minute,
+          team,
+          playerId: player?.id,
+          playerName: player?.name || "Jugador",
+          cardType: isYellow ? "yellow" : "red",
+          isSecondYellow: false,
+        }
+      });
+    }
+    
+    // Generate random substitutions (3-5 per team)
+    const numSubsHome = Math.floor(Math.random() * 3) + 3;
+    const numSubsAway = Math.floor(Math.random() * 3) + 3;
+    
+    for (let i = 0; i < numSubsHome; i++) {
+      const minute = 60 + Math.floor(Math.random() * 30);
+      const playerOut = homePlayers[Math.floor(Math.random() * Math.min(11, homePlayers.length))];
+      const playerIn = homePlayers[11 + Math.floor(Math.random() * Math.max(0, homePlayers.length - 11))];
+      
+      if (playerOut && playerIn) {
         basicEvents.push({
-          kind: "goal" as const,
+          kind: "sub" as const,
           minute,
           data: {
             minute,
             team: "home",
-            type: "goal",
-            scorerId: scorer?.id,
-            scorerName: scorer?.name || "Jugador",
-            assistName: null,
+            playerOutId: playerOut.id,
+            playerOutName: playerOut.name,
+            playerInId: playerIn.id,
+            playerInName: playerIn.name,
           }
         });
       }
+    }
+    
+    for (let i = 0; i < numSubsAway; i++) {
+      const minute = 60 + Math.floor(Math.random() * 30);
+      const playerOut = awayPlayers[Math.floor(Math.random() * Math.min(11, awayPlayers.length))];
+      const playerIn = awayPlayers[11 + Math.floor(Math.random() * Math.max(0, awayPlayers.length - 11))];
       
-      for (let i = 0; i < result.awayGoals; i++) {
-        const minute = Math.floor(Math.random() * 90) + 1;
-        const scorer = awayPlayers[Math.floor(Math.random() * Math.min(11, awayPlayers.length))];
+      if (playerOut && playerIn) {
         basicEvents.push({
-          kind: "goal" as const,
+          kind: "sub" as const,
           minute,
           data: {
             minute,
             team: "away",
-            type: "goal",
-            scorerId: scorer?.id,
-            scorerName: scorer?.name || "Jugador",
-            assistName: null,
+            playerOutId: playerOut.id,
+            playerOutName: playerOut.name,
+            playerInId: playerIn.id,
+            playerInName: playerIn.name,
           }
         });
-      }
-    }
-    
-    // Generate random cards only if no cards exist
-    const hasCards = (result.cards || []).length > 0;
-    if (!hasCards && homePlayers.length > 0 && awayPlayers.length > 0) {
-      const numCards = Math.floor(Math.random() * 3) + 2;
-      for (let i = 0; i < numCards; i++) {
-        const team = Math.random() > 0.5 ? "home" : "away";
-        const players = team === "home" ? homePlayers : awayPlayers;
-        const player = players[Math.floor(Math.random() * Math.min(11, players.length))];
-        const minute = Math.floor(Math.random() * 90) + 1;
-        const isYellow = Math.random() > 0.2; // 80% yellow, 20% red
-      
-        basicEvents.push({
-          kind: "card" as const,
-          minute,
-          data: {
-            minute,
-            team,
-            playerId: player?.id,
-            playerName: player?.name || "Jugador",
-            cardType: isYellow ? "yellow" : "red",
-            isSecondYellow: false,
-          }
-        });
-      }
-    }
-    
-    // Generate random highlights (paradones, palos, ocasiones) only if no highlights exist
-    if (!hasHighlights && homePlayers.length > 0 && awayPlayers.length > 0) {
-      const numHighlights = Math.floor(Math.random() * 4) + 2;
-      for (let i = 0; i < numHighlights; i++) {
-        const team = Math.random() > 0.5 ? "home" : "away";
-        const players = team === "home" ? homePlayers : awayPlayers;
-        const player = players[Math.floor(Math.random() * Math.min(11, players.length))];
-        const minute = Math.floor(Math.random() * 90) + 1;
-        const highlightTypes = ["save", "post", "chance"];
-        const type = highlightTypes[Math.floor(Math.random() * highlightTypes.length)];
-        
-        let detail = "";
-        if (type === "save") detail = "¡Paradón!";
-        else if (type === "post") detail = "¡Remate al palo!";
-        else if (type === "chance") detail = "¡Ocasión clara!";
-        
-        basicEvents.push({
-          kind: "highlight" as const,
-          minute,
-          data: {
-            minute,
-            team,
-            playerId: player?.id,
-            playerName: player?.name || "Jugador",
-            type,
-            detail,
-          }
-        });
-      }
-    }
-    
-    // Generate random substitutions (3-5 per team) only if no substitutions exist
-    if (!hasSubstitutions && homePlayers.length > 0 && awayPlayers.length > 0) {
-      const numSubsHome = Math.floor(Math.random() * 3) + 3;
-      const numSubsAway = Math.floor(Math.random() * 3) + 3;
-      
-      for (let i = 0; i < numSubsHome; i++) {
-        const minute = 60 + Math.floor(Math.random() * 30);
-        const playerOut = homePlayers[Math.floor(Math.random() * Math.min(11, homePlayers.length))];
-        const playerIn = homePlayers[11 + Math.floor(Math.random() * Math.max(0, homePlayers.length - 11))];
-        
-        if (playerOut && playerIn) {
-          basicEvents.push({
-            kind: "sub" as const,
-            minute,
-            data: {
-              minute,
-              team: "home",
-              playerOutId: playerOut.id,
-              playerOutName: playerOut.name,
-              playerInId: playerIn.id,
-              playerInName: playerIn.name,
-            }
-          });
-        }
-      }
-      
-      for (let i = 0; i < numSubsAway; i++) {
-        const minute = 60 + Math.floor(Math.random() * 30);
-        const playerOut = awayPlayers[Math.floor(Math.random() * Math.min(11, awayPlayers.length))];
-        const playerIn = awayPlayers[11 + Math.floor(Math.random() * Math.max(0, awayPlayers.length - 11))];
-        
-        if (playerOut && playerIn) {
-          basicEvents.push({
-            kind: "sub" as const,
-            minute,
-            data: {
-              minute,
-              team: "away",
-              playerOutId: playerOut.id,
-              playerOutName: playerOut.name,
-              playerInId: playerIn.id,
-              playerInName: playerIn.name,
-            }
-          });
-        }
       }
     }
     
     return basicEvents.sort((a, b) => b.minute - a.minute);
   };
 
-  const finalChronicleEvents = generateBasicEvents();
+  const finalChronicleEvents = chronicleEvents.length > 0 ? chronicleEvents : generateBasicEvents();
 
   // Events used to draw goal ⚽ / assist 👟 icons on the mini pitch. For
   // matches from other leagues (fast-simulated, no individual events saved)
@@ -684,7 +613,6 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       const h = item.data;
                       const hTeam = teamOf(h.team);
                       const meta = KEEP[h.type];
-                      if (!meta) return null; // Skip if type not in KEEP
                       return (
                         <div key={`hl-${i}`} className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0">
                           <span className="text-sm text-muted-foreground font-bold w-10">{h.minute}'</span>

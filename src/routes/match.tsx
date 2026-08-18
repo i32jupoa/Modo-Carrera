@@ -174,7 +174,7 @@ function MatchPage() {
       const mySide = fx.homeId === s.myTeamId ? "home" : "away";
       setSubFeed(
         (st.subs || [])
-          .map((sb: any) => ({ minute: sb.minute, team: mySide, inName: sb.inName, outName: sb.outName }))
+          .map((sb: any) => ({ minute: sb.minute, team: mySide, inName: sb.inName, outName: sb.outName, playerInId: sb.inId, playerOutId: sb.outId }))
           .reverse(),
       );
     }
@@ -1230,7 +1230,7 @@ function MatchPage() {
     subsRef.current = [...subsRef.current, ...madeNow]; setSubsMade(subsRef.current);
     const mySide = fixtureRef.current?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
     setSubFeed((prev) => [
-      ...madeNow.map((s) => ({ minute: s.minute, team: mySide, inName: s.inName, outName: s.outName })).reverse(),
+      ...madeNow.map((s) => ({ minute: s.minute, team: mySide, inName: s.inName, outName: s.outName, playerInId: s.inId, playerOutId: s.outId })).reverse(),
       ...prev,
     ]);
     setShowSubs(false);
@@ -1287,7 +1287,7 @@ function MatchPage() {
       const out = xi[idx];
       xi[idx] = inn;
       oppBenchRef.current = oppBenchRef.current.filter((p: any) => p.id !== inn.id);
-      made.push({ minute: m, team: oppSide, inName: inn.name, outName: out.name });
+      made.push({ minute: m, team: oppSide, inName: inn.name, outName: out.name, playerInId: inn.id, playerOutId: out.id });
     }
     if (made.length === 0) return;
     oppXIRef.current = xi;
@@ -1398,7 +1398,7 @@ function MatchPage() {
     };
     subsRef.current = [...subsRef.current, entry]; setSubsMade(subsRef.current);
     const mySide = fixtureRef.current?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
-    return [{ minute: m, team: mySide, inName: entry.inName, outName: entry.outName }];
+    return [{ minute: m, team: mySide, inName: entry.inName, outName: entry.outName, playerInId: entry.inId, playerOutId: entry.outId }];
   }
 
   function skipToEnd(includeOpponentSubs = true) {
@@ -1651,7 +1651,17 @@ function MatchPage() {
               <CountryFlag country={LEAGUES[home.league]?.country || ""} />
               <div className="font-bold text-sm md:text-base">{home.name}</div>
             </div>
-            <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" cards={cardFeed.filter(c => c.team === 'home')} goals={feed} assists={feed} mvp={allEventsRef.current.length > 0 ? allEventsRef.current[0]?.playerId : undefined} injuries={[]} substitutions={subsMade} size={28} />
+            <MiniPitch
+              startingXI={homeLineup}
+              formation={homeFormation}
+              teamId={fixture.homeId}
+              className="mt-2"
+              cards={cardFeed.filter(c => c.team === 'home')}
+              goals={feed}
+              assists={feed}
+              mvp={phase === "done" ? fixture.result?.mvp?.playerId : undefined}
+              substitutions={subFeed.filter((s: any) => s.team === 'home')}
+            />
           </div>
           <div className="scoreline text-5xl md:text-7xl font-black">
             {phase === "preview" ? "–" : 
@@ -1677,7 +1687,17 @@ function MatchPage() {
               <CountryFlag country={LEAGUES[away.league]?.country || ""} />
               <div className="font-bold text-sm md:text-base">{away.name}</div>
             </div>
-            <MiniPitch startingXI={awayLineup} formation={awayFormation} teamId={fixture.awayId} className="mt-2" cards={cardFeed.filter(c => c.team === 'away')} goals={feed} assists={feed} mvp={allEventsRef.current.length > 0 ? allEventsRef.current[0]?.playerId : undefined} injuries={[]} substitutions={subsMade} size={28} />
+            <MiniPitch
+              startingXI={awayLineup}
+              formation={awayFormation}
+              teamId={fixture.awayId}
+              className="mt-2"
+              cards={cardFeed.filter(c => c.team === 'away')}
+              goals={feed}
+              assists={feed}
+              mvp={phase === "done" ? fixture.result?.mvp?.playerId : undefined}
+              substitutions={subFeed.filter((s: any) => s.team === 'away')}
+            />
           </div>
         </div>
 

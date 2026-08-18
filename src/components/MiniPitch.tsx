@@ -18,7 +18,6 @@ interface MiniPitchProps {
   mvp?: string;
   injuries?: InjuryEvent[];
   substitutions?: SubstitutionEvent[];
-  size?: number;
 }
 
 // Position role mappings for CPU lineup generation
@@ -53,7 +52,7 @@ function getContrastColor(hexColor: string): string {
   return luminance > 0.5 ? '#000000' : '#ffffff';
 }
 
-export function MiniPitch({ startingXI, formation, teamId, className = "", cards = [], ratings = [], goals = [], assists = [], mvp, injuries = [], substitutions = [], size = 36 }: MiniPitchProps) {
+export function MiniPitch({ startingXI, formation, teamId, className = "", cards = [], ratings = [], goals = [], assists = [], mvp, injuries = [], substitutions = [] }: MiniPitchProps) {
   const formationPositions = FORMATION_COORDINATES[formation];
   const positionKeys = Object.keys(formationPositions);
   const team = teamById(teamId);
@@ -192,28 +191,28 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
                   name={player.name}
                   image={faceUrl(player.id, player.cardImage)}
                   role={roleFromPosition(player.positions[0])}
-                  size={size}
+                  size={22}
                   className="shadow-lg"
                   showRing={false}
                 />
                 {/* Rating - top right */}
                 {rating !== undefined && (
-                  <div className="absolute -top-1 -right-1 bg-white/90 rounded-full w-4 h-4 flex items-center justify-center text-[0.5rem] font-bold text-black shadow-sm">
+                  <div className="absolute -top-1 -right-1 bg-white/90 rounded-full w-3.5 h-3.5 flex items-center justify-center text-[0.45rem] font-bold text-black shadow-sm">
                     {rating.toFixed(1)}
                   </div>
                 )}
                 {/* Indicators - bottom right */}
                 <div className="absolute -bottom-1 -right-1 flex flex-row gap-0.5">
-                  {cardType === 'yellow' && <span className="text-[0.5rem]">🟨</span>}
-                  {cardType === 'red' && <span className="text-[0.5rem]">🟥</span>}
-                  {goals > 0 && <span className="text-[0.5rem]">⚽</span>}
-                  {isMvp && <span className="text-[0.5rem]">⭐</span>}
-                  {assists > 0 && <span className="text-[0.5rem]">👟</span>}
-                  {isInjured && <span className="text-[0.5rem]">🚑</span>}
-                  {wasSubstituted && <span className="text-[0.5rem]">🔄</span>}
+                  {cardType === 'yellow' && <span className="text-[0.45rem]">🟨</span>}
+                  {cardType === 'red' && <span className="text-[0.45rem]">🟥</span>}
+                  {goals > 0 && <span className="text-[0.45rem]">⚽</span>}
+                  {isMvp && <span className="text-[0.45rem]">⭐</span>}
+                  {assists > 0 && <span className="text-[0.45rem]">👟</span>}
+                  {isInjured && <span className="text-[0.45rem]">🚑</span>}
+                  {wasSubstituted && <span className="text-[0.45rem]">🔄</span>}
                 </div>
               </div>
-              <div className="mt-0.5 text-[0.5rem] text-foreground font-medium text-center leading-tight">
+              <div className="mt-0.5 text-[0.45rem] text-foreground font-medium text-center leading-tight">
                 {player.name.split(' ').pop()}
               </div>
             </div>

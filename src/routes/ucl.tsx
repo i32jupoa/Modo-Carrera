@@ -8,6 +8,7 @@ import { usePlayersStore } from "@/store/playersStore";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
+import { MatchStatsModal } from "@/components/MatchStatsModal";
 import { sortUCLTable, UCLTableEntry, UCLBracketSlot, UCL_START } from "@/data/ucl";
 import type { Fixture } from "@/lib/season";
 
@@ -229,7 +230,7 @@ function TableView({ table, userTeamId, fixtures }: { table: UCLTableEntry[]; us
 
 // ── Fixtures list ─────────────────────────────────────────────────────────────
 
-function FixtureRow({ f, myTeamId }: { f: Fixture; myTeamId: string }) {
+function FixtureRow({ f, myTeamId, onClick }: { f: Fixture; myTeamId: string; onClick?: (fixture: Fixture) => void }) {
   const isUser = f.homeId === myTeamId || f.awayId === myTeamId;
   const played = !!f.result;
   let resultBg = "";
@@ -251,7 +252,10 @@ function FixtureRow({ f, myTeamId }: { f: Fixture; myTeamId: string }) {
   }
 
   return (
-    <div className={`flex items-center gap-2 px-3 py-2 hover:bg-muted/30 text-sm ${isUser ? resultBg || "bg-blue-950/20 border-l-2 border-blue-400" : ""}`}>
+    <div
+      className={`flex items-center gap-2 px-3 py-2 hover:bg-muted/30 text-sm ${isUser ? resultBg || "bg-blue-950/20 border-l-2 border-blue-400" : ""} ${played ? "cursor-pointer" : ""}`}
+      onClick={() => played && onClick?.(f)}
+    >
       <div className="flex-1 flex items-center justify-end gap-2 min-w-0">
         <span className={`text-right truncate max-w-[130px] ${f.homeId === myTeamId ? "font-bold text-white" : ""}`}>{teamName(f.homeId)}</span>
         <Logo id={f.homeId} />
@@ -438,7 +442,7 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
 }
 
 // Calculate real aggregate result from fixtures by tie
-function getRealMatchResult(matchup: BracketMatchup, fixtures: Fixture[]): { homeGoals: number; awayGoals: number; winner: string; extraTime?: boolean; penalties?: { homeGoals: number; awayGoals: number } } | null {
+function getRealMatchResult(matchup: BracketMatchup, fixtures: Fixture[]): { homeGoals: number; awayGoals: number; winner: string; extraTime?: boolean; penalties?: { homeGoals: number; awayGoals: number }; lastLeg?: Fixture } | null {
   if (!matchup.homeTeam || !matchup.awayTeam) return null;
 
   // For final, find the single fixture
@@ -452,7 +456,8 @@ function getRealMatchResult(matchup: BracketMatchup, fixtures: Fixture[]): { hom
         awayGoals: finalMatch.result.awayGoals,
         winner: finalMatch.result.homeGoals > finalMatch.result.awayGoals ? finalMatch.homeId : finalMatch.awayId,
         extraTime,
-        penalties
+        penalties,
+        lastLeg: finalMatch
       };
     }
     return null;
@@ -488,7 +493,7 @@ function getRealMatchResult(matchup: BracketMatchup, fixtures: Fixture[]): { hom
     // Correct aggregate calculation for two-legged ties
     const homeAgg = leg1.result.homeGoals + leg2.result.awayGoals + (leg2.result.extraTime?.awayGoals || 0);
     const awayAgg = leg1.result.awayGoals + leg2.result.homeGoals + (leg2.result.extraTime?.homeGoals || 0);
-    return { homeGoals: homeAgg, awayGoals: awayAgg, winner, extraTime, penalties };
+    return { homeGoals: homeAgg, awayGoals: awayAgg, winner, extraTime, penalties, lastLeg: leg2 };
   }
 
   // If only leg1 is played, show leg1 result
@@ -496,14 +501,15 @@ function getRealMatchResult(matchup: BracketMatchup, fixtures: Fixture[]): { hom
     return {
       homeGoals: leg1.result.homeGoals,
       awayGoals: leg1.result.awayGoals,
-      winner: leg1.result.homeGoals > leg1.result.awayGoals ? leg1.homeId : leg1.awayId
+      winner: leg1.result.homeGoals > leg1.result.awayGoals ? leg1.homeId : leg1.awayId,
+      lastLeg: leg1
     };
   }
 
   return null;
 }
 
-function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixtures: Fixture[] }) {
+function BracketView({ bracket, fixtures, onOpenFixture }: { bracket: UCLBracketSlot[]; fixtures: Fixture[]; onOpenFixture?: (fixture: Fixture) => void }) {
   if (bracket.length === 0) {
     return <p className="text-muted-foreground text-sm p-4">El cuadro se generará tras el sorteo de play-offs.</p>;
   }
@@ -603,6 +609,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
                     fixtures={fixtures} 
                     safeTeamName={safeTeamName} 
                     getTeamLogoPath={getTeamLogoPath} 
+                    onOpenFixture={onOpenFixture}
                   />
                   {/* CSS connector lines */}
                   {idx < 2 && <div className="bracket-connector-right" />}
@@ -620,6 +627,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
                     fixtures={fixtures} 
                     safeTeamName={safeTeamName} 
                     getTeamLogoPath={getTeamLogoPath} 
+                    onOpenFixture={onOpenFixture}
                   />
                   {idx === 0 && <div className="bracket-connector-right" />}
                 </div>
@@ -636,6 +644,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
                     fixtures={fixtures} 
                     safeTeamName={safeTeamName} 
                     getTeamLogoPath={getTeamLogoPath} 
+                    onOpenFixture={onOpenFixture}
                   />
                   <div className="bracket-connector-right" />
                 </div>
@@ -652,6 +661,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
                     fixtures={fixtures} 
                     safeTeamName={safeTeamName} 
                     getTeamLogoPath={getTeamLogoPath} 
+                    onOpenFixture={onOpenFixture}
                   />
                   <div className="bracket-connector-right-long" />
                 </div>
@@ -723,7 +733,10 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
               {(() => {
                 const result = getRealMatchResult(bracketState.final, fixtures);
                 return result ? (
-                  <div className="inline-flex items-center gap-2 bg-white/10 px-4 py-2 rounded-lg border border-white/20">
+                  <div
+                    className={`inline-flex items-center gap-2 bg-white/10 px-4 py-2 rounded-lg border border-white/20 ${result.lastLeg ? "cursor-pointer hover:bg-white/20 hover:border-white/40 transition-colors" : ""}`}
+                    onClick={() => result.lastLeg && onOpenFixture?.(result.lastLeg)}
+                  >
                     <span className="text-white font-bold text-lg">{result.homeGoals}</span>
                     <span className="text-white/40">-</span>
                     <span className="text-white font-bold text-lg">{result.awayGoals}</span>
@@ -749,6 +762,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
                     fixtures={fixtures} 
                     safeTeamName={safeTeamName} 
                     getTeamLogoPath={getTeamLogoPath} 
+                    onOpenFixture={onOpenFixture}
                   />
                   <div className="bracket-connector-left-long" />
                 </div>
@@ -765,6 +779,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
                     fixtures={fixtures} 
                     safeTeamName={safeTeamName} 
                     getTeamLogoPath={getTeamLogoPath} 
+                    onOpenFixture={onOpenFixture}
                   />
                   <div className="bracket-connector-left" />
                 </div>
@@ -781,6 +796,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
                     fixtures={fixtures} 
                     safeTeamName={safeTeamName} 
                     getTeamLogoPath={getTeamLogoPath} 
+                    onOpenFixture={onOpenFixture}
                   />
                   {idx === 0 && <div className="bracket-connector-left" />}
                 </div>
@@ -797,6 +813,7 @@ function BracketView({ bracket, fixtures }: { bracket: UCLBracketSlot[]; fixture
                     fixtures={fixtures} 
                     safeTeamName={safeTeamName} 
                     getTeamLogoPath={getTeamLogoPath} 
+                    onOpenFixture={onOpenFixture}
                   />
                   {idx < 2 && <div className="bracket-connector-left" />}
                 </div>
@@ -914,11 +931,13 @@ function ImmutableMatchCard({
   fixtures, 
   safeTeamName, 
   getTeamLogoPath,
+  onOpenFixture,
 }: { 
   matchup: BracketMatchup;
   fixtures: Fixture[];
   safeTeamName: (id: string) => string;
   getTeamLogoPath: (id: string) => string;
+  onOpenFixture?: (fixture: Fixture) => void;
 }) {
   const home = matchup.homeTeam;
   const away = matchup.awayTeam;
@@ -936,7 +955,10 @@ function ImmutableMatchCard({
   const awayLogoPath = getTeamLogoPath(away);
 
   return (
-    <div className="flex flex-col items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10 backdrop-blur-sm">
+    <div
+      className={`flex flex-col items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10 backdrop-blur-sm ${result?.lastLeg ? "cursor-pointer hover:bg-white/10 hover:border-white/30 transition-colors" : ""}`}
+      onClick={() => result?.lastLeg && onOpenFixture?.(result.lastLeg)}
+    >
       {/* Home team */}
       <div className="relative group">
         {homeLogoPath ? (
@@ -1422,6 +1444,7 @@ function UCLPage() {
   const [tab, setTab] = useState<Tab>("tabla");
   const [selectedRound, setSelectedRound] = useState<string | null>(null);
   const [phaseTab, setPhaseTab] = useState<PhaseTab>("liga");
+  const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
 
   const currentDate = usePlayersStore((s) => s.currentDate);
 
@@ -1620,7 +1643,7 @@ function UCLPage() {
                                   const bUser = b.homeId === save.myTeamId || b.awayId === save.myTeamId;
                                   return aUser === bUser ? 0 : aUser ? -1 : 1;
                                 })
-                                .map(f => <FixtureRow key={f.id} f={f} myTeamId={save.myTeamId} />)}
+                                .map(f => <FixtureRow key={f.id} f={f} myTeamId={save.myTeamId} onClick={setSelectedFixture} />)}
                             </div>
                           </div>
                         );
@@ -1668,7 +1691,7 @@ function UCLPage() {
                               const bU = b.homeId === save.myTeamId || b.awayId === save.myTeamId;
                               return aU === bU ? 0 : aU ? -1 : 1;
                             })
-                            .map(f => <FixtureRow key={f.id} f={f} myTeamId={save.myTeamId} />)}
+                            .map(f => <FixtureRow key={f.id} f={f} myTeamId={save.myTeamId} onClick={setSelectedFixture} />)}
                         </div>
                       </div>
                     ))}
@@ -1680,9 +1703,11 @@ function UCLPage() {
         })()}
 
         {tab === "bracket" && (
-          <BracketView bracket={ucl.bracket ?? []} fixtures={fixtures} />
+          <BracketView bracket={ucl.bracket ?? []} fixtures={fixtures} onOpenFixture={setSelectedFixture} />
         )}
       </div>
+
+      <MatchStatsModal fixture={selectedFixture} onClose={() => setSelectedFixture(null)} />
     </div>
   );
 }

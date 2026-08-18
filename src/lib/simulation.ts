@@ -375,12 +375,73 @@ function goalMinute(from = 1, to = 90): number {
   return from + Math.min(span - 1, Math.floor(skewed * span));
 }
 
+// Generate realistic in-match substitutions using each team's actual bench,
+// spread across the second half and preferring same-position replacements.
+export function generateTacticalSubs(
+  xi: Player[],
+  bench: Player[],
+  team: "home" | "away",
+  redCardedPlayers: Map<string, number> = new Map(),
+): SubstitutionEvent[] {
+  if (bench.length === 0 || xi.length === 0) return [];
+
+  const availableOut = xi.filter((p) => !isGoalkeeper(p.positions) && !redCardedPlayers.has(p.id));
+  const availableIn = bench.filter((p) => !isGoalkeeper(p.positions));
+  if (availableOut.length === 0 || availableIn.length === 0) return [];
+
+  const desired = 2 + Math.floor(rand() * 2); // 2-3 subs, like a real match
+  const n = Math.min(desired, availableOut.length, availableIn.length);
+  const minutes = Array.from({ length: n }, () => 55 + Math.floor(rand() * 31)).sort((a, b) => a - b);
+
+  // Tired/weaker starters tend to come off first.
+  const outPool = [...availableOut].sort((a, b) => a.rating - b.rating);
+  const usedOut = new Set<string>();
+  const usedIn = new Set<string>();
+  const subs: SubstitutionEvent[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const playerOut = outPool.find((p) => !usedOut.has(p.id));
+    if (!playerOut) break;
+    const candidatesIn = availableIn.filter((p) => !usedIn.has(p.id));
+    if (candidatesIn.length === 0) break;
+    const samePos = candidatesIn.filter((p) => p.positions.some((pos) => playerOut.positions.includes(pos)));
+    const pool = samePos.length > 0 ? samePos : candidatesIn;
+    const playerIn = pool.slice().sort((a, b) => b.rating - a.rating)[0];
+
+    usedOut.add(playerOut.id);
+    usedIn.add(playerIn.id);
+    subs.push({
+      minute: minutes[i],
+      team,
+      playerOutId: playerOut.id,
+      playerOutName: playerOut.name,
+      playerInId: playerIn.id,
+      playerInName: playerIn.name,
+    });
+  }
+
+  return subs;
+}
+
 // Ultra-fast simulation for bulk matchdays (no detailed events, just results)
 // NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatchFast(
-  home: Team, away: Team, homeXI: Player[], awayXI: Player[]
+  home: Team, away: Team, homeXI: Player[], awayXI: Player[],
+  opts: {
+    homeBench?: Player[];
+    awayBench?: Player[];
+    homeTactics?: SimTactics | null;
+    awayTactics?: SimTactics | null;
+    homeFormation?: FormationName;
+    awayFormation?: FormationName;
+  } = {},
 ): SimResult {
-  const { lh, la } = expectedGoals(home, away, homeXI, awayXI);
+  const homeBench = opts.homeBench ?? [];
+  const awayBench = opts.awayBench ?? [];
+  const homeFormation = opts.homeFormation ?? "Táctica 4-4-2";
+  const awayFormation = opts.awayFormation ?? "Táctica 4-4-2";
+
+  const { lh, la } = expectedGoals(home, away, homeXI, awayXI, opts.homeTactics, opts.awayTactics);
 
   // Poisson keeps the goal distribution realistic and, unlike the previous
   // implementation, does NOT force every fast-simulated match to end in a draw.
@@ -417,8 +478,82 @@ export function simulateMatchFast(
 
   events.sort((a, b) => a.minute - b.minute);
 
-  // No injuries or cards in fast mode
-  return { homeGoals, awayGoals, events, cards: [], injuries: [], xgHome: lh, xgAway: la };
+  // Lightweight cards: lower rates than the detailed engine but still present,
+  // so the chronicle of other teams' matches isn't empty of bookings.
+  const cards: CardEvent[] = [];
+  const CARD_REASONS = [
+    "entrada dura", "juego peligroso", "protestar", "cortar un contragolpe", "agarrón",
+  ];
+  function simulateTeamCardsFast(xi: Player[], team: "home" | "away") {
+    for (const player of xi) {
+      const base =
+        isGoalkeeper(player.positions) ? 0.015 :
+        isDefensive(player.positions) ? 0.08 :
+        isMidfield(player.positions) ? 0.065 : 0.035;
+      if (rand() >= base) continue;
+      cards.push({
+        minute: 8 + Math.floor(rand() * 80),
+        team, playerId: player.id, playerName: player.name,
+        cardType: "yellow", isSecondYellow: false,
+        reason: CARD_REASONS[Math.floor(rand() * CARD_REASONS.length)],
+      });
+    }
+  }
+  simulateTeamCardsFast(homeXI, "home");
+  simulateTeamCardsFast(awayXI, "away");
+  cards.sort((a, b) => a.minute - b.minute);
+
+  // A couple of saves and the occasional woodwork, so the chronicle of
+  // non-user matches has more than just goals.
+  const highlights: HighlightEvent[] = [];
+  const homeGK = homeXI.find((p) => isGoalkeeper(p.positions));
+  const awayGK = awayXI.find((p) => isGoalkeeper(p.positions));
+  const addFastSaves = (gk: Player | undefined, team: "home" | "away") => {
+    if (!gk) return;
+    const count = 1 + Math.floor(rand() * 3);
+    for (let i = 0; i < count; i++) {
+      highlights.push({
+        minute: 3 + Math.floor(rand() * 85),
+        team, type: "save",
+        playerId: gk.id, playerName: gk.name,
+        detail: rand() < 0.35 ? "¡Paradón!" : "Buena intervención",
+      });
+    }
+  };
+  addFastSaves(homeGK, "home");
+  addFastSaves(awayGK, "away");
+
+  const addFastWoodwork = (xi: Player[], team: "home" | "away") => {
+    if (rand() > 0.18) return;
+    const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
+    if (candidates.length === 0) return;
+    const p = candidates[Math.floor(rand() * candidates.length)];
+    highlights.push({
+      minute: 3 + Math.floor(rand() * 85),
+      team, type: "woodwork",
+      playerId: p.id, playerName: p.name,
+      detail: rand() < 0.5 ? "¡Al palo!" : "¡Al travesaño!",
+    });
+  };
+  addFastWoodwork(homeXI, "home");
+  addFastWoodwork(awayXI, "away");
+  highlights.sort((a, b) => a.minute - b.minute);
+
+  // Real substitutions from each team's actual bench.
+  const substitutions = [
+    ...generateTacticalSubs(homeXI, homeBench, "home"),
+    ...generateTacticalSubs(awayXI, awayBench, "away"),
+  ].sort((a, b) => a.minute - b.minute);
+
+  return {
+    homeGoals, awayGoals, events, cards, injuries: [], xgHome: lh, xgAway: la,
+    highlights,
+    homeLineup: homeXI,
+    awayLineup: awayXI,
+    homeFormation,
+    awayFormation,
+    substitutions,
+  };
 }
 
 // Detailed simulation with events and injuries
@@ -822,6 +957,14 @@ export function simulateMatch(
     penaltiesMissed,
   });
 
+  // -------------------------------------------------------------------------
+  // 7. Substitutions from each team's actual bench (skips red-carded players).
+  // -------------------------------------------------------------------------
+  const substitutions = [
+    ...generateTacticalSubs(homeXI, homeBench, "home", homeRedCardedPlayers),
+    ...generateTacticalSubs(awayXI, awayBench, "away", awayRedCardedPlayers),
+  ].sort((a, b) => a.minute - b.minute);
+
   return {
     homeGoals, awayGoals, events, cards, injuries,
     xgHome: lh, xgAway: la,
@@ -830,7 +973,7 @@ export function simulateMatch(
     awayLineup: awayXI,
     homeFormation,
     awayFormation,
-    substitutions: [],
+    substitutions,
   };
 }
 

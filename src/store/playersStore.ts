@@ -11887,7 +11887,7 @@ export const usePlayersStore = create<PlayersState>()(
 
 
 
-          .filter((p): p is Player => !!p && !unavailable.has(p.id));
+          .filter((p): p is Player => !!p && p.teamId === teamId && !unavailable.has(p.id));
 
 
 
