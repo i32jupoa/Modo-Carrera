@@ -3389,25 +3389,11 @@ export function getStartersWithFormation(
 
 
 
-    const existingFormation = options?.randomFormation
-      ? undefined
-      : (save.formations[teamId] as FormationName | undefined);
+    // Always regenerate formation based on team style (ignore saved formation to ensure it respects current style)
+    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, undefined);
 
-
-
-
-
-
-
-    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, existingFormation);
-
-
-
-
-
-
-
-    if (!save.formations[teamId]) save.formations[teamId] = formation;
+    // Always update the saved formation to the current style-based one
+    save.formations[teamId] = formation;
 
 
 
@@ -3657,7 +3643,7 @@ export function getStarters(save: SaveGame, teamId: string): Player[] {
 
 
 
-  // CPU teams (no saved lineup): auto-generate XI from squad with a random formation
+  // CPU teams (no saved lineup): auto-generate XI from squad with a formation based on team style
 
 
 
@@ -3665,31 +3651,16 @@ export function getStarters(save: SaveGame, teamId: string): Player[] {
 
 
 
-    // Use existing persisted formation if available, otherwise pick a random one
+    // Generate formation based on team style (ignore saved formation to ensure it respects current style)
 
 
 
-    const existingFormation = save.formations[teamId] as FormationName | undefined;
+    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, undefined);
 
 
 
-    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, existingFormation);
-
-
-
-    // Persist the chosen formation so re-renders show the same XI
-
-
-
-    if (!save.formations[teamId]) {
-
-
-
-      save.formations[teamId] = formation;
-
-
-
-    }
+    // Always update the saved formation to the current style-based one
+    save.formations[teamId] = formation;
 
 
 

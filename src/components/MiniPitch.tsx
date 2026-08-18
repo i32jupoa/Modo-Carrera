@@ -18,6 +18,7 @@ interface MiniPitchProps {
   mvp?: string;
   injuries?: InjuryEvent[];
   substitutions?: SubstitutionEvent[];
+  size?: number;
 }
 
 // Position role mappings for CPU lineup generation
@@ -52,7 +53,7 @@ function getContrastColor(hexColor: string): string {
   return luminance > 0.5 ? '#000000' : '#ffffff';
 }
 
-export function MiniPitch({ startingXI, formation, teamId, className = "", cards = [], ratings = [], goals = [], assists = [], mvp, injuries = [], substitutions = [] }: MiniPitchProps) {
+export function MiniPitch({ startingXI, formation, teamId, className = "", cards = [], ratings = [], goals = [], assists = [], mvp, injuries = [], substitutions = [], size = 36 }: MiniPitchProps) {
   const formationPositions = FORMATION_COORDINATES[formation];
   const positionKeys = Object.keys(formationPositions);
   const team = teamById(teamId);
@@ -191,7 +192,7 @@ export function MiniPitch({ startingXI, formation, teamId, className = "", cards
                   name={player.name}
                   image={faceUrl(player.id, player.cardImage)}
                   role={roleFromPosition(player.positions[0])}
-                  size={36}
+                  size={size}
                   className="shadow-lg"
                   showRing={false}
                 />

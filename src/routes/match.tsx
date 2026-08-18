@@ -1651,7 +1651,7 @@ function MatchPage() {
               <CountryFlag country={LEAGUES[home.league]?.country || ""} />
               <div className="font-bold text-sm md:text-base">{home.name}</div>
             </div>
-            <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" cards={cardFeed.filter(c => c.team === 'home')} />
+            <MiniPitch startingXI={homeLineup} formation={homeFormation} teamId={fixture.homeId} className="mt-2" cards={cardFeed.filter(c => c.team === 'home')} goals={feed} assists={feed} mvp={allEventsRef.current.length > 0 ? allEventsRef.current[0]?.playerId : undefined} injuries={[]} substitutions={subsMade} size={28} />
           </div>
           <div className="scoreline text-5xl md:text-7xl font-black">
             {phase === "preview" ? "–" : 
@@ -1677,7 +1677,7 @@ function MatchPage() {
               <CountryFlag country={LEAGUES[away.league]?.country || ""} />
               <div className="font-bold text-sm md:text-base">{away.name}</div>
             </div>
-            <MiniPitch startingXI={awayLineup} formation={awayFormation} teamId={fixture.awayId} className="mt-2" cards={cardFeed.filter(c => c.team === 'away')} />
+            <MiniPitch startingXI={awayLineup} formation={awayFormation} teamId={fixture.awayId} className="mt-2" cards={cardFeed.filter(c => c.team === 'away')} goals={feed} assists={feed} mvp={allEventsRef.current.length > 0 ? allEventsRef.current[0]?.playerId : undefined} injuries={[]} substitutions={subsMade} size={28} />
           </div>
         </div>
 
