@@ -87,7 +87,7 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
   return (
     <button
       onClick={onClick}
-      className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-[4.5rem] flex flex-col items-center justify-center bg-transparent transition-all duration-200 ${
+      className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-[5.5rem] flex flex-col items-center justify-center bg-transparent transition-all duration-200 ${
         isSelected
           ? "scale-110 drop-shadow-[0_0_6px_hsl(var(--primary))]"
           : isUnavailable
@@ -105,7 +105,7 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
         <PlayerFace
           name={player.name}
           image={faceUrl(player.id, player.cardImage)}
-          size={56}
+          size={64}
           showRing={false}
           className="shadow-md"
         />

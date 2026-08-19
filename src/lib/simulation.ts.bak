@@ -351,22 +351,16 @@ function maybeInjury(
   xi: Player[],
   team: "home" | "away",
   bench: Player[] = [],
-  plannedSubs: SubstitutionEvent[] = [],
-  redCards: Map<string, number> = new Map(),
 ): InjuryEvent | null {
   if (rand() > 0.06) return null;
-  const minute = 5 + Math.floor(rand() * 80);
-  const active = activePlayersAt(xi, bench, plannedSubs, redCards, team, minute);
-  if (active.length === 0) return null;
-  const victim = active[Math.floor(rand() * active.length)];
+  const victim = xi[Math.floor(rand() * xi.length)];
+  if (!victim) return null;
   const weeks = 1 + Math.floor(rand() * 5);
+  const minute = 5 + Math.floor(rand() * 80);
 
   // A forced substitution happens whenever a bench player of a compatible
   // profile is available and the injury happens before the 88th minute.
-  const plannedIncomingIds = new Set(
-    plannedSubs.filter((s) => s.team === team).map((s) => s.playerInId),
-  );
-  const candidates = bench.filter((p) => p.id !== victim.id && !plannedIncomingIds.has(p.id));
+  const candidates = bench.filter((p) => p.id !== victim.id);
   // Check if positions overlap (at least one common position)
   const samePos = candidates.filter((p) =>
     p.positions.some((pos) => victim.positions.includes(pos)),
@@ -452,122 +446,6 @@ export function generateTacticalSubs(
   return subs;
 }
 
-/**
- * Returns the players actually on the pitch at a given minute, taking into
- * account tactical substitutions and red cards. A player who has left the
- * pitch is never eligible for a later goal, assist, card, injury or highlight.
- */
-function activePlayersAt(
-  xi: Player[],
-  bench: Player[],
-  substitutions: SubstitutionEvent[],
-  redCards: Map<string, number>,
-  team: "home" | "away",
-  minute: number,
-): Player[] {
-  const all = [...xi, ...bench];
-  const byId = new Map(all.map((p) => [p.id, p]));
-  const starters = new Set(xi.map((p) => p.id));
-
-  const entered = new Set<string>();
-  const left = new Set<string>();
-  for (const sub of substitutions) {
-    if (sub.team !== team || sub.minute > minute) continue;
-    left.add(sub.playerOutId);
-    entered.add(sub.playerInId);
-  }
-
-  return all.filter((p) => {
-    const wasStarter = starters.has(p.id);
-    const onPitch = wasStarter ? !left.has(p.id) : entered.has(p.id);
-    if (!onPitch) return false;
-    const redMinute = redCards.get(p.id);
-    return redMinute === undefined || redMinute > minute;
-  });
-}
-
-function participantsFromSubs(
-  xi: Player[],
-  bench: Player[],
-  substitutions: SubstitutionEvent[],
-  team: "home" | "away",
-): Player[] {
-  const ids = new Set(xi.map((p) => p.id));
-  const all = [...xi, ...bench];
-  for (const sub of substitutions) {
-    if (sub.team === team) ids.add(sub.playerInId);
-  }
-  return all.filter((p) => ids.has(p.id));
-}
-
-function buildMinutesPlayed(
-  xi: Player[],
-  bench: Player[],
-  substitutions: SubstitutionEvent[],
-  cards: CardEvent[],
-  injuries: InjuryEvent[],
-  team: "home" | "away",
-): Record<string, number> {
-  const minutes: Record<string, number> = {};
-  const participants = participantsFromSubs(xi, bench, substitutions, team);
-  const all = new Set(participants.map((p) => p.id));
-  const startAt = new Map<string, number>();
-  const onPitch = new Set<string>(xi.map((p) => p.id));
-
-  for (const id of onPitch) startAt.set(id, 0);
-
-  const addInterval = (id: string, endMinute: number) => {
-    const started = startAt.get(id);
-    if (started === undefined) return;
-    minutes[id] = (minutes[id] ?? 0) + Math.max(0, endMinute - started);
-    startAt.delete(id);
-  };
-
-  const timeline = substitutions
-    .filter((s) => s.team === team)
-    .slice()
-    .sort((a, b) => a.minute - b.minute);
-
-  for (const sub of timeline) {
-    if (onPitch.has(sub.playerOutId)) {
-      addInterval(sub.playerOutId, sub.minute);
-      onPitch.delete(sub.playerOutId);
-    }
-    if (all.has(sub.playerInId) && !onPitch.has(sub.playerInId)) {
-      onPitch.add(sub.playerInId);
-      startAt.set(sub.playerInId, sub.minute);
-    }
-  }
-
-  for (const card of cards) {
-    if (card.team !== team || card.cardType !== "red") continue;
-    if (onPitch.has(card.playerId)) {
-      addInterval(card.playerId, card.minute);
-      onPitch.delete(card.playerId);
-    }
-  }
-
-  for (const injury of injuries) {
-    if (injury.team !== team || injury.minute === undefined || injury.forcedSub) continue;
-    if (onPitch.has(injury.playerId)) {
-      addInterval(injury.playerId, injury.minute);
-      onPitch.delete(injury.playerId);
-    }
-  }
-
-  for (const id of onPitch) {
-    addInterval(id, 90);
-  }
-
-  // A player who entered and was later injured/expelled is already accounted
-  // for above; keep a deterministic integer minute count for the UI.
-  for (const id of all) {
-    minutes[id] = Math.max(0, Math.min(90, Math.round(minutes[id] ?? 0)));
-  }
-
-  return minutes;
-}
-
 // Ultra-fast simulation for bulk matchdays (no detailed events, just results)
 // NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatchFast(
@@ -589,13 +467,6 @@ export function simulateMatchFast(
   const homeFormation = opts.homeFormation ?? "Táctica 4-4-2";
   const awayFormation = opts.awayFormation ?? "Táctica 4-4-2";
 
-  // Generate substitutions before any match event so every later event uses
-  // the correct players actually on the pitch.
-  const substitutions = [
-    ...generateTacticalSubs(homeXI, homeBench, "home"),
-    ...generateTacticalSubs(awayXI, awayBench, "away"),
-  ].sort((a, b) => a.minute - b.minute);
-
   const { lh, la } = expectedGoals(home, away, homeXI, awayXI, opts.homeTactics, opts.awayTactics);
 
   // Poisson keeps the goal distribution realistic and, unlike the previous
@@ -609,13 +480,11 @@ export function simulateMatchFast(
 
   // Home team goals
   for (let i = 0; i < homeGoals; i++) {
-    const minute = goalMinute();
-    const active = activePlayersAt(homeXI, homeBench, substitutions, new Map(), "home", minute);
-    const scorer = fastPickScorerWeighted(active);
-    const assister = fastPickAssister(active, scorer.id);
+    const scorer = fastPickScorerWeighted(homeXI);
+    const assister = fastPickAssister(homeXI, scorer.id);
 
     events.push({
-      minute,
+      minute: goalMinute(),
       team: "home",
       type: "goal",
       scorerId: scorer.id,
@@ -627,13 +496,11 @@ export function simulateMatchFast(
 
   // Away team goals
   for (let i = 0; i < awayGoals; i++) {
-    const minute = goalMinute();
-    const active = activePlayersAt(awayXI, awayBench, substitutions, new Map(), "away", minute);
-    const scorer = fastPickScorerWeighted(active);
-    const assister = fastPickAssister(active, scorer.id);
+    const scorer = fastPickScorerWeighted(awayXI);
+    const assister = fastPickAssister(awayXI, scorer.id);
 
     events.push({
-      minute,
+      minute: goalMinute(),
       team: "away",
       type: "goal",
       scorerId: scorer.id,
@@ -655,9 +522,8 @@ export function simulateMatchFast(
     "cortar un contragolpe",
     "agarrón",
   ];
-  function simulateTeamCardsFast(xi: Player[], bench: Player[], team: "home" | "away") {
-    const candidates = [...xi, ...bench];
-    for (const player of candidates) {
+  function simulateTeamCardsFast(xi: Player[], team: "home" | "away") {
+    for (const player of xi) {
       const base = isGoalkeeper(player.positions)
         ? 0.015
         : isDefensive(player.positions)
@@ -666,11 +532,8 @@ export function simulateMatchFast(
             ? 0.065
             : 0.035;
       if (rand() >= base) continue;
-      const minute = 8 + Math.floor(rand() * 80);
-      const active = activePlayersAt(xi, bench, substitutions, new Map(), team, minute);
-      if (!active.some((p) => p.id === player.id)) continue;
       cards.push({
-        minute,
+        minute: 8 + Math.floor(rand() * 80),
         team,
         playerId: player.id,
         playerName: player.name,
@@ -680,24 +543,21 @@ export function simulateMatchFast(
       });
     }
   }
-  simulateTeamCardsFast(homeXI, homeBench, "home");
-  simulateTeamCardsFast(awayXI, awayBench, "away");
+  simulateTeamCardsFast(homeXI, "home");
+  simulateTeamCardsFast(awayXI, "away");
   cards.sort((a, b) => a.minute - b.minute);
 
   // A couple of saves and the occasional woodwork, so the chronicle of
   // non-user matches has more than just goals.
   const highlights: HighlightEvent[] = [];
-  const addFastSaves = (xi: Player[], bench: Player[], team: "home" | "away") => {
+  const homeGK = homeXI.find((p) => isGoalkeeper(p.positions));
+  const awayGK = awayXI.find((p) => isGoalkeeper(p.positions));
+  const addFastSaves = (gk: Player | undefined, team: "home" | "away") => {
+    if (!gk) return;
     const count = 1 + Math.floor(rand() * 3);
     for (let i = 0; i < count; i++) {
-      const minute = 3 + Math.floor(rand() * 85);
-      const gks = activePlayersAt(xi, bench, substitutions, new Map(), team, minute).filter((p) =>
-        isGoalkeeper(p.positions),
-      );
-      const gk = gks[0];
-      if (!gk) continue;
       highlights.push({
-        minute,
+        minute: 3 + Math.floor(rand() * 85),
         team,
         type: "save",
         playerId: gk.id,
@@ -706,19 +566,16 @@ export function simulateMatchFast(
       });
     }
   };
-  addFastSaves(homeXI, homeBench, "home");
-  addFastSaves(awayXI, awayBench, "away");
+  addFastSaves(homeGK, "home");
+  addFastSaves(awayGK, "away");
 
-  const addFastWoodwork = (xi: Player[], bench: Player[], team: "home" | "away") => {
+  const addFastWoodwork = (xi: Player[], team: "home" | "away") => {
     if (rand() > 0.18) return;
-    const minute = 3 + Math.floor(rand() * 85);
-    const candidates = activePlayersAt(xi, bench, substitutions, new Map(), team, minute).filter(
-      (p) => !isGoalkeeper(p.positions),
-    );
+    const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
     if (candidates.length === 0) return;
     const p = candidates[Math.floor(rand() * candidates.length)];
     highlights.push({
-      minute,
+      minute: 3 + Math.floor(rand() * 85),
       team,
       type: "woodwork",
       playerId: p.id,
@@ -726,39 +583,15 @@ export function simulateMatchFast(
       detail: rand() < 0.5 ? "¡Al palo!" : "¡Al travesaño!",
     });
   };
-  addFastWoodwork(homeXI, homeBench, "home");
-  addFastWoodwork(awayXI, awayBench, "away");
+  addFastWoodwork(homeXI, "home");
+  addFastWoodwork(awayXI, "away");
   highlights.sort((a, b) => a.minute - b.minute);
 
-  const homeParticipants = participantsFromSubs(homeXI, homeBench, substitutions, "home");
-  const awayParticipants = participantsFromSubs(awayXI, awayBench, substitutions, "away");
-  const minutesPlayed = {
-    ...buildMinutesPlayed(homeXI, homeBench, substitutions, cards, [], "home"),
-    ...buildMinutesPlayed(awayXI, awayBench, substitutions, cards, [], "away"),
-  };
-  const homeSaves = highlights.filter((h) => h.team === "home" && h.type === "save").length;
-  const awaySaves = highlights.filter((h) => h.team === "away" && h.type === "save").length;
-  const { ratings, mvp } = computePlayerRatings({
-    homeXI: homeParticipants,
-    awayXI: awayParticipants,
-    homeGoals,
-    awayGoals,
-    goals: events.map((e) => ({
-      team: e.team,
-      scorerId: e.scorerId,
-      assistId: e.assistId,
-      ownGoal: e.type === "own_goal",
-    })),
-    cards: cards.map((c) => ({
-      team: c.team,
-      playerId: c.playerId,
-      cardType: c.cardType,
-      minute: c.minute,
-    })),
-    minutesPlayed,
-    homeSaves,
-    awaySaves,
-  });
+  // Real substitutions from each team's actual bench.
+  const substitutions = [
+    ...generateTacticalSubs(homeXI, homeBench, "home"),
+    ...generateTacticalSubs(awayXI, awayBench, "away"),
+  ].sort((a, b) => a.minute - b.minute);
 
   return {
     homeGoals,
@@ -769,10 +602,8 @@ export function simulateMatchFast(
     xgHome: lh,
     xgAway: la,
     highlights,
-    ratings,
-    mvp,
-    homeLineup: homeParticipants,
-    awayLineup: awayParticipants,
+    homeLineup: homeXI,
+    awayLineup: awayXI,
     homeFormation,
     awayFormation,
     substitutions,
@@ -804,14 +635,6 @@ export function simulateMatch(
   const homeMods = tacticsModifiers(homeTactics);
   const awayMods = tacticsModifiers(awayTactics);
 
-  // Planned CPU substitutions are created before any match events. This makes
-  // the match timeline authoritative: once a player leaves, he is no longer
-  // eligible for goals, assists, cards, injuries or highlights.
-  let substitutions = [
-    ...generateTacticalSubs(homeXI, homeBench, "home"),
-    ...generateTacticalSubs(awayXI, awayBench, "away"),
-  ].sort((a, b) => a.minute - b.minute);
-
   /** Designated taker from the tactics screen, if he is on the pitch. */
   const designated = (
     xi: Player[],
@@ -842,11 +665,11 @@ export function simulateMatch(
   ];
   const RED_REASONS = ["entrada muy dura", "mano en el área", "última falta", "conducta violenta"];
 
-  function simulateTeamCards(xi: Player[], bench: Player[], team: "home" | "away"): number {
+  function simulateTeamCards(xi: Player[], team: "home" | "away"): number {
     let reds = 0;
     // A high press produces more fouls, a low block fewer.
     const aggression = team === "home" ? homeMods.aggression : awayMods.aggression;
-    for (const player of [...xi, ...bench]) {
+    for (const player of xi) {
       // Defenders and defensive midfielders commit more fouls than keepers.
       const base =
         (isGoalkeeper(player.positions)
@@ -859,12 +682,9 @@ export function simulateMatch(
 
       // Direct red card: rare (~0.35% per player => ~4% per team per match).
       if (rand() < 0.0035) {
-        const minute = 15 + Math.floor(rand() * 75);
-        const active = activePlayersAt(xi, bench, substitutions, new Map(), team, minute);
-        if (!active.some((p) => p.id === player.id)) continue;
         reds++;
         cards.push({
-          minute,
+          minute: 15 + Math.floor(rand() * 75),
           team,
           playerId: player.id,
           playerName: player.name,
@@ -878,8 +698,6 @@ export function simulateMatch(
       if (rand() >= base) continue;
 
       const firstMinute = 8 + Math.floor(rand() * 75);
-      const activeAtFirst = activePlayersAt(xi, bench, substitutions, new Map(), team, firstMinute);
-      if (!activeAtFirst.some((p) => p.id === player.id)) continue;
       cards.push({
         minute: firstMinute,
         team,
@@ -895,37 +713,23 @@ export function simulateMatch(
       const timeLeft = Math.max(0, 90 - firstMinute) / 90;
       const secondYellowChance = 0.1 * timeLeft * (isDefensive(player.positions) ? 1.4 : 1);
       if (rand() < secondYellowChance) {
-        const secondMinute = Math.min(
-          90,
-          firstMinute + 5 + Math.floor(rand() * (90 - firstMinute)),
-        );
-        const activeAtSecond = activePlayersAt(
-          xi,
-          bench,
-          substitutions,
-          new Map(),
+        reds++;
+        cards.push({
+          minute: Math.min(90, firstMinute + 5 + Math.floor(rand() * (90 - firstMinute))),
           team,
-          secondMinute,
-        );
-        if (activeAtSecond.some((p) => p.id === player.id)) {
-          reds++;
-          cards.push({
-            minute: secondMinute,
-            team,
-            playerId: player.id,
-            playerName: player.name,
-            cardType: "red",
-            isSecondYellow: true,
-            reason: "doble amarilla",
-          });
-        }
+          playerId: player.id,
+          playerName: player.name,
+          cardType: "red",
+          isSecondYellow: true,
+          reason: "doble amarilla",
+        });
       }
     }
     return reds;
   }
 
-  homeRedCards = simulateTeamCards(homeXI, homeBench, "home");
-  awayRedCards = simulateTeamCards(awayXI, awayBench, "away");
+  homeRedCards = simulateTeamCards(homeXI, "home");
+  awayRedCards = simulateTeamCards(awayXI, "away");
   cards.sort((a, b) => a.minute - b.minute);
 
   // Map of red-carded players -> expulsion minute.
@@ -985,93 +789,12 @@ export function simulateMatch(
 
   const events: MatchEvent[] = [];
   const highlights: HighlightEvent[] = [];
-  const injuries: InjuryEvent[] = [];
 
-  const activeAt = (
-    xi: Player[],
-    reds: Map<string, number>,
-    minute: number,
-    team: "home" | "away",
-  ) => {
-    const active = activePlayersAt(
-      xi,
-      team === "home" ? homeBench : awayBench,
-      substitutions,
-      reds,
-      team,
-      minute,
-    );
-    return active.filter((p) => {
-      const injury = injuries?.find(
-        (i) =>
-          i.team === team && i.playerId === p.id && i.minute !== undefined && minute > i.minute,
-      );
-      return !injury;
+  const activeAt = (xi: Player[], reds: Map<string, number>, minute: number) =>
+    xi.filter((p) => {
+      const expMin = reds.get(p.id);
+      return expMin === undefined || expMin > minute;
     });
-  };
-
-  // Injuries are generated before goals/highlights so an injured player is
-  // immediately removed from the pool of eligible match actions.
-  const homeInj = maybeInjury(homeXI, "home", homeBench, substitutions, homeRedCardedPlayers);
-  if (homeInj) injuries.push(homeInj);
-  const awayInj = maybeInjury(awayXI, "away", awayBench, substitutions, awayRedCardedPlayers);
-  if (awayInj) injuries.push(awayInj);
-
-  for (const inj of injuries) {
-    if (inj.forcedSub && inj.replacementId && inj.replacementName && inj.minute !== undefined) {
-      substitutions.push({
-        minute: inj.minute,
-        team: inj.team,
-        playerOutId: inj.playerId,
-        playerOutName: inj.playerName,
-        playerInId: inj.replacementId,
-        playerInName: inj.replacementName,
-      });
-      highlights.push({
-        minute: inj.minute,
-        team: inj.team,
-        type: "forced_sub",
-        playerId: inj.replacementId,
-        playerName: inj.replacementName,
-        detail: `Entra por ${inj.playerName} (cambio forzado)`,
-      });
-    }
-    highlights.push({
-      minute: inj.minute ?? 60,
-      team: inj.team,
-      type: "injury",
-      playerId: inj.playerId,
-      playerName: inj.playerName,
-      detail: inj.reason,
-    });
-  }
-  substitutions = substitutions.filter((sub) => {
-    const injury = injuries.find(
-      (i) => i.team === sub.team && i.playerId === sub.playerOutId && i.minute !== undefined,
-    );
-    return !injury || sub.minute <= (injury.minute as number);
-  });
-  substitutions.sort((a, b) => a.minute - b.minute);
-
-  // A player who is injured before a booked minute cannot receive that card.
-  const validCards = cards.filter((card) => {
-    const injury = injuries.find(
-      (i) => i.team === card.team && i.playerId === card.playerId && i.minute !== undefined,
-    );
-    return !injury || card.minute <= (injury.minute as number);
-  });
-  cards.length = 0;
-  cards.push(...validCards);
-
-  // Rebuild red-card maps after the injury validity pass.
-  homeRedCardedPlayers.clear();
-  awayRedCardedPlayers.clear();
-  for (const card of cards) {
-    if (card.cardType === "red") {
-      if (card.team === "home") homeRedCardedPlayers.set(card.playerId, card.minute);
-      else awayRedCardedPlayers.set(card.playerId, card.minute);
-    }
-  }
 
   const homeGoalMinutes = Array.from({ length: homeGoalsRaw }, () => goalMinute()).sort(
     (a, b) => a - b,
@@ -1213,19 +936,59 @@ export function simulateMatch(
   }
 
   for (const minute of homeGoalMinutes) {
-    const attack = activeAt(homeXI, homeRedCardedPlayers, minute, "home");
-    const defend = activeAt(awayXI, awayRedCardedPlayers, minute, "away");
+    const attack = activeAt(homeXI, homeRedCardedPlayers, minute);
+    const defend = activeAt(awayXI, awayRedCardedPlayers, minute);
     if (buildGoal(minute, "home", attack, defend)) finalHomeGoalMinutes.push(minute);
   }
   for (const minute of awayGoalMinutes) {
-    const attack = activeAt(awayXI, awayRedCardedPlayers, minute, "away");
-    const defend = activeAt(homeXI, homeRedCardedPlayers, minute, "home");
+    const attack = activeAt(awayXI, awayRedCardedPlayers, minute);
+    const defend = activeAt(homeXI, homeRedCardedPlayers, minute);
     if (buildGoal(minute, "away", attack, defend)) finalAwayGoalMinutes.push(minute);
   }
 
   const homeGoals = finalHomeGoalMinutes.length;
   const awayGoals = finalAwayGoalMinutes.length;
   events.sort((a, b) => a.minute - b.minute);
+
+  // -------------------------------------------------------------------------
+  // 3. Injuries with exact minute + forced substitution.
+  // -------------------------------------------------------------------------
+  const injuries: InjuryEvent[] = [];
+  const homeAvailableForInjury = homeXI.filter((p) => !homeRedCardedPlayers.has(p.id));
+  const awayAvailableForInjury = awayXI.filter((p) => !awayRedCardedPlayers.has(p.id));
+  const homeInj = maybeInjury(
+    homeAvailableForInjury.length > 0 ? homeAvailableForInjury : homeXI,
+    "home",
+    homeBench,
+  );
+  if (homeInj) injuries.push(homeInj);
+  const awayInj = maybeInjury(
+    awayAvailableForInjury.length > 0 ? awayAvailableForInjury : awayXI,
+    "away",
+    awayBench,
+  );
+  if (awayInj) injuries.push(awayInj);
+
+  for (const inj of injuries) {
+    highlights.push({
+      minute: inj.minute ?? 60,
+      team: inj.team,
+      type: "injury",
+      playerId: inj.playerId,
+      playerName: inj.playerName,
+      detail: inj.reason,
+    });
+    if (inj.forcedSub && inj.replacementName) {
+      highlights.push({
+        minute: inj.minute ?? 60,
+        team: inj.team,
+        type: "forced_sub",
+        playerId: inj.replacementId!,
+        playerName: inj.replacementName,
+        detail: `Entra por ${inj.playerName} (cambio forzado)`,
+      });
+    }
+  }
 
   // -------------------------------------------------------------------------
   // 4. Match statistics (possession, shots, corners, fouls, passes, live xG).
@@ -1246,20 +1009,15 @@ export function simulateMatch(
   // -------------------------------------------------------------------------
   // 5. Extra highlights: saves and woodwork, tied to the generated stats.
   // -------------------------------------------------------------------------
-  const addSaves = (team: "home" | "away", count: number) => {
+  const homeGK = homeXI.find((p) => isGoalkeeper(p.positions));
+  const awayGK = awayXI.find((p) => isGoalkeeper(p.positions));
+
+  const addSaves = (gk: Player | undefined, team: "home" | "away", count: number) => {
+    if (!gk) return;
     const shown = Math.min(count, 4);
-    const xi = team === "home" ? homeXI : awayXI;
     for (let i = 0; i < shown; i++) {
-      const minute = 3 + Math.floor(rand() * 85);
-      const gk = activeAt(
-        xi,
-        team === "home" ? homeRedCardedPlayers : awayRedCardedPlayers,
-        minute,
-        team,
-      ).find((p) => isGoalkeeper(p.positions));
-      if (!gk) continue;
       highlights.push({
-        minute,
+        minute: 3 + Math.floor(rand() * 85),
         team,
         type: "save",
         playerId: gk.id,
@@ -1268,24 +1026,16 @@ export function simulateMatch(
       });
     }
   };
-  addSaves("home", stats.home.saves);
-  addSaves("away", stats.away.saves);
+  addSaves(homeGK, "home", stats.home.saves);
+  addSaves(awayGK, "away", stats.away.saves);
 
-  const addWoodwork = (team: "home" | "away") => {
+  const addWoodwork = (xi: Player[], team: "home" | "away") => {
     if (rand() > 0.18) return;
-    const xi = team === "home" ? homeXI : awayXI;
-    const minute = 3 + Math.floor(rand() * 85);
-    const active = activeAt(
-      xi,
-      team === "home" ? homeRedCardedPlayers : awayRedCardedPlayers,
-      minute,
-      team,
-    );
-    const candidates = active.filter((p) => !isGoalkeeper(p.positions));
+    const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
     if (candidates.length === 0) return;
     const p = candidates[Math.floor(rand() * candidates.length)];
     highlights.push({
-      minute,
+      minute: 3 + Math.floor(rand() * 85),
       team,
       type: "woodwork",
       playerId: p.id,
@@ -1293,25 +1043,25 @@ export function simulateMatch(
       detail: rand() < 0.5 ? "¡Al palo!" : "¡Al travesaño!",
     });
   };
-  addWoodwork("home");
-  addWoodwork("away");
+  addWoodwork(homeXI, "home");
+  addWoodwork(awayXI, "away");
 
   highlights.sort((a, b) => a.minute - b.minute);
 
   // -------------------------------------------------------------------------
   // 6. Player ratings (1-10) and MVP.
   // -------------------------------------------------------------------------
-  const minutesPlayed: Record<string, number> = {
-    ...buildMinutesPlayed(homeXI, homeBench, substitutions, cards, injuries, "home"),
-    ...buildMinutesPlayed(awayXI, awayBench, substitutions, cards, injuries, "away"),
-  };
-
-  const homeParticipants = participantsFromSubs(homeXI, homeBench, substitutions, "home");
-  const awayParticipants = participantsFromSubs(awayXI, awayBench, substitutions, "away");
+  const minutesPlayed: Record<string, number> = {};
+  for (const p of [...homeXI, ...awayXI]) minutesPlayed[p.id] = 90;
+  for (const [id, min] of homeRedCardedPlayers) minutesPlayed[id] = min;
+  for (const [id, min] of awayRedCardedPlayers) minutesPlayed[id] = min;
+  for (const inj of injuries) {
+    if (inj.forcedSub && inj.minute !== undefined) minutesPlayed[inj.playerId] = inj.minute;
+  }
 
   const { ratings, mvp } = computePlayerRatings({
-    homeXI: homeParticipants,
-    awayXI: awayParticipants,
+    homeXI,
+    awayXI,
     homeGoals,
     awayGoals,
     goals: events.map((e) => ({
@@ -1333,16 +1083,12 @@ export function simulateMatch(
   });
 
   // -------------------------------------------------------------------------
-  // 7. Substitutions. The tactical substitutions were planned before the
-  // event simulation so all previous sections can respect their timing.
+  // 7. Substitutions from each team's actual bench (skips red-carded players).
   // -------------------------------------------------------------------------
-  substitutions = substitutions.filter((sub) => {
-    const redAt =
-      sub.team === "home"
-        ? homeRedCardedPlayers.get(sub.playerOutId)
-        : awayRedCardedPlayers.get(sub.playerOutId);
-    return redAt === undefined || redAt > sub.minute;
-  });
+  const substitutions = [
+    ...generateTacticalSubs(homeXI, homeBench, "home", homeRedCardedPlayers),
+    ...generateTacticalSubs(awayXI, awayBench, "away", awayRedCardedPlayers),
+  ].sort((a, b) => a.minute - b.minute);
 
   return {
     homeGoals,

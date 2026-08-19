@@ -2231,7 +2231,7 @@ export function selectTopAssisters(
 }
 
 export function selectTopYellowCards(
-  leagueFilter?: LeagueId,
+  leagueFilter?: LeagueId | "big5",
 
   limit = 30,
 ): (Player & { yellowCards: number; redCards: number })[] {
@@ -2248,7 +2248,16 @@ export function selectTopYellowCards(
 
     if (!p) continue;
 
-    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+    if (leagueFilter) {
+      const team = teamById(p.teamId);
+      if (!team) continue;
+      const playerLeague = team.league;
+      if (leagueFilter === "big5") {
+        if (!BIG5_LEAGUES.includes(playerLeague as LeagueId)) continue;
+      } else if (playerLeague !== leagueFilter) {
+        continue;
+      }
+    }
 
     out.push({ ...p, yellowCards: st.yellowCards ?? 0, redCards: st.redCards ?? 0 });
   }
@@ -2259,7 +2268,7 @@ export function selectTopYellowCards(
 }
 
 export function selectTopRedCards(
-  leagueFilter?: LeagueId,
+  leagueFilter?: LeagueId | "big5",
 
   limit = 30,
 ): (Player & { yellowCards: number; redCards: number })[] {
@@ -2276,7 +2285,16 @@ export function selectTopRedCards(
 
     if (!p) continue;
 
-    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+    if (leagueFilter) {
+      const team = teamById(p.teamId);
+      if (!team) continue;
+      const playerLeague = team.league;
+      if (leagueFilter === "big5") {
+        if (!BIG5_LEAGUES.includes(playerLeague as LeagueId)) continue;
+      } else if (playerLeague !== leagueFilter) {
+        continue;
+      }
+    }
 
     out.push({ ...p, yellowCards: st.yellowCards ?? 0, redCards: st.redCards ?? 0 });
   }
@@ -2287,7 +2305,7 @@ export function selectTopRedCards(
 }
 
 export function selectTopCleanSheets(
-  leagueFilter?: LeagueId,
+  leagueFilter?: LeagueId | "big5",
   limit = 30,
   competition: "all" | "league" | "cup" | "ucl" = "all",
 ): (Player & { cleanSheets: number })[] {
@@ -2307,14 +2325,23 @@ export function selectTopCleanSheets(
     const p = store.getSimPlayer(id);
     if (!p) continue;
     if (p.position !== "POR" && p.position !== "GK") continue;
-    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+    if (leagueFilter) {
+      const team = teamById(p.teamId);
+      if (!team) continue;
+      const playerLeague = team.league;
+      if (leagueFilter === "big5") {
+        if (!BIG5_LEAGUES.includes(playerLeague as LeagueId)) continue;
+      } else if (playerLeague !== leagueFilter) {
+        continue;
+      }
+    }
     out.push({ ...p, cleanSheets: cs });
   }
   return out.sort((a, b) => b.cleanSheets - a.cleanSheets).slice(0, limit);
 }
 
 export function selectTopMotm(
-  leagueFilter?: LeagueId,
+  leagueFilter?: LeagueId | "big5",
   limit = 30,
   competition: "all" | "league" | "cup" | "ucl" = "all",
 ): (Player & { motm: number })[] {
@@ -2333,7 +2360,16 @@ export function selectTopMotm(
     if (m <= 0) continue;
     const p = store.getSimPlayer(id);
     if (!p) continue;
-    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
+    if (leagueFilter) {
+      const team = teamById(p.teamId);
+      if (!team) continue;
+      const playerLeague = team.league;
+      if (leagueFilter === "big5") {
+        if (!BIG5_LEAGUES.includes(playerLeague as LeagueId)) continue;
+      } else if (playerLeague !== leagueFilter) {
+        continue;
+      }
+    }
     out.push({ ...p, motm: m });
   }
   return out.sort((a, b) => b.motm - a.motm).slice(0, limit);

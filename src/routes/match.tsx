@@ -1048,6 +1048,19 @@ function MatchPage() {
 
         allEventsRef.current = foundFixture.result.events;
         allCardsRef.current = foundFixture.result.cards || [];
+        allHighlightsRef.current = foundFixture.result.highlights || [];
+        setSubFeed(
+          (foundFixture.result.substitutions || [])
+            .map((sb: any) => ({
+              minute: sb.minute,
+              team: sb.team,
+              inName: sb.playerInName,
+              outName: sb.playerOutName,
+              playerInId: sb.playerInId,
+              playerOutId: sb.playerOutId,
+            }))
+            .reverse(),
+        );
         setHomeScore(foundFixture.result.homeGoals);
         setAwayScore(foundFixture.result.awayGoals);
         setFeed(foundFixture.result.events.slice().reverse());
@@ -1111,6 +1124,18 @@ function MatchPage() {
     allEventsRef.current = fixture.result.events;
     allCardsRef.current = fixture.result.cards || [];
     allHighlightsRef.current = fixture.result.highlights || [];
+    setSubFeed(
+      (fixture.result.substitutions || [])
+        .map((sb: any) => ({
+          minute: sb.minute,
+          team: sb.team,
+          inName: sb.playerInName,
+          outName: sb.playerOutName,
+          playerInId: sb.playerInId,
+          playerOutId: sb.playerOutId,
+        }))
+        .reverse(),
+    );
     fixtureRef.current = fixture;
 
     // For cup matches that end in a draw, don't save the result yet
@@ -1799,7 +1824,10 @@ function MatchPage() {
       .sort((a: any, b: any) => b.rating - a.rating)
       .slice(0, 7);
     oppCacheRef.current = { key: `${fixture.id}:${oppId}`, formation: oppFmt };
-    planOpponentSubs();
+    const storedOppSubs = (fixture.result?.substitutions || [])
+      .filter((sb: any) => sb.team === (fixture.homeId === oppId ? "home" : "away"))
+      .map((sb: any) => ({ minute: sb.minute, outId: sb.playerOutId, inId: sb.playerInId }));
+    oppPlanRef.current = storedOppSubs.length > 0 ? storedOppSubs : [];
   }
   const oppFormation = oppCacheRef.current.formation;
 

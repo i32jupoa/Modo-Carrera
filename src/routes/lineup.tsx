@@ -960,7 +960,7 @@ function LineupPage() {
                     }}
                   >
                     <div
-                      className="w-[56px] h-[56px] rounded-full border-2 border-dashed border-primary/40 bg-background/40 flex flex-col items-center justify-center text-primary/70 text-[0.55rem] font-black leading-tight"
+                      className="w-[64px] h-[64px] rounded-full border-2 border-dashed border-primary/40 bg-background/40 flex flex-col items-center justify-center text-primary/70 text-[0.55rem] font-black leading-tight"
                       title={`Hueco vacío: ${emptySlotLabel(posKey)}`}
                     >
                       <span className="scoreline text-[0.6rem]">{emptySlotLabel(posKey)}</span>

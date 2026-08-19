@@ -186,7 +186,7 @@ import {
   slotPosCode,
   type FormationName,
 } from "@/lib/formations";
-import { getTeamStyle, formationsForStyle } from "@/lib/teamProfile";
+import { FIVE_DEFENDER_TEAMS, getTeamStyle, formationsForStyle } from "@/lib/teamProfile";
 
 // Generate a CPU XI using a random (or specified) formation, always returning exactly 11 players
 
@@ -273,9 +273,11 @@ function generateCPUXI(
 
   let best: { ids: string[]; formation: FormationName; score: number } | null = null;
   for (const formation of candidateFormations) {
-    const { ids, score } = pickXIForFormation(squad, unavailable, formation);
+    const picked = pickXIForFormation(squad, unavailable, formation);
+    const fiveBackBonus = FIVE_DEFENDER_TEAMS.has(team.name) && formation.includes("5-") ? 12 : 0;
+    const score = picked.score + fiveBackBonus;
     if (!best || score > best.score) {
-      best = { ids, formation, score };
+      best = { ids: picked.ids, formation, score };
     }
   }
 
@@ -638,7 +640,7 @@ function slimResult(result: any, keepDetail: boolean): any {
   // highlights, sustituciones, XI y formación. Se siguen descartando las
   // estadísticas pesadas y las notas/rating completas para no volver a llenar
   // localStorage.
-  const { stats, ratings, mvp, extraTime, ...rest } = result;
+  const { stats, extraTime, ...rest } = result;
 
   const compactHighlights = Array.isArray(rest.highlights)
     ? rest.highlights.map((h: any) => ({
@@ -1017,9 +1019,12 @@ export function getStartersWithFormation(
   const isUserTeam = teamId === save.myTeamId;
 
   if (!isUserTeam || lineup.length === 0 || options?.randomFormation) {
+    const savedFormation = save.formations[teamId] as FormationName | undefined;
     const existingFormation = options?.randomFormation
       ? undefined
-      : (save.formations[teamId] as FormationName | undefined);
+      : FIVE_DEFENDER_TEAMS.has(team.name) && !savedFormation?.includes("5-")
+        ? undefined
+        : savedFormation;
 
     const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, existingFormation);
 
@@ -1168,6 +1173,13 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
   for (const p of [...homeXI, ...awayXI]) {
     store.recordAppearance(p.id, fixture.competition);
+  }
+
+  // A substitute who actually enters the match also gets an appearance.
+  // Keep the stored event as the source of truth so players who stayed on the
+  // bench are not credited with an appearance.
+  for (const sub of r.substitutions ?? []) {
+    store.recordAppearance(sub.playerInId, fixture.competition);
   }
 
   // Process regular time events
@@ -3227,78 +3239,63 @@ export async function scheduleBackgroundCupsOnly(
 
 function recordFakeMatchStats(
   store: ReturnType<typeof usePlayersStore.getState>,
-
   homePlayers: Player[],
-
   awayPlayers: Player[],
-
   result: SimResult,
-
   currentMatchday: number,
 ) {
-  const assignGoals = (teamGoals: number, players: Player[]) => {
-    const forwards = players.filter((p) => isAttacking(p.positions));
+  // Fast-simulated matches already contain the same authoritative events as
+  // detailed matches. Never generate a second, random set of scorers/cards:
+  // that could credit a player who had already been substituted.
+  const allPlayers = new Map(
+    [
+      ...homePlayers,
+      ...awayPlayers,
+      ...(result.homeLineup ?? []),
+      ...(result.awayLineup ?? []),
+    ].map((p) => [p.id, p]),
+  );
 
-    const mids = players.filter((p) => isMidfield(p.positions));
+  const participants = new Set<string>();
+  for (const p of result.homeLineup ?? homePlayers) participants.add(p.id);
+  for (const p of result.awayLineup ?? awayPlayers) participants.add(p.id);
+  for (const sub of result.substitutions ?? []) participants.add(sub.playerInId);
 
-    const defs = players.filter((p) => isDefensive(p.positions));
+  for (const playerId of participants) {
+    store.recordAppearance(playerId);
+  }
 
-    for (let i = 0; i < teamGoals; i++) {
-      const rand = Math.random();
+  for (const event of result.events ?? []) {
+    if (event.type === "own_goal") continue;
+    store.recordGoal(event.scorerId);
+    if (event.assistId) store.recordAssist(event.assistId);
+  }
 
-      let scorer: Player | undefined;
-
-      if (rand < 0.7 && forwards.length > 0)
-        scorer = forwards[Math.floor(Math.random() * forwards.length)];
-      else if (rand < 0.95 && mids.length > 0)
-        scorer = mids[Math.floor(Math.random() * mids.length)];
-      else if (defs.length > 0) scorer = defs[Math.floor(Math.random() * defs.length)];
-
-      if (scorer) {
-        store.recordGoal(scorer.id);
-
-        if (Math.random() < 0.4 && players.length > 1) {
-          const potentialAssisters = players.filter((p) => p.id !== scorer!.id);
-
-          if (potentialAssisters.length > 0) {
-            store.recordAssist(
-              potentialAssisters[Math.floor(Math.random() * potentialAssisters.length)].id,
-            );
-          }
-        }
-      }
+  for (const card of result.cards ?? []) {
+    if (card.cardType === "yellow") {
+      store.recordYellowCard(card.playerId);
+    } else {
+      store.recordRedCard(card.playerId);
+      if (card.isSecondYellow) store.recordYellowCard(card.playerId);
     }
-  };
+  }
 
-  const assignCards = (players: Player[]) => {
-    for (const player of players) {
-      if (Math.random() < 0.1) store.recordYellowCard(player.id);
-
-      if (Math.random() < 0.02) store.recordRedCard(player.id);
+  for (const injury of result.injuries ?? []) {
+    const player = allPlayers.get(injury.playerId);
+    if (player) {
+      store.recordInjury(
+        injury.playerId,
+        currentMatchday + Math.max(1, injury.weeks),
+        injury.reason,
+      );
     }
-  };
+  }
 
-  const assignInjuries = (players: Player[]) => {
-    for (const player of players) {
-      if (Math.random() < 0.01) {
-        const weeksOut = Math.floor(Math.random() * 4) + 1;
-
-        store.recordInjury(player.id, currentMatchday + weeksOut, "Lesión muscular");
-      }
-    }
-  };
-
-  assignGoals(result.homeGoals, homePlayers);
-
-  assignGoals(result.awayGoals, awayPlayers);
-
-  assignCards(homePlayers);
-
-  assignCards(awayPlayers);
-
-  assignInjuries(homePlayers);
-
-  assignInjuries(awayPlayers);
+  for (const event of result.extraTime?.events ?? []) {
+    if (event.type === "own_goal") continue;
+    store.recordGoal(event.scorerId);
+    if (event.assistId) store.recordAssist(event.assistId);
+  }
 }
 
 // Shared helper: select 11 match players from a squad

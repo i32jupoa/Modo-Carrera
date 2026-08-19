@@ -182,12 +182,12 @@ export function MiniPitch({
     <div className={`relative ${className}`}>
       <div
         className="relative bg-green-800/20 border-2 border-green-600/30 rounded-lg overflow-hidden"
-        style={{ aspectRatio: "3/4", width: "100%", maxWidth: "320px", minHeight: "320px" }}
+        style={{ aspectRatio: "3/4", width: "100%", maxWidth: "380px", minHeight: "380px" }}
       >
         {/* Pitch markings */}
         <div className="absolute inset-0">
           {/* Center circle */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 border-2 border-green-500/40 rounded-full" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-20 h-20 border-2 border-green-500/40 rounded-full" />
           {/* Halfway line */}
           <div className="absolute top-1/2 left-0 right-0 h-px bg-green-500/40" />
           {/* Goal areas */}
@@ -243,13 +243,13 @@ export function MiniPitch({
                   name={player.name}
                   image={faceUrl(player.id, player.cardImage)}
                   role={roleFromPosition(player.positions[0])}
-                  size={22}
+                  size={30}
                   className="shadow-lg"
                   showRing={false}
                 />
                 {/* Rating - top right */}
                 {rating !== undefined && (
-                  <div className="absolute -top-1 -right-1 bg-white/90 rounded-full w-3.5 h-3.5 flex items-center justify-center text-[0.45rem] font-bold text-black shadow-sm">
+                  <div className="absolute -top-1 -right-1 bg-white/90 rounded-full w-5 h-5 flex items-center justify-center text-[0.5rem] font-bold text-black shadow-sm">
                     {rating.toFixed(1)}
                   </div>
                 )}

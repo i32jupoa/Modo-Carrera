@@ -47,7 +47,7 @@ function ScorersPage() {
   const [save, setSave] = useState<SaveGame | null>(null);
   const [tab, setTab] = useState<Tab>("scorers");
   const [competition, setCompetition] = useState<"all" | "league" | "cup" | "ucl">("all");
-  const [league, setLeague] = useState<LeagueId | "all">("all");
+  const [league, setLeague] = useState<LeagueId | "all" | "big5">("all");
   const [cupCountry, setCupCountry] = useState<string>("all");
 
   const isCardTab = tab === "yellows" || tab === "reds";
@@ -76,7 +76,8 @@ function ScorersPage() {
     ];
   }, []);
 
-  const leagueArg = competition === "league" && league !== "all" ? (league as LeagueId) : undefined;
+  const leagueArg =
+    competition === "league" && league !== "all" ? (league as LeagueId | "big5") : undefined;
   const cupCountryArg = competition === "cup" && cupCountry !== "all" ? cupCountry : undefined;
 
   const scorers = useMemo(
@@ -98,14 +99,14 @@ function ScorersPage() {
   const yellows = useMemo(
     () =>
       save && ready
-        ? selectTopYellowCards(league !== "all" ? (league as LeagueId) : undefined, 30)
+        ? selectTopYellowCards(league !== "all" ? (league as LeagueId | "big5") : undefined, 30)
         : [],
     [save, ready, league],
   );
   const reds = useMemo(
     () =>
       save && ready
-        ? selectTopRedCards(league !== "all" ? (league as LeagueId) : undefined, 30)
+        ? selectTopRedCards(league !== "all" ? (league as LeagueId | "big5") : undefined, 30)
         : [],
     [save, ready, league],
   );
@@ -166,12 +167,13 @@ function ScorersPage() {
 
         {/* League filter — for league competition or card tabs */}
         {(competition === "league" || isCardTab) && (
-          <Select value={league} onValueChange={(v) => setLeague(v as LeagueId | "all")}>
+          <Select value={league} onValueChange={(v) => setLeague(v as LeagueId | "all" | "big5")}>
             <SelectTrigger className="w-[210px]">
               <SelectValue placeholder="Todas las ligas" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todas las ligas</SelectItem>
+              <SelectItem value="big5">5 grandes ligas</SelectItem>
               {ALL_LEAGUES.map((lg) => (
                 <SelectItem key={lg} value={lg}>
                   <div className="flex items-center gap-2">

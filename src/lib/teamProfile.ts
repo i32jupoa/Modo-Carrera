@@ -80,7 +80,7 @@ const TEAM_STYLES: Record<string, PlayStyle> = {
   Udinese: "defensive",
   Venezia: "defensive",
   // Italia - Serie B
-  "Lombardia FC": "balanced",
+  "Lombardia FC": "defensive",
   // Alemania - Bundesliga
   "Borussia Dortmund": "offensive",
   "FC Bayern München": "offensive",
@@ -426,6 +426,9 @@ function elevenScore(eleven: ElevenSlot[]): number {
   }, 0);
 }
 
+/** Equipos cuya identidad defensiva prioriza una línea de cinco. */
+export const FIVE_DEFENDER_TEAMS = new Set(["Getafe CF", "Lombardia FC"]);
+
 /**
  * Elige, entre las formaciones típicas del estilo del equipo, la que mejor
  * encaja con la plantilla (mejor media en su sitio natural).
@@ -440,7 +443,8 @@ export function bestFormationForSquad(squad: FcPlayer[], team: Team): FormationN
   let bestScore = -Infinity;
 
   for (const formation of candidateFormations) {
-    const score = elevenScore(estimatedEleven(formation, squad));
+    const fiveBackBonus = FIVE_DEFENDER_TEAMS.has(team.name) && formation.includes("5-") ? 12 : 0;
+    const score = elevenScore(estimatedEleven(formation, squad)) + fiveBackBonus;
     if (score > bestScore) {
       bestScore = score;
       best = formation;
