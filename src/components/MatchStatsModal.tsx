@@ -303,6 +303,28 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
       ? result.events
       : finalChronicleEvents.filter((e) => e.kind === "goal").map((e) => e.data);
 
+  // Las alineaciones guardadas contienen el XI inicial. Los ratings, en cambio,
+  // también incluyen a los jugadores que entraron desde el banquillo. Separamos
+  // ambos grupos por ID para que las notas no mezclen titulares y suplentes.
+  const homeStarterIds = new Set(homePlayers.slice(0, 11).map((p) => p.id));
+  const awayStarterIds = new Set(awayPlayers.slice(0, 11).map((p) => p.id));
+
+  const getSubstituteIds = (team: "home" | "away", starterIds: Set<string>) => {
+    const ids = new Set<string>(
+      (result.substitutions || [])
+        .filter((s: any) => s.team === team)
+        .map((s: any) => s.playerInId),
+    );
+    const ratings = team === "home" ? finalHomeRatings : finalAwayRatings;
+    for (const rating of ratings) {
+      if (!starterIds.has(rating.playerId)) ids.add(rating.playerId);
+    }
+    return ids;
+  };
+
+  const homeSubstituteIds = getSubstituteIds("home", homeStarterIds);
+  const awaySubstituteIds = getSubstituteIds("away", awayStarterIds);
+
   return (
     <Dialog open={!!fixture} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
@@ -916,37 +938,51 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       substitutions={result.substitutions || []}
                     />
                     {/* Substitutes */}
-                    {homePlayers.length > 11 && (
-                      <div className="mt-4">
-                        <h4 className="text-sm font-semibold mb-2">Suplentes</h4>
+                    <div className="mt-4">
+                      <h4 className="text-sm font-semibold mb-2">Suplentes</h4>
+                      {homeSubstituteIds.size > 0 ? (
                         <div className="space-y-1">
-                          {homePlayers.slice(11).map((player) => {
-                            const rating = finalHomeRatings.find((r) => r.playerId === player.id);
+                          {Array.from(homeSubstituteIds).map((playerId) => {
+                            const player = store.getSimPlayer(playerId);
+                            const rating = finalHomeRatings.find((r) => r.playerId === playerId);
+                            const substitution = (result.substitutions || []).find(
+                              (s: any) => s.team === "home" && s.playerInId === playerId,
+                            );
                             return (
                               <div
-                                key={player.id}
+                                key={playerId}
                                 className="text-sm flex items-center justify-between"
                               >
                                 <div className="flex items-center gap-2">
                                   <span className="text-muted-foreground">
-                                    {player.positions?.[0] || "N/A"}
+                                    {player?.positions?.[0] || "N/A"}
                                   </span>
-                                  <span>{player.name}</span>
+                                  <span>{player?.name || substitution?.playerInName || "Desconocido"}</span>
+                                  {substitution && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {substitution.minute}'
+                                    </span>
+                                  )}
                                 </div>
-                                <span className="font-semibold">
-                                  {rating?.rating.toFixed(1) || "N/A"}
-                                </span>
+                                {rating && (
+                                  <span className="font-semibold">{rating.rating.toFixed(1)}</span>
+                                )}
                               </div>
                             );
                           })}
                         </div>
-                      </div>
-                    )}
-                    {/* Player Ratings */}
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No entró ningún suplente.</p>
+                      )}
+                    </div>
+
+                    {/* Player Ratings - Starters */}
                     <div className="mt-4">
-                      <h4 className="text-sm font-semibold mb-2">Notas del partido</h4>
+                      <h4 className="text-sm font-semibold mb-2">Notas del partido - Titulares</h4>
                       <div className="space-y-1">
                         {finalHomeRatings
+                          .filter((rating) => homeStarterIds.has(rating.playerId))
+                          .slice()
                           .sort((a, b) => b.rating - a.rating)
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
@@ -977,6 +1013,49 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           })}
                       </div>
                     </div>
+
+                    {/* Player Ratings - Substitutes */}
+                    <div className="mt-4">
+                      <h4 className="text-sm font-semibold mb-2">Notas del partido - Suplentes</h4>
+                      <div className="space-y-1">
+                        {finalHomeRatings
+                          .filter((rating) => homeSubstituteIds.has(rating.playerId))
+                          .slice()
+                          .sort((a, b) => b.rating - a.rating)
+                          .map((rating) => {
+                            const player = store.getSimPlayer(rating.playerId);
+                            const isMvp = displayMvp?.playerId === rating.playerId;
+                            return (
+                              <div
+                                key={rating.playerId}
+                                className="text-sm flex items-center justify-between"
+                              >
+                                <div className="flex items-center gap-2">
+                                  {isMvp && <Star className="w-3 h-3 text-yellow-500" />}
+                                  <TeamLogo
+                                    teamName={home.name}
+                                    leagueName={getLeagueName(home.league)}
+                                    size={16}
+                                  />
+                                  <span className="font-medium">
+                                    {player?.name || "Desconocido"}
+                                  </span>
+                                </div>
+                                <span
+                                  className={`font-bold ${rating.rating >= 7 ? "text-green-600" : rating.rating >= 5 ? "text-yellow-600" : "text-red-600"}`}
+                                >
+                                  {rating.rating.toFixed(1)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        {!Array.from(homeSubstituteIds).some((id) =>
+                          finalHomeRatings.some((rating) => rating.playerId === id),
+                        ) && (
+                          <p className="text-sm text-muted-foreground">Sin notas de suplentes.</p>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Away Team Lineup */}
@@ -1005,41 +1084,51 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       substitutions={result.substitutions || []}
                     />
                     {/* Substitutes */}
-                    {awayPlayers.length > 11 && (
-                      <div className="mt-4">
-                        <h4 className="text-sm font-semibold mb-2">Suplentes</h4>
+                    <div className="mt-4">
+                      <h4 className="text-sm font-semibold mb-2">Suplentes</h4>
+                      {awaySubstituteIds.size > 0 ? (
                         <div className="space-y-1">
-                          {awayPlayers.slice(11).map((player) => {
-                            const rating = finalAwayRatings.find((r) => r.playerId === player.id);
+                          {Array.from(awaySubstituteIds).map((playerId) => {
+                            const player = store.getSimPlayer(playerId);
+                            const rating = finalAwayRatings.find((r) => r.playerId === playerId);
+                            const substitution = (result.substitutions || []).find(
+                              (s: any) => s.team === "away" && s.playerInId === playerId,
+                            );
                             return (
                               <div
-                                key={player.id}
+                                key={playerId}
                                 className="text-sm flex items-center justify-between"
                               >
                                 <div className="flex items-center gap-2">
-                                  <span className="text-medium">{player.name}</span>
-                                  <span className="text-muted-foreground text-xs">
-                                    ({player.positions.join(", ")})
+                                  <span className="text-muted-foreground">
+                                    {player?.positions?.[0] || "N/A"}
                                   </span>
+                                  <span>{player?.name || substitution?.playerInName || "Desconocido"}</span>
+                                  {substitution && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {substitution.minute}'
+                                    </span>
+                                  )}
                                 </div>
                                 {rating && (
-                                  <span
-                                    className={`font-bold text-sm ${rating.rating >= 7 ? "text-green-600" : rating.rating >= 5 ? "text-yellow-600" : "text-red-600"}`}
-                                  >
-                                    {rating.rating.toFixed(1)}
-                                  </span>
+                                  <span className="font-semibold">{rating.rating.toFixed(1)}</span>
                                 )}
                               </div>
                             );
                           })}
                         </div>
-                      </div>
-                    )}
-                    {/* Player Ratings */}
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No entró ningún suplente.</p>
+                      )}
+                    </div>
+
+                    {/* Player Ratings - Starters */}
                     <div className="mt-4">
-                      <h4 className="text-sm font-semibold mb-2">Notas del partido</h4>
+                      <h4 className="text-sm font-semibold mb-2">Notas del partido - Titulares</h4>
                       <div className="space-y-1">
                         {finalAwayRatings
+                          .filter((rating) => awayStarterIds.has(rating.playerId))
+                          .slice()
                           .sort((a, b) => b.rating - a.rating)
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
@@ -1068,6 +1157,49 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                               </div>
                             );
                           })}
+                      </div>
+                    </div>
+
+                    {/* Player Ratings - Substitutes */}
+                    <div className="mt-4">
+                      <h4 className="text-sm font-semibold mb-2">Notas del partido - Suplentes</h4>
+                      <div className="space-y-1">
+                        {finalAwayRatings
+                          .filter((rating) => awaySubstituteIds.has(rating.playerId))
+                          .slice()
+                          .sort((a, b) => b.rating - a.rating)
+                          .map((rating) => {
+                            const player = store.getSimPlayer(rating.playerId);
+                            const isMvp = displayMvp?.playerId === rating.playerId;
+                            return (
+                              <div
+                                key={rating.playerId}
+                                className="text-sm flex items-center justify-between"
+                              >
+                                <div className="flex items-center gap-2">
+                                  {isMvp && <Star className="w-3 h-3 text-yellow-500" />}
+                                  <TeamLogo
+                                    teamName={away.name}
+                                    leagueName={getLeagueName(away.league)}
+                                    size={16}
+                                  />
+                                  <span className="font-medium">
+                                    {player?.name || "Desconocido"}
+                                  </span>
+                                </div>
+                                <span
+                                  className={`font-bold ${rating.rating >= 7 ? "text-green-600" : rating.rating >= 5 ? "text-yellow-600" : "text-red-600"}`}
+                                >
+                                  {rating.rating.toFixed(1)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        {!Array.from(awaySubstituteIds).some((id) =>
+                          finalAwayRatings.some((rating) => rating.playerId === id),
+                        ) && (
+                          <p className="text-sm text-muted-foreground">Sin notas de suplentes.</p>
+                        )}
                       </div>
                     </div>
                   </div>

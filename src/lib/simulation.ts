@@ -375,6 +375,11 @@ function maybeInjury(
     .slice()
     .sort((a, b) => b.rating - a.rating)[0];
 
+  // Los cambios forzados también consumen una de las cinco sustituciones
+  // disponibles en este modelo. Nunca añadimos un sexto cambio al partido.
+  const teamSubCount = plannedSubs.filter((s) => s.team === team).length;
+  const canForceSub = teamSubCount < 5 && !!replacement && minute < 88;
+
   return {
     team,
     playerId: victim.id,
@@ -382,9 +387,9 @@ function maybeInjury(
     weeks,
     minute,
     reason: INJURY_REASONS[Math.floor(rand() * INJURY_REASONS.length)],
-    forcedSub: !!replacement && minute < 88,
-    replacementId: replacement && minute < 88 ? replacement.id : undefined,
-    replacementName: replacement && minute < 88 ? replacement.name : undefined,
+    forcedSub: canForceSub,
+    replacementId: canForceSub ? replacement.id : undefined,
+    replacementName: canForceSub ? replacement.name : undefined,
   };
 }
 
@@ -414,23 +419,58 @@ export function generateTacticalSubs(
   const availableIn = bench.filter((p) => !isGoalkeeper(p.positions));
   if (availableOut.length === 0 || availableIn.length === 0) return [];
 
-  const desired = 2 + Math.floor(rand() * 2); // 2-3 subs, like a real match
-  const n = Math.min(desired, availableOut.length, availableIn.length);
-  const minutes = Array.from({ length: n }, () => 55 + Math.floor(rand() * 31)).sort(
-    (a, b) => a - b,
-  );
+  // Cinco cambios como máximo y repartidos en las tres ventanas configuradas
+  // por el juego. La primera ventana es excepcional, la del descanso permite
+  // hasta dos cambios y el tramo final concentra la mayor parte de los cambios.
+  const maxSubs = Math.min(5, availableOut.length, availableIn.length);
+  if (maxSubs <= 0) return [];
 
-  // Tired/weaker starters tend to come off first.
+  const firstWindowCount = rand() < 0.16 ? 1 + Math.floor(rand() * 2) : 0; // 0-2
+  const halftimeCount = Math.floor(rand() * 3); // 0-2
+  const minimumLate = maxSubs >= 1 ? 1 : 0;
+
+  // Garantiza que el total nunca supere 5 y que, cuando haya cambios tácticos,
+  // al menos uno llegue en la última ventana.
+  const lateMax = Math.min(3, maxSubs - firstWindowCount - halftimeCount);
+  let lateCount = Math.max(minimumLate, lateMax > 0 ? Math.floor(rand() * (lateMax + 1)) : 0);
+
+  // Si las primeras dos ventanas han consumido demasiados cambios, recortamos
+  // empezando por la del descanso para conservar el cambio estándar de cierre.
+  let firstCount = Math.min(firstWindowCount, maxSubs - 1);
+  let halfCount = Math.min(halftimeCount, maxSubs - firstCount - 1);
+  const total = firstCount + halfCount + lateCount;
+  if (total > maxSubs) {
+    lateCount = Math.max(1, maxSubs - firstCount - halfCount);
+    if (firstCount + halfCount + lateCount > maxSubs) {
+      halfCount = Math.max(0, maxSubs - firstCount - 1);
+    }
+  }
+
+  // La ventana 0-45 es rara; un cambio al descanso puede ocurrir entre 45-60;
+  // y los cambios de gestión se concentran entre 60-90.
+  const minutes: number[] = [];
+  const pushRandomMinutes = (count: number, from: number, to: number) => {
+    for (let i = 0; i < count; i++) {
+      minutes.push(from + Math.floor(rand() * (to - from + 1)));
+    }
+  };
+  pushRandomMinutes(firstCount, 1, 45);
+  pushRandomMinutes(halfCount, 45, 60);
+  pushRandomMinutes(lateCount, 61, 90);
+  minutes.sort((a, b) => a - b);
+
   const outPool = [...availableOut].sort((a, b) => a.rating - b.rating);
   const usedOut = new Set<string>();
   const usedIn = new Set<string>();
   const subs: SubstitutionEvent[] = [];
 
-  for (let i = 0; i < n; i++) {
+  for (const minute of minutes) {
     const playerOut = outPool.find((p) => !usedOut.has(p.id));
     if (!playerOut) break;
+
     const candidatesIn = availableIn.filter((p) => !usedIn.has(p.id));
     if (candidatesIn.length === 0) break;
+
     const samePos = candidatesIn.filter((p) =>
       p.positions.some((pos) => playerOut.positions.includes(pos)),
     );
@@ -440,7 +480,7 @@ export function generateTacticalSubs(
     usedOut.add(playerOut.id);
     usedIn.add(playerIn.id);
     subs.push({
-      minute: minutes[i],
+      minute,
       team,
       playerOutId: playerOut.id,
       playerOutName: playerOut.name,
@@ -451,7 +491,6 @@ export function generateTacticalSubs(
 
   return subs;
 }
-
 /**
  * Returns the players actually on the pitch at a given minute, taking into
  * account tactical substitutions and red cards. A player who has left the

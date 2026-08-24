@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { persistCurrentSave } from "./savedGames";
+import { saveTransferSystem } from "./transfers/Persistence";
 import {
   LeagueId,
   TEAMS,
@@ -749,6 +750,16 @@ export function saveSave(s: SaveGame) {
     persistCurrentSave(slim);
   } catch (e) {
     console.error("persistCurrentSave failed", e);
+  }
+
+  // El mercado tiene su propia instantánea por partida. Guardarlo aquí hace
+  // que un guardado manual/automático de la carrera también persista el
+  // histórico y el estado interno del mercado, sin depender de que el reloj
+  // del mercado haya ejecutado su propio guardado justo antes.
+  try {
+    saveTransferSystem();
+  } catch (e) {
+    console.error("saveTransferSystem failed", e);
   }
 }
 
@@ -2072,10 +2083,6 @@ export async function simulateCupMatchdayLayered(
         const hXI = selectMatchPlayers(store.getSimSquad(home.id));
 
         const aXI = selectMatchPlayers(store.getSimSquad(away.id));
-
-        hXI.forEach((p) => store.recordAppearance(p.id));
-
-        aXI.forEach((p) => store.recordAppearance(p.id));
 
         recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league]);
       }
@@ -3628,9 +3635,6 @@ export async function advanceMatchdayLayered(
             homeFormation: homeData.formation,
             awayFormation: awayData.formation,
           });
-
-          hXI.forEach((p) => store.recordAppearance(p.id));
-          aXI.forEach((p) => store.recordAppearance(p.id));
 
           recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league]);
         }
