@@ -937,44 +937,6 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       injuries={result.injuries || []}
                       substitutions={result.substitutions || []}
                     />
-                    {/* Substitutes */}
-                    <div className="mt-4">
-                      <h4 className="text-sm font-semibold mb-2">Suplentes</h4>
-                      {homeSubstituteIds.size > 0 ? (
-                        <div className="space-y-1">
-                          {Array.from(homeSubstituteIds).map((playerId) => {
-                            const player = store.getSimPlayer(playerId);
-                            const rating = finalHomeRatings.find((r) => r.playerId === playerId);
-                            const substitution = (result.substitutions || []).find(
-                              (s: any) => s.team === "home" && s.playerInId === playerId,
-                            );
-                            return (
-                              <div
-                                key={playerId}
-                                className="text-sm flex items-center justify-between"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <span className="text-muted-foreground">
-                                    {player?.positions?.[0] || "N/A"}
-                                  </span>
-                                  <span>{player?.name || substitution?.playerInName || "Desconocido"}</span>
-                                  {substitution && (
-                                    <span className="text-xs text-muted-foreground">
-                                      {substitution.minute}'
-                                    </span>
-                                  )}
-                                </div>
-                                {rating && (
-                                  <span className="font-semibold">{rating.rating.toFixed(1)}</span>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">No entró ningún suplente.</p>
-                      )}
-                    </div>
 
                     {/* Player Ratings - Starters */}
                     <div className="mt-4">
@@ -987,6 +949,9 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
                             const isMvp = displayMvp?.playerId === rating.playerId;
+                            const substitution = (result.substitutions || []).find(
+                              (s: any) => s.team === "home" && s.playerOutId === rating.playerId,
+                            );
                             return (
                               <div
                                 key={rating.playerId}
@@ -1002,6 +967,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                                   <span className="font-medium">
                                     {player?.name || "Desconocido"}
                                   </span>
+                                  {substitution && (
+                                    <span className="text-xs text-muted-foreground">
+                                      (salida {substitution.minute}')
+                                    </span>
+                                  )}
                                 </div>
                                 <span
                                   className={`font-bold ${rating.rating >= 7 ? "text-green-600" : rating.rating >= 5 ? "text-yellow-600" : "text-red-600"}`}
@@ -1025,6 +995,9 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
                             const isMvp = displayMvp?.playerId === rating.playerId;
+                            const substitution = (result.substitutions || []).find(
+                              (s: any) => s.team === "home" && s.playerInId === rating.playerId,
+                            );
                             return (
                               <div
                                 key={rating.playerId}
@@ -1040,6 +1013,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                                   <span className="font-medium">
                                     {player?.name || "Desconocido"}
                                   </span>
+                                  {substitution && (
+                                    <span className="text-xs text-muted-foreground">
+                                      ({substitution.minute}')
+                                    </span>
+                                  )}
                                 </div>
                                 <span
                                   className={`font-bold ${rating.rating >= 7 ? "text-green-600" : rating.rating >= 5 ? "text-yellow-600" : "text-red-600"}`}
@@ -1083,44 +1061,6 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       injuries={result.injuries || []}
                       substitutions={result.substitutions || []}
                     />
-                    {/* Substitutes */}
-                    <div className="mt-4">
-                      <h4 className="text-sm font-semibold mb-2">Suplentes</h4>
-                      {awaySubstituteIds.size > 0 ? (
-                        <div className="space-y-1">
-                          {Array.from(awaySubstituteIds).map((playerId) => {
-                            const player = store.getSimPlayer(playerId);
-                            const rating = finalAwayRatings.find((r) => r.playerId === playerId);
-                            const substitution = (result.substitutions || []).find(
-                              (s: any) => s.team === "away" && s.playerInId === playerId,
-                            );
-                            return (
-                              <div
-                                key={playerId}
-                                className="text-sm flex items-center justify-between"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <span className="text-muted-foreground">
-                                    {player?.positions?.[0] || "N/A"}
-                                  </span>
-                                  <span>{player?.name || substitution?.playerInName || "Desconocido"}</span>
-                                  {substitution && (
-                                    <span className="text-xs text-muted-foreground">
-                                      {substitution.minute}'
-                                    </span>
-                                  )}
-                                </div>
-                                {rating && (
-                                  <span className="font-semibold">{rating.rating.toFixed(1)}</span>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">No entró ningún suplente.</p>
-                      )}
-                    </div>
 
                     {/* Player Ratings - Starters */}
                     <div className="mt-4">
@@ -1133,6 +1073,9 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
                             const isMvp = displayMvp?.playerId === rating.playerId;
+                            const substitution = (result.substitutions || []).find(
+                              (s: any) => s.team === "away" && s.playerOutId === rating.playerId,
+                            );
                             return (
                               <div
                                 key={rating.playerId}
@@ -1148,6 +1091,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                                   <span className="font-medium">
                                     {player?.name || "Desconocido"}
                                   </span>
+                                  {substitution && (
+                                    <span className="text-xs text-muted-foreground">
+                                      (salida {substitution.minute}')
+                                    </span>
+                                  )}
                                 </div>
                                 <span
                                   className={`font-bold ${rating.rating >= 7 ? "text-green-600" : rating.rating >= 5 ? "text-yellow-600" : "text-red-600"}`}
@@ -1171,6 +1119,9 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
                             const isMvp = displayMvp?.playerId === rating.playerId;
+                            const substitution = (result.substitutions || []).find(
+                              (s: any) => s.team === "away" && s.playerInId === rating.playerId,
+                            );
                             return (
                               <div
                                 key={rating.playerId}
@@ -1186,6 +1137,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                                   <span className="font-medium">
                                     {player?.name || "Desconocido"}
                                   </span>
+                                  {substitution && (
+                                    <span className="text-xs text-muted-foreground">
+                                      ({substitution.minute}')
+                                    </span>
+                                  )}
                                 </div>
                                 <span
                                   className={`font-bold ${rating.rating >= 7 ? "text-green-600" : rating.rating >= 5 ? "text-yellow-600" : "text-red-600"}`}

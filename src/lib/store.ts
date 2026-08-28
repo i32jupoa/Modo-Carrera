@@ -746,6 +746,14 @@ export function saveSave(s: SaveGame) {
       throw retryError;
     }
   }
+  
+  // Guardar también el sistema de transferencias
+  try {
+    const { saveTransferSystem } = require('./transfers');
+    saveTransferSystem();
+  } catch (e) {
+    console.warn("saveSave: no se pudo guardar el sistema de transferencias", e);
+  }
   try {
     persistCurrentSave(slim);
   } catch (e) {

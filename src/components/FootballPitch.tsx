@@ -105,7 +105,7 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
         <PlayerFace
           name={player.name}
           image={faceUrl(player.id, player.cardImage)}
-          size={64}
+          size={48}
           showRing={false}
           className="shadow-md"
         />

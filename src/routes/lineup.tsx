@@ -1005,7 +1005,7 @@ function LineupPage() {
                     <PlayerFace
                       name={player.name}
                       image={faceUrl(player.id, player.cardImage)}
-                      size={40}
+                      size={32}
                       showRing={false}
                       className="bg-secondary shadow"
                     />

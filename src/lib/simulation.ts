@@ -419,77 +419,122 @@ export function generateTacticalSubs(
   const availableIn = bench.filter((p) => !isGoalkeeper(p.positions));
   if (availableOut.length === 0 || availableIn.length === 0) return [];
 
-  // Cinco cambios como máximo y repartidos en las tres ventanas configuradas
-  // por el juego. La primera ventana es excepcional, la del descanso permite
-  // hasta dos cambios y el tramo final concentra la mayor parte de los cambios.
+  // Sistema de ventanas de cambios: máximo 5 cambios en 3 ventanas
+  // Una ventana = cambios en el mismo minuto o muy cercanos
+  // El descanso no cuenta como ventana
   const maxSubs = Math.min(5, availableOut.length, availableIn.length);
   if (maxSubs <= 0) return [];
 
-  const firstWindowCount = rand() < 0.16 ? 1 + Math.floor(rand() * 2) : 0; // 0-2
-  const halftimeCount = Math.floor(rand() * 3); // 0-2
-  const minimumLate = maxSubs >= 1 ? 1 : 0;
+  // Determinar cuántos cambios queremos hacer en total
+  const desiredTotal = 1 + Math.floor(rand() * 5); // 1-5 cambios deseados
+  const totalSubs = Math.min(desiredTotal, maxSubs);
 
-  // Garantiza que el total nunca supere 5 y que, cuando haya cambios tácticos,
-  // al menos uno llegue en la última ventana.
-  const lateMax = Math.min(3, maxSubs - firstWindowCount - halftimeCount);
-  let lateCount = Math.max(minimumLate, lateMax > 0 ? Math.floor(rand() * (lateMax + 1)) : 0);
+  // Determinar cuántas ventanas usaremos (máximo 3)
+  const maxWindows = Math.min(3, totalSubs);
+  let numWindows = 1;
+  
+  if (totalSubs >= 4) {
+    // Para 4-5 cambios, usar 2-3 ventanas
+    numWindows = 2 + Math.floor(rand() * 2); // 2-3 ventanas
+  } else if (totalSubs >= 2) {
+    // Para 2-3 cambios, usar 1-2 ventanas
+    numWindows = 1 + Math.floor(rand() * 2); // 1-2 ventanas
+  }
 
-  // Si las primeras dos ventanas han consumido demasiados cambios, recortamos
-  // empezando por la del descanso para conservar el cambio estándar de cierre.
-  let firstCount = Math.min(firstWindowCount, maxSubs - 1);
-  let halfCount = Math.min(halftimeCount, maxSubs - firstCount - 1);
-  const total = firstCount + halfCount + lateCount;
-  if (total > maxSubs) {
-    lateCount = Math.max(1, maxSubs - firstCount - halfCount);
-    if (firstCount + halfCount + lateCount > maxSubs) {
-      halfCount = Math.max(0, maxSubs - firstCount - 1);
+  // Distribuir cambios entre las ventanas
+  const subsPerWindow: number[] = [];
+  let remainingSubs = totalSubs;
+  
+  for (let i = 0; i < numWindows; i++) {
+    if (i === numWindows - 1) {
+      // Última ventana: todos los cambios restantes
+      subsPerWindow.push(remainingSubs);
+    } else {
+      // Ventanas anteriores: al menos 1 cambio
+      const maxInWindow = Math.min(remainingSubs - (numWindows - i - 1), 3);
+      const subsInWindow = 1 + Math.floor(rand() * maxInWindow);
+      subsPerWindow.push(subsInWindow);
+      remainingSubs -= subsInWindow;
     }
   }
 
-  // La ventana 0-45 es rara; un cambio al descanso puede ocurrir entre 45-60;
-  // y los cambios de gestión se concentran entre 60-90.
-  const minutes: number[] = [];
-  const pushRandomMinutes = (count: number, from: number, to: number) => {
-    for (let i = 0; i < count; i++) {
-      minutes.push(from + Math.floor(rand() * (to - from + 1)));
+  // Asignar minutos a cada ventana
+  const windowMinutes: number[] = [];
+  const usedMinutes = new Set<number>();
+  
+  for (let i = 0; i < numWindows; i++) {
+    let minute: number;
+    
+    if (i === 0) {
+      // Primera ventana: 45-70 minutos
+      minute = 45 + Math.floor(rand() * 26);
+    } else if (i === 1) {
+      // Segunda ventana: después de la primera ventana + 5-15 minutos
+      const minMinute = windowMinutes[0] + 5;
+      minute = Math.min(minMinute + Math.floor(rand() * 16), 85);
+    } else {
+      // Tercera ventana: después de la segunda ventana + 5-10 minutos
+      const minMinute = windowMinutes[1] + 5;
+      minute = Math.min(minMinute + Math.floor(rand() * 11), 88);
     }
-  };
-  pushRandomMinutes(firstCount, 1, 45);
-  pushRandomMinutes(halfCount, 45, 60);
-  pushRandomMinutes(lateCount, 61, 90);
-  minutes.sort((a, b) => a - b);
+    
+    windowMinutes.push(minute);
+    usedMinutes.add(minute);
+  }
 
-  const outPool = [...availableOut].sort((a, b) => a.rating - b.rating);
+  // Generar los cambios agrupados por ventana
+  const subs: SubstitutionEvent[] = [];
   const usedOut = new Set<string>();
   const usedIn = new Set<string>();
-  const subs: SubstitutionEvent[] = [];
-
-  for (const minute of minutes) {
-    const playerOut = outPool.find((p) => !usedOut.has(p.id));
-    if (!playerOut) break;
-
-    const candidatesIn = availableIn.filter((p) => !usedIn.has(p.id));
-    if (candidatesIn.length === 0) break;
-
-    const samePos = candidatesIn.filter((p) =>
-      p.positions.some((pos) => playerOut.positions.includes(pos)),
-    );
-    const pool = samePos.length > 0 ? samePos : candidatesIn;
-    const playerIn = pool.slice().sort((a, b) => b.rating - a.rating)[0];
-
-    usedOut.add(playerOut.id);
-    usedIn.add(playerIn.id);
-    subs.push({
-      minute,
-      team,
-      playerOutId: playerOut.id,
-      playerOutName: playerOut.name,
-      playerInId: playerIn.id,
-      playerInName: playerIn.name,
-    });
+  
+  // Tired/weaker starters tend to come off first.
+  const outPool = [...availableOut].sort((a, b) => a.rating - b.rating);
+  
+  for (let windowIdx = 0; windowIdx < numWindows; windowIdx++) {
+    const minute = windowMinutes[windowIdx];
+    const numSubsInWindow = subsPerWindow[windowIdx];
+    
+    for (let i = 0; i < numSubsInWindow; i++) {
+      if (!addSub(subs, minute, team, outPool, availableIn, usedOut, usedIn)) break;
+    }
   }
 
-  return subs;
+  return subs.sort((a, b) => a.minute - b.minute);
+}
+
+function addSub(
+  subs: SubstitutionEvent[],
+  minute: number,
+  team: "home" | "away",
+  outPool: Player[],
+  availableIn: Player[],
+  usedOut: Set<string>,
+  usedIn: Set<string>,
+): boolean {
+  const playerOut = outPool.find((p) => !usedOut.has(p.id));
+  if (!playerOut) return false;
+  
+  const candidatesIn = availableIn.filter((p) => !usedIn.has(p.id));
+  if (candidatesIn.length === 0) return false;
+  
+  const samePos = candidatesIn.filter((p) =>
+    p.positions.some((pos) => playerOut.positions.includes(pos)),
+  );
+  const pool = samePos.length > 0 ? samePos : candidatesIn;
+  const playerIn = pool.slice().sort((a, b) => b.rating - a.rating)[0];
+
+  usedOut.add(playerOut.id);
+  usedIn.add(playerIn.id);
+  subs.push({
+    minute,
+    team,
+    playerOutId: playerOut.id,
+    playerOutName: playerOut.name,
+    playerInId: playerIn.id,
+    playerInName: playerIn.name,
+  });
+  
+  return true;
 }
 /**
  * Returns the players actually on the pitch at a given minute, taking into
