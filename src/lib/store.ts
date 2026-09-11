@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { persistCurrentSave } from "./savedGames";
+import { persistCurrentSave, getCurrentSaveId } from "./savedGames";
+import { safeSetItem, safeRemoveItem } from "./safeStorage";
 import { saveTransferSystem } from "./transfers/Persistence";
 import {
   LeagueId,
@@ -526,9 +527,15 @@ export function loadSave(): SaveGame | null {
 
     localStorage.removeItem("fcsim:save:v1");
 
-    const raw = localStorage.getItem(STORAGE_KEY);
+    // La partida activa vive en su propia ranura (`...:{id}`); la clave
+    // global sólo se usa cuando todavía no hay ninguna partida activa.
+    const activeId = getCurrentSaveId();
+    const raw =
+      (activeId ? localStorage.getItem(`${STORAGE_KEY}:${activeId}`) : null) ??
+      localStorage.getItem(STORAGE_KEY);
 
     if (!raw) return null;
+
 
     const parsed = JSON.parse(raw) as LegacySave;
 
@@ -727,43 +734,39 @@ export function slimSave(s: SaveGame): SaveGame {
   }
 }
 
+/**
+ * Guarda la carrera.
+ *
+ * Cuando hay una partida activa, la copia buena es su ranura propia
+ * (`fcsim:save:v2:{id}`): escribir además la clave global duplicaba el
+ * tamaño de la partida en `localStorage` y era la causa principal de que se
+ * desbordara la cuota. Si el navegador se queda sin espacio NO se borra todo
+ * (eso arrasaba con el mercado y las demás partidas): se liberan cachés
+ * reconstruibles y, como mucho, no se guarda esta vez. Nunca lanza.
+ */
 export function saveSave(s: SaveGame) {
   if (typeof window === "undefined") return;
 
   const slim = slimSave(s);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
-  } catch (e) {
-    console.warn("saveSave: almacenamiento lleno", (e as Error)?.message);
-    // Limpiar localStorage y reintentar
-    console.log("Limpiando localStorage y reintentando...");
-    localStorage.clear();
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
-      console.log("Save guardado después de limpiar localStorage");
-    } catch (retryError) {
-      console.error("saveSave: falló incluso después de limpiar localStorage", retryError);
-      throw retryError;
-    }
+  const activeId = getCurrentSaveId();
+
+  if (activeId) {
+    // La ranura por partida es la fuente de verdad; la clave global antigua
+    // sobra y sólo ocupa espacio.
+    safeRemoveItem(STORAGE_KEY);
+  } else {
+    safeSetItem(STORAGE_KEY, JSON.stringify(slim));
   }
-  
-  // Guardar también el sistema de transferencias
+
   try {
-    const { saveTransferSystem } = require('./transfers');
-    saveTransferSystem();
-  } catch (e) {
-    console.warn("saveSave: no se pudo guardar el sistema de transferencias", e);
-  }
-  try {
-    persistCurrentSave(slim);
+    persistCurrentSave(slim, { immediate: true });
   } catch (e) {
     console.error("persistCurrentSave failed", e);
   }
 
-  // El mercado tiene su propia instantánea por partida. Guardarlo aquí hace
-  // que un guardado manual/automático de la carrera también persista el
-  // histórico y el estado interno del mercado, sin depender de que el reloj
-  // del mercado haya ejecutado su propio guardado justo antes.
+  // El mercado tiene su propia instantánea por partida y por ventana de
+  // fichajes. Guardarlo aquí hace que un guardado de la carrera también
+  // persista rumores, negociaciones e historial de traspasos.
   try {
     saveTransferSystem();
   } catch (e) {

@@ -6,6 +6,7 @@ import {
   setClubOverrides,
   usePlayersStore,
 } from "@/store/playersStore";
+import { safeSetItem } from "./safeStorage";
 
 const STORAGE_KEY = "fcsim:save:v2";
 const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
@@ -63,14 +64,14 @@ function saveKeyFor(id: string) {
  * into the active save slot. Called on every saveSave() during gameplay so
  * that the per-id save stays in sync with the actual progress.
  */
-export function persistCurrentSave(save: SaveGame) {
+export function persistCurrentSave(save: SaveGame, options?: { immediate?: boolean }) {
   if (typeof window === "undefined") return;
   const id = getCurrentSaveId();
   if (!id) return;
 
   const flush = (targetId: string, targetSave: SaveGame) => {
     const payload = { ...targetSave, playersStoreState: snapshotPlayersStore() };
-    localStorage.setItem(saveKeyFor(targetId), JSON.stringify(payload));
+    safeSetItem(saveKeyFor(targetId), JSON.stringify(payload));
     lastPersistAt = Date.now();
     const saves = loadAllSaves();
     const meta = saves.find((s) => s.id === targetId);
@@ -81,10 +82,16 @@ export function persistCurrentSave(save: SaveGame) {
   };
 
   try {
-    if (Date.now() - lastPersistAt >= SAVE_PERSIST_THROTTLE_MS) {
+    if (options?.immediate || Date.now() - lastPersistAt >= SAVE_PERSIST_THROTTLE_MS) {
+      if (pendingPersistTimer) {
+        clearTimeout(pendingPersistTimer);
+        pendingPersistTimer = null;
+        pendingPersist = null;
+      }
       flush(id, save);
       return;
     }
+
 
     pendingPersist = { id, save };
     if (!pendingPersistTimer) {
@@ -148,20 +155,10 @@ export function addSaveToMultiple(save: SaveGame) {
   setCurrentSaveId(meta.id);
 
   const payload = { ...save, playersStoreState: snapshotPlayersStore() };
-  try {
-    localStorage.setItem(saveKeyFor(meta.id), JSON.stringify(payload));
-  } catch (e) {
-    console.warn("addSaveToMultiple: almacenamiento lleno", (e as Error)?.message);
-    // Limpiar localStorage y reintentar
-    console.log("Limpiando localStorage y reintentando...");
-    localStorage.clear();
-    try {
-      localStorage.setItem(saveKeyFor(meta.id), JSON.stringify(payload));
-      console.log("Save guardado después de limpiar localStorage");
-    } catch (retryError) {
-      console.error("addSaveToMultiple: falló incluso después de limpiar localStorage", retryError);
-      throw retryError;
-    }
+  // Nunca `localStorage.clear()`: eso borraba las demás partidas y el mercado
+  // (rumores y traspasos). `safeSetItem` libera sólo cachés reconstruibles.
+  if (!safeSetItem(saveKeyFor(meta.id), JSON.stringify(payload))) {
+    console.warn("addSaveToMultiple: no hay espacio para guardar la partida nueva");
   }
 
   // Añadir a la lista de metadatos

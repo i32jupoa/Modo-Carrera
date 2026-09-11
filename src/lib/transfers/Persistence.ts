@@ -7,11 +7,13 @@
  * Todo lo demás (índices, perfiles de club, valoraciones) se recalcula al
  * cargar, porque depende únicamente de los datos base y de semillas estables.
  *
- * IMPORTANTE: el mercado se guarda POR PARTIDA, igual que el resto del
- * `SaveGame` (`fcsim:save:v2:{id}`). Antes vivía en una única clave global
- * compartida por todas las partidas, así que cargar una partida distinta a
- * la última jugada podía aplicarle el mercado de otra, o disparar un reset
- * completo que borraba los fichajes de la IA ya cerrados. Ver `getCurrentSaveId`.
+ * IMPORTANTE: el mercado se guarda POR PARTIDA (`fcsim:market:v1:{id}`) y,
+ * dentro de cada partida, el historial y los rumores de las ventanas ya
+ * cerradas se archivan en una clave propia por ventana de fichajes
+ * (`fcsim:market:v1:{id}:w:{temporada}:{ventana}`). Así el mercado de cada
+ * año/ventana queda almacenado por separado: no se reescribe en cada
+ * guardado (menos presión sobre la cuota del navegador) y no se pierde al
+ * simular partidos.
  */
 
 import { restoreFinances, snapshotFinances } from "./BudgetManager";
@@ -32,6 +34,7 @@ import {
   type PursuitMemoryEntry,
 } from "./TransferEngine";
 import { getCurrentSaveId } from "@/lib/savedGames";
+import { safeSetItem, MARKET_ARCHIVE_MARKER } from "@/lib/safeStorage";
 import { MARKET_STATE_VERSION, MARKET_STORAGE_KEY_PREFIX } from "./constants";
 import type { ClubFinances, Rumor, TransferRecord } from "./types";
 
@@ -41,22 +44,27 @@ import type { ClubFinances, Rumor, TransferRecord } from "./types";
 // que ninguna otra partida pueda heredarla por accidente.
 const LEGACY_GLOBAL_STORAGE_KEY = MARKET_STORAGE_KEY_PREFIX;
 const STORAGE_KEY_PREFIX = MARKET_STORAGE_KEY_PREFIX;
-// v3 añade `pursuits`: la memoria de rechazos recientes por club-jugador.
-// Sin ella, cargar una partida "olvidaba" a quién había rechazado ya un
-// club y el mercado volvía a ofertar por los mismos jugadores al instante.
-// (Ver MARKET_STATE_VERSION en `constants.ts`: es la única fuente de verdad
-// de la versión, para que este archivo no pueda desincronizarse de ella.)
 const VERSION = MARKET_STATE_VERSION;
 
 /**
  * Clave de almacenamiento del mercado para la partida actualmente activa.
- * Si por algún motivo no hay partida activa (no debería ocurrir mientras el
- * reloj del mercado está en marcha), se usa la clave heredada como último
- * recurso para no perder datos, pero nunca se comparte entre partidas con id.
  */
 function storageKeyForActiveSave(): string {
   const saveId = getCurrentSaveId();
   return saveId ? `${STORAGE_KEY_PREFIX}:${saveId}` : LEGACY_GLOBAL_STORAGE_KEY;
+}
+
+/** Clave del archivo de una ventana de fichajes concreta. */
+function archiveKey(baseKey: string, windowKey: string): string {
+  return `${baseKey}${MARKET_ARCHIVE_MARKER}${windowKey}`;
+}
+
+/** Mercado archivado de una ventana ya cerrada. */
+interface WindowArchive {
+  version: number;
+  windowKey: string;
+  history: TransferRecord[];
+  rumors: Rumor[];
 }
 
 /** Partida de mercado serializada. */
@@ -72,6 +80,8 @@ export interface TransferSaveData {
   userDeals: UserDeal[];
   /** Últimos rechazos por pareja club-jugador (evita ofertas repetidas). */
   pursuits: PursuitMemoryEntry[];
+  /** Ventanas de fichajes cuyo mercado vive en su propia clave. */
+  archivedWindows?: string[];
 }
 
 /** Construye la instantánea completa del sistema de mercado. */
@@ -109,15 +119,64 @@ function hasStorage(): boolean {
   return typeof window !== "undefined" && !!window.localStorage;
 }
 
-/** Guarda el mercado en `localStorage`, en la ranura de la partida activa. Nunca lanza. */
+/** Tamaño ya archivado de cada ventana, para no reescribirla en cada guardado. */
+const archivedSizes = new Map<string, number>();
+
+function groupByWindow<T extends { date: string }>(items: readonly T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const key = windowKeyForDate(item.date);
+    const list = groups.get(key);
+    if (list) list.push(item);
+    else groups.set(key, [item]);
+  }
+  return groups;
+}
+
+/**
+ * Guarda el mercado en `localStorage`, en la ranura de la partida activa.
+ *
+ * El historial y los rumores de ventanas ya cerradas se escriben una sola vez
+ * en su propia clave por año/ventana; la clave principal sólo lleva la ventana
+ * en curso más el estado vivo (simulación, finanzas, negociaciones). Nunca lanza.
+ */
 export function saveTransferSystem(): boolean {
   if (!hasStorage()) return false;
   try {
-    window.localStorage.setItem(
-      storageKeyForActiveSave(),
-      JSON.stringify(snapshotTransferSystem()),
-    );
-    return true;
+    const snapshot = snapshotTransferSystem();
+    const baseKey = storageKeyForActiveSave();
+    const currentWindow = snapshot.simulation?.windowKey ?? null;
+
+    const historyByWindow = groupByWindow(snapshot.history);
+    const rumorsByWindow = groupByWindow(snapshot.rumors);
+    const windows = new Set<string>([...historyByWindow.keys(), ...rumorsByWindow.keys()]);
+
+    const archivedWindows: string[] = [];
+    for (const windowKey of windows) {
+      if (windowKey === currentWindow) continue;
+      const history = historyByWindow.get(windowKey) ?? [];
+      const rumors = rumorsByWindow.get(windowKey) ?? [];
+      const key = archiveKey(baseKey, windowKey);
+      const size = history.length + rumors.length;
+      const alreadyStored =
+        archivedSizes.get(key) === size && window.localStorage.getItem(key) !== null;
+      if (!alreadyStored) {
+        const archive: WindowArchive = { version: VERSION, windowKey, history, rumors };
+        if (safeSetItem(key, JSON.stringify(archive))) archivedSizes.set(key, size);
+        else continue; // sin espacio: esa ventana se queda en la clave principal
+      }
+      archivedWindows.push(windowKey);
+    }
+
+    const archivedSet = new Set(archivedWindows);
+    const core: TransferSaveData = {
+      ...snapshot,
+      history: snapshot.history.filter((r) => !archivedSet.has(windowKeyForDate(r.date))),
+      rumors: snapshot.rumors.filter((r) => !archivedSet.has(windowKeyForDate(r.date))),
+      archivedWindows,
+    };
+
+    return safeSetItem(baseKey, JSON.stringify(core));
   } catch (error) {
     console.warn("[transfers] no se pudo guardar el mercado:", (error as Error)?.message);
     return false;
@@ -125,12 +184,8 @@ export function saveTransferSystem(): boolean {
 }
 
 /**
- * Lee el mercado guardado de la partida activa, si existe y es válido.
- *
- * Migración de compatibilidad: si esta partida todavía no tiene su propia
- * ranura pero existe la clave global antigua (de antes de que el mercado
- * fuera por partida), se adopta una única vez para esa partida y se borra la
- * clave global, de forma que ninguna otra partida pueda heredarla después.
+ * Lee el mercado guardado de la partida activa, si existe y es válido,
+ * reuniendo la ventana en curso con todas las ventanas archivadas.
  */
 export function loadTransferSave(): TransferSaveData | null {
   if (!hasStorage()) return null;
@@ -149,17 +204,57 @@ export function loadTransferSave(): TransferSaveData | null {
 
     if (!raw) return null;
     const parsed = JSON.parse(raw) as TransferSaveData;
-    return parsed?.version === VERSION ? parsed : null;
+    if (parsed?.version !== VERSION) return null;
+
+    const history: TransferRecord[] = [...(parsed.history ?? [])];
+    const rumors: Rumor[] = [...(parsed.rumors ?? [])];
+
+    for (const windowKey of parsed.archivedWindows ?? []) {
+      const archiveRaw = window.localStorage.getItem(archiveKey(key, windowKey));
+      if (!archiveRaw) continue;
+      try {
+        const archive = JSON.parse(archiveRaw) as WindowArchive;
+        if (archive?.version !== VERSION) continue;
+        history.push(...(archive.history ?? []));
+        rumors.push(...(archive.rumors ?? []));
+        archivedSizes.set(
+          archiveKey(key, windowKey),
+          (archive.history?.length ?? 0) + (archive.rumors?.length ?? 0),
+        );
+      } catch {
+        /* archivo corrupto: se ignora esa ventana */
+      }
+    }
+
+    const byDate = (a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date);
+    history.sort(byDate);
+    rumors.sort(byDate);
+
+    return { ...parsed, history, rumors };
   } catch {
     return null;
   }
 }
 
-/** Borra el mercado guardado de la partida activa. */
+function removeKeysWithPrefix(prefix: string): void {
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const key = window.localStorage.key(i);
+    if (key && (key === prefix || key.startsWith(prefix + MARKET_ARCHIVE_MARKER))) {
+      keysToRemove.push(key);
+    }
+  }
+  for (const key of keysToRemove) {
+    window.localStorage.removeItem(key);
+    archivedSizes.delete(key);
+  }
+}
+
+/** Borra el mercado guardado de la partida activa (incluidos sus archivos). */
 export function clearTransferSave(): void {
   if (!hasStorage()) return;
   try {
-    window.localStorage.removeItem(storageKeyForActiveSave());
+    removeKeysWithPrefix(storageKeyForActiveSave());
   } catch {
     /* sin espacio o modo privado: no pasa nada */
   }
@@ -169,7 +264,7 @@ export function clearTransferSave(): void {
 export function clearTransferSaveFor(saveId: string): void {
   if (!hasStorage() || !saveId) return;
   try {
-    window.localStorage.removeItem(`${STORAGE_KEY_PREFIX}:${saveId}`);
+    removeKeysWithPrefix(`${STORAGE_KEY_PREFIX}:${saveId}`);
   } catch {
     /* sin espacio o modo privado: no pasa nada */
   }
@@ -179,19 +274,14 @@ export function clearTransferSaveFor(saveId: string): void {
 export function clearAllTransferSaves(): void {
   if (!hasStorage()) return;
   try {
-    // Borrar la clave heredada global
     window.localStorage.removeItem(LEGACY_GLOBAL_STORAGE_KEY);
-    // Borrar todas las claves específicas de partida
     const keysToRemove: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const key = window.localStorage.key(i);
-      if (key && key.startsWith(STORAGE_KEY_PREFIX + ":")) {
-        keysToRemove.push(key);
-      }
+      if (key && key.startsWith(STORAGE_KEY_PREFIX + ":")) keysToRemove.push(key);
     }
-    for (const key of keysToRemove) {
-      window.localStorage.removeItem(key);
-    }
+    for (const key of keysToRemove) window.localStorage.removeItem(key);
+    archivedSizes.clear();
   } catch {
     /* sin espacio o modo privado: no pasa nada */
   }
