@@ -648,7 +648,15 @@ function slimResult(result: any, keepDetail: boolean): any {
   // highlights, sustituciones, XI y formación. Se siguen descartando las
   // estadísticas pesadas y las notas/rating completas para no volver a llenar
   // localStorage.
-  const { stats, extraTime, ...rest } = result;
+  // `homeLineup`/`awayLineup` guardan los 22 jugadores completos (nombre,
+  // rating, valor de mercado, carta...) de cada partido. Pesan mucho más que
+  // `stats`, y antes NO se descartaban aquí pese a lo que decía este
+  // comentario: se acumulaban para siempre, en todos los partidos de todas
+  // las ligas, y eran la causa real de que la cuota de `localStorage` se
+  // agotara ya en la jornada 2. La UI (MatchStatsModal) ya sabe reconstruir
+  // una alineación aproximada a partir de `ratings` cuando faltan estos
+  // campos, así que es seguro quitarlos.
+  const { stats, extraTime, homeLineup, awayLineup, ...rest } = result;
 
   const compactHighlights = Array.isArray(rest.highlights)
     ? rest.highlights.map((h: any) => ({
