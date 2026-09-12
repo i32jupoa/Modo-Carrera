@@ -79,9 +79,12 @@ function Index() {
     setLoaderTeamId(id);
     setLoading(true);
     try {
-      // Primero borrar cualquier dato persistente del mercado de localStorage
-      // ANTES de limpiar el saveId, para borrar TODOS los mercados guardados
-      clearAllTransferSaves();
+      // Primero borrar cualquier dato persistente del mercado (vive en
+      // IndexedDB, ver Persistence.ts) ANTES de limpiar el saveId, para
+      // borrar TODOS los mercados guardados. Es async pero no bloquea: opera
+      // sobre ids de partidas que ya no se van a usar, así que no hay
+      // conflicto con la partida nueva que se crea a continuación.
+      void clearAllTransferSaves();
 
       // Limpiar el estado persistente del playersStore para evitar estado compartido
       localStorage.removeItem("fcsim:players:v1");

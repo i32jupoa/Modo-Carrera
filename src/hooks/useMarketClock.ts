@@ -68,13 +68,19 @@ export function useMarketClock(): void {
       // reproducen exactamente el mismo mercado (mismos fichajes, mismas
       // fechas, mismos rivales) sólo por compartir fecha de inicio.
       setMarketSeedSalt(saveId);
-      loadOrInitTransferSystem(currentDate);
-      // El mercado arranca desde el mundo real de la partida, no desde el JSON.
-      attachWorldBridge();
-      hydrateWorld();
-      saveTransferSystem();
+      // Marcamos esta partida como "en curso de arranque" ya mismo (antes de
+      // que termine de leer IndexedDB) para que un segundo efecto disparado
+      // mientras tanto no vuelva a lanzar la carga por duplicado.
       bootedForSave.current = saveId;
       bootedFor.current = currentDate;
+
+      (async () => {
+        await loadOrInitTransferSystem(currentDate);
+        // El mercado arranca desde el mundo real de la partida, no desde el JSON.
+        attachWorldBridge();
+        hydrateWorld();
+        void saveTransferSystem();
+      })();
       return;
     }
 

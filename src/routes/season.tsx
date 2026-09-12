@@ -2,6 +2,8 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 
 import { useState, useEffect } from "react";
 
+import { toast } from "sonner";
+
 import {
   ALL_LEAGUES,
   loadSave,
@@ -282,12 +284,15 @@ function SeasonPage() {
 
       console.timeEnd("simulateRest");
 
+      // El mercado (lo que más pesaba, con diferencia) ya no vive en
+      // localStorage, así que esto ya casi nunca debería fallar por cuota.
+      // Si aun así falla (disco realmente lleno, modo privado muy
+      // restrictivo...), avisamos sin bloquear: el resultado ya está
+      // aplicado en memoria y el jugador puede seguir jugando.
       if (!saveSaveWithRetry(next)) {
-        alert(
-          "No se pudo guardar la partida (almacenamiento lleno). Libera espacio e inténtalo de nuevo.",
+        toast.error(
+          "No se pudo guardar en el dispositivo (almacenamiento lleno). La jornada se ha jugado igualmente, pero conviene liberar espacio pronto.",
         );
-        setIsSimulating(false);
-        return;
       }
 
       setSave(next);
@@ -327,11 +332,9 @@ function SeasonPage() {
       }
 
       if (!saveSaveWithRetry(cur)) {
-        alert(
-          "No se pudo guardar la partida (almacenamiento lleno). Libera espacio e inténtalo de nuevo.",
+        toast.error(
+          "No se pudo guardar en el dispositivo (almacenamiento lleno). La temporada se ha simulado igualmente, pero conviene liberar espacio pronto.",
         );
-        setIsSimulating(false);
-        return;
       }
 
       setSave(cur);

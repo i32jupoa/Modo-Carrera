@@ -6,8 +6,15 @@
  * sobre todo, el mercado guardado (rumores, negociaciones e historial de
  * traspasos), que es exactamente lo que el jugador veía desaparecer tras
  * simular un partido. Aquí nunca se borra todo: se liberan primero las
- * cachés reconstruibles y, si hace falta, los archivos de mercado más
- * antiguos, y jamás se lanza una excepción hacia la UI.
+ * cachés reconstruibles y, si hace falta, restos de mercado que pudieran
+ * quedar sin migrar, y jamás se lanza una excepción hacia la UI.
+ *
+ * IMPORTANTE: el mercado (con diferencia lo que más pesaba) ya NO vive aquí:
+ * vive en IndexedDB (ver `src/lib/transfers/marketIdb.ts` y `Persistence.ts`),
+ * que no tiene la cuota tan ajustada de `localStorage`. Lo que queda en
+ * `localStorage` (plantillas, guardado de la partida, metadatos) es mucho
+ * más pequeño, así que esta cuota debería dejar de agotarse en la práctica;
+ * este archivo se mantiene igualmente como red de seguridad.
  */
 
 const PLAYERS_CACHE_KEY = "fcsim:players:v1";
@@ -56,10 +63,15 @@ function pruneCandidates(protectedKey: string): string[] {
   const archives = allKeys().filter(
     (k) => k.startsWith(MARKET_PREFIX) && k.includes(MARKET_ARCHIVE_MARKER),
   );
-  const windowOf = (k: string) => k.slice(k.indexOf(MARKET_ARCHIVE_MARKER) + MARKET_ARCHIVE_MARKER.length);
+  const windowOf = (k: string) =>
+    k.slice(k.indexOf(MARKET_ARCHIVE_MARKER) + MARKET_ARCHIVE_MARKER.length);
   const byWindowAsc = (a: string, b: string) => windowOf(a).localeCompare(windowOf(b));
-  const others = archives.filter((k) => !activeId || !k.includes(`:${activeId}${MARKET_ARCHIVE_MARKER}`));
-  const mine = archives.filter((k) => activeId && k.includes(`:${activeId}${MARKET_ARCHIVE_MARKER}`));
+  const others = archives.filter(
+    (k) => !activeId || !k.includes(`:${activeId}${MARKET_ARCHIVE_MARKER}`),
+  );
+  const mine = archives.filter(
+    (k) => activeId && k.includes(`:${activeId}${MARKET_ARCHIVE_MARKER}`),
+  );
 
   return [
     PLAYERS_CACHE_KEY,

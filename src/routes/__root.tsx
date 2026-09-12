@@ -19,6 +19,7 @@ import { MarketClock } from "@/hooks/useMarketClock";
 import { MarketNotifier } from "@/components/MarketNotifier";
 import { useEffect } from "react";
 import { cleanupOrphanedStorage } from "@/lib/safeStorage";
+import { migrateAllMarketDataFromLocalStorage } from "@/lib/transfers/Persistence";
 
 function NotFoundComponent() {
   return (
@@ -151,6 +152,12 @@ function AppShell() {
   // cuota de almacenamiento en mitad de una jornada.
   useEffect(() => {
     cleanupOrphanedStorage();
+    // Traslada a IndexedDB cualquier mercado (rumores, negociaciones,
+    // historial de traspasos) que todavía viviera en `localStorage` de una
+    // versión anterior del juego. Es justo lo que llenaba la cuota y
+    // provocaba el aviso de "almacenamiento lleno" al volver de un partido;
+    // se ejecuta una única vez por partida guardada y no bloquea nada.
+    void migrateAllMarketDataFromLocalStorage();
   }, []);
 
   return (

@@ -352,15 +352,15 @@ function MatchPage() {
       setSave(next);
 
       if (!persisted) {
-        // No pudimos escribir la partida en el dispositivo (p. ej. sin
-        // espacio de almacenamiento). Avisamos claramente en vez de navegar
-        // como si nada: si navegáramos igualmente, la central volvería a
-        // leer la versión antigua guardada y mostraría el mismo partido que
-        // se acaba de jugar como "siguiente".
+        // El mercado (lo que más pesaba, con diferencia) ya no vive en
+        // localStorage, así que esto ya casi nunca debería fallar por cuota.
+        // Si aun así falla (disco realmente lleno, modo privado muy
+        // restrictivo...) avisamos sin bloquear: el resultado ya está
+        // aplicado en memoria (`setSave(next)` de arriba) y bloquear aquí
+        // sólo dejaría al jugador atascado sin poder seguir la partida.
         toast.error(
-          "No se pudo guardar la partida (almacenamiento lleno). Libera espacio e inténtalo de nuevo antes de volver a la temporada.",
+          "No se pudo guardar en el dispositivo (almacenamiento lleno). El partido se ha jugado igualmente, pero conviene liberar espacio pronto.",
         );
-        return;
       }
 
       navigate({ to: "/season" });

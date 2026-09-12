@@ -1,19 +1,29 @@
 /**
  * Persistencia del mercado.
  *
- * Guarda en `localStorage` sólo lo que no se puede reconstruir de forma
- * determinista: el estado de la simulación, las finanzas de los clubes, los
- * cambios sobre las fichas de los jugadores, el historial y los rumores.
- * Todo lo demás (índices, perfiles de club, valoraciones) se recalcula al
- * cargar, porque depende únicamente de los datos base y de semillas estables.
+ * Guarda el estado de la simulación, las finanzas de los clubes, los cambios
+ * sobre las fichas de los jugadores, el historial y los rumores — todo lo
+ * que no se puede reconstruir de forma determinista. Todo lo demás (índices,
+ * perfiles de club, valoraciones) se recalcula al cargar, porque depende
+ * únicamente de los datos base y de semillas estables.
  *
  * IMPORTANTE: el mercado se guarda POR PARTIDA (`fcsim:market:v1:{id}`) y,
  * dentro de cada partida, el historial y los rumores de las ventanas ya
  * cerradas se archivan en una clave propia por ventana de fichajes
  * (`fcsim:market:v1:{id}:w:{temporada}:{ventana}`). Así el mercado de cada
  * año/ventana queda almacenado por separado: no se reescribe en cada
- * guardado (menos presión sobre la cuota del navegador) y no se pierde al
- * simular partidos.
+ * guardado y no se pierde al simular partidos.
+ *
+ * DÓNDE VIVE: en IndexedDB (`marketIdb.ts`), no en `localStorage`. El
+ * mercado es, con diferencia, lo que más pesa de todo lo que guarda la
+ * partida (rumores + historial + negociaciones de una carrera larga pueden
+ * ocupar varios MB en una sola clave) y `localStorage` sólo da entre 5 y
+ * 10 MB por sitio en la mayoría de navegadores — esa única clave podía
+ * agotar la cuota ella sola. IndexedDB usa la cuota del disco, muchísimo más
+ * amplia, así que aquí ya no hay techo real que golpear. Todas las funciones
+ * de este archivo son asíncronas por eso, pero se llaman siempre desde
+ * puntos que ya toleran esperar (el `useEffect` de `useMarketClock.ts`),
+ * nunca desde el arranque síncrono de la app.
  */
 
 import { restoreFinances, snapshotFinances } from "./BudgetManager";
@@ -38,7 +48,7 @@ import {
   type PursuitMemoryEntry,
 } from "./TransferEngine";
 import { getCurrentSaveId } from "@/lib/savedGames";
-import { safeSetItem, MARKET_ARCHIVE_MARKER } from "@/lib/safeStorage";
+import { idbGetItem, idbListKeys, idbRemoveItem, idbSetItem } from "./marketIdb";
 import { MARKET_STATE_VERSION, MARKET_STORAGE_KEY_PREFIX } from "./constants";
 import type { ClubFinances, Rumor, TransferRecord } from "./types";
 
@@ -49,6 +59,9 @@ import type { ClubFinances, Rumor, TransferRecord } from "./types";
 const LEGACY_GLOBAL_STORAGE_KEY = MARKET_STORAGE_KEY_PREFIX;
 const STORAGE_KEY_PREFIX = MARKET_STORAGE_KEY_PREFIX;
 const VERSION = MARKET_STATE_VERSION;
+
+/** Marca de los archivos de mercado ya cerrados: `...:{saveId}:w:{ventana}`. */
+export const MARKET_ARCHIVE_MARKER = ":w:";
 
 /**
  * Clave de almacenamiento del mercado para la partida actualmente activa.
@@ -118,9 +131,71 @@ export function applyTransferSnapshot(data: TransferSaveData): boolean {
   return true;
 }
 
-/** ¿Estamos en un entorno con `localStorage`? */
-function hasStorage(): boolean {
+/** ¿Estamos en un entorno con `localStorage`? (sólo para la migración). */
+function hasLocalStorage(): boolean {
   return typeof window !== "undefined" && !!window.localStorage;
+}
+
+/**
+ * Migración única: si esta clave (o alguno de sus archivos por ventana)
+ * todavía vive en `localStorage` de una versión anterior del juego, se
+ * copia a IndexedDB y se borra de `localStorage` para liberar esa cuota tan
+ * pequeña. Idempotente y silenciosa: si no hay nada que migrar no hace nada.
+ */
+async function migrateKeyFromLocalStorage(baseKey: string): Promise<void> {
+  if (!hasLocalStorage()) return;
+  try {
+    const prefix = baseKey; // cubre baseKey y baseKey + MARKET_ARCHIVE_MARKER + ...
+    const legacyKeys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && (k === prefix || k.startsWith(prefix + MARKET_ARCHIVE_MARKER))) legacyKeys.push(k);
+    }
+    for (const key of legacyKeys) {
+      const value = window.localStorage.getItem(key);
+      if (value == null) continue;
+      const alreadyInIdb = await idbGetItem(key);
+      if (alreadyInIdb == null) await idbSetItem(key, value);
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+        /* no crítico: se reintentará en el próximo arranque */
+      }
+    }
+  } catch {
+    /* si la migración falla no debe bloquear el arranque del mercado */
+  }
+}
+
+/**
+ * Barrido único de TODO lo que el mercado dejó en `localStorage` en
+ * versiones anteriores del juego, para todas las partidas guardadas y no
+ * sólo la activa. Se llama una vez al arrancar la app (ver `__root.tsx`)
+ * para que ninguna partida se quede esperando a abrirse para liberar esa
+ * cuota.
+ */
+export async function migrateAllMarketDataFromLocalStorage(): Promise<void> {
+  if (!hasLocalStorage()) return;
+  try {
+    const legacyKeys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(STORAGE_KEY_PREFIX)) legacyKeys.push(k);
+    }
+    for (const key of legacyKeys) {
+      const value = window.localStorage.getItem(key);
+      if (value == null) continue;
+      const alreadyInIdb = await idbGetItem(key);
+      if (alreadyInIdb == null) await idbSetItem(key, value);
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+        /* no crítico */
+      }
+    }
+  } catch (e) {
+    console.warn("[transfers] no se pudo migrar el mercado antiguo de localStorage:", e);
+  }
 }
 
 /** Tamaño ya archivado de cada ventana, para no reescribirla en cada guardado. */
@@ -128,16 +203,16 @@ const archivedSizes = new Map<string, number>();
 
 /**
  * Nº máximo de ventanas de mercado archivadas que se conservan por partida
- * (24 ventanas ≈ 12 temporadas de historial y rumores). Sin este tope, una
- * carrera muy larga acumulaba archivos para siempre y acababa agotando la
- * cuota de `localStorage` justo al volver de un partido. Superado el tope,
- * se descartan las ventanas más antiguas (las menos relevantes) tanto del
- * disco como de la memoria; el resto del mercado sigue intacto.
+ * (24 ventanas ≈ 12 temporadas de historial y rumores). Ahora que el mercado
+ * vive en IndexedDB ya no hay presión real de cuota, pero se mantiene un
+ * tope para no acumular para siempre: superarlo sólo alargaría cada arranque
+ * (hay que leer todas las ventanas archivadas) sin aportar nada, ya que el
+ * historial y los rumores tan antiguos casi no se consultan.
  */
 const MAX_ARCHIVED_WINDOWS = 24;
 
-/** Descarta del disco (y de la memoria) las ventanas archivadas más antiguas por encima del tope. */
-function enforceArchiveCap(baseKey: string, archivedWindows: string[]): string[] {
+/** Descarta las ventanas archivadas más antiguas por encima del tope. */
+async function enforceArchiveCap(baseKey: string, archivedWindows: string[]): Promise<string[]> {
   if (archivedWindows.length <= MAX_ARCHIVED_WINDOWS) return archivedWindows;
   const sorted = [...archivedWindows].sort();
   const overflow = sorted.length - MAX_ARCHIVED_WINDOWS;
@@ -146,11 +221,7 @@ function enforceArchiveCap(baseKey: string, archivedWindows: string[]): string[]
 
   for (const windowKey of toDrop) {
     const key = archiveKey(baseKey, windowKey);
-    try {
-      window.localStorage.removeItem(key);
-    } catch {
-      /* si no se puede borrar, seguimos: no es crítico */
-    }
+    await idbRemoveItem(key);
     archivedSizes.delete(key);
   }
   dropTransferWindows(new Set(toDrop), windowKeyForDate);
@@ -169,14 +240,13 @@ function groupByWindow<T extends { date: string }>(items: readonly T[]): Map<str
 }
 
 /**
- * Guarda el mercado en `localStorage`, en la ranura de la partida activa.
+ * Guarda el mercado en IndexedDB, en la ranura de la partida activa.
  *
  * El historial y los rumores de ventanas ya cerradas se escriben una sola vez
  * en su propia clave por año/ventana; la clave principal sólo lleva la ventana
  * en curso más el estado vivo (simulación, finanzas, negociaciones). Nunca lanza.
  */
-export function saveTransferSystem(): boolean {
-  if (!hasStorage()) return false;
+export async function saveTransferSystem(): Promise<boolean> {
   try {
     const snapshot = snapshotTransferSystem();
     const baseKey = storageKeyForActiveSave();
@@ -193,17 +263,16 @@ export function saveTransferSystem(): boolean {
       const rumors = rumorsByWindow.get(windowKey) ?? [];
       const key = archiveKey(baseKey, windowKey);
       const size = history.length + rumors.length;
-      const alreadyStored =
-        archivedSizes.get(key) === size && window.localStorage.getItem(key) !== null;
+      const alreadyStored = archivedSizes.get(key) === size && (await idbGetItem(key)) !== null;
       if (!alreadyStored) {
         const archive: WindowArchive = { version: VERSION, windowKey, history, rumors };
-        if (safeSetItem(key, JSON.stringify(archive))) archivedSizes.set(key, size);
+        if (await idbSetItem(key, JSON.stringify(archive))) archivedSizes.set(key, size);
         else continue; // sin espacio: esa ventana se queda en la clave principal
       }
       archivedWindows.push(windowKey);
     }
 
-    const cappedArchivedWindows = enforceArchiveCap(baseKey, archivedWindows);
+    const cappedArchivedWindows = await enforceArchiveCap(baseKey, archivedWindows);
     // Ojo: para filtrar lo que se queda en la clave principal usamos la lista
     // SIN recortar. Una ventana descartada por el tope (`enforceArchiveCap`)
     // ya no está en `cappedArchivedWindows`, pero tampoco debe reaparecer
@@ -216,7 +285,7 @@ export function saveTransferSystem(): boolean {
       archivedWindows: cappedArchivedWindows,
     };
 
-    return safeSetItem(baseKey, JSON.stringify(core));
+    return await idbSetItem(baseKey, JSON.stringify(core));
   } catch (error) {
     console.warn("[transfers] no se pudo guardar el mercado:", (error as Error)?.message);
     return false;
@@ -225,19 +294,24 @@ export function saveTransferSystem(): boolean {
 
 /**
  * Lee el mercado guardado de la partida activa, si existe y es válido,
- * reuniendo la ventana en curso con todas las ventanas archivadas.
+ * reuniendo la ventana en curso con todas las ventanas archivadas. Antes de
+ * leer, migra a IndexedDB cualquier resto que esta partida tuviera todavía
+ * en `localStorage` de una versión anterior del juego.
  */
-export function loadTransferSave(): TransferSaveData | null {
-  if (!hasStorage()) return null;
+export async function loadTransferSave(): Promise<TransferSaveData | null> {
   try {
     const key = storageKeyForActiveSave();
-    let raw = window.localStorage.getItem(key);
+    await migrateKeyFromLocalStorage(key);
+    if (key !== LEGACY_GLOBAL_STORAGE_KEY)
+      await migrateKeyFromLocalStorage(LEGACY_GLOBAL_STORAGE_KEY);
+
+    let raw = await idbGetItem(key);
 
     if (!raw && key !== LEGACY_GLOBAL_STORAGE_KEY) {
-      const legacy = window.localStorage.getItem(LEGACY_GLOBAL_STORAGE_KEY);
+      const legacy = await idbGetItem(LEGACY_GLOBAL_STORAGE_KEY);
       if (legacy) {
-        window.localStorage.setItem(key, legacy);
-        window.localStorage.removeItem(LEGACY_GLOBAL_STORAGE_KEY);
+        await idbSetItem(key, legacy);
+        await idbRemoveItem(LEGACY_GLOBAL_STORAGE_KEY);
         raw = legacy;
       }
     }
@@ -250,7 +324,7 @@ export function loadTransferSave(): TransferSaveData | null {
     const rumors: Rumor[] = [...(parsed.rumors ?? [])];
 
     for (const windowKey of parsed.archivedWindows ?? []) {
-      const archiveRaw = window.localStorage.getItem(archiveKey(key, windowKey));
+      const archiveRaw = await idbGetItem(archiveKey(key, windowKey));
       if (!archiveRaw) continue;
       try {
         const archive = JSON.parse(archiveRaw) as WindowArchive;
@@ -276,51 +350,60 @@ export function loadTransferSave(): TransferSaveData | null {
   }
 }
 
-function removeKeysWithPrefix(prefix: string): void {
-  const keysToRemove: string[] = [];
-  for (let i = 0; i < window.localStorage.length; i++) {
-    const key = window.localStorage.key(i);
-    if (key && (key === prefix || key.startsWith(prefix + MARKET_ARCHIVE_MARKER))) {
-      keysToRemove.push(key);
+async function removeKeysWithPrefix(prefix: string): Promise<void> {
+  const keys = await idbListKeys(prefix);
+  for (const key of keys) {
+    if (key === prefix || key.startsWith(prefix + MARKET_ARCHIVE_MARKER)) {
+      await idbRemoveItem(key);
+      archivedSizes.delete(key);
     }
   }
-  for (const key of keysToRemove) {
-    window.localStorage.removeItem(key);
-    archivedSizes.delete(key);
+  // Por si quedara algún resto sin migrar en localStorage de esta partida.
+  if (hasLocalStorage()) {
+    try {
+      const legacyKeys: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && (k === prefix || k.startsWith(prefix + MARKET_ARCHIVE_MARKER))) legacyKeys.push(k);
+      }
+      for (const k of legacyKeys) window.localStorage.removeItem(k);
+    } catch {
+      /* no crítico */
+    }
   }
 }
 
 /** Borra el mercado guardado de la partida activa (incluidos sus archivos). */
-export function clearTransferSave(): void {
-  if (!hasStorage()) return;
+export async function clearTransferSave(): Promise<void> {
   try {
-    removeKeysWithPrefix(storageKeyForActiveSave());
+    await removeKeysWithPrefix(storageKeyForActiveSave());
   } catch {
     /* sin espacio o modo privado: no pasa nada */
   }
 }
 
 /** Borra el mercado guardado de una partida concreta por id (al eliminarla). */
-export function clearTransferSaveFor(saveId: string): void {
-  if (!hasStorage() || !saveId) return;
+export async function clearTransferSaveFor(saveId: string): Promise<void> {
+  if (!saveId) return;
   try {
-    removeKeysWithPrefix(`${STORAGE_KEY_PREFIX}:${saveId}`);
+    await removeKeysWithPrefix(`${STORAGE_KEY_PREFIX}:${saveId}`);
   } catch {
     /* sin espacio o modo privado: no pasa nada */
   }
 }
 
 /** Borra TODOS los mercados guardados (al crear una nueva partida desde cero). */
-export function clearAllTransferSaves(): void {
-  if (!hasStorage()) return;
+export async function clearAllTransferSaves(): Promise<void> {
   try {
-    window.localStorage.removeItem(LEGACY_GLOBAL_STORAGE_KEY);
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const key = window.localStorage.key(i);
-      if (key && key.startsWith(STORAGE_KEY_PREFIX + ":")) keysToRemove.push(key);
+    if (hasLocalStorage()) {
+      try {
+        window.localStorage.removeItem(LEGACY_GLOBAL_STORAGE_KEY);
+      } catch {
+        /* no crítico */
+      }
     }
-    for (const key of keysToRemove) window.localStorage.removeItem(key);
+    const keys = await idbListKeys(STORAGE_KEY_PREFIX + ":");
+    for (const key of keys) await idbRemoveItem(key);
     archivedSizes.clear();
   } catch {
     /* sin espacio o modo privado: no pasa nada */

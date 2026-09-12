@@ -104,12 +104,16 @@ export function simulateMarketForDate(date: string): MarketDayResult {
 /**
  * Carga la partida de mercado guardada si existe; si no, arranca una nueva.
  * Devuelve `true` cuando se ha restaurado una partida previa.
+ *
+ * Asíncrona porque el mercado vive en IndexedDB (ver `Persistence.ts`), no
+ * en `localStorage`: se llama siempre desde el `useEffect` de
+ * `useMarketClock.ts`, nunca desde el arranque síncrono de la app.
  */
-export function loadOrInitTransferSystem(date: string): {
+export async function loadOrInitTransferSystem(date: string): Promise<{
   restored: boolean;
   state: MarketSimulationState;
-} {
-  const saved = loadTransferSave();
+}> {
+  const saved = await loadTransferSave();
   if (saved && applyTransferSnapshot(saved)) {
     const state = getSimulationState() ?? initializeSimulation(date);
     return { restored: true, state };
@@ -120,11 +124,16 @@ export function loadOrInitTransferSystem(date: string): {
 /**
  * Sincroniza el mercado con la fecha del juego: simula los días pendientes y
  * guarda el resultado. Si la fecha ya está simulada no hace nada.
+ *
+ * El guardado (IndexedDB) se dispara en segundo plano: la simulación en sí
+ * es síncrona y el resultado ya está calculado y aplicado antes de volver,
+ * así que no hay razón para que quien llama espere a que termine de
+ * escribirse en disco.
  */
 export function syncMarketWithGameDate(date: string): MarketDayResult | null {
   const state = getSimulationState();
   if (state && state.lastSimulatedDate === date) return null;
   const result = simulateMarketForDate(date);
-  saveTransferSystem();
+  void saveTransferSystem();
   return result;
 }
