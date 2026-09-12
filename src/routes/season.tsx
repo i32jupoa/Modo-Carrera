@@ -14,7 +14,7 @@ import {
   getTeamRecentResults,
   simulateCupMatchday,
   simulateUCLMatchday,
-  saveSave,
+  saveSaveWithRetry,
 } from "@/lib/store";
 
 import {
@@ -97,6 +97,26 @@ function SeasonPage() {
 
     setViewLeague(s.myLeague);
   }, [navigate]);
+
+  // Red de seguridad: si el navegador restaura esta pantalla desde la caché
+  // de retroceso (bfcache) al volver de "/match" sin volver a ejecutar el
+  // JavaScript de montaje, o si la pestaña recupera el foco, releemos el
+  // guardado por si el resultado del último partido se persistió con algo
+  // de retraso. Así la central nunca se queda mostrando el partido que
+  // acabamos de jugar como si siguiera pendiente.
+  useEffect(() => {
+    function refresh() {
+      if (document.visibilityState !== "visible") return;
+      const s = loadSave();
+      if (s) setSave(s);
+    }
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pageshow", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("pageshow", refresh);
+    };
+  }, []);
 
   // Generate stats on-demand when league changes
 
@@ -262,7 +282,13 @@ function SeasonPage() {
 
       console.timeEnd("simulateRest");
 
-      saveSave(next);
+      if (!saveSaveWithRetry(next)) {
+        alert(
+          "No se pudo guardar la partida (almacenamiento lleno). Libera espacio e inténtalo de nuevo.",
+        );
+        setIsSimulating(false);
+        return;
+      }
 
       setSave(next);
     } catch (err) {
@@ -300,7 +326,13 @@ function SeasonPage() {
         }
       }
 
-      saveSave(cur);
+      if (!saveSaveWithRetry(cur)) {
+        alert(
+          "No se pudo guardar la partida (almacenamiento lleno). Libera espacio e inténtalo de nuevo.",
+        );
+        setIsSimulating(false);
+        return;
+      }
 
       setSave(cur);
 

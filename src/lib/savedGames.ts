@@ -64,14 +64,25 @@ function saveKeyFor(id: string) {
  * into the active save slot. Called on every saveSave() during gameplay so
  * that the per-id save stays in sync with the actual progress.
  */
-export function persistCurrentSave(save: SaveGame, options?: { immediate?: boolean }) {
-  if (typeof window === "undefined") return;
+/**
+ * Devuelve `true` cuando el guardado de la partida activa (jornada,
+ * resultados, plantilla) realmente quedó escrito en `localStorage` antes de
+ * volver. Con `immediate: true` (el caso que usa `saveSave`) el resultado es
+ * fiable de inmediato; con el guardado diferido no podemos saberlo todavía,
+ * así que devolvemos `true` de forma optimista (no es una operación crítica
+ * para la navegación).
+ */
+export function persistCurrentSave(
+  save: SaveGame,
+  options?: { immediate?: boolean },
+): boolean {
+  if (typeof window === "undefined") return false;
   const id = getCurrentSaveId();
-  if (!id) return;
+  if (!id) return false;
 
-  const flush = (targetId: string, targetSave: SaveGame) => {
+  const flush = (targetId: string, targetSave: SaveGame): boolean => {
     const payload = { ...targetSave, playersStoreState: snapshotPlayersStore() };
-    safeSetItem(saveKeyFor(targetId), JSON.stringify(payload));
+    const ok = safeSetItem(saveKeyFor(targetId), JSON.stringify(payload));
     lastPersistAt = Date.now();
     const saves = loadAllSaves();
     const meta = saves.find((s) => s.id === targetId);
@@ -79,6 +90,7 @@ export function persistCurrentSave(save: SaveGame, options?: { immediate?: boole
       meta.lastPlayed = new Date().toISOString();
       saveMultipleSaves(saves);
     }
+    return ok;
   };
 
   try {
@@ -88,8 +100,7 @@ export function persistCurrentSave(save: SaveGame, options?: { immediate?: boole
         pendingPersistTimer = null;
         pendingPersist = null;
       }
-      flush(id, save);
-      return;
+      return flush(id, save);
     }
 
 
@@ -107,8 +118,10 @@ export function persistCurrentSave(save: SaveGame, options?: { immediate?: boole
         }
       }, SAVE_PERSIST_THROTTLE_MS);
     }
+    return true;
   } catch (err) {
     console.error("Error persisting current save:", err);
+    return false;
   }
 }
 

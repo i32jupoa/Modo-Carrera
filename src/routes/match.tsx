@@ -8,7 +8,7 @@ import {
   playMyNextMatch,
   playMyNextCupMatch,
   SaveGame,
-  saveSave,
+  saveSaveWithRetry,
   setLineup,
   setFormation,
   getMyNextFixtureAny,
@@ -348,8 +348,20 @@ function MatchPage() {
         });
       }
 
-      saveSave(next);
+      const persisted = saveSaveWithRetry(next);
       setSave(next);
+
+      if (!persisted) {
+        // No pudimos escribir la partida en el dispositivo (p. ej. sin
+        // espacio de almacenamiento). Avisamos claramente en vez de navegar
+        // como si nada: si navegáramos igualmente, la central volvería a
+        // leer la versión antigua guardada y mostraría el mismo partido que
+        // se acaba de jugar como "siguiente".
+        toast.error(
+          "No se pudo guardar la partida (almacenamiento lleno). Libera espacio e inténtalo de nuevo antes de volver a la temporada.",
+        );
+        return;
+      }
 
       navigate({ to: "/season" });
     } catch (err) {
@@ -767,7 +779,7 @@ function MatchPage() {
       const updatedSave = await simulateCupMatchdayLayered(currentSave, matchday, (done, total) => {
         console.log(`Cup matches: ${done}/${total}`);
       });
-      saveSave(updatedSave);
+      saveSaveWithRetry(updatedSave);
       setSave(updatedSave);
       console.log("Cup matches simulation complete, setting phase to done");
     } catch (err) {
@@ -904,7 +916,7 @@ function MatchPage() {
 
         const updated = s.uclFixtures.map((f) => (f.id === fixtureId ? { ...f, result } : f));
         const newSave = { ...s, uclFixtures: updated };
-        saveSave(newSave);
+        saveSaveWithRetry(newSave);
         console.log("UCL result saved successfully");
       }
     } else if (isCup) {
@@ -976,7 +988,7 @@ function MatchPage() {
 
         const updated = leagueFixtures.map((f) => (f.id === fixtureId ? { ...f, result } : f));
         const newSave = { ...s, cupFixtures: { ...s.cupFixtures, [fixtureLeague]: updated } };
-        saveSave(newSave);
+        saveSaveWithRetry(newSave);
         console.log("Result saved successfully");
       }
     } else {
@@ -1153,10 +1165,10 @@ function MatchPage() {
           originalFormation,
         );
         setSave(saveWithOriginalFormation);
-        saveSave(saveWithOriginalFormation);
+        saveSaveWithRetry(saveWithOriginalFormation);
       } else {
         setSave(newSave);
-        saveSave(newSave);
+        saveSaveWithRetry(newSave);
       }
 
       if (fixture.result) {
@@ -1185,7 +1197,7 @@ function MatchPage() {
               console.log(`Cup matches: ${done}/${total}`);
             },
           );
-          saveSave(updatedSave);
+          saveSaveWithRetry(updatedSave);
           setSave(updatedSave);
         } catch (err) {
           console.error("Error simulating remaining cup matches:", err);

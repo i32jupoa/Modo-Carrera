@@ -743,35 +743,87 @@ export function slimSave(s: SaveGame): SaveGame {
  * desbordara la cuota. Si el navegador se queda sin espacio NO se borra todo
  * (eso arrasaba con el mercado y las demás partidas): se liberan cachés
  * reconstruibles y, como mucho, no se guarda esta vez. Nunca lanza.
+ *
+ * Devuelve `true` si la partida quedó realmente escrita en `localStorage`.
+ * Los llamantes que hacen algo importante justo después de guardar (avanzar
+ * de pantalla, dar por bueno un resultado) deben comprobar este valor: si es
+ * `false` la jornada que se acaba de jugar NO se persistió y, por ejemplo, la
+ * pantalla de la central volverá a mostrar el partido anterior como
+ * "siguiente" en cuanto se recargue el guardado desde `localStorage`.
  */
-export function saveSave(s: SaveGame) {
-  if (typeof window === "undefined") return;
+export function saveSave(s: SaveGame): boolean {
+  if (typeof window === "undefined") return false;
 
   const slim = slimSave(s);
   const activeId = getCurrentSaveId();
+
+  let ok = true;
 
   if (activeId) {
     // La ranura por partida es la fuente de verdad; la clave global antigua
     // sobra y sólo ocupa espacio.
     safeRemoveItem(STORAGE_KEY);
   } else {
-    safeSetItem(STORAGE_KEY, JSON.stringify(slim));
+    ok = safeSetItem(STORAGE_KEY, JSON.stringify(slim));
   }
 
   try {
-    persistCurrentSave(slim, { immediate: true });
+    const persisted = persistCurrentSave(slim, { immediate: true });
+    // Sólo cuenta si hay una partida activa (si no, ya se guardó arriba en
+    // la clave global).
+    if (activeId) ok = persisted;
   } catch (e) {
     console.error("persistCurrentSave failed", e);
+    if (activeId) ok = false;
   }
 
   // El mercado tiene su propia instantánea por partida y por ventana de
   // fichajes. Guardarlo aquí hace que un guardado de la carrera también
-  // persista rumores, negociaciones e historial de traspasos.
+  // persista rumores, negociaciones e historial de traspasos. Un fallo aquí
+  // no invalida el guardado de la carrera en sí (que es lo crítico para la
+  // central), así que no afecta al valor devuelto.
   try {
     saveTransferSystem();
   } catch (e) {
     console.error("saveTransferSystem failed", e);
   }
+
+  return ok;
+}
+
+/**
+ * Igual que `saveSave`, pero si el primer intento no logra escribir en
+ * `localStorage` (por ejemplo por cuota agotada), reintenta recortando aún
+ * más el detalle de partidos antiguos antes de rendirse. Se usa en los
+ * puntos en los que perder el guardado sería especialmente visible para el
+ * jugador (terminar un partido y volver a la temporada).
+ */
+export function saveSaveWithRetry(s: SaveGame): boolean {
+  if (saveSave(s)) return true;
+
+  console.warn("saveSaveWithRetry: primer intento falló, recortando detalle y reintentando");
+
+  // Recorte extra: nos quedamos solo con el último partido detallado en vez
+  // de los últimos DETAILED_MATCHES_KEPT, lo que reduce bastante el tamaño
+  // del guardado sin perder resultados ni clasificaciones.
+  const trimmed: SaveGame = {
+    ...s,
+    fixtures: mapValues(s.fixtures, (list) => slimFixtures(list, s.myTeamId, new Set())),
+    cupFixtures: mapValues(s.cupFixtures, (list) => slimFixtures(list, s.myTeamId, new Set())),
+    uclFixtures: slimFixtures(s.uclFixtures, s.myTeamId, new Set()),
+  };
+
+  if (saveSave(trimmed)) return true;
+
+  console.error("saveSaveWithRetry: no fue posible guardar la partida ni tras recortar el detalle");
+  return false;
+}
+
+function mapValues<T>(obj: Record<string, T> | undefined, fn: (v: T) => T): Record<string, T> {
+  if (!obj) return obj as any;
+  const out: Record<string, T> = {};
+  for (const k of Object.keys(obj)) out[k] = fn(obj[k]);
+  return out;
 }
 
 export function clearSave() {
@@ -3582,6 +3634,13 @@ export async function advanceMatchdayLayered(
 
     let processed = 0;
 
+    // Leagues that actually have fixtures to resolve this matchday. Each one
+    // must have its currentMatchday advanced EXACTLY ONCE no matter how many
+    // batches it takes to process all of its fixtures (a matchday can span
+    // several batches once there are 100+ VIP fixtures in a single round).
+
+    const leaguesToAdvance = new Set(allFixtures.map((f) => f.league));
+
     // Process in batches with yield control
 
     for (let i = 0; i < allFixtures.length; i += BATCH_SIZE) {
@@ -3665,14 +3724,6 @@ export async function advanceMatchdayLayered(
         processed++;
       }
 
-      // Advance matchday counters
-
-      const leaguesInBatch = new Set(batch.map((b) => b.league));
-
-      for (const lg of leaguesInBatch) {
-        next.currentMatchday[lg]++;
-      }
-
       // Update progress
 
       onProgress?.(processed, totalMatches);
@@ -3682,6 +3733,16 @@ export async function advanceMatchdayLayered(
       if (i % (BATCH_SIZE * 2) === 0) {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
+    }
+
+    // Advance matchday counters ONCE per league, after every batch for that
+    // league has been processed (see leaguesToAdvance above). Doing this
+    // inside the batch loop used to bump some leagues' matchday more than
+    // once whenever a single round needed more than one batch, which could
+    // silently skip a round and desync fixtures/standings.
+
+    for (const lg of leaguesToAdvance) {
+      next.currentMatchday[lg]++;
     }
 
     console.log(
