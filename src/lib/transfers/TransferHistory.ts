@@ -148,3 +148,34 @@ export function restoreTransferHistory(records: readonly TransferRecord[]): void
   resetTransferHistory();
   recordTransfers(records);
 }
+
+/**
+ * Elimina permanentemente del historial en memoria los traspasos de las
+ * ventanas indicadas.
+ *
+ * En una carrera muy larga, el historial completo (todas las ventanas desde
+ * el primer día) se recorre en cada guardado para repartirlo entre la clave
+ * principal y los archivos por ventana (ver `Persistence.ts`), y eso hacía
+ * que el hueco ocupado en `localStorage` creciera sin límite temporada tras
+ * temporada. `Persistence.ts` llama a esta función para descartar las
+ * ventanas más antiguas una vez superado un tope generoso: al quitarlas
+ * también de aquí (no sólo del disco), dejan de reaparecer en el siguiente
+ * `snapshotTransferHistory()` y no se vuelven a escribir.
+ */
+export function dropTransferWindows(
+  windowKeys: ReadonlySet<string>,
+  windowKeyForDate: (date: string) => string,
+): void {
+  if (windowKeys.size === 0) return;
+  const kept = history.filter((record) => !windowKeys.has(windowKeyForDate(record.date)));
+  if (kept.length === history.length) return;
+  history.length = 0;
+  byPlayer.clear();
+  byClub.clear();
+  for (const record of kept) {
+    history.push(record);
+    pushInto(byPlayer, record.playerId, record);
+    if (record.fromClubId) pushInto(byClub, record.fromClubId, record);
+    pushInto(byClub, record.toClubId, record);
+  }
+}

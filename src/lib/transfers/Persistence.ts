@@ -25,7 +25,11 @@ import {
   type SimulationSnapshot,
 } from "./MarketSimulation";
 import { rebuildLocks } from "./MarketLocks";
-import { restoreTransferHistory, snapshotTransferHistory } from "./TransferHistory";
+import {
+  dropTransferWindows,
+  restoreTransferHistory,
+  snapshotTransferHistory,
+} from "./TransferHistory";
 import { restoreRumors, snapshotRumors } from "./RumorEngine";
 import { restoreUserDeals, snapshotUserDeals, type UserDeal } from "./UserNegotiation";
 import {
@@ -122,6 +126,37 @@ function hasStorage(): boolean {
 /** Tamaño ya archivado de cada ventana, para no reescribirla en cada guardado. */
 const archivedSizes = new Map<string, number>();
 
+/**
+ * Nº máximo de ventanas de mercado archivadas que se conservan por partida
+ * (24 ventanas ≈ 12 temporadas de historial y rumores). Sin este tope, una
+ * carrera muy larga acumulaba archivos para siempre y acababa agotando la
+ * cuota de `localStorage` justo al volver de un partido. Superado el tope,
+ * se descartan las ventanas más antiguas (las menos relevantes) tanto del
+ * disco como de la memoria; el resto del mercado sigue intacto.
+ */
+const MAX_ARCHIVED_WINDOWS = 24;
+
+/** Descarta del disco (y de la memoria) las ventanas archivadas más antiguas por encima del tope. */
+function enforceArchiveCap(baseKey: string, archivedWindows: string[]): string[] {
+  if (archivedWindows.length <= MAX_ARCHIVED_WINDOWS) return archivedWindows;
+  const sorted = [...archivedWindows].sort();
+  const overflow = sorted.length - MAX_ARCHIVED_WINDOWS;
+  const toDrop = sorted.slice(0, overflow);
+  const kept = sorted.slice(overflow);
+
+  for (const windowKey of toDrop) {
+    const key = archiveKey(baseKey, windowKey);
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      /* si no se puede borrar, seguimos: no es crítico */
+    }
+    archivedSizes.delete(key);
+  }
+  dropTransferWindows(new Set(toDrop), windowKeyForDate);
+  return kept;
+}
+
 function groupByWindow<T extends { date: string }>(items: readonly T[]): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const item of items) {
@@ -168,12 +203,17 @@ export function saveTransferSystem(): boolean {
       archivedWindows.push(windowKey);
     }
 
-    const archivedSet = new Set(archivedWindows);
+    const cappedArchivedWindows = enforceArchiveCap(baseKey, archivedWindows);
+    // Ojo: para filtrar lo que se queda en la clave principal usamos la lista
+    // SIN recortar. Una ventana descartada por el tope (`enforceArchiveCap`)
+    // ya no está en `cappedArchivedWindows`, pero tampoco debe reaparecer
+    // aquí: se ha borrado a propósito, no "vuelto a la ventana en curso".
+    const handledSet = new Set(archivedWindows);
     const core: TransferSaveData = {
       ...snapshot,
-      history: snapshot.history.filter((r) => !archivedSet.has(windowKeyForDate(r.date))),
-      rumors: snapshot.rumors.filter((r) => !archivedSet.has(windowKeyForDate(r.date))),
-      archivedWindows,
+      history: snapshot.history.filter((r) => !handledSet.has(windowKeyForDate(r.date))),
+      rumors: snapshot.rumors.filter((r) => !handledSet.has(windowKeyForDate(r.date))),
+      archivedWindows: cappedArchivedWindows,
     };
 
     return safeSetItem(baseKey, JSON.stringify(core));

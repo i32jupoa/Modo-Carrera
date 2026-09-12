@@ -17,6 +17,8 @@ import { usePlayersReady } from "@/components/PlayersLoading";
 import { Toaster } from "@/components/ui/sonner";
 import { MarketClock } from "@/hooks/useMarketClock";
 import { MarketNotifier } from "@/components/MarketNotifier";
+import { useEffect } from "react";
+import { cleanupOrphanedStorage } from "@/lib/safeStorage";
 
 function NotFoundComponent() {
   return (
@@ -142,6 +144,14 @@ function RootComponent() {
 
 function AppShell() {
   usePlayersReady();
+
+  // Libera al arrancar cualquier resto de partidas ya borradas (mercado,
+  // notificaciones, ranuras de guardado huérfanas). Es basura segura de
+  // quitar y hacerlo aquí, una vez por sesión, evita llegar sin margen a la
+  // cuota de almacenamiento en mitad de una jornada.
+  useEffect(() => {
+    cleanupOrphanedStorage();
+  }, []);
 
   return (
     <SidebarProvider>
