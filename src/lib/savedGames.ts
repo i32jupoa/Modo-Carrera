@@ -6,7 +6,7 @@ import {
   setClubOverrides,
   usePlayersStore,
 } from "@/store/playersStore";
-import { safeSetItem } from "./safeStorage";
+import { getSaveItem, setSaveItem, removeSaveItem } from "./saveStorage";
 
 const STORAGE_KEY = "fcsim:save:v2";
 const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
@@ -82,7 +82,7 @@ export function persistCurrentSave(
 
   const flush = (targetId: string, targetSave: SaveGame): boolean => {
     const payload = { ...targetSave, playersStoreState: snapshotPlayersStore() };
-    const ok = safeSetItem(saveKeyFor(targetId), JSON.stringify(payload));
+    const ok = setSaveItem(saveKeyFor(targetId), JSON.stringify(payload));
     lastPersistAt = Date.now();
     const saves = loadAllSaves();
     const meta = saves.find((s) => s.id === targetId);
@@ -170,7 +170,7 @@ export function addSaveToMultiple(save: SaveGame) {
   const payload = { ...save, playersStoreState: snapshotPlayersStore() };
   // Nunca `localStorage.clear()`: eso borraba las demás partidas y el mercado
   // (rumores y traspasos). `safeSetItem` libera sólo cachés reconstruibles.
-  if (!safeSetItem(saveKeyFor(meta.id), JSON.stringify(payload))) {
+  if (!setSaveItem(saveKeyFor(meta.id), JSON.stringify(payload))) {
     console.warn("addSaveToMultiple: no hay espacio para guardar la partida nueva");
   }
 
@@ -181,7 +181,7 @@ export function addSaveToMultiple(save: SaveGame) {
 
 export function deleteSave(id: string) {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(saveKeyFor(id));
+  removeSaveItem(saveKeyFor(id));
   // Borra también el mercado de esa partida (import perezoso para evitar un
   // ciclo de módulos: Persistence.ts ya importa `getCurrentSaveId` de aquí).
   import("@/lib/transfers/Persistence")
@@ -202,7 +202,7 @@ export function deleteSave(id: string) {
 export function loadSaveById(id: string): SaveGame | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(saveKeyFor(id));
+    const raw = getSaveItem(saveKeyFor(id));
     if (!raw) return null;
     return JSON.parse(raw) as SaveGame;
   } catch (err) {

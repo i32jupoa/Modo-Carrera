@@ -17,8 +17,13 @@ import { usePlayersReady } from "@/components/PlayersLoading";
 import { Toaster } from "@/components/ui/sonner";
 import { MarketClock } from "@/hooks/useMarketClock";
 import { MarketNotifier } from "@/components/MarketNotifier";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { cleanupOrphanedStorage } from "@/lib/safeStorage";
+import {
+  cleanupOrphanedSaveSlots,
+  flushSaveStorage,
+  initSaveStorage,
+} from "@/lib/saveStorage";
 import { migrateAllMarketDataFromLocalStorage } from "@/lib/transfers/Persistence";
 
 function NotFoundComponent() {
@@ -146,6 +151,37 @@ function RootComponent() {
 function AppShell() {
   usePlayersReady();
 
+  // Las partidas guardadas viven en IndexedDB (sin el tope de ~5 MB de
+  // `localStorage`), que es asíncrono, así que hay que traerlas a memoria
+  // ANTES de pintar cualquier pantalla: el juego lee la partida de forma
+  // síncrona en todas ellas. Es una sola lectura por sesión.
+  const [savesReady, setSavesReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void initSaveStorage().then(() => {
+      cleanupOrphanedSaveSlots();
+      if (!cancelled) setSavesReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Al cerrar o esconder la pestaña, asegura que la última jornada jugada
+  // acabe de escribirse en disco.
+  useEffect(() => {
+    const flush = () => {
+      void flushSaveStorage();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", flush);
+    };
+  }, []);
+
   // Libera al arrancar cualquier resto de partidas ya borradas (mercado,
   // notificaciones, ranuras de guardado huérfanas). Es basura segura de
   // quitar y hacerlo aquí, una vez por sesión, evita llegar sin margen a la
@@ -159,6 +195,17 @@ function AppShell() {
     // se ejecuta una única vez por partida guardada y no bloquea nada.
     void migrateAllMarketDataFromLocalStorage();
   }, []);
+
+  if (!savesReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <p className="text-sm text-muted-foreground">Cargando tu partida…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <SidebarProvider>

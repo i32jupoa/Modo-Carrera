@@ -1995,35 +1995,38 @@ export const usePlayersStore = create<PlayersState>()(
     {
       name: "fcsim:players:v1",
 
+      // Esta copia del estado de jugadores (plantilla, estadísticas de la
+      // temporada) NO se escribe en `localStorage`: pesaba más de 2 MB y era
+      // una copia duplicada de lo que ya guarda la ranura de la partida
+      // (`fcsim:save:v2:{id}`, que ahora vive en IndexedDB y es la fuente de
+      // verdad). Además, el propio juego borraba esta clave en cada arranque
+      // y al cargar una partida, así que sólo consumía cuota. Se mantiene
+      // como caché de sesión en memoria para no cambiar el comportamiento.
       storage: createJSONStorage(() => {
-        if (typeof window === "undefined") {
-          return { getItem: () => null, setItem: () => {}, removeItem: () => {} } as Storage;
+        const mem = new Map<string, string>();
+        // Limpia cualquier resto de la versión anterior que siguiera
+        // ocupando cuota en `localStorage`.
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.removeItem("fcsim:players:v1");
+          } catch {
+            /* si falla no es crítico */
+          }
         }
-        const safe: Storage = {
+        return {
           length: 0,
-          key: (i: number) => localStorage.key(i),
-          clear: () => localStorage.clear(),
-          getItem: (k: string) => localStorage.getItem(k),
-          removeItem: (k: string) => localStorage.removeItem(k),
-          setItem: (k: string, v: string) => {
-            try {
-              localStorage.setItem(k, v);
-            } catch (e) {
-              // Quota exceeded: drop this write silently. The multi-save system
-              // (fcsim:save:v2*) is the source of truth; the persisted player
-              // store is only a hot cache for the current session.
-              try {
-                localStorage.removeItem(k);
-              } catch {
-                /* intentionally ignored */
-              }
-
-              console.warn("[playersStore] persist skipped (quota):", (e as Error)?.message);
-            }
+          key: () => null,
+          clear: () => mem.clear(),
+          getItem: (k: string) => mem.get(k) ?? null,
+          removeItem: (k: string) => {
+            mem.delete(k);
           },
-        } as Storage;
-        return safe;
+          setItem: (k: string, v: string) => {
+            mem.set(k, v);
+          },
+        } as unknown as Storage;
       }),
+
 
       merge: (persisted, current) => {
         const saved = (persisted as Partial<PlayersState>) ?? {};

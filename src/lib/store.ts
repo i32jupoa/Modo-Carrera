@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { persistCurrentSave, getCurrentSaveId } from "./savedGames";
-import { safeSetItem, safeRemoveItem } from "./safeStorage";
+import { getSaveItem, setSaveItem, removeSaveItem } from "./saveStorage";
+
 import { saveTransferSystem } from "./transfers/Persistence";
 import {
   LeagueId,
@@ -531,8 +532,8 @@ export function loadSave(): SaveGame | null {
     // global sólo se usa cuando todavía no hay ninguna partida activa.
     const activeId = getCurrentSaveId();
     const raw =
-      (activeId ? localStorage.getItem(`${STORAGE_KEY}:${activeId}`) : null) ??
-      localStorage.getItem(STORAGE_KEY);
+      (activeId ? getSaveItem(`${STORAGE_KEY}:${activeId}`) : null) ??
+      getSaveItem(STORAGE_KEY);
 
     if (!raw) return null;
 
@@ -770,9 +771,11 @@ export function saveSave(s: SaveGame): boolean {
   if (activeId) {
     // La ranura por partida es la fuente de verdad; la clave global antigua
     // sobra y sólo ocupa espacio.
-    safeRemoveItem(STORAGE_KEY);
+    removeSaveItem(STORAGE_KEY);
   } else {
-    ok = safeSetItem(STORAGE_KEY, JSON.stringify(slim));
+    // Sin partida activa (partida rápida antigua) la clave global también va
+    // al almacén sin límite de cuota.
+    ok = setSaveItem(STORAGE_KEY, JSON.stringify(slim));
   }
 
   try {
