@@ -1725,6 +1725,12 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   newcastleunited: "Newcastle Utd",
   nottinghamforest: "Nott'm Forest",
   nottmforest: "Nott'm Forest",
+  // Nombre real usado en el dataset de jugadores ("Notting. Forest"),
+  // distinto de los alias anteriores: sin este, el Nottingham Forest se
+  // quedaba sin ningún jugador.
+  nottingforest: "Nott'm Forest",
+  // El dataset usa "Leeds Utd", no "Leeds United".
+  leedsutd: "Leeds United",
   inter: "Lombardia FC",
   intermilan: "Lombardia FC",
   acmilan: "Milano FC",
@@ -1745,6 +1751,15 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   stadebrest: "Stade Brestois 29",
   lehavre: "Havre AC",
   rennes: "Stade Rennais FC",
+  // El dataset trae varios equipos con el nombre en español o abreviado de
+  // forma distinta al del juego; sin estos alias esos clubes se quedaban
+  // con la plantilla vacía.
+  bolonia: "Bologna", // dataset: "Bolonia"
+  omarsella: "OM", // dataset: "O. Marsella"
+  ogcniza: "OGC Nice", // dataset: "OGC Niza"
+  olympiquelyon: "OL", // dataset: "Olympique Lyon"
+  stadebrestois: "Stade Brestois 29", // dataset: "Stade Brestois" (sin "29")
+  lehavreac: "Havre AC", // dataset: "Le Havre AC"
 };
 
 let _teamLookupMap: Map<string, Team> | null = null;
@@ -1869,4 +1884,53 @@ export function teamsByLeague(league: LeagueId): Team[] {
 
 export function overall(t: Team): number {
   return Math.round((t.att + t.mid + t.def) / 3);
+}
+
+// ============================================================================
+// NIVEL (TIER) DE CADA LIGA DENTRO DE SU PAÍS
+// ----------------------------------------------------------------------------
+// Solo se modela la jerarquía de divisiones para los países en los que el
+// juego incluye varias categorías. El resto de ligas (Portugal, Países
+// Bajos, MLS, etc.) son de un único nivel dentro del juego, así que no
+// llevan hándicap.
+// ============================================================================
+const LEAGUE_TIER: Record<string, number> = {
+  laliga: 1,
+  laliga2: 2,
+  premier: 1,
+  championship: 2,
+  leagueone: 3,
+  leaguetwo: 4,
+  seriea: 1,
+  serieb: 2,
+  bundesliga: 1,
+  bundesliga2: 2,
+  liga3: 3,
+  ligue1: 1,
+  ligue2: 2,
+};
+
+/** Nivel (1 = máxima categoría) de una liga dentro de su país. Por defecto, 1 (sin hándicap). */
+export function getLeagueTier(leagueId: string): number {
+  return LEAGUE_TIER[leagueId] ?? 1;
+}
+
+/**
+ * Actualiza la media (att/mid/def) de un equipo ya existente, mutando el
+ * mismo objeto que devuelven `teamById`/`getAllTeams` para que todas las
+ * pantallas y sistemas (fichas de club, partidos, sorteos, IA de mercado...)
+ * vean el cambio sin tener que tocar cada punto donde se lee `team.att`.
+ * Se llama cada vez que la plantilla real de un club cambia (fichajes,
+ * ventas, cesiones) para que la media del equipo esté siempre equiparada a
+ * la de sus jugadores actuales.
+ */
+export function applyTeamRating(
+  teamId: string,
+  rating: { att: number; mid: number; def: number },
+): void {
+  const team = getTeamsMap().get(teamId.toLowerCase());
+  if (!team) return;
+  team.att = rating.att;
+  team.mid = rating.mid;
+  team.def = rating.def;
 }

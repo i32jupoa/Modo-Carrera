@@ -49,7 +49,10 @@ import {
   leagueIdFromName,
   type LeagueId,
   teamsByLeague,
+  applyTeamRating,
+  getLeagueTier,
 } from "@/data/teams";
+import { computeTeamRatingFromSquad, finalizeTeamRating, type RatedSquadMember } from "@/lib/teamRating";
 
 import { defaultLineup, type Player, marketValueFor } from "@/data/players";
 import {
@@ -365,16 +368,23 @@ let CLUB_OVERRIDES: Record<string, string> = {};
 /** Caché de plantillas ya calculadas; se invalida al cambiar los overrides. */
 let SQUAD_CACHE = new Map<string, FcPlayer[]>();
 
+// Calculamos la media real de cada equipo en cuanto tenemos las plantillas
+// base cargadas, para que incluso en el menú principal (antes de empezar o
+// cargar una partida) la media mostrada ya refleje a los jugadores reales.
+recomputeAllTeamRatings();
+
 /** Sustituye por completo el mapa de overrides (carga de partida). */
 export function setClubOverrides(next: Record<string, string>): void {
   CLUB_OVERRIDES = { ...next };
   SQUAD_CACHE = new Map();
+  recomputeAllTeamRatings();
 }
 
 /** Resetea completamente los overrides (nueva partida). */
 export function resetClubOverrides(): void {
   CLUB_OVERRIDES = {};
   SQUAD_CACHE = new Map();
+  recomputeAllTeamRatings();
 }
 
 /** Overrides actuales (para guardar con la partida). */
@@ -384,8 +394,13 @@ export function getClubOverrides(): Record<string, string> {
 
 /** Aplica un traspaso al registro central. `toClubId` null = agente libre. */
 export function setPlayerClub(playerId: string, toClubId: string | null): void {
+  const fromClubId = clubOfPlayer(playerId);
   CLUB_OVERRIDES[playerId] = toClubId ?? "";
   SQUAD_CACHE = new Map();
+  // El fichaje/venta cambia la plantilla real de ambos clubes implicados, así
+  // que su media (att/mid/def) debe recalcularse en el acto.
+  if (fromClubId) recomputeTeamRating(fromClubId);
+  if (toClubId) recomputeTeamRating(toClubId);
 }
 
 /** Club real de un jugador hoy (override si existe, si no el del JSON). */
@@ -469,6 +484,39 @@ export function mapEaPosition(pos: string): Position {
   if (["ST", "CF", "LW", "RW", "LF", "RF", "LS", "RS"].includes(u)) return "FWD";
 
   return "MID";
+}
+
+// ============================================================================
+// MEDIA DE EQUIPO DINÁMICA
+// ----------------------------------------------------------------------------
+// La media (att/mid/def) de cada club se recalcula siempre a partir de su
+// plantilla real (`squadForTeam`), dando mucho más peso al once titular que
+// al banquillo (ver `computeTeamRatingFromSquad`). Así, la media nunca queda
+// desconectada de los jugadores reales: si un equipo de una categoría
+// inferior tiene mejores jugadores que uno de una superior, su media lo
+// reflejará. Se recalcula cada vez que cambia una plantilla (fichajes,
+// ventas, cesiones, carga de partida, nueva partida).
+// ============================================================================
+
+function recomputeTeamRating(teamId: string): void {
+  if (!teamId) return;
+  const squad = squadForTeam(teamId);
+  const rated: RatedSquadMember[] = squad.map((fc) => ({
+    rating: fc.OVR || 70,
+    position: mapEaPosition(fc.Position),
+    age: fc.Age,
+  }));
+  const raw = computeTeamRatingFromSquad(rated);
+  const tier = getLeagueTier(teamById(teamId).league);
+  const rating = finalizeTeamRating(raw, tier);
+  applyTeamRating(teamId, rating);
+}
+
+/** Recalcula la media de todos los equipos del juego a partir de sus plantillas reales. */
+export function recomputeAllTeamRatings(): void {
+  for (const team of getAllTeams()) {
+    recomputeTeamRating(team.id);
+  }
 }
 
 // Sophisticated market valuation using the new Transfermarkt-style system
