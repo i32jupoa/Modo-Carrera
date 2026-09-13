@@ -107,6 +107,8 @@ function LineupPage() {
   const liveMode = routerState?.liveMatch === true;
   const [live, setLive] = useState<LiveMatchState | null>(null);
   const liveBaseXIRef = useRef<string[]>([]);
+  // Players taken off the pitch during this live edit (cannot come back).
+  const liveGoneRef = useRef<string[]>([]);
 
   useEffect(() => {
     const s = loadSave();
@@ -491,14 +493,28 @@ function LineupPage() {
     }
   }
 
+  /** Players that already left the pitch in this match and cannot come back. */
+  function liveGoneIds(): Set<string> {
+    if (!live) return new Set<string>();
+    return new Set<string>([
+      ...(live.gone || []),
+      ...(live.subs || []).map((s: any) => s.outId),
+      ...liveGoneRef.current,
+    ]);
+  }
+
   /**
    * In live mode the number of substitutions (and windows) is limited: block any
-   * bench -> XI move once there are no changes/windows left.
+   * bench -> XI move once there are no changes/windows left. A player who has
+   * already been substituted off can never return to the pitch.
    */
   function liveSubBlocked(benchPlayerId: string): boolean {
     if (!liveMode || !live) return false;
-    // Bringing back a player that started the match does not consume a new sub.
-    if (liveBaseXIRef.current.includes(benchPlayerId)) return false;
+    if (liveGoneIds().has(benchPlayerId)) {
+      toast.error("Ese jugador ya ha sido sustituido y no puede volver al campo.");
+      setSelectedPlayer(null);
+      return true;
+    }
     const limits = subLimits(live.isExtraTime);
     const free = isFreeWindow(live.phase);
     const inIds = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
@@ -564,7 +580,15 @@ function LineupPage() {
 
     // Perform the swap
     setStartingXI((prev) => prev.map((id) => (id === pitchPlayerId ? benchPlayerId : id)));
-    setBench((prev) => prev.map((id) => (id === benchPlayerId ? pitchPlayerId : id)));
+    if (liveMode) {
+      // During a live match the player who comes off is out for good.
+      if (!liveGoneRef.current.includes(pitchPlayerId)) {
+        liveGoneRef.current = [...liveGoneRef.current, pitchPlayerId];
+      }
+      setBench((prev) => prev.filter((id) => id !== benchPlayerId));
+    } else {
+      setBench((prev) => prev.map((id) => (id === benchPlayerId ? pitchPlayerId : id)));
+    }
     setSelectedPlayer(null);
   }
 
@@ -1093,7 +1117,12 @@ function LineupPage() {
                   disabled={blocked}
                   className={btnPrimary}
                   onClick={() => {
-                    const nextBench = bench.filter((id) => !startingXI.includes(id));
+                    const goneList = Array.from(
+                      new Set([...(live.gone || []), ...liveGoneRef.current, ...outIds]),
+                    );
+                    const nextBench = bench.filter(
+                      (id) => !startingXI.includes(id) && !goneList.includes(id),
+                    );
                     const stamina = { ...(live.stamina || {}) };
                     const subs = [...(live.subs || [])];
                     for (let i = 0; i < changes; i++) {
@@ -1110,6 +1139,7 @@ function LineupPage() {
                       ...live,
                       lineup: startingXI,
                       bench: nextBench,
+                      gone: goneList,
                       formation: selectedFormation,
                       stamina,
                       subs,

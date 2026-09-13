@@ -732,7 +732,12 @@ type PlayersState = {
   recordGoal: (playerId: string, competition?: string) => void;
 
   recordAssist: (playerId: string, competition?: string) => void;
+  /** Removes one goal previously credited to a player (never goes below 0). */
+  unrecordGoal: (playerId: string, competition?: string) => void;
+  /** Removes one assist previously credited to a player (never goes below 0). */
+  unrecordAssist: (playerId: string, competition?: string) => void;
   recordCleanSheet: (playerId: string, competition?: string) => void;
+
   recordMotm: (playerId: string, competition?: string) => void;
   recordMatchRating: (playerId: string, rating: number) => void;
 
@@ -1827,6 +1832,41 @@ export const usePlayersStore = create<PlayersState>()(
         };
         set({ stats: next });
       },
+
+      unrecordGoal: (playerId, competition) => {
+        const dec = (n: number) => Math.max(0, n - 1);
+        mutatePlayerStat(get, set, playerId, (s) => {
+          const isCup = competition === "cup";
+          const isUcl = competition === "ucl";
+          return {
+            ...s,
+            goals: dec(s.goals),
+            cupGoals: isCup ? dec(s.cupGoals ?? 0) : (s.cupGoals ?? 0),
+            uclGoals: isUcl ? dec(s.uclGoals ?? 0) : (s.uclGoals ?? 0),
+            dynamicStats: s.dynamicStats
+              ? { ...s.dynamicStats, seasonGoals: dec(s.dynamicStats.seasonGoals) }
+              : s.dynamicStats,
+          };
+        });
+      },
+
+      unrecordAssist: (playerId, competition) => {
+        const dec = (n: number) => Math.max(0, n - 1);
+        mutatePlayerStat(get, set, playerId, (s) => {
+          const isCup = competition === "cup";
+          const isUcl = competition === "ucl";
+          return {
+            ...s,
+            assists: dec(s.assists),
+            cupAssists: isCup ? dec(s.cupAssists ?? 0) : (s.cupAssists ?? 0),
+            uclAssists: isUcl ? dec(s.uclAssists ?? 0) : (s.uclAssists ?? 0),
+            dynamicStats: s.dynamicStats
+              ? { ...s.dynamicStats, seasonAssists: dec(s.dynamicStats.seasonAssists) }
+              : s.dynamicStats,
+          };
+        });
+      },
+
       recordCleanSheet: (playerId, competition) => {
         mutatePlayerStat(get, set, playerId, (s) => {
           const isCup = competition === "cup";

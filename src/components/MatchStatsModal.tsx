@@ -150,9 +150,50 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
     [...finalHomeRatings, ...finalAwayRatings].sort((a, b) => b.rating - a.rating)[0] ??
     null;
 
+  // ---- Prórroga y penaltis ------------------------------------------------
+  // result.homeGoals/awayGoals son SOLO los 90 minutos. Los goles de la
+  // prórroga viven en result.extraTime, y la tanda en result.penalties.
+  const extraTime = (result as any).extraTime as
+    | { homeGoals: number; awayGoals: number; events?: any[]; highlights?: any[] }
+    | undefined;
+  const penalties = (result as any).penalties as
+    | {
+        homeGoals: number;
+        awayGoals: number;
+        shootout?: Array<{ team: "home" | "away"; scored: boolean; playerId?: string }>;
+      }
+    | undefined;
+
+  const displayHomeGoals = result.homeGoals + (extraTime?.homeGoals || 0);
+  const displayAwayGoals = result.awayGoals + (extraTime?.awayGoals || 0);
+  const decisionLabel = penalties ? "Penaltis" : extraTime ? "Prórroga" : null;
+
+  // Los eventos y highlights de la prórroga se fusionan con los del partido
+  // (evitando duplicados cuando el motor ya los guardó juntos).
+  const baseEvents: any[] = (result.events || []) as any[];
+  const sameEvent = (a: any, b: any) =>
+    a.minute === b.minute &&
+    a.team === b.team &&
+    (a.scorerId ?? a.playerName) === (b.scorerId ?? b.playerName) &&
+    a.type === b.type;
+  const mergedEvents: any[] = [
+    ...baseEvents,
+    ...((extraTime?.events || []) as any[]).filter((e) => !baseEvents.some((b) => sameEvent(b, e))),
+  ];
+  const baseHighlights: any[] = (result.highlights || []) as any[];
+  const mergedHighlights: any[] = [
+    ...baseHighlights,
+    ...((extraTime?.highlights || []) as any[]).filter(
+      (h) =>
+        !baseHighlights.some(
+          (b) => b.minute === h.minute && b.team === h.team && b.type === h.type,
+        ),
+    ),
+  ];
+
   // Get goals by team
-  const homeGoals = (result.events || []).filter((e) => e.type === "goal" && e.team === "home");
-  const awayGoals = (result.events || []).filter((e) => e.type === "goal" && e.team === "away");
+  const homeGoals = mergedEvents.filter((e) => e.type === "goal" && e.team === "home");
+  const awayGoals = mergedEvents.filter((e) => e.type === "goal" && e.team === "away");
 
   // Get cards by team
   // Igual para tarjetas y lesiones: usar el equipo registrado en el evento
@@ -181,7 +222,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   // Combine all match events chronologically for the chronicle (like match.tsx)
   const chronicleEvents = (() => {
     const usedSaves: number[] = [];
-    const filteredHighlights = (result.highlights || []).filter((h: any) => {
+    const filteredHighlights = mergedHighlights.filter((h: any) => {
       if (!KEEP[h.type]) return false;
       if (h.type === "save") {
         if (h.detail !== "¡Paradón!" || usedSaves.length >= 3) return false;
@@ -196,7 +237,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
         minute: c.minute,
         data: c,
       })),
-      ...(result.events || [])
+      ...mergedEvents
         .filter(
           (e: any) =>
             e.type === "goal" ||
@@ -223,13 +264,13 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
 
   // Generate basic events for chronicle if no events exist (for old simulated matches)
   const generateBasicEvents = () => {
-    if ((result.events || []).length > 0) return chronicleEvents;
+    if (mergedEvents.length > 0) return chronicleEvents;
 
     const basicEvents = [];
     const goals = result.homeGoals + result.awayGoals;
 
     // Generate goal events based on score
-    for (let i = 0; i < result.homeGoals; i++) {
+    for (let i = 0; i < displayHomeGoals; i++) {
       const minute = Math.floor(Math.random() * 90) + 1;
       const scorer = homePlayers[Math.floor(Math.random() * Math.min(11, homePlayers.length))];
       basicEvents.push({
@@ -246,7 +287,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
       });
     }
 
-    for (let i = 0; i < result.awayGoals; i++) {
+    for (let i = 0; i < displayAwayGoals; i++) {
       const minute = Math.floor(Math.random() * 90) + 1;
       const scorer = awayPlayers[Math.floor(Math.random() * Math.min(11, awayPlayers.length))];
       basicEvents.push({
@@ -299,8 +340,8 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   // we fall back to the same generated goal events used in the chronicle,
   // instead of leaving the pitch without any icons.
   const displayEvents =
-    result.events && result.events.length > 0
-      ? result.events
+    mergedEvents.length > 0
+      ? mergedEvents
       : finalChronicleEvents.filter((e) => e.kind === "goal").map((e) => e.data);
 
   // Las alineaciones guardadas contienen el XI inicial. Los ratings, en cambio,
@@ -329,12 +370,19 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
     <Dialog open={!!fixture} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-3">
+          <DialogTitle className="flex flex-wrap items-center gap-3">
             <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={40} />
             <span className="text-2xl font-bold">
-              {result.homeGoals} - {result.awayGoals}
+              {displayHomeGoals}
+              {penalties && <span className="text-base font-bold"> ({penalties.homeGoals})</span>}
+              {" - "}
+              {penalties && <span className="text-base font-bold">({penalties.awayGoals}) </span>}
+              {displayAwayGoals}
             </span>
             <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={40} />
+            {decisionLabel && (
+              <span className="text-sm font-normal text-muted-foreground">({decisionLabel})</span>
+            )}
           </DialogTitle>
         </DialogHeader>
 
@@ -873,6 +921,66 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                 </div>
               )}
             </div>
+
+            {/* Tanda de penaltis */}
+            {penalties && (
+              <div className="space-y-3">
+                <h3 className="font-bold flex items-center gap-2">
+                  <Target className="w-4 h-4" />
+                  Tanda de penaltis · {penalties.homeGoals} - {penalties.awayGoals}
+                </h3>
+                {penalties.shootout && penalties.shootout.length > 0 ? (
+                  <div className="space-y-1">
+                    {(() => {
+                      let h = 0;
+                      let a = 0;
+                      return penalties.shootout.map((shot, i) => {
+                        if (shot.scored) {
+                          if (shot.team === "home") h += 1;
+                          else a += 1;
+                        }
+                        const shotTeam = shot.team === "home" ? home : away;
+                        const shooter = shot.playerId
+                          ? store.getSimPlayer(shot.playerId)
+                          : undefined;
+                        return (
+                          <div
+                            key={`pen-${i}`}
+                            className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
+                          >
+                            <span className="text-sm text-muted-foreground font-bold w-10">
+                              {i + 1}
+                            </span>
+                            <span className="text-base w-5 text-center shrink-0">
+                              {shot.scored ? "✅" : "❌"}
+                            </span>
+                            <TeamLogo
+                              teamName={shotTeam.name}
+                              leagueName={getLeagueName(shotTeam.league)}
+                              size={22}
+                            />
+                            <div className="text-sm min-w-0 truncate">
+                              <span className="font-bold">{shooter?.name || "Jugador"}</span>
+                              <span className="text-muted-foreground">
+                                {" "}
+                                · {shot.scored ? "Gol" : "Fallado"} ({shotTeam.short})
+                              </span>
+                            </div>
+                            <span className="ml-auto text-sm font-bold tabular-nums">
+                              {h} - {a}
+                            </span>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    No se guardó el detalle de los lanzamientos de este partido.
+                  </div>
+                )}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="lineups">

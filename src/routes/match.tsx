@@ -159,6 +159,13 @@ function MatchPage() {
   const oppXIRef = useRef<any[]>([]);
   const oppBenchRef = useRef<any[]>([]);
   const oppPlanRef = useRef<{ minute: number; outId: string; inId: string }[]>([]);
+  // Rival substitutions actually shown during the match.
+  const oppSubsDoneRef = useRef<any[]>([]);
+  // The chronicle as it really happened (after remapping events to the players
+  // that were on the pitch at that minute).
+  const playedEventsRef = useRef<any[]>([]);
+  const playedCardsRef = useRef<any[]>([]);
+  const playedHighlightsRef = useRef<any[]>([]);
   const resumeLive = (location.state as any)?.resumeLive === true;
 
   // Extract temporary lineup from router state (if passed from lineup page)
@@ -1136,19 +1143,55 @@ function MatchPage() {
     allEventsRef.current = fixture.result.events;
     allCardsRef.current = fixture.result.cards || [];
     allHighlightsRef.current = fixture.result.highlights || [];
-    setSubFeed(
-      (fixture.result.substitutions || [])
-        .map((sb: any) => ({
-          minute: sb.minute,
-          team: sb.team,
-          inName: sb.playerInName,
-          outName: sb.playerOutName,
-          playerInId: sb.playerInId,
-          playerOutId: sb.playerOutId,
-        }))
-        .reverse(),
-    );
+    // The chronicle starts empty: MY substitutions are decided by the manager
+    // (or by the assistant only when the match is simulated to the end), and the
+    // rival ones are revealed as the clock reaches their minute.
+    setSubFeed([]);
+
+    // Rival lineup and substitutions: use exactly the ones the engine used for
+    // this result, so his changes happen at their minute and every goal belongs
+    // to a player that is really on the pitch.
+    {
+      const myId = myTeamIdRef.current || save.myTeamId;
+      const oppSide = fixture.homeId === myId ? "away" : "home";
+      const oppId = oppSide === "home" ? fixture.homeId : fixture.awayId;
+      const planned = (fixture.result.substitutions || [])
+        .filter((sb: any) => sb.team === oppSide)
+        .map((sb: any) => ({ minute: sb.minute, outId: sb.playerOutId, inId: sb.playerInId }))
+        .sort((a: any, b: any) => a.minute - b.minute);
+
+      const simLineup: any[] =
+        (oppSide === "home" ? fixture.result.homeLineup : fixture.result.awayLineup) || [];
+      if (simLineup.length > 0) {
+        const oppSquad = getSimSquad(oppId);
+        const onPitch = new Set(simLineup.map((p: any) => p.id));
+        const plannedIn = planned
+          .map((s: any) => oppSquad.find((p: any) => p.id === s.inId))
+          .filter((p: any) => p && !onPitch.has(p.id));
+        const rest = oppSquad
+          .filter(
+            (p: any) =>
+              !onPitch.has(p.id) &&
+              (p.injuredUntil ?? 0) <= 0 &&
+              !plannedIn.some((q: any) => q.id === p.id),
+          )
+          .sort((a: any, b: any) => b.rating - a.rating)
+          .slice(0, 7);
+        oppXIRef.current = simLineup;
+        oppBenchRef.current = [...plannedIn, ...rest];
+        oppCacheRef.current = {
+          key: `${fixture.id}:${oppId}`,
+          formation:
+            (oppSide === "home" ? fixture.result.homeFormation : fixture.result.awayFormation) ||
+            oppCacheRef.current?.formation ||
+            "Táctica 4-4-2",
+        };
+      }
+      if (planned.length > 0) oppPlanRef.current = planned;
+      else planOpponentSubs();
+    }
     fixtureRef.current = fixture;
+
 
     // For cup matches that end in a draw, don't save the result yet
     // Allow user to edit lineup and go to extra time
@@ -1212,10 +1255,13 @@ function MatchPage() {
     }
 
     initLiveMatch();
+    if (oppPlanRef.current.length === 0) planOpponentSubs();
     setPhase("playing");
     runClock();
     if (shouldSkipToEnd) {
-      skipToEnd(false);
+      // Simulating to the end: the assistant makes my substitutions and the
+      // rival performs his planned ones.
+      skipToEnd(true);
     }
   }
 
@@ -1256,6 +1302,10 @@ function MatchPage() {
     setStamina(st);
     goneRef.current = [];
     setGoneIds([]);
+    oppSubsDoneRef.current = [];
+    playedEventsRef.current = [];
+    playedCardsRef.current = [];
+    playedHighlightsRef.current = [];
     subsUsedRef.current = 0;
     setSubsUsed(0);
     windowsUsedRef.current = 0;
@@ -1422,8 +1472,14 @@ function MatchPage() {
     for (const { outId, inId } of pairs) {
       const idx = xi.indexOf(outId);
       if (idx === -1) continue;
+      // A player who already left the pitch can never come back.
+      if (goneRef.current.includes(inId)) {
+        toast.error(`${playerById(inId)?.name ?? inId} ya ha sido sustituido y no puede volver.`);
+        continue;
+      }
       xi[idx] = inId;
-      bench = bench.filter((id) => id !== inId);
+      bench = bench.filter((id) => id !== inId && id !== outId);
+      goneRef.current = [...goneRef.current, outId];
       staminaRef.current = { ...staminaRef.current, [inId]: STAMINA_START };
       madeNow.push({
         minute: minuteRef.current,
@@ -1433,10 +1489,12 @@ function MatchPage() {
         inName: playerById(inId)?.name ?? inId,
       });
     }
+    if (madeNow.length === 0) return;
     myXIRef.current = xi;
     setMyXI(xi);
     myBenchRef.current = bench;
     setMyBench(bench);
+    setGoneIds(goneRef.current);
     setStamina(staminaRef.current);
     subsUsedRef.current += madeNow.length;
     setSubsUsed(subsUsedRef.current);
@@ -1471,7 +1529,178 @@ function MatchPage() {
     );
   }
 
+  // ------------------------------------- chronicle consistency (played match)
+
+  function mySideOf(fx: any): "home" | "away" {
+    return fx?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
+  }
+
+  /** My players that are really on the pitch right now. */
+  function myOnPitchPlayers(): any[] {
+    return myXIRef.current.map((id) => playerById(id)).filter(Boolean) as any[];
+  }
+
+  function isGkPlayer(p: any) {
+    const pos = p?.position ?? "";
+    return pos === "GK" || pos === "POR";
+  }
+
+  /** Random outfield player of a pool, weighted by rating. */
+  function pickCredit(pool: any[], excludeIds: string[] = []) {
+    const cands = pool.filter((p) => p && !isGkPlayer(p) && !excludeIds.includes(p.id));
+    if (cands.length === 0) return null;
+    const weights = cands.map((p) => Math.max(1, (p.rating ?? 70) - 50));
+    let r = Math.random() * weights.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < cands.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return cands[i];
+    }
+    return cands[cands.length - 1];
+  }
+
+  /**
+   * The result is simulated up front with its own substitutions, so a goal or
+   * assist can end up credited to a player the manager already took off. This
+   * re-credits the event to somebody actually on the pitch at that minute.
+   */
+  function remapEventToPitch(ev: any) {
+    const fx = fixtureRef.current;
+    if (!fx || !ev) return ev;
+    if (ev.type === "own_goal") return { ...ev };
+    const pool = ev.team === mySideOf(fx) ? myOnPitchPlayers() : oppXIRef.current;
+    if (!pool || pool.length === 0) return { ...ev };
+    const onPitch = new Set(pool.map((p: any) => p.id));
+    let next: any = { ...ev, _origScorerId: ev.scorerId, _origAssistId: ev.assistId };
+    if (next.scorerId && !onPitch.has(next.scorerId)) {
+      const repl = pickCredit(pool);
+      if (repl) next = { ...next, scorerId: repl.id, scorerName: repl.name };
+    }
+    if (next.assistId && (!onPitch.has(next.assistId) || next.assistId === next.scorerId)) {
+      const repl = pickCredit(pool, [next.scorerId]);
+      next = repl
+        ? { ...next, assistId: repl.id, assistName: repl.name }
+        : { ...next, assistId: undefined, assistName: undefined };
+    }
+    return next;
+  }
+
+  /** Same idea for cards: nobody off the pitch can be booked. */
+  function remapCardToPitch(c: any) {
+    const fx = fixtureRef.current;
+    if (!fx || !c) return c;
+    const pool = c.team === mySideOf(fx) ? myOnPitchPlayers() : oppXIRef.current;
+    if (!pool || pool.length === 0) return { ...c };
+    const onPitch = new Set(pool.map((p: any) => p.id));
+    if (onPitch.has(c.playerId)) return { ...c };
+    const repl = pickCredit(pool);
+    return repl ? { ...c, playerId: repl.id, playerName: repl.name } : { ...c };
+  }
+
+  /** Real substitutions of the match: mine plus the rival ones already shown. */
+  function buildPlayedSubstitutions() {
+    const fx = fixtureRef.current;
+    const mySide = mySideOf(fx);
+    const mine = subsRef.current.map((s: any) => ({
+      minute: s.minute,
+      team: mySide,
+      playerOutId: s.outId,
+      playerOutName: s.outName,
+      playerInId: s.inId,
+      playerInName: s.inName,
+    }));
+    const opp = oppSubsDoneRef.current.map((s: any) => ({
+      minute: s.minute,
+      team: s.team,
+      playerOutId: s.playerOutId,
+      playerOutName: s.outName,
+      playerInId: s.playerInId,
+      playerInName: s.inName,
+    }));
+    return [...mine, ...opp].sort((a, b) => a.minute - b.minute);
+  }
+
+  function persistResultToSave(fixtureId: string, result: any) {
+    const s = loadSave();
+    if (!s) return;
+    const next: any = { ...s };
+    let changed = false;
+
+    const patchList = (list: any[]) =>
+      list.map((f: any) => {
+        if (f.id !== fixtureId || !f.result) return f;
+        changed = true;
+        return { ...f, result };
+      });
+
+    if (next.fixtures) {
+      const fixturesNext: any = {};
+      for (const lg of Object.keys(next.fixtures)) {
+        fixturesNext[lg] = patchList(next.fixtures[lg] || []);
+      }
+      next.fixtures = fixturesNext;
+    }
+    if (next.cupFixtures) {
+      const cupNext: any = {};
+      for (const lg of Object.keys(next.cupFixtures)) {
+        cupNext[lg] = patchList(next.cupFixtures[lg] || []);
+      }
+      next.cupFixtures = cupNext;
+    }
+    if (next.uclFixtures) next.uclFixtures = patchList(next.uclFixtures);
+
+    if (!changed) return;
+    saveSaveWithRetry(next);
+    setSave(next);
+  }
+
+  /**
+   * When the match ends, the chronicle the manager just watched becomes the
+   * official one: same goals, same scorers and the substitutions that really
+   * happened (mine and the rival's). This is what "Jornadas" shows later.
+   */
+  function finalizePlayedChronicle() {
+    const fx = fixtureRef.current;
+    if (!fx?.result) return;
+    const comp = fx.competition;
+    const store = usePlayersStore.getState();
+
+    for (const ev of playedEventsRef.current) {
+      if (ev.type === "own_goal") continue;
+      const origScorer = ev._origScorerId;
+      const origAssist = ev._origAssistId;
+      if (origScorer && origScorer !== ev.scorerId) {
+        store.unrecordGoal(origScorer, comp);
+        if (ev.scorerId) store.recordGoal(ev.scorerId, comp);
+      }
+      if ((origAssist ?? null) !== (ev.assistId ?? null)) {
+        if (origAssist) store.unrecordAssist(origAssist, comp);
+        if (ev.assistId) store.recordAssist(ev.assistId, comp);
+      }
+    }
+
+    const strip = (o: any) => {
+      const { _origScorerId, _origAssistId, ...rest } = o;
+      return rest;
+    };
+    const events =
+      playedEventsRef.current.length > 0
+        ? playedEventsRef.current.map(strip).sort((a: any, b: any) => a.minute - b.minute)
+        : fx.result.events;
+    const cards =
+      playedCardsRef.current.length > 0
+        ? playedCardsRef.current.slice().sort((a: any, b: any) => a.minute - b.minute)
+        : fx.result.cards;
+    const substitutions = buildPlayedSubstitutions();
+
+    const nextResult = { ...fx.result, events, cards, substitutions };
+    fixtureRef.current = { ...fx, result: nextResult } as any;
+    allEventsRef.current = events;
+    allCardsRef.current = cards;
+    persistResultToSave(fx.id, nextResult);
+  }
+
   // ------------------------------------------------- rival (CPU) substitutions
+
 
   /** Plan 2-3 substitutions for the CPU side, spread across the second half. */
   function planOpponentSubs() {
@@ -1512,8 +1741,17 @@ function MatchPage() {
     const xi = [...oppXIRef.current];
     const made: any[] = [];
     for (const s of due) {
-      const idx = xi.findIndex((p: any) => p.id === s.outId);
-      const inn = oppBenchRef.current.find((p: any) => p.id === s.inId);
+      // Be resilient: if the planned player is not on the pitch (or the planned
+      // substitute is not on the bench any more) use a valid one instead, so the
+      // rival always makes his changes.
+      let idx = xi.findIndex((p: any) => p.id === s.outId);
+      if (idx === -1) {
+        idx = xi.findIndex((p: any) => !isGkPlayer(p));
+      }
+      const inn =
+        oppBenchRef.current.find((p: any) => p.id === s.inId) ??
+        oppBenchRef.current.find((p: any) => !isGkPlayer(p)) ??
+        oppBenchRef.current[0];
       if (idx === -1 || !inn) continue;
       const out = xi[idx];
       xi[idx] = inn;
@@ -1529,8 +1767,10 @@ function MatchPage() {
     }
     if (made.length === 0) return;
     oppXIRef.current = xi;
-    setSubFeed((prev) => [...made.reverse(), ...prev]);
+    oppSubsDoneRef.current = [...oppSubsDoneRef.current, ...made];
+    setSubFeed((prev) => [...made.slice().reverse(), ...prev]);
   }
+
 
   function goEditLineupLive() {
     if (!pausedRef.current) pauseMatch("manual");
@@ -1558,11 +1798,17 @@ function MatchPage() {
       m += 1;
       setMinute(m);
       minuteRef.current = m;
-      const events = allEventsRef.current.filter((e) => e.minute === m);
-      const cards = allCardsRef.current.filter((c) => c.minute === m);
+      const rawEvents = allEventsRef.current.filter((e) => e.minute === m);
+      const rawCards = allCardsRef.current.filter((c) => c.minute === m);
+      const events = rawEvents.map(remapEventToPitch);
+      const cards = rawCards.map(remapCardToPitch);
       const hls = allHighlightsRef.current.filter((h) => h.minute === m);
-      if (hls.length > 0) setHighlightFeed((prev) => [...hls, ...prev]);
+      if (hls.length > 0) {
+        playedHighlightsRef.current = [...playedHighlightsRef.current, ...hls];
+        setHighlightFeed((prev) => [...hls, ...prev]);
+      }
       if (events.length > 0) {
+        playedEventsRef.current = [...playedEventsRef.current, ...events];
         setFeed((prev) => [...events, ...prev]);
         for (const ev of events) {
           if (ev.team === "home") setHomeScore((s) => s + 1);
@@ -1570,6 +1816,7 @@ function MatchPage() {
         }
       }
       if (cards.length > 0) {
+        playedCardsRef.current = [...playedCardsRef.current, ...cards];
         setCardFeed((prev) => [...cards, ...prev]);
         // A red card of my team leaves us one man down for the rest of the match.
         const mySide =
@@ -1588,11 +1835,13 @@ function MatchPage() {
       applyOpponentSubsAt(m);
 
       if (m >= 90) {
+        finalizePlayedChronicle();
         setPhase("done");
         clearMatchSnapshot();
         clearLive();
         return;
       }
+
       if (checkInjuriesAt(m)) return;
       if (m === 45 && !halftimeDoneRef.current) {
         halftimeDoneRef.current = true;
@@ -1610,7 +1859,7 @@ function MatchPage() {
    * The manager can't intervene, so the assistant takes the most tired outfield
    * players off, mirroring what the CPU does for the rival.
    */
-  function autoSubMyTeamAt(m: number): any[] {
+  function autoSubMyTeamAt(m: number, staminaThreshold = 62): any[] {
     const check = canSubstitute(
       {
         subsUsed: subsUsedRef.current,
@@ -1623,13 +1872,14 @@ function MatchPage() {
     if (!check.ok) return [];
     if (myBenchRef.current.length === 0) return [];
 
-    // Take off the most tired outfield player if he is genuinely gassed.
+    // Take off the most tired outfield player.
     const candidates = myXIRef.current
       .map((id) => ({ id, p: playerById(id), st: staminaRef.current[id] ?? STAMINA_START }))
       .filter((c) => c.p && c.p.position !== "GK" && c.p.position !== "POR")
       .sort((a, b) => a.st - b.st);
     const worst = candidates[0];
-    if (!worst || worst.st > 62) return [];
+    if (!worst || worst.st > staminaThreshold) return [];
+
 
     const inId =
       myBenchRef.current.find((id) => {
@@ -1683,24 +1933,35 @@ function MatchPage() {
 
     if (!fixtureRef.current?.result) return;
 
-    // Fast-forward the remaining minutes so stamina keeps draining and our team
-    // can make automatic substitutions. When this is triggered from the preview
-    // skip button, the opponent does not perform planned subs.
+    // Fast-forward the remaining minutes so stamina keeps draining, our team
+    // makes its substitutions and every goal is credited to a player that was
+    // really on the pitch at that minute. When this is triggered from the
+    // preview skip button, the opponent does not perform planned subs.
     const madeWhileSkipping: any[] = [];
+    // The assistant always makes a couple of changes in the second half, just
+    // like the rival does, so the chronicle shows my substitutions too.
+    const autoSubMinutes = [61, 71, 80];
     for (let m = minuteRef.current + 1; m <= 90; m++) {
       drainStamina();
-      if (includeOpponentSubs) {
-        const before = oppPlanRef.current.filter((s) => s.minute === m);
-        if (before.length > 0) applyOpponentSubsAt(m);
+      if (includeOpponentSubs && oppPlanRef.current.some((s) => s.minute === m)) {
+        applyOpponentSubsAt(m);
       }
-      // My team considers a change roughly every 10 minutes of the second half.
-      if (m >= 55 && m % 10 === 0) {
-        madeWhileSkipping.push(...autoSubMyTeamAt(m));
+      if (autoSubMinutes.includes(m)) {
+        // First change only if somebody is tired; the later ones are always made.
+        madeWhileSkipping.push(...autoSubMyTeamAt(m, m === autoSubMinutes[0] ? 80 : 101));
       }
+      const evs = allEventsRef.current.filter((e) => e.minute === m).map(remapEventToPitch);
+      if (evs.length > 0) playedEventsRef.current = [...playedEventsRef.current, ...evs];
+      const cds = allCardsRef.current.filter((c) => c.minute === m).map(remapCardToPitch);
+      if (cds.length > 0) playedCardsRef.current = [...playedCardsRef.current, ...cds];
+      const hls = allHighlightsRef.current.filter((h) => h.minute === m);
+      if (hls.length > 0) playedHighlightsRef.current = [...playedHighlightsRef.current, ...hls];
     }
     if (madeWhileSkipping.length > 0) {
-      setSubFeed((prev) => [...madeWhileSkipping.reverse(), ...prev]);
+      setSubFeed((prev) => [...madeWhileSkipping.slice().reverse(), ...prev]);
     }
+
+    finalizePlayedChronicle();
 
     setHomeScore(fixtureRef.current.result.homeGoals);
     setAwayScore(fixtureRef.current.result.awayGoals);
@@ -1712,6 +1973,7 @@ function MatchPage() {
     setPhase("done");
     clearMatchSnapshot();
     clearLive();
+
   }
 
   function skipPenaltyShootoutToEnd() {
