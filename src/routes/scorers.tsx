@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
+import { faceUrl } from "@/lib/playerFaces";
 import {
   selectTopScorers,
   selectTopAssisters,
@@ -21,6 +22,27 @@ import {
   selectTopCleanSheets,
   selectTopMotm,
 } from "@/store/playersStore";
+
+/** Miniatura de la carta del jugador, mismo recorte que en el Mercado
+ * (parte superior de la carta) pero a tamaño reducido para encajar en las
+ * filas de los rankings. */
+function RankFace({ id, cardImage, name }: { id: string; cardImage?: string; name: string }) {
+  const src = faceUrl(id, cardImage);
+  return (
+    <div className="w-11 h-13 shrink-0 rounded overflow-hidden bg-secondary/60 grid place-items-center">
+      {src ? (
+        <img
+          src={src}
+          alt={name}
+          className="w-full h-full object-cover object-top"
+          loading="lazy"
+        />
+      ) : (
+        <div className="w-3 h-3 rounded-full bg-white/10" aria-hidden />
+      )}
+    </div>
+  );
+}
 
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
@@ -268,13 +290,14 @@ function ScorerList({ players, emptyMsg }: { players: any[]; emptyMsg: string })
         return (
           <div
             key={p.id}
-            className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+            className="grid grid-cols-[28px_auto_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
           >
             <span
               className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}
             >
               {i + 1}
             </span>
+            <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
@@ -303,13 +326,14 @@ function AssisterList({ players, emptyMsg }: { players: any[]; emptyMsg: string 
         return (
           <div
             key={p.id}
-            className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+            className="grid grid-cols-[28px_auto_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
           >
             <span
               className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}
             >
               {i + 1}
             </span>
+            <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
@@ -354,13 +378,14 @@ function CardList({
         return (
           <div
             key={p.id}
-            className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+            className="grid grid-cols-[28px_auto_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
           >
             <span
               className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}
             >
               {i + 1}
             </span>
+            <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
@@ -401,13 +426,14 @@ function SimpleList({
         return (
           <div
             key={p.id}
-            className="grid grid-cols-[28px_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
+            className="grid grid-cols-[28px_auto_auto_1fr_auto_auto] items-center gap-3 px-4 py-3"
           >
             <span
               className={`text-sm font-black ${i < 3 ? "text-primary" : "text-muted-foreground"}`}
             >
               {i + 1}
             </span>
+            <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
             <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>

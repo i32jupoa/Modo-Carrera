@@ -43,6 +43,16 @@ function initials(name: string): string {
     .join("");
 }
 
+/**
+ * Recorte de la imagen de la carta: qué punto de la imagen queda centrado
+ * en el círculo y cuánto se hace zoom sobre ella. Las cartas traen bastante
+ * espacio vacío alrededor del jugador (parámetro `padding` de la API de EA),
+ * así que se hace zoom para que la cara ocupe el círculo sin quedar
+ * gigante ni descentrada. Ajustar aquí si hace falta afinar el encuadre.
+ */
+const FACE_OBJECT_POSITION = "50% 24%";
+const FACE_SCALE = 1.05;
+
 interface PlayerFaceProps {
   name: string;
   image?: string;
@@ -84,10 +94,14 @@ export function PlayerFace({
           loading="lazy"
           onError={() => setFailed(true)}
           className="h-full w-full object-cover"
-          style={{ objectPosition: "44% 30%", transform: "scale(1.45)" }}
+          style={{ objectPosition: FACE_OBJECT_POSITION, transform: `scale(${FACE_SCALE})` }}
         />
       ) : (
-        <span className={`text-[0.6rem] font-black ${ROLE_TEXT[role]}`}>{initials(name)}</span>
+        <span
+          className={`text-[0.6rem] font-black ${showRing ? ROLE_TEXT[role] : "text-foreground/70"}`}
+        >
+          {initials(name)}
+        </span>
       )}
     </span>
   );

@@ -1,13 +1,6 @@
 import type { ElevenSlot } from "@/lib/teamProfile";
 import { FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
-import { PlayerFace, ROLE_TEXT, roleFromPosition, type PosRole } from "@/components/PlayerFace";
-
-const LEGEND: Array<{ role: PosRole; label: string }> = [
-  { role: "GK", label: "Portería" },
-  { role: "DEF", label: "Defensa" },
-  { role: "MID", label: "Centro del campo" },
-  { role: "ATT", label: "Delantera" },
-];
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 
 const FALLBACK: FormationName = "Táctica 4-2-3-1 (2)";
 
@@ -89,9 +82,7 @@ export function TypicalElevenPitch({ eleven, formation, className = "" }: Props)
                   </span>
                 )}
               </div>
-              <span
-                className={`mt-1 text-[0.58rem] font-black uppercase tracking-wide ${ROLE_TEXT[role]}`}
-              >
+              <span className="mt-1 text-[0.58rem] font-black uppercase tracking-wide text-white/80">
                 {slot.label}
               </span>
               <span className="max-w-full truncate text-[0.58rem] font-semibold leading-tight text-white/90">
@@ -100,19 +91,6 @@ export function TypicalElevenPitch({ eleven, formation, className = "" }: Props)
             </div>
           );
         })}
-      </div>
-
-      {/* Leyenda de colores */}
-      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-        {LEGEND.map((l) => (
-          <span key={l.role} className="flex items-center gap-1.5 text-[0.62rem] font-semibold">
-            <span
-              className={`h-2 w-2 rounded-full ${ROLE_TEXT[l.role]}`}
-              style={{ backgroundColor: "currentColor" }}
-            />
-            <span className={ROLE_TEXT[l.role]}>{l.label}</span>
-          </span>
-        ))}
       </div>
     </div>
   );

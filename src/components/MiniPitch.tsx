@@ -243,7 +243,7 @@ export function MiniPitch({
                   name={player.name}
                   image={faceUrl(player.id, player.cardImage)}
                   role={roleFromPosition(player.positions[0])}
-                  size={30}
+                  size={34}
                   className="shadow-lg"
                   showRing={false}
                 />
