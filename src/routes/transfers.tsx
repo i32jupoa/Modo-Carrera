@@ -472,8 +472,8 @@ function TransfersPage() {
           <span className="text-primary">{totalEconomicBudget > 0 ? ((wageBudget / totalEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · máximo 50%</span>
         </div>
         <Slider
-          value={[Math.min(wageBudget, Math.floor(totalEconomicBudget / 2))]}
-          min={Math.min(wageBill, Math.floor(totalEconomicBudget / 2))}
+          value={[Math.min(Math.max(0, wageBudget), Math.floor(totalEconomicBudget / 2))]}
+          min={0}
           max={Math.floor(totalEconomicBudget / 2)}
           step={250_000}
           onValueChange={(values) => setWageBudget(values[0] ?? wageBudget)}

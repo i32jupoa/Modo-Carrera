@@ -308,7 +308,7 @@ export function scoreCandidate(input: {
   // fue (el "sustituto natural"), no sólo al que más mejora la media actual.
   const lossOvr = recentCoreLossOvr(input.clubId, need.group);
   const replacementBonus =
-    lossOvr > 0 ? clamp(1 - Math.abs(player.ovr - lossOvr) / 10, 0, 1) * 0.12 : 0;
+    lossOvr > 0 ? clamp(1 - Math.abs(player.ovr - lossOvr) / 10, 0, 1) * 0.2 : 0;
 
   // Ruido de ojeador: baraja el orden entre candidatos de nivel similar de
   // forma estable dentro de una misma partida (ver `DECISION_ACCURACY.
@@ -482,6 +482,7 @@ export function buildShortlist(
   const excludeClubIds = userClubId && userClubId !== clubId ? [clubId, userClubId] : [clubId];
 
   const candidates = findCandidates({
+    clubId,
     group: need.group,
     minOvr,
     maxOvr,
@@ -501,7 +502,8 @@ export function buildShortlist(
   for (const player of candidates) {
     if (!isAvailable(player.id, options.cacheKey, buyerContext)) continue;
     if (isPursuitOnCooldown(clubId, player.id, options.cacheKey)) continue;
-    if (!playerImprovesSquad(report, player, options.lenient)) continue;
+    const recentLossOvr = recentCoreLossOvr(clubId, need.group);
+    if (!playerImprovesSquad(report, player, options.lenient || recentLossOvr > 0)) continue;
 
     // Verificar compatibilidad de posición específica para laterales
     // Un lateral izquierdo no puede cubrir un hueco de lateral derecho a menos que tenga posiciones alternativas
@@ -757,8 +759,10 @@ export function pursueTarget(
     // de transferibles/cedibles del análisis): es un titular o casi. Un club
     // sólo se desprende de un puñado de esos por ventana, no de media
     // alineación — ver `maxCoreDeparturesPerWindow`.
+    const shape = IDEAL_SQUAD_SHAPE[player.group];
     isCoreDeparture =
-      !sellerReport.transferables.includes(playerId) && !sellerReport.loanables.includes(playerId);
+      !sellerReport.transferables.includes(playerId) && !sellerReport.loanables.includes(playerId) ||
+      sellerReport.countByGroup[player.group] <= shape.ideal + 1;
     if (
       isCoreDeparture &&
       coreDeparturesFor(player.clubId) >= MARKET_TIMING.maxCoreDeparturesPerWindow
@@ -1091,6 +1095,9 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
     return null;
   }
   const buyerLeague = teamById(buyerId).league;
+  if (buyerId === "ath" && player.nation.trim().toLowerCase() !== "españa") {
+    return null;
+  }
   const isLoan =
     offer.type === "loan" || offer.type === "loan-option" || offer.type === "loan-obligation";
 
@@ -1239,7 +1246,11 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
     if (restrictToUrgent && need.priority !== "critical" && need.priority !== "high") continue;
     if (result.transfers.length >= maxSignings) break;
     const shape = IDEAL_SQUAD_SHAPE[need.group];
-    if (need.count >= shape.max) continue;
+    const recentLossOvr = recentCoreLossOvr(clubId, need.group);
+    // Si el club ha perdido recientemente a un jugador de nivel en esta demarcación,
+    // puede fichar un sustituto aunque siga dentro del máximo numérico de la posición.
+    // El objetivo es reponer calidad, no sólo rellenar casillas.
+    if (need.count >= shape.max && recentLossOvr <= 0) continue;
 
     const shortlist = buildShortlist(clubId, need, {
       cacheKey,
@@ -1334,7 +1345,10 @@ export function signBestFreeAgent(
     const options = getFreeAgents()
       .filter(
         (player) =>
-          player.group === need.group && player.ovr <= ceilingOvr && player.ovr >= floorOvr,
+          player.group === need.group &&
+          player.ovr <= ceilingOvr &&
+          player.ovr >= floorOvr &&
+          (clubId !== "ath" || player.nation.trim().toLowerCase() === "españa"),
       )
       .filter((player) => wageDemand(player.id, clubId) <= wageCeiling)
       .sort((a, b) => b.ovr - a.ovr)

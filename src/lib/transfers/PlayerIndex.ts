@@ -315,6 +315,8 @@ export function getFreeAgents(): MarketPlayer[] {
 /** Filtro de búsqueda de candidatos. */
 export interface CandidateQuery {
   group: PositionGroup;
+  /** Club comprador; permite aplicar reglas especiales de elegibilidad. */
+  clubId?: string;
   minOvr?: number;
   maxOvr?: number;
   minAge?: number;
@@ -353,6 +355,10 @@ export function findCandidates(query: CandidateQuery): MarketPlayer[] {
       if (query.maxValue !== undefined && player.value > query.maxValue) continue;
       if (player.clubId && excluded.has(player.clubId)) continue;
       if (leagues && !leagues.has(player.leagueId)) continue;
+      // Athletic Club solo puede fichar jugadores españoles. Se aplica en el
+      // índice para que ningún buscador de candidatos de la IA pueda saltarse
+      // la regla por accidente.
+      if (query.clubId === "ath" && player.nation.trim().toLowerCase() !== "españa") continue;
       candidates.push(player);
     }
   }

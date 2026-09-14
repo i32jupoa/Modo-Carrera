@@ -143,7 +143,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     if (current.budget !== finances.budget || current.wageBudget !== finances.wageBudget || current.wageBill !== finances.wageBill) {
       usePlayersStore.setState({
         budget: Math.max(0, Math.round(finances.budget)),
-        wageBudget: Math.max(finances.wageBill, Math.round(finances.wageBudget)),
+        wageBudget: Math.max(0, Math.round(finances.wageBudget)),
         wageBill: Math.max(0, Math.round(finances.wageBill)),
       });
     }
@@ -276,16 +276,21 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit(undefined, result.reason ?? "La venta no se pudo cerrar.");
         return;
       }
+      const playerBeforeSale = store.getSimPlayer(result.record.playerId);
+      const previousWage = playerBeforeSale?.contract.wage ?? result.record.wage ?? 0;
       const sold = store.sellPlayer(result.record.playerId, 0);
       if (!sold.ok) {
         commit(undefined, sold.reason ?? "La venta no se pudo aplicar a tu plantilla.");
         return;
       }
+      // La venta se liquida en el motor económico una sola vez: entra el 100%
+      // del traspaso y se libera la masa salarial del contrato que acaba de salir.
+      syncUserFinances(myTeamId!, result.fee, previousWage, true);
       flushWorldMoves();
       syncBudget();
       commit(`Venta cerrada por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
     },
-    [currentDate, commit, syncBudget],
+    [currentDate, commit, myTeamId, syncBudget],
   );
 
   const counterIncoming = useCallback(

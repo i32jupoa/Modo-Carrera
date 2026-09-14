@@ -247,6 +247,9 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   if (!player) return { ok: false, reason: "Jugador no encontrado en el mercado." };
   if (!player.clubId) return { ok: false, reason: "Es agente libre: negocia sólo la ficha." };
   if (player.clubId === input.userClubId) return { ok: false, reason: "Ya es tu jugador." };
+  if (input.userClubId === "ath" && player.nation.trim().toLowerCase() !== "españa") {
+    return { ok: false, reason: "Athletic Club solo puede fichar jugadores españoles." };
+  }
   if (windowForDate(input.date) === "closed") {
     return { ok: false, reason: "El mercado está cerrado." };
   }
@@ -907,6 +910,9 @@ export function signFreeAgent(
   const player = getPlayer(playerId);
   if (!player) return { ok: false, reason: "Jugador no encontrado." };
   if (player.clubId) return { ok: false, reason: "No es agente libre." };
+  if (userClubId === "ath" && player.nation.trim().toLowerCase() !== "españa") {
+    return { ok: false, reason: "Athletic Club solo puede fichar jugadores españoles." };
+  }
 
   const decision = decideOnMove({
     playerId,

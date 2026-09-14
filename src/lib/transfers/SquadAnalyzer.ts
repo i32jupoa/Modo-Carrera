@@ -135,14 +135,15 @@ export function analyzeSquad(clubId: string): SquadReport {
     countByGroup[group] = players.length;
     ratingByGroup[group] = Math.round(average(players.map((p) => p.ovr)) * 10) / 10;
 
+    const recentLoss = recentCoreLossOvr(clubId, group);
     const urgency = computeUrgency(
       clubId,
       group,
       players,
       startingRating,
-      recentCoreLossOvr(clubId, group),
+      recentLoss,
     );
-    if (urgency > 0.15) {
+    if (urgency > 0.15 || recentLoss > 0) {
       needs.push({
         group,
         urgency,

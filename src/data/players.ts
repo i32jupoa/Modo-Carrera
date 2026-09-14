@@ -110,7 +110,7 @@ function positionRoleModifier(pos: string): number {
  *  enorme y entre un 70 y un 65 es casi simbólica. */
 function ratingCurve(rating: number): number {
   const normalized = clamp((rating - 35) / 59, 0, 1.02);
-  return Math.pow(normalized, 7);
+  return Math.pow(normalized, 5);
 }
 
 /** Curva de edad: pico entre 24 y 27, prima moderada a la proyección joven

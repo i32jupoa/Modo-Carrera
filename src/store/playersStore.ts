@@ -1490,13 +1490,19 @@ export const usePlayersStore = create<PlayersState>()(
           opts?.resetBudget || prev.myTeamId !== teamId
             ? teamInitialBudget(avgOvr, team.league, team.id)
             : prev.budget;
-        const previousWageBudget =
-          prev.myTeamId === teamId ? prev.wageBudget ?? 0 : initialWageBudget(teamId, defaultSquad, transferBase);
         const wageBill = getClubWageBill(teamId);
-        let total = Math.max(0, transferBase + previousWageBudget);
-        if (wageBill > Math.floor(total / 2)) total = wageBill * 2;
-        const maxWage = Math.floor(total / 2);
-        const preferredWage = Math.max(wageBill, Math.min(maxWage, previousWageBudget || Math.round(total * 0.25)));
+        // En un cambio de club, el presupuesto de fichajes viene del perfil
+        // económico fijado para ese club. La masa salarial real nunca aumenta
+        // artificialmente ese presupuesto (era la causa de que Ipswich pasara
+        // de 20M a ~54M). La bolsa salarial inicial es el 25% del total y se
+        // puede mover con la barra hasta un máximo del 50%.
+        const previousWageBudget =
+          prev.myTeamId === teamId ? prev.wageBudget ?? 0 : 0;
+        const initialTotal = Math.ceil(transferBase / 0.75);
+        const maxWage = Math.floor(initialTotal / 2);
+        const defaultWage = Math.round(initialTotal * 0.25);
+        const preferredWage = Math.max(0, Math.min(maxWage, previousWageBudget || defaultWage));
+        const total = Math.max(0, initialTotal);
         set({
           myTeamId: teamId,
           rosterIds,
@@ -1565,25 +1571,17 @@ export const usePlayersStore = create<PlayersState>()(
         const team = state.myTeamId ? teamById(state.myTeamId) : null;
         const transferBudget = team ? teamInitialBudget(Math.round(team.att + team.mid + team.def) / 3, team.league, team.id) : INITIAL_BUDGET;
         const wageBill = state.myTeamId ? getClubWageBill(state.myTeamId) : 0;
-        let wageBudget = Math.max(wageBill * 1.12, Math.round(transferBudget * 0.25));
-        let total = transferBudget + wageBudget;
-        if (wageBudget > total / 2) {
-          total = wageBudget * 2;
-          wageBudget = Math.floor(total / 2);
-        }
+        const total = Math.ceil(Math.max(0, transferBudget) / 0.75);
+        const wageBudget = Math.round(total * 0.25);
         set({ budget: Math.max(0, total - wageBudget), wageBill, wageBudget });
       },
 
       setWageBudget: (value) => {
         const state = get();
         const marketBill = state.myTeamId ? getClubWageBill(state.myTeamId) : 0;
-        const minimum = Math.max(0, marketBill);
-        let total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0));
-        // Si una partida antigua tenía una masa salarial superior al 50%,
-        // elevamos el total económico una sola vez para que la regla sea posible.
-        if (minimum > Math.floor(total / 2)) total = minimum * 2;
+        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0));
         const maxWage = Math.floor(total / 2);
-        const nextWage = Math.max(minimum, Math.min(maxWage, Math.round(value)));
+        const nextWage = Math.max(0, Math.min(maxWage, Math.round(value)));
         set({
           wageBudget: nextWage,
           budget: Math.max(0, total - nextWage),
@@ -1595,10 +1593,9 @@ export const usePlayersStore = create<PlayersState>()(
         const state = get();
         if (!state.myTeamId) return;
         const bill = getClubWageBill(state.myTeamId);
-        let total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0));
-        if (bill > Math.floor(total / 2)) total = Math.max(total, bill * 2);
+        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0));
         const maxWage = Math.floor(total / 2);
-        const preferred = Math.max(bill, Math.min(maxWage, state.wageBudget || Math.round(total * 0.25)));
+        const preferred = Math.max(0, Math.min(maxWage, state.wageBudget || Math.round(total * 0.25)));
         set({
           wageBill: bill,
           wageBudget: preferred,

@@ -8,7 +8,7 @@
  */
 
 import { BUDGET_RULES, WAGE_RULES } from "./constants";
-import { getClubProfile, NO_DISCOUNT_LEAGUES, SAUDI_LEAGUE_ID, TOP5_LEAGUES } from "./ClubStrategy";
+import { getClubProfile, SAUDI_LEAGUE_ID } from "./ClubStrategy";
 import { getClubPlayers } from "./PlayerIndex";
 import { clamp } from "./random";
 import { getProtectedClubId, setProtectedClubId } from "./MarketLocks";
@@ -18,16 +18,220 @@ import type { ClubFinances, ClubProfile } from "./types";
  * Multiplicador de "identidad económica" de la liga: el mismo para todo el
  * mercado (equipo del usuario y clubes IA por igual), para que un Real Madrid
  * llevado por la IA y uno llevado por el usuario partan del mismo dinero.
- *  - Liga saudí: +220% (dinero estatal fuera de escala deportiva, pero sin
- *    llegar a superar sistemáticamente a los grandes de Europa).
- *  - Fuera del top 5 (salvo Portugal/Bélgica/Turquía/Países Bajos): -20%.
- *  - Resto: sin ajuste.
+ *  - Arabia Saudí mantiene su multiplicador especial con la reducción del 35%.
+ *  - Las demás ligas usan multiplicadores propios para reflejar su capacidad
+ *    económica, sin forzar a todos los clubes a compartir un mismo 80%.
  */
 function leagueBudgetMultiplier(leagueId: string): number {
-  if (leagueId === SAUDI_LEAGUE_ID) return 3.2; // +220%
-  if (leagueId && !TOP5_LEAGUES.has(leagueId) && !NO_DISCOUNT_LEAGUES.has(leagueId)) return 0.8; // -20%
-  return 1;
+  // Arabia mantiene la reducción del 35% acordada anteriormente.
+  if (leagueId === SAUDI_LEAGUE_ID) return 2.08;
+
+  // El resto de competiciones usa una escala propia: las ligas con más
+  // capacidad económica no pueden quedar artificialmente al 80% de una
+  // fórmula genérica, mientras que las competiciones menores parten de
+  // cantidades mucho más contenidas.
+  const multipliers: Record<string, number> = {
+    premier: 1,
+    laliga: 1,
+    seriea: 1,
+    bundesliga: 1,
+    ligue1: 1,
+    ligaportugal: 0.9,
+    eredivisie: 0.85,
+    trendyolsperlig: 0.82,
+    mls: 0.82,
+    lpf: 0.62,
+    scottish: 0.6,
+    "1aproleague": 0.62,
+    bracksuperleague: 0.5,
+    austrianbundesliga: 0.52,
+    "3fsuperliga": 0.48,
+    pkobpekstraklasa: 0.48,
+    allsvenskan: 0.4,
+    eliteserien: 0.42,
+    superliga: 0.36,
+    championship: 0.48,
+    laliga2: 0.36,
+    bundesliga2: 0.36,
+    serieb: 0.34,
+    ligue2: 0.3,
+    liga3: 0.2,
+    leagueone: 0.2,
+    leaguetwo: 0.16,
+  };
+  return multipliers[leagueId] ?? 0.3;
 }
+
+/**
+ * Presupuestos iniciales fijados para las cinco grandes ligas europeas que
+ * tienen equipos definidos de forma estática en el juego. Así el presupuesto
+ * no depende de pequeñas variaciones en la media del equipo y mantiene una
+ * escala coherente entre gigantes, aspirantes y clubes modestos.
+ * El resto de ligas conserva la fórmula económica existente.
+ */
+const CLUB_BUDGET_OVERRIDES: Record<string, number> = {
+  // LaLiga
+  rma: 250,
+  bar: 180,
+  atm: 125,
+  vil: 60,
+  bet: 50,
+  ath: 45,
+  rso: 43,
+  val: 36,
+  sev: 32,
+  cel: 29,
+  esp: 24,
+  ala: 21,
+  get: 20,
+  osa: 19,
+  rayo: 18,
+  elc: 16,
+  lev: 14,
+  racing: 14,
+  depor: 13,
+  malaga: 13,
+  // Premier League
+  mci: 240,
+  liv: 220,
+  ars: 190,
+  che: 175,
+  mun: 155,
+  new: 105,
+  tot: 95,
+  avl: 70,
+  not: 55,
+  bri: 45,
+  cry: 42,
+  eve: 38,
+  ful: 34,
+  bou: 32,
+  bre: 29,
+  lee: 27,
+  sun: 22,
+  it: 20,
+  cc: 15,
+  hc: 13,
+
+  // Serie A
+  int: 190,
+  nap: 140,
+  juv: 175,
+  mil: 150,
+  rom: 85,
+  ata: 65,
+  laz: 55,
+  fio: 45,
+  bol: 38,
+  com: 30,
+  tor: 27,
+  udi: 22,
+  gen: 22,
+  par: 20,
+  cag: 18,
+  sas: 18,
+  lec: 15,
+  monz: 14,
+  ven: 14,
+  fro: 12,
+
+  // Bundesliga
+  bay: 200,
+  lev2: 110,
+  bvb: 150,
+  rbl: 105,
+  ein: 60,
+  stu: 48,
+  fre: 32,
+  hof: 30,
+  bre2: 30,
+  bmg: 32,
+  mai: 27,
+  fcu: 25,
+  ham: 24,
+  fca: 21,
+  koe: 17,
+  fs0: 20,
+  sp0: 12,
+  se: 10,
+
+  // Ligue 1
+  psg: 220,
+  mar: 85,
+  mon: 75,
+  lyo: 70,
+  lil: 60,
+  nic: 42,
+  ren: 34,
+  str: 30,
+  rcl: 32,
+  tou: 22,
+  bre3: 20,
+  par2: 20,
+  auxe: 14,
+  hav: 13,
+  loi: 14,
+  ang: 12,
+  eta: 11,
+  lmf: 10,
+
+  // Portugal
+  benfica: 60,
+  porto: 55,
+  sportingcp: 50,
+
+  // Países Bajos
+  ajax: 60,
+  psv: 55,
+  feyenoord: 48,
+
+  // Turquía
+  galatasaray: 65,
+  fenerbahce: 58,
+  besiktas: 45,
+  trabzonspor: 32,
+
+  // MLS
+  intermiami: 50,
+  lagalaxy: 42,
+  lafc: 40,
+  seattle: 34,
+  atlantautd: 32,
+  nycfc: 30,
+
+  // Escocia
+  celtic: 35,
+  rangers: 32,
+
+  // Bélgica
+  clubbrugge: 32,
+  anderlecht: 28,
+  genk: 24,
+  unionsg: 22,
+
+  // Argentina
+  riverplate: 32,
+  boca: 30,
+
+  // Austria
+  salzburg: 30,
+  rapidwien: 18,
+
+  // Suiza
+  basel: 22,
+  youngboys: 20,
+  zurich: 15,
+
+  // Dinamarca / Suecia / Noruega / Polonia / Rumanía
+  kopenhavn: 18,
+  copenhaguen: 18,
+  malmo: 14,
+  rosenborg: 14,
+  bodo: 15,
+  legia: 16,
+  steauabucuresti: 12,
+  cfrcluj: 11,
+};
 
 /**
  * Presupuesto inicial de fichajes según el poder económico y la liga del
@@ -43,10 +247,29 @@ function leagueBudgetMultiplier(leagueId: string): number {
  * que no representaba nada concreto).
  */
 export function initialBudget(profile: ClubProfile): number {
+  const override = CLUB_BUDGET_OVERRIDES[profile.clubId];
+  if (override !== undefined) return Math.round(override * 1_000_000);
+
   const power = clamp(profile.financialPower, 0, 1);
-  // Escala exponencial: los grandes manejan cifras de otro orden.
-  const base = 2_000_000 + Math.pow(power, 3.2) * 260_000_000;
-  const budget = base * leagueBudgetMultiplier(profile.leagueId);
+
+  // Mantener los grandes en la escala que ya estaba funcionando, pero evitar
+  // que los clubes medios/bajos arranquen con presupuestos desproporcionados.
+  // El ancla de 0.72 conserva aproximadamente el presupuesto de un club
+  // grande como el Barcelona; por debajo, la curva cae de forma mucho más
+  // pronunciada para que equipos como Ipswich se muevan alrededor de 20M.
+  let budget: number;
+  if (power >= 0.72) {
+    const base = 2_000_000 + Math.pow(power, 3.2) * 260_000_000;
+    budget = base * leagueBudgetMultiplier(profile.leagueId);
+  } else {
+    const referencePower = 0.72;
+    const referenceBase = 2_000_000 + Math.pow(referencePower, 3.2) * 260_000_000;
+    const referenceBudget = referenceBase * leagueBudgetMultiplier(profile.leagueId);
+    const referenceFloor = 2_000_000;
+    const ratio = Math.pow(power / referencePower, 7.5);
+    budget = referenceFloor + (referenceBudget - referenceFloor) * ratio;
+  }
+
   return Math.max(BUDGET_RULES.floor, Math.round(budget));
 }
 
@@ -146,11 +369,14 @@ export function getFinances(clubId: string): ClubFinances {
   const bridge = bridgeFor(clubId);
   if (bridge) {
     // El contrato del mercado es la fuente única de verdad para la masa salarial.
+    // Importante: la masa salarial real NO puede inflar automáticamente el
+    // presupuesto de fichajes. Si el club está por encima de su partida salarial,
+    // se muestra como exceso salarial y la barra sigue pudiendo moverse hasta el
+    // 50% del presupuesto económico.
     entry.wageBill = currentWageBill(clubId);
-    let total = Math.max(0, Math.round(bridge.getBudget()) + Math.round(bridge.getWageBudget()));
-    if (entry.wageBill > Math.floor(total / 2)) total = Math.round(entry.wageBill * 2);
+    const total = Math.max(0, Math.round(bridge.getBudget()) + Math.round(bridge.getWageBudget()));
     const maxAllowed = Math.floor(total / 2);
-    entry.wageBudget = Math.max(entry.wageBill, Math.min(maxAllowed, Math.round(bridge.getWageBudget())));
+    entry.wageBudget = Math.max(0, Math.min(maxAllowed, Math.round(bridge.getWageBudget())));
     entry.budget = Math.max(0, total - entry.wageBudget);
     entry.totalBudget = total;
   }
@@ -196,6 +422,14 @@ export function setWageBudget(clubId: string, value: number): void {
 
 export function maxWageOffer(clubId: string): number {
   const entry = getFinances(clubId);
+
+  // Solo Arabia Saudí mantiene el tope salarial del motor de mercado.
+  // Para el resto de clubes no existe esta restricción: pueden asumir la
+  // ficha que demande un jugador siempre que el resto de la operación sea
+  // viable.
+  const profile = getClubProfile(clubId);
+  if (profile.leagueId !== SAUDI_LEAGUE_ID) return Number.MAX_SAFE_INTEGER;
+
   const room = entry.wageBudget - entry.wageBill;
   const singleCap = entry.wageBudget * WAGE_RULES.maxShareSingle;
   return Math.max(WAGE_RULES.minimumWage, Math.round(Math.min(room, singleCap)));
