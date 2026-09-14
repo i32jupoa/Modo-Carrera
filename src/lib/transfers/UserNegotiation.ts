@@ -837,9 +837,10 @@ export interface IncomingResponseResult extends FinalizeResult {
 }
 
 /**
- * El usuario acepta vender. La decisión es suya y sólo suya: si acepta la
- * oferta, la venta se cierra. El jugador puede quejarse (mensaje), pero no
- * puede vetar su salida del club del usuario.
+ * El usuario acepta vender. A partir de ese momento el jugador toma una
+ * decisión independiente: tiene un 80% de probabilidad de aceptar la salida y
+ * un 20% de quedarse en el club. Si se queda, la operación se cancela y no se
+ * modifica la plantilla, el presupuesto ni el historial de traspasos.
  */
 export function acceptIncomingOffer(dealId: string, date: string): IncomingResponseResult {
   if (windowForDate(date) === "closed") {
@@ -849,20 +850,36 @@ export function acceptIncomingOffer(dealId: string, date: string): IncomingRespo
   if (!deal || deal.direction !== "out" || deal.stage !== "incoming") {
     return { ok: false, reason: "No hay oferta que aceptar." };
   }
-  const decision = decideOnMove({
-    playerId: deal.playerId,
-    toClubId: deal.otherClubId,
-    wageOffer: deal.offer.wageOffer,
-    cacheKey: cacheKeyFor(date),
-    deadlineDay: deadlineToday(date),
-  });
-  const reluctant = decision.verdict === "rejected-project" || decision.verdict === "rejected-wage";
-  deal.playerMessage = reluctant
-    ? `${decision.message} Aun así, el club ha decidido su salida.`
-    : decision.message;
-  if (reluctant) log(deal, date, deal.playerMessage);
+
+  // El 80%/20% es deliberadamente una tirada separada de la decisión normal
+  // sobre fichajes: aquí el club del usuario ya ha aceptado la oferta recibida.
+  // `seededUnit` mantiene el resultado estable dentro de la misma partida.
+  const playerLeaves = seededUnit(
+    "incoming-sale-player-decision",
+    deal.id,
+    deal.playerId,
+    deal.otherClubId,
+    date,
+  ) < 0.8;
+
+  if (!playerLeaves) {
+    deal.stage = "failed";
+    deal.offer.status = "rejected";
+    deal.playerMessage = `${deal.playerName} ha decidido quedarse en el club. La venta ha sido cancelada porque no ha querido marcharse.`;
+    dropInterest(deal.playerId, deal.otherClubId);
+    log(deal, date, deal.playerMessage);
+    return {
+      ok: false,
+      reason: deal.playerMessage,
+      deal,
+    };
+  }
+
+  deal.playerMessage = `${deal.playerName} ha aceptado marcharse. La venta puede cerrarse.`;
   deal.stage = "ready";
+  log(deal, date, deal.playerMessage);
   log(deal, date, "Acuerdo total: la venta puede cerrarse.");
+
   const result = finalizeUserDeal(deal.id, date);
   return { ...result, deal };
 }

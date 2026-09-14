@@ -89,7 +89,11 @@ export function DealCard({
       </div>
 
       {deal.clubMessage && <p className="text-xs text-muted-foreground">{deal.clubMessage}</p>}
-      {deal.playerMessage && <p className="text-xs text-primary">{deal.playerMessage}</p>}
+      {deal.playerMessage && (
+        <p className={`text-xs ${deal.stage === "failed" ? "text-destructive" : "text-primary"}`}>
+          {deal.playerMessage}
+        </p>
+      )}
 
       {!closed && deal.stage === "club-counter" && (
         <div className="space-y-2">
