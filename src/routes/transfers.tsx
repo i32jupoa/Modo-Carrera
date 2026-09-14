@@ -22,6 +22,7 @@ import {
   FcPlayer,
   clubOfPlayer,
 } from "@/store/playersStore";
+import { getPlayerAnnualWage, getPlayer } from "@/lib/transfers";
 import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
@@ -446,27 +447,42 @@ function TransfersPage() {
             <p className="text-lg font-black">{formatEuro(totalEconomicBudget)}</p>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-          <div className="rounded-xl bg-secondary/60 p-3 flex items-center gap-3">
+        <div className="grid grid-cols-1 gap-3 mb-4 md:grid-cols-3">
+          <div className="rounded-xl border border-border/50 bg-secondary/60 p-3 flex items-center gap-3">
             <Banknote className="h-5 w-5 text-primary" />
-            <div><p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Disponible para fichajes</p><p className="font-black text-lg">{formatEuro(budget)}</p></div>
+            <div>
+              <p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Fichajes</p>
+              <p className="font-black text-lg">{formatEuro(budget)}</p>
+            </div>
           </div>
-          <div className="rounded-xl bg-secondary/60 p-3 flex items-center gap-3">
+          <div className="rounded-xl border border-border/50 bg-secondary/60 p-3 flex items-center gap-3">
             <Coins className="h-5 w-5 text-primary" />
-            <div><p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Salarios asignados / gastados</p><p className="font-black text-lg">{formatEuro(wageBudget)} <span className="text-xs text-muted-foreground font-normal">/ {formatEuro(wageBill)} actuales</span></p></div>
+            <div>
+              <p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Presupuesto salarial</p>
+              <p className="font-black text-lg">{formatEuro(wageBudget)}</p>
+            </div>
+          </div>
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+            <p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Masa real</p>
+            <p className="font-black text-lg">{formatEuro(wageBill)}<span className="text-xs font-normal text-muted-foreground">/año</span></p>
           </div>
         </div>
+        <div className="flex items-center justify-between gap-3 text-xs font-bold">
+          <span>Distribución económica</span>
+          <span className="text-primary">{totalEconomicBudget > 0 ? ((wageBudget / totalEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · máximo 50%</span>
+        </div>
         <Slider
-          value={[wageBudget]}
-          min={Math.min(wageBill, totalEconomicBudget)}
-          max={totalEconomicBudget}
+          value={[Math.min(wageBudget, Math.floor(totalEconomicBudget / 2))]}
+          min={Math.min(wageBill, Math.floor(totalEconomicBudget / 2))}
+          max={Math.floor(totalEconomicBudget / 2)}
           step={250_000}
           onValueChange={(values) => setWageBudget(values[0] ?? wageBudget)}
-          aria-label="Distribución del presupuesto entre salarios y fichajes"
+          aria-label="Distribución del presupuesto entre salarios y fichajes, máximo 50% para salarios"
+          className="mt-3"
         />
         <div className="flex justify-between mt-2 text-[0.7rem] text-muted-foreground">
           <span>Más dinero para fichajes</span>
-          <span>Más dinero para salarios</span>
+          <span>50% máximo para salarios</span>
         </div>
       </div>
 
@@ -748,11 +764,15 @@ function TransfersPage() {
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 p-3 mt-auto">
-                      <div>
-                        <p className="text-[0.6rem] uppercase text-muted-foreground">
-                          Valor de mercado
-                        </p>
-                        <p className="font-black scoreline text-primary">{formatEuro(cost)}</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
+                          <p className="font-black scoreline text-primary">{formatEuro(cost)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[0.6rem] uppercase text-muted-foreground">Salario actual</p>
+                          <p className="font-black scoreline text-emerald-300">{formatEuro(getPlayerAnnualWage(id))}<span className="text-[0.55rem] font-medium text-muted-foreground">/año</span></p>
+                        </div>
                       </div>
                       <button
                         type="button"

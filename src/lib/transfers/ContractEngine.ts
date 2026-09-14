@@ -15,7 +15,14 @@
 import { teamById } from "@/data/teams";
 import { CONTRACT_RULES, POSITION_AGE_CURVE, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
-import { getUserClubId, maxWageOffer, needsToSell } from "./BudgetManager";
+import {
+  getFinances,
+  getUserClubId,
+  maxWageOffer,
+  needsToSell,
+  registerRenewal,
+  syncWageBill,
+} from "./BudgetManager";
 import {
   getClubPlayers,
   getMarketIndex,
@@ -43,6 +50,101 @@ export interface RenewalOutcome {
   wage: number;
   years: number;
   message: string;
+}
+
+export interface UserRenewalInput {
+  playerId: string;
+  clubId: string;
+  years: number;
+  wage: number;
+  releaseClause: number;
+  signingBonus: number;
+}
+
+export interface UserRenewalOutcome extends RenewalOutcome {
+  accepted: boolean;
+  releaseClause: number;
+  signingBonus: number;
+  previousWage: number;
+}
+
+/** Renueva manualmente a un jugador de la plantilla del usuario.
+ * La operación utiliza el mismo contrato que ve el mercado y actualiza la
+ * economía compartida (masa salarial + prima de renovación).
+ */
+export function renewUserPlayer(input: UserRenewalInput): UserRenewalOutcome {
+  const player = getPlayer(input.playerId);
+  const base: UserRenewalOutcome = {
+    playerId: input.playerId,
+    playerName: player?.name ?? "Jugador",
+    clubId: input.clubId,
+    renewed: false,
+    accepted: false,
+    wage: player?.contract.wage ?? WAGE_RULES.minimumWage,
+    years: player?.contract.yearsLeft ?? 0,
+    releaseClause: player?.contract.releaseClause ?? 0,
+    signingBonus: player?.contract.signingBonus ?? 0,
+    previousWage: player?.contract.wage ?? 0,
+    message: "No se puede renovar a este jugador.",
+  };
+  if (!player || player.clubId !== input.clubId) return base;
+  if (getUserClubId() !== input.clubId) {
+    return { ...base, message: "El club del usuario no está conectado al presupuesto de la partida." };
+  }
+
+  const years = clamp(Math.round(input.years), CONTRACT_RULES.minYears, CONTRACT_RULES.maxYears);
+  const wage = Math.max(WAGE_RULES.minimumWage, Math.round(input.wage));
+  const releaseClause = Math.max(0, Math.round(input.releaseClause));
+  const signingBonus = Math.max(0, Math.round(input.signingBonus));
+  syncWageBill(input.clubId);
+  const finances = getFinances(input.clubId);
+  const availableWageRoom = finances.wageBudget - finances.wageBill + player.contract.wage;
+
+  if (wage > availableWageRoom) {
+    return {
+      ...base,
+      wage,
+      years,
+      releaseClause,
+      signingBonus,
+      message: `La renovación supera el margen salarial disponible (${Math.round(availableWageRoom).toLocaleString("es-ES")} €).`,
+    };
+  }
+  if (signingBonus > finances.budget) {
+    return {
+      ...base,
+      wage,
+      years,
+      releaseClause,
+      signingBonus,
+      message: `No puedes pagar la prima de renovación. Disponible: ${Math.round(finances.budget).toLocaleString("es-ES")} €.`,
+    };
+  }
+
+  const previousWage = player.contract.wage;
+  updatePlayer(input.playerId, {
+    contract: {
+      yearsLeft: years,
+      wage,
+      releaseClause,
+      signingBonus,
+    },
+    transferListed: false,
+    listReason: null,
+  });
+  registerRenewal(input.clubId, previousWage, wage, signingBonus);
+
+  return {
+    ...base,
+    renewed: true,
+    accepted: true,
+    wage,
+    years,
+    releaseClause,
+    signingBonus,
+    previousWage,
+    message: `${player.name} ha renovado por ${years} temporada(s).`,
+  };
 }
 
 /** Años de contrato que un club ofrece según la edad del jugador. */

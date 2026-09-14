@@ -70,12 +70,19 @@ function createFinances(clubId: string): ClubFinances {
   const profile = getClubProfile(clubId);
   const budget = initialBudget(profile);
   const wageBill = currentWageBill(clubId);
-  const wageBudget = Math.max(wageBill * 1.22, Math.round(budget * 0.68));
+  // La masa salarial presupuestada no puede superar el 50% del presupuesto económico
+  // total. Partimos con un 25% y dejamos un pequeño colchón sobre la masa actual.
+  let wageBudget = Math.max(wageBill * 1.12, Math.round(budget * 0.25));
+  // wageBudget <= (budget + wageBudget) / 2  <=>  wageBudget <= budget.
+  let totalBudget = Math.max(budget + wageBudget, Math.round(wageBill * 2));
+  const maxWageBudget = Math.floor(totalBudget / 2);
+  wageBudget = Math.max(wageBill, Math.min(maxWageBudget, wageBudget));
+  totalBudget = Math.max(totalBudget, wageBudget * 2);
   return {
     clubId,
     budget,
     initialBudget: budget,
-    totalBudget: budget + wageBudget,
+    totalBudget,
     wageBudget,
     wageBill,
     spent: 0,
@@ -138,9 +145,14 @@ export function getFinances(clubId: string): ClubFinances {
   // El club del usuario siempre refleja el presupuesto real de la partida.
   const bridge = bridgeFor(clubId);
   if (bridge) {
-    entry.budget = bridge.getBudget();
-    entry.wageBudget = Math.max(entry.wageBill, Math.round(bridge.getWageBudget()));
-    entry.totalBudget = entry.budget + entry.wageBudget;
+    // El contrato del mercado es la fuente única de verdad para la masa salarial.
+    entry.wageBill = currentWageBill(clubId);
+    let total = Math.max(0, Math.round(bridge.getBudget()) + Math.round(bridge.getWageBudget()));
+    if (entry.wageBill > Math.floor(total / 2)) total = Math.round(entry.wageBill * 2);
+    const maxAllowed = Math.floor(total / 2);
+    entry.wageBudget = Math.max(entry.wageBill, Math.min(maxAllowed, Math.round(bridge.getWageBudget())));
+    entry.budget = Math.max(0, total - entry.wageBudget);
+    entry.totalBudget = total;
   }
   return entry;
 }
@@ -172,8 +184,13 @@ export function maxSpend(clubId: string): number {
 /** Ajusta la partida salarial del club manteniendo el suelo de la masa actual. */
 export function setWageBudget(clubId: string, value: number): void {
   const entry = getFinances(clubId);
-  entry.wageBudget = Math.max(entry.wageBill, Math.round(value));
+  let total = Math.max(0, entry.budget + entry.wageBudget);
+  if (entry.wageBill > Math.floor(total / 2)) total = Math.round(entry.wageBill * 2);
+  const maxAllowed = Math.floor(total / 2);
+  entry.wageBudget = Math.max(entry.wageBill, Math.min(maxAllowed, Math.round(value)));
+  entry.budget = Math.max(0, total - entry.wageBudget);
   entry.totalBudget = entry.budget + entry.wageBudget;
+  bridgeFor(clubId)?.setBudget(entry.budget);
   bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
 }
 
@@ -202,6 +219,26 @@ export function registerSigning(clubId: string, fee: number, wage: number): void
   bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
 }
 
+/** Registra una renovación del club del usuario: ajusta el salario comprometido
+ * por la diferencia y descuenta la prima/ficha de renovación del presupuesto.
+ */
+export function registerRenewal(
+  clubId: string,
+  previousWage: number,
+  newWage: number,
+  signingBonus: number,
+): void {
+  const entry = getFinances(clubId);
+  const delta = Math.round(newWage) - Math.round(previousWage);
+  entry.budget = Math.max(0, entry.budget - Math.max(0, Math.round(signingBonus)));
+  entry.spent += Math.max(0, Math.round(signingBonus));
+  entry.wageBill = Math.max(0, Math.round(entry.wageBill + delta));
+  entry.wageBudget = Math.max(entry.wageBill, entry.wageBudget);
+  entry.totalBudget = entry.budget + entry.wageBudget;
+  bridgeFor(clubId)?.setBudget(entry.budget);
+  bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
+}
+
 /** Registra una venta: parte del ingreso vuelve al presupuesto. */
 export function registerSale(clubId: string, fee: number, wage: number): void {
   const entry = getFinances(clubId);
@@ -220,6 +257,17 @@ export function registerSale(clubId: string, fee: number, wage: number): void {
 export function registerLoanOut(clubId: string, wage: number, wageShareCovered: number): void {
   const entry = getFinances(clubId);
   entry.wageBill = Math.max(0, entry.wageBill - wage * clamp(wageShareCovered, 0, 1));
+}
+
+/** Recalcula la masa salarial del club desde los contratos reales del mercado. */
+export function syncWageBill(clubId: string): number {
+  const entry = getFinances(clubId);
+  const actual = currentWageBill(clubId);
+  entry.wageBill = actual;
+  entry.wageBudget = Math.max(entry.wageBill, entry.wageBudget);
+  entry.totalBudget = entry.budget + entry.wageBudget;
+  bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
+  return actual;
 }
 
 /** ¿El club necesita vender para poder operar? */

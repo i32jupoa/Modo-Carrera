@@ -81,6 +81,9 @@ export function useMarketClock(): void {
         // El mercado arranca desde el mundo real de la partida, no desde el JSON.
         attachWorldBridge();
         hydrateWorld();
+        // Tras restaurar los contratos del mercado, la masa salarial de la partida
+        // debe reflejar exactamente esas fichas.
+        usePlayersStore.getState().syncWageStateFromMarket();
         void saveTransferSystem();
       })();
       return;

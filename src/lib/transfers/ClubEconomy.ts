@@ -16,11 +16,11 @@ export function clubWageBill(clubId: string): number {
 
 /**
  * El presupuesto total siempre tiene que soportar al menos la masa salarial
- * actual dentro de su tercio máximo. Por tanto, total >= 3 * wageBill.
+ * actual dentro de su máximo del 50%. Por tanto, total >= 2 * wageBill.
  */
 export function normalizeClubBudget(totalBudget: number, wageBill: number): { totalBudget: number; wageBudget: number; transferBudget: number } {
-  const total = Math.max(0, Math.round(totalBudget), Math.round(wageBill * 3));
-  const maxWageBudget = Math.floor(total / 3);
+  const total = Math.max(0, Math.round(totalBudget), Math.round(wageBill * 2));
+  const maxWageBudget = Math.floor(total / 2);
   const wageBudget = Math.min(maxWageBudget, Math.max(Math.round(wageBill), Math.round(total * 0.25)));
   return {
     totalBudget: total,
@@ -30,8 +30,8 @@ export function normalizeClubBudget(totalBudget: number, wageBill: number): { to
 }
 
 export function clampWageAllocation(totalBudget: number, currentWageBill: number, requestedWageBudget: number): number {
-  const total = Math.max(Math.round(totalBudget), Math.round(currentWageBill * 3));
+  const total = Math.max(Math.round(totalBudget), Math.round(currentWageBill * 2));
   const minWage = Math.round(currentWageBill);
-  const maxWage = Math.floor(total / 3);
+  const maxWage = Math.floor(total / 2);
   return clamp(Math.round(requestedWageBudget), minWage, maxWage);
 }

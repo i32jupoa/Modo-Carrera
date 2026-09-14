@@ -17,7 +17,6 @@ import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { toast } from "sonner";
 import {
   Wallet,
-  UserMinus,
   Smile,
   Meh,
   Frown,
@@ -28,9 +27,21 @@ import {
   ShieldAlert,
   Goal,
   Sparkles,
+  Shield,
+  CalendarDays,
+  Banknote,
+  ArrowUpRight,
+  CircleDollarSign,
 } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
+import {
+  getPlayer,
+  getPlayerAnnualWage,
+  listForTransfer,
+  unlistFromTransfer,
+} from "@/lib/transfers";
+import { saveTransferSystem } from "@/lib/transfers/Persistence";
 import {
   Dialog,
   DialogContent,
@@ -74,6 +85,23 @@ function moodLabel(m: number) {
   return { label: "Furioso", Icon: Frown, tone: "text-destructive" };
 }
 
+function SummaryMetric({
+  label,
+  value,
+  accent = "text-foreground",
+}: {
+  label: string;
+  value: string;
+  accent?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/60 px-3 py-2.5">
+      <p className="text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className={`mt-1 scoreline text-base font-black ${accent}`}>{value}</p>
+    </div>
+  );
+}
+
 function StatBar({ label, value }: { label: string; value: number }) {
   const v = Math.max(0, Math.min(99, value));
   const tone =
@@ -103,53 +131,251 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
   const morale = stats?.morale ?? 70;
   const mood = moodLabel(morale);
   const injured = (stats?.injuredUntil ?? 0) > 0;
+  const contract = getPlayer(String(p.ID))?.contract;
+  const wage = contract?.wage ?? getPlayerAnnualWage(String(p.ID));
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group relative flex w-full items-center gap-3 rounded-xl border border-border/60 bg-card/80 p-3 text-left transition hover:-translate-y-0.5 hover:border-primary/60 hover:bg-card"
+      className="group relative flex w-full overflow-hidden rounded-2xl border border-border/60 bg-card/80 text-left transition hover:-translate-y-0.5 hover:border-primary/60 hover:bg-card"
     >
-      <PlayerFace
-        name={p.Name}
-        image={p.card}
-        role={roleFromPosition(p.Position)}
-        size={48}
-        className="bg-secondary/40"
-      />
-      <div
-        className={`grid h-12 w-12 shrink-0 place-items-center rounded-lg border scoreline text-lg font-black ${ovrTone(
-          p.OVR,
-        )}`}
-      >
-        {p.OVR}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-bold">{p.Name}</span>
-          {injured && (
-            <span title="Lesionado" className="text-destructive">
-              <Activity className="h-3 w-3" />
+      <div className={`w-1 shrink-0 bg-gradient-to-b ${POSITION_ACCENT[pos].replace("from-", "from-").replace(" to-", " to-")}`} />
+      <div className="flex min-w-0 flex-1 items-center gap-3 p-3">
+        <PlayerFace
+          name={p.Name}
+          image={p.card}
+          role={roleFromPosition(p.Position)}
+          size={54}
+          className="bg-secondary/40"
+        />
+        <div
+          className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl border scoreline text-lg font-black ${ovrTone(
+            p.OVR,
+          )}`}
+        >
+          {p.OVR}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-black">{p.Name}</span>
+            {injured && (
+              <span title="Lesionado" className="text-destructive">
+                <Activity className="h-3 w-3" />
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[0.62rem] font-bold uppercase tracking-wider text-muted-foreground">
+            <span className={`rounded bg-secondary/60 px-1.5 py-0.5 ${ROLE_TEXT[roleFromPosition(p.Position)]}`}>
+              {POS_LABEL_ES[pos]}
             </span>
-          )}
+            <span>{p.Age} años</span>
+            <span>{contract?.yearsLeft ?? "—"} temp.</span>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-[0.58rem] uppercase tracking-wider text-muted-foreground">Salario</span>
+            <span className="scoreline text-xs font-black text-primary">{formatEuro(wage)}/año</span>
+          </div>
         </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
-          <span
-            className={`rounded bg-secondary/60 px-1.5 py-0.5 font-black ${
-              ROLE_TEXT[roleFromPosition(p.Position)]
-            }`}
-          >
-            {POS_LABEL_ES[pos]}
-          </span>
-          <span>{p.Age}a</span>
-          <span className="text-primary/80 scoreline">{formatEuro(marketValueEuros(p))}</span>
+        <div className={`hidden flex-col items-end gap-1 sm:flex ${mood.tone}`}>
+          <mood.Icon className="h-4 w-4" />
+          <span className="text-[0.5rem] font-bold uppercase tracking-wider">{mood.label}</span>
         </div>
-      </div>
-      <div className={`flex flex-col items-end gap-1 ${mood.tone}`}>
-        <mood.Icon className="h-4 w-4" />
-        <span className="text-[0.55rem] font-bold uppercase tracking-wider">{mood.label}</span>
       </div>
     </button>
+  );
+}
+
+function RenewalModal({
+  p,
+  budget,
+  wageBill,
+  wageBudget,
+  onClose,
+  onConfirm,
+}: {
+  p: FcPlayer;
+  budget: number;
+  wageBill: number;
+  wageBudget: number;
+  onClose: () => void;
+  onConfirm: (input: {
+    playerId: string;
+    years: number;
+    wage: number;
+    releaseClause: number;
+    signingBonus: number;
+  }) => void;
+}) {
+  const contract = getPlayer(String(p.ID))?.contract;
+  const currentWage = contract?.wage ?? getPlayerAnnualWage(String(p.ID));
+  const [years, setYears] = useState(Math.max(2, Math.min(5, contract?.yearsLeft ?? 3)));
+  const [wageM, setWageM] = useState(currentWage / 1_000_000);
+  const [clauseM, setClauseM] = useState((contract?.releaseClause ?? marketValueEuros(p) * 1.8) / 1_000_000);
+  const [bonusM, setBonusM] = useState((contract?.signingBonus ?? currentWage * 0.2) / 1_000_000);
+
+  const wage = Math.round(Math.max(0, wageM) * 1_000_000);
+  const releaseClause = Math.round(Math.max(0, clauseM) * 1_000_000);
+  const signingBonus = Math.round(Math.max(0, bonusM) * 1_000_000);
+  const availableRoom = Math.max(0, wageBudget - wageBill + currentWage);
+  const wageDelta = wage - currentWage;
+  const invalidWage = wage > availableRoom;
+  const invalidBonus = signingBonus > budget;
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-xl overflow-hidden p-0">
+        <div className="bg-gradient-to-br from-emerald-500/20 via-primary/10 to-transparent p-5">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-black">
+              <HeartHandshake className="h-5 w-5 text-emerald-300" />
+              Renovar contrato
+            </DialogTitle>
+            <DialogDescription>
+              {p.Name} · {p.OVR} OVR · contrato actual {contract?.yearsLeft ?? 0} temporadas
+            </DialogDescription>
+          </DialogHeader>
+        </div>
+
+        <div className="space-y-5 p-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <ContractMetric icon={Banknote} label="Salario actual" value={`${formatEuro(currentWage)}/año`} />
+            <ContractMetric icon={CalendarDays} label="Duración" value={`${contract?.yearsLeft ?? 0} temp.`} />
+            <ContractMetric icon={Shield} label="Cláusula actual" value={formatEuro(contract?.releaseClause ?? 0)} />
+            <ContractMetric icon={CircleDollarSign} label="Prima actual" value={formatEuro(contract?.signingBonus ?? 0)} />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <NumberField label="Duración nueva (años)" value={years} onChange={setYears} min={1} max={5} step={1} suffix="años" />
+            <NumberField label="Salario anual" value={wageM} onChange={setWageM} min={0} step={0.05} suffix="M €" />
+            <NumberField label="Cláusula de rescisión" value={clauseM} onChange={setClauseM} min={0} step={0.1} suffix="M €" />
+            <NumberField label="Prima / ficha de renovación" value={bonusM} onChange={setBonusM} min={0} step={0.05} suffix="M €" />
+          </div>
+
+          <div className="rounded-xl border border-border/60 bg-secondary/40 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">
+                Impacto económico
+              </span>
+              <span className="text-xs font-black">
+                {wageDelta >= 0 ? "+" : ""}
+                {formatEuro(wageDelta)}/año
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+              <div className="rounded-lg border border-border/50 bg-background/30 p-2.5">
+                <p className="text-muted-foreground">Margen salarial</p>
+                <p className={`mt-0.5 font-black ${invalidWage ? "text-destructive" : "text-emerald-300"}`}>
+                  {formatEuro(Math.max(0, availableRoom - wage))}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border/50 bg-background/30 p-2.5">
+                <p className="text-muted-foreground">Presupuesto tras la prima</p>
+                <p className={`mt-0.5 font-black ${invalidBonus ? "text-destructive" : "text-emerald-300"}`}>
+                  {formatEuro(Math.max(0, budget - signingBonus))}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
+            Este contrato será el mismo que verá <strong className="text-foreground">Mercado</strong>:
+            salario, años, cláusula y prima quedan guardados en la ficha única del jugador.
+          </div>
+
+          {(invalidWage || invalidBonus) && (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+              {invalidWage && `El salario supera tu margen salarial (${formatEuro(availableRoom)} disponibles). `}
+              {invalidBonus && `La prima supera tu presupuesto (${formatEuro(budget)} disponibles).`}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={invalidWage || invalidBonus || years < 1 || years > 5 || wage <= 0}
+              onClick={() =>
+                onConfirm({
+                  playerId: String(p.ID),
+                  years,
+                  wage,
+                  releaseClause,
+                  signingBonus,
+                })
+              }
+              className="flex-1 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-emerald-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Confirmar renovación
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl bg-secondary px-4 py-3 text-sm font-bold"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ContractMetric({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof Banknote;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-card/60 p-2.5">
+      <div className="flex items-center gap-1.5 text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">
+        <Icon className="h-3 w-3" />
+        {label}
+      </div>
+      <p className="mt-1 text-xs font-black">{value}</p>
+    </div>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  suffix,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  min: number;
+  max?: number;
+  step: number;
+  suffix: string;
+}) {
+  return (
+    <label className="space-y-1.5">
+      <span className="text-[0.62rem] font-bold uppercase tracking-wider text-muted-foreground">{label}</span>
+      <div className="relative">
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Math.max(min, Number(e.target.value)))}
+          className="w-full rounded-xl border border-border bg-secondary px-3 py-2.5 pr-12 text-sm font-black outline-none focus:border-primary"
+        />
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[0.65rem] font-bold text-muted-foreground">
+          {suffix}
+        </span>
+      </div>
+    </label>
   );
 }
 
@@ -161,9 +387,12 @@ function SquadPage() {
   const budget = usePlayersStore((s) => s.budget);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const hydrate = usePlayersStore((s) => s.hydrateMyTeam);
-  const sellPlayer = usePlayersStore((s) => s.sellPlayer);
+  const wageBudget = usePlayersStore((s) => s.wageBudget);
+  const renewPlayerContract = usePlayersStore((s) => s.renewPlayerContract);
+  const syncWageStateFromMarket = usePlayersStore((s) => s.syncWageStateFromMarket);
   const { isMarketOpen } = useTransferMarket();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [renewalPlayerId, setRenewalPlayerId] = useState<string | null>(null);
   const [listed, setListed] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
@@ -177,7 +406,18 @@ function SquadPage() {
     } else if (squad.length === 0) {
       hydrate();
     }
-  }, [myTeamId, squad.length, navigate, setMyTeam, hydrate]);
+  }, [myTeamId, squad.length, navigate, setMyTeam, hydrate, syncWageStateFromMarket]);
+
+  useEffect(() => {
+    syncWageStateFromMarket();
+    setListed(
+      new Set(
+        squad
+          .filter((player) => getPlayer(String(player.ID))?.transferListed)
+          .map((player) => String(player.ID)),
+      ),
+    );
+  }, [myTeamId, squad, syncWageStateFromMarket]);
 
   const byPos = useMemo(() => {
     const buckets: Record<Position, FcPlayer[]> = { GK: [], DEF: [], MID: [], FWD: [] };
@@ -190,53 +430,56 @@ function SquadPage() {
     ? (squad.reduce((s, p) => s + p.OVR, 0) / squad.length).toFixed(1)
     : "—";
   const totalValue = squad.reduce((s, p) => s + marketValueEuros(p), 0);
+  const realWageBill = squad.reduce((sum, p) => sum + getPlayerAnnualWage(String(p.ID)), 0);
+  const realWageBudget = Math.max(wageBudget || 0, realWageBill);
+  const wageUsage = realWageBudget > 0 ? Math.min(100, (realWageBill / realWageBudget) * 100) : 0;
+  const totalEconomicBudget = budget + realWageBudget;
+  const salaryShare = totalEconomicBudget > 0 ? (realWageBudget / totalEconomicBudget) * 100 : 0;
 
   const selected = selectedId ? (squad.find((p) => String(p.ID) === selectedId) ?? null) : null;
   const selectedStats = selected
     ? usePlayersStore.getState().stats[String(selected.ID)]
     : undefined;
 
-  function handleSell(p: FcPlayer) {
-    const id = String(p.ID);
-    const price = marketValueEuros(p);
-    const result = sellPlayer(id, price);
-    if (!result.ok) {
-      toast.error("No se pudo vender", { description: result.reason });
+  function handleRenewSubmit(input: {
+    playerId: string;
+    years: number;
+    wage: number;
+    releaseClause: number;
+    signingBonus: number;
+  }) {
+    const result = renewPlayerContract(input);
+    if (!result.renewed) {
+      toast.error("No se pudo renovar", { description: result.message });
       return;
     }
-    const save = loadSave();
-    if (save && save.lineups[save.myTeamId]) {
-      save.lineups[save.myTeamId] = save.lineups[save.myTeamId].filter((x) => x !== id);
-      saveSave(save);
-    }
-    toast.success(`${p.Name} vendido`, {
-      description: `Ingreso: ${formatEuro(price)} · Saldo: ${formatEuro(usePlayersStore.getState().budget)}`,
+    toast.success(`${result.playerName} renovado`, {
+      description: `${result.years} temporadas · ${formatEuro(result.wage)}/año · cláusula ${formatEuro(result.releaseClause)}`,
     });
-    setSelectedId(null);
-  }
-
-  function handleRenew(p: FcPlayer) {
-    const cost = Math.round(marketValueEuros(p) * 0.18);
-    toast.success(`${p.Name} ha renovado`, {
-      description: `Nuevo contrato hasta 2029 · Prima de renovación: ${formatEuro(cost)}`,
-    });
+    syncWageStateFromMarket();
+    setRenewalPlayerId(null);
   }
 
   function handleToggleListed(p: FcPlayer) {
     const id = String(p.ID);
-    setListed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
+    const marketPlayer = getPlayer(id);
+    if (!marketPlayer) return;
+    if (marketPlayer.transferListed) {
+      unlistFromTransfer(id);
+      setListed((prev) => {
+        const next = new Set(prev);
         next.delete(id);
-        toast.info(`${p.Name} retirado del mercado`);
-      } else {
-        next.add(id);
-        toast.success(`${p.Name} en el mercado`, {
-          description: `Precio de salida: ${formatEuro(marketValueEuros(p))}`,
-        });
-      }
-      return next;
-    });
+        return next;
+      });
+      toast.info(`${p.Name} retirado del mercado`);
+    } else {
+      listForTransfer(id, "user");
+      setListed((prev) => new Set(prev).add(id));
+      toast.success(`${p.Name} puesto en venta`, {
+        description: `Las ofertas aparecerán en Mercado → Ofertas recibidas.`,
+      });
+    }
+    void saveTransferSystem();
   }
 
   if (!myTeamId) return null;
@@ -265,35 +508,47 @@ function SquadPage() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-center">
-              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
-                Jugadores
-              </p>
-              <p className="scoreline text-lg font-black">{squad.length}</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <SummaryMetric label="Jugadores" value={String(squad.length)} />
+            <SummaryMetric label="OVR medio" value={avgOvr} accent="text-primary" />
+            <SummaryMetric label="Valor plantilla" value={formatEuro(totalValue)} accent="text-emerald-400" />
+            <SummaryMetric label="Saldo fichajes" value={formatEuro(budget)} accent="text-primary" />
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-6 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
+        <div className="rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/10 via-card/70 to-card/50 p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted-foreground">Masa salarial real</p>
+              <p className="mt-1 text-xl font-black">{formatEuro(realWageBill)} <span className="text-xs font-semibold text-muted-foreground">/ año</span></p>
+              <p className="mt-1 text-xs text-muted-foreground">Suma exacta de las fichas de todos los jugadores de tu plantilla.</p>
             </div>
-            <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-center">
-              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
-                OVR Medio
+            <div className="text-right">
+              <p className="text-[0.62rem] font-bold uppercase tracking-wider text-muted-foreground">Presupuesto salarial</p>
+              <p className="mt-1 text-lg font-black text-primary">{formatEuro(realWageBudget)}</p>
+              <p className={`text-[0.6rem] font-black ${salaryShare >= 33 ? "text-amber-300" : "text-emerald-300"}`}>
+                {salaryShare.toFixed(1)}% del total
               </p>
-              <p className="scoreline text-lg font-black text-primary">{avgOvr}</p>
-            </div>
-            <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-center">
-              <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Valor</p>
-              <p className="scoreline text-lg font-black text-emerald-400">
-                {formatEuro(totalValue)}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2">
-              <Wallet className="h-4 w-4 text-primary" />
-              <div>
-                <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
-                  Saldo
-                </p>
-                <p className="scoreline text-lg font-black text-primary">{formatEuro(budget)}</p>
-              </div>
             </div>
           </div>
+          <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-muted/50">
+            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${wageUsage}%` }} />
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[0.6rem] font-semibold text-muted-foreground">
+            <span>Comprometido: {formatEuro(realWageBill)}</span>
+            <span>Máximo de asignación: 50%</span>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border/60 bg-card/70 p-4">
+          <div className="flex items-center gap-2 text-xs font-black">
+            <ArrowUpRight className="h-4 w-4 text-primary" />
+            Gestiona cada contrato desde la ficha del jugador
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            Renueva con salario, duración, cláusula y prima. Para vender, pon al jugador en el mercado y recibirás ofertas en la sección correspondiente.
+          </p>
         </div>
       </div>
 
@@ -349,8 +604,10 @@ function SquadPage() {
               const morale = selectedStats?.morale ?? 70;
               const mood = moodLabel(morale);
               const injured = (selectedStats?.injuredUntil ?? 0) > 0;
-              const isListed = listed.has(String(selected.ID));
+              const marketContract = getPlayer(String(selected.ID))?.contract;
+              const isListed = marketContract?.transferListed ?? listed.has(String(selected.ID));
               const value = marketValueEuros(selected);
+              const wage = marketContract?.wage ?? getPlayerAnnualWage(String(selected.ID));
               return (
                 <>
                   <div className={`bg-gradient-to-br p-5 ${POSITION_ACCENT[pos]}`}>
@@ -437,7 +694,15 @@ function SquadPage() {
                       </div>
                     </div>
 
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <ContractMetric icon={Banknote} label="Salario" value={`${formatEuro(wage)}/año`} />
+                      <ContractMetric icon={CalendarDays} label="Contrato" value={`${marketContract?.yearsLeft ?? 0} temp.`} />
+                      <ContractMetric icon={Shield} label="Cláusula" value={formatEuro(marketContract?.releaseClause ?? 0)} />
+                      <ContractMetric icon={CircleDollarSign} label="Prima" value={formatEuro(marketContract?.signingBonus ?? 0)} />
+                    </div>
+
                     {/* Six stats */}
+
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                       <StatBar label="PAC" value={selected.PAC} />
                       <StatBar label="SHO" value={selected.SHO} />
@@ -466,37 +731,27 @@ function SquadPage() {
                     )}
 
                     {/* Actions */}
-                    <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-2">
                       <button
                         type="button"
-                        onClick={() => handleRenew(selected)}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-300 transition hover:bg-emerald-500/20"
+                        onClick={() => setRenewalPlayerId(String(selected.ID))}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5 text-xs font-black text-emerald-300 transition hover:bg-emerald-500/20"
                       >
                         <HeartHandshake className="h-4 w-4" />
-                        Renovar
+                        Renovar contrato
                       </button>
                       <button
                         type="button"
                         onClick={() => handleToggleListed(selected)}
                         disabled={!isMarketOpen}
-                        className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                        className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
                           isListed
                             ? "border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
                             : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
                         }`}
                       >
                         <Tag className="h-4 w-4" />
-                        {isListed ? "Retirar" : "Mercado"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSell(selected)}
-                        disabled={squad.length <= 11 || !isMarketOpen}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive transition hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-40"
-                        title={squad.length <= 11 ? "Mínimo 11 jugadores" : "Vender al instante"}
-                      >
-                        <UserMinus className="h-4 w-4" />
-                        Vender
+                        {isListed ? "Retirar de venta" : "Poner en venta"}
                       </button>
                     </div>
 
@@ -512,6 +767,21 @@ function SquadPage() {
             })()}
         </DialogContent>
       </Dialog>
+
+      {renewalPlayerId && (() => {
+        const renewalPlayer = squad.find((p) => String(p.ID) === renewalPlayerId) ?? null;
+        if (!renewalPlayer) return null;
+        return (
+          <RenewalModal
+            p={renewalPlayer}
+            budget={budget}
+            wageBill={realWageBill}
+            wageBudget={realWageBudget}
+            onClose={() => setRenewalPlayerId(null)}
+            onConfirm={handleRenewSubmit}
+          />
+        );
+      })()}
     </div>
   );
 }
