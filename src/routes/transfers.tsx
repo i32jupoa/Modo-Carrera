@@ -284,7 +284,7 @@ function TransfersPage() {
   const wageBudget = usePlayersStore((s) => s.wageBudget);
   const wageBill = usePlayersStore((s) => s.wageBill);
   const setWageBudget = usePlayersStore((s) => s.setWageBudget);
-  const totalEconomicBudget = budget + wageBudget;
+  const totalEconomicBudget = budget + wageBudget + wageBill;
   const rawPlayers = usePlayersStore((s) => s.getRawPlayers?.() || []);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
@@ -469,20 +469,20 @@ function TransfersPage() {
         </div>
         <div className="flex items-center justify-between gap-3 text-xs font-bold">
           <span>Distribución económica</span>
-          <span className="text-primary">{totalEconomicBudget > 0 ? ((wageBudget / totalEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · máximo 50%</span>
+          <span className="text-primary">{totalEconomicBudget > 0 ? ((wageBudget / totalEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · máximo 17,5%</span>
         </div>
         <Slider
-          value={[Math.min(Math.max(0, wageBudget), Math.floor(totalEconomicBudget / 2))]}
+          value={[Math.min(Math.max(0, wageBudget), Math.floor(totalEconomicBudget * 0.175))]}
           min={0}
-          max={Math.floor(totalEconomicBudget / 2)}
+          max={Math.floor(totalEconomicBudget * 0.175)}
           step={250_000}
           onValueChange={(values) => setWageBudget(values[0] ?? wageBudget)}
-          aria-label="Distribución del presupuesto entre salarios y fichajes, máximo 50% para salarios"
+          aria-label="Distribución del presupuesto entre salarios y fichajes, máximo 17,5% para salarios"
           className="mt-3"
         />
         <div className="flex justify-between mt-2 text-[0.7rem] text-muted-foreground">
           <span>Más dinero para fichajes</span>
-          <span>50% máximo para salarios</span>
+          <span>17,5% máximo para salarios</span>
         </div>
       </div>
 
@@ -862,6 +862,7 @@ function TransfersPage() {
           clubName={target.Team}
           report={report}
           budget={budget}
+          wageBudget={wageBudget}
           onClose={() => setTarget(null)}
           onSubmit={({ amount, wageOffer, clauses }) => {
             market.makeOffer({ playerId: String(target.ID), amount, wageOffer, clauses });

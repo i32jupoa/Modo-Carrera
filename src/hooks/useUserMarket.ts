@@ -159,7 +159,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       if (!myTeamId) return;
       const store = usePlayersStore.getState();
       const budget = store.budget;
-      const wageRoom = Math.max(0, store.wageBudget - store.wageBill);
+      const wageRoom = Math.max(0, store.wageBudget);
       if (amount > budget) {
         toast.error("No tienes presupuesto para esa oferta.");
         return;

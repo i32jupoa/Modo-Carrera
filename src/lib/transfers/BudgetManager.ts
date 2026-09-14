@@ -71,7 +71,7 @@ function leagueBudgetMultiplier(leagueId: string): number {
  */
 const CLUB_BUDGET_OVERRIDES: Record<string, number> = {
   // LaLiga
-  rma: 250,
+  rma: 220,
   bar: 180,
   atm: 125,
   vil: 60,
@@ -92,12 +92,12 @@ const CLUB_BUDGET_OVERRIDES: Record<string, number> = {
   depor: 13,
   malaga: 13,
   // Premier League
-  mci: 240,
+  mci: 230,
   liv: 220,
   ars: 190,
   che: 175,
   mun: 155,
-  new: 105,
+  new: 100,
   tot: 95,
   avl: 70,
   not: 55,
@@ -114,11 +114,11 @@ const CLUB_BUDGET_OVERRIDES: Record<string, number> = {
   hc: 13,
 
   // Serie A
-  int: 190,
-  nap: 140,
-  juv: 175,
-  mil: 150,
-  rom: 85,
+  int: 170,
+  nap: 120,
+  juv: 150,
+  mil: 130,
+  rom: 80,
   ata: 65,
   laz: 55,
   fio: 45,
@@ -137,10 +137,10 @@ const CLUB_BUDGET_OVERRIDES: Record<string, number> = {
 
   // Bundesliga
   bay: 200,
-  lev2: 110,
-  bvb: 150,
-  rbl: 105,
-  ein: 60,
+  lev2: 100,
+  bvb: 140,
+  rbl: 90,
+  ein: 55,
   stu: 48,
   fre: 32,
   hof: 30,
@@ -372,17 +372,14 @@ export function getFinances(clubId: string): ClubFinances {
   // El club del usuario siempre refleja el presupuesto real de la partida.
   const bridge = bridgeFor(clubId);
   if (bridge) {
-    // El contrato del mercado es la fuente única de verdad para la masa salarial.
-    // Importante: la masa salarial real NO puede inflar automáticamente el
-    // presupuesto de fichajes. Si el club está por encima de su partida salarial,
-    // se muestra como exceso salarial y la barra sigue pudiendo moverse hasta el
-    // 50% del presupuesto económico.
+    // Para el club del usuario, `wageBudget` representa MARGEN SALARIAL
+    // DISPONIBLE adicional, mientras `wageBill` es la masa ya comprometida.
+    // No deben restarse entre sí: los €16M disponibles del ejemplo son dinero
+    // que todavía se puede ofrecer aunque la masa actual sea €163M/año.
     entry.wageBill = currentWageBill(clubId);
-    const total = Math.max(0, Math.round(bridge.getBudget()) + Math.round(bridge.getWageBudget()));
-    const maxAllowed = Math.floor(total / 2);
-    entry.wageBudget = Math.max(0, Math.min(maxAllowed, Math.round(bridge.getWageBudget())));
-    entry.budget = Math.max(0, total - entry.wageBudget);
-    entry.totalBudget = total;
+    entry.budget = Math.max(0, Math.round(bridge.getBudget()));
+    entry.wageBudget = Math.max(0, Math.round(bridge.getWageBudget()));
+    entry.totalBudget = entry.budget + entry.wageBill + entry.wageBudget;
   }
   return entry;
 }
@@ -411,17 +408,28 @@ export function maxSpend(clubId: string): number {
 }
 
 /** Salario máximo que el club puede ofrecer a un solo jugador. */
-/** Ajusta la partida salarial del club manteniendo el suelo de la masa actual. */
+/** Ajusta el margen salarial disponible del club. */
 export function setWageBudget(clubId: string, value: number): void {
   const entry = getFinances(clubId);
+  const bridge = bridgeFor(clubId);
+  if (bridge) {
+    const totalEconomic = Math.max(0, entry.budget + entry.wageBill + entry.wageBudget);
+    const maxAdditionalWage = Math.floor(totalEconomic * 0.175);
+    const nextWageRoom = Math.max(0, Math.min(maxAdditionalWage, Math.round(value)));
+    entry.wageBudget = nextWageRoom;
+    entry.budget = Math.max(0, totalEconomic - entry.wageBill - nextWageRoom);
+    entry.totalBudget = totalEconomic;
+    bridge.setBudget(entry.budget);
+    bridge.setWageBudget(entry.wageBudget);
+    return;
+  }
+
+  // La IA conserva su contabilidad interna tradicional.
   let total = Math.max(0, entry.budget + entry.wageBudget);
-  if (entry.wageBill > Math.floor(total / 2)) total = Math.round(entry.wageBill * 2);
-  const maxAllowed = Math.floor(total / 2);
+  const maxAllowed = Math.floor(total * 0.175);
   entry.wageBudget = Math.max(entry.wageBill, Math.min(maxAllowed, Math.round(value)));
   entry.budget = Math.max(0, total - entry.wageBudget);
   entry.totalBudget = entry.budget + entry.wageBudget;
-  bridgeFor(clubId)?.setBudget(entry.budget);
-  bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
 }
 
 export function maxWageOffer(clubId: string): number {
@@ -434,7 +442,7 @@ export function maxWageOffer(clubId: string): number {
   const profile = getClubProfile(clubId);
   if (profile.leagueId !== SAUDI_LEAGUE_ID) return Number.MAX_SAFE_INTEGER;
 
-  const room = entry.wageBudget - entry.wageBill;
+  const room = entry.wageBudget;
   const singleCap = entry.wageBudget * WAGE_RULES.maxShareSingle;
   return Math.max(WAGE_RULES.minimumWage, Math.round(Math.min(room, singleCap)));
 }
@@ -444,17 +452,22 @@ export function canAfford(clubId: string, fee: number, wage: number): boolean {
   return fee <= maxSpend(clubId) && wage <= maxWageOffer(clubId);
 }
 
-/** Registra un fichaje: descuenta traspaso y suma salario. */
+/** Registra un fichaje: descuenta traspaso y salario del margen disponible. */
 export function registerSigning(clubId: string, fee: number, wage: number): void {
   const entry = getFinances(clubId);
+  const bridge = bridgeFor(clubId);
   entry.budget = Math.max(0, entry.budget - fee);
-  entry.totalBudget = entry.budget + entry.wageBudget;
   entry.spent += fee;
   entry.wageBill += wage;
-  entry.wageBudget = Math.max(entry.wageBudget, entry.wageBill);
-  entry.totalBudget = entry.budget + entry.wageBudget;
-  bridgeFor(clubId)?.setBudget(entry.budget);
-  bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
+  if (bridge) {
+    entry.wageBudget = Math.max(0, entry.wageBudget - wage);
+    entry.totalBudget = entry.budget + entry.wageBill + entry.wageBudget;
+    bridge.setBudget(entry.budget);
+    bridge.setWageBudget(entry.wageBudget);
+  } else {
+    entry.wageBudget = Math.max(entry.wageBudget, entry.wageBill);
+    entry.totalBudget = entry.budget + entry.wageBudget;
+  }
 }
 
 /** Registra una renovación del club del usuario: ajusta el salario comprometido
@@ -485,10 +498,15 @@ export function registerSale(clubId: string, fee: number, wage: number): void {
   entry.budget += bridge ? fee : Math.round(fee * BUDGET_RULES.saleReinvestment);
   entry.earned += fee;
   entry.wageBill = Math.max(0, entry.wageBill - wage);
-  entry.totalBudget = entry.budget + entry.wageBudget;
-  if (!bridge) capBudget(entry);
-  bridge?.setBudget(entry.budget);
-  bridge?.setWageBudget(entry.wageBudget);
+  if (bridge) {
+    entry.wageBudget += Math.max(0, Math.round(wage));
+    entry.totalBudget = entry.budget + entry.wageBill + entry.wageBudget;
+    bridge.setBudget(entry.budget);
+    bridge.setWageBudget(entry.wageBudget);
+  } else {
+    entry.totalBudget = entry.budget + entry.wageBudget;
+    capBudget(entry);
+  }
 }
 
 /** Registra el ahorro salarial de una cesión con reparto de sueldo. */
@@ -502,9 +520,13 @@ export function syncWageBill(clubId: string): number {
   const entry = getFinances(clubId);
   const actual = currentWageBill(clubId);
   entry.wageBill = actual;
-  entry.wageBudget = Math.max(entry.wageBill, entry.wageBudget);
-  entry.totalBudget = entry.budget + entry.wageBudget;
-  bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
+  if (bridgeFor(clubId)) {
+    entry.totalBudget = entry.budget + entry.wageBill + entry.wageBudget;
+    bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
+  } else {
+    entry.wageBudget = Math.max(entry.wageBill, entry.wageBudget);
+    entry.totalBudget = entry.budget + entry.wageBudget;
+  }
   return actual;
 }
 

@@ -11,6 +11,7 @@ interface Props {
   clubName: string;
   report: ScoutingReport | null;
   budget: number;
+  wageBudget?: number;
   onSubmit: (input: { amount: number; wageOffer: number; clauses: Partial<OfferClauses> }) => void;
   onClose: () => void;
 }
@@ -26,6 +27,7 @@ export function NegotiationModal({
   clubName,
   report,
   budget,
+  wageBudget = 0,
   onSubmit,
   onClose,
 }: Props) {
@@ -38,6 +40,8 @@ export function NegotiationModal({
   const amountEuros = Math.round(amount * 1_000_000);
   const wageEuros = Math.round(wage * 1_000_000);
   const overBudget = amountEuros > budget;
+  const wageRoom = Math.max(0, wageBudget);
+  const overWageBudget = wageEuros > wageRoom;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-auto">
@@ -107,18 +111,15 @@ export function NegotiationModal({
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          Presupuesto disponible:{" "}
-          <span className="text-foreground font-bold">{formatEuro(budget)}</span>
-          {overBudget && (
-            <span className="text-destructive"> · oferta por encima del presupuesto</span>
-          )}
-        </p>
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>Presupuesto disponible:{" "}<span className="text-foreground font-bold">{formatEuro(budget)}</span>{overBudget && <span className="text-destructive"> · oferta por encima del presupuesto</span>}</p>
+          <p>Presupuesto salarial disponible:{" "}<span className="text-foreground font-bold">{formatEuro(wageRoom)} al año</span>{overWageBudget && <span className="text-destructive"> · No tienes margen salarial suficiente (disponible: {formatEuro(wageRoom)} al año).</span>}</p>
+        </div>
 
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={overBudget || amountEuros <= 0}
+            disabled={overBudget || overWageBudget || amountEuros <= 0 || wageEuros < 0}
             onClick={() =>
               onSubmit({
                 amount: amountEuros,

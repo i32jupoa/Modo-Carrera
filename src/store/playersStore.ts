@@ -689,7 +689,7 @@ type PlayersState = {
 
   budget: number;
 
-  /** Presupuesto salarial anual (máximo 50% del presupuesto económico total). */
+  /** Margen salarial anual disponible adicional (máximo 17,5% del presupuesto económico total). */
   wageBudget: number;
 
   /** Masa salarial anual comprometida por los jugadores de la plantilla. */
@@ -1491,25 +1491,25 @@ export const usePlayersStore = create<PlayersState>()(
             ? teamInitialBudget(avgOvr, team.league, team.id)
             : prev.budget;
         const wageBill = getClubWageBill(teamId);
-        // En un cambio de club, el presupuesto de fichajes viene del perfil
-        // económico fijado para ese club. La masa salarial real nunca aumenta
-        // artificialmente ese presupuesto (era la causa de que Ipswich pasara
-        // de 20M a ~54M). La bolsa salarial inicial es el 25% del total y se
-        // puede mover con la barra hasta un máximo del 50%.
+        // En un cambio de club, la masa salarial real se mantiene separada del
+        // margen salarial disponible. Ese margen adicional empieza en el 25%
+        // histórico, pero la barra lo limita ahora al 17,5% del presupuesto económico.
         const previousWageBudget =
           prev.myTeamId === teamId ? prev.wageBudget ?? 0 : 0;
         const initialTotal = Math.ceil(transferBase / 0.75);
         const maxWage = Math.floor(initialTotal / 2);
         const defaultWage = Math.round(initialTotal * 0.25);
         const preferredWage = Math.max(0, Math.min(maxWage, previousWageBudget || defaultWage));
-        const total = Math.max(0, initialTotal);
+        const total = Math.max(0, initialTotal + wageBill);
+        const maxAdditionalWage = Math.floor(total * 0.175);
+        const preferred = Math.max(0, Math.min(maxAdditionalWage, previousWageBudget || Math.round(total * 0.04)));
         set({
           myTeamId: teamId,
           rosterIds,
           squad: defaultSquad,
-          budget: Math.max(0, total - preferredWage),
+          budget: Math.max(0, total - wageBill - preferred),
           wageBill,
-          wageBudget: preferredWage,
+          wageBudget: preferred,
         });
       },
 
@@ -1579,12 +1579,12 @@ export const usePlayersStore = create<PlayersState>()(
       setWageBudget: (value) => {
         const state = get();
         const marketBill = state.myTeamId ? getClubWageBill(state.myTeamId) : 0;
-        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0));
-        const maxWage = Math.floor(total / 2);
+        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0) + marketBill);
+        const maxWage = Math.floor(total * 0.175);
         const nextWage = Math.max(0, Math.min(maxWage, Math.round(value)));
         set({
           wageBudget: nextWage,
-          budget: Math.max(0, total - nextWage),
+          budget: Math.max(0, total - marketBill - nextWage),
           wageBill: marketBill,
         });
       },
@@ -1593,13 +1593,13 @@ export const usePlayersStore = create<PlayersState>()(
         const state = get();
         if (!state.myTeamId) return;
         const bill = getClubWageBill(state.myTeamId);
-        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0));
-        const maxWage = Math.floor(total / 2);
-        const preferred = Math.max(0, Math.min(maxWage, state.wageBudget || Math.round(total * 0.25)));
+        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0) + bill);
+        const maxWage = Math.floor(total * 0.175);
+        const preferred = Math.max(0, Math.min(maxWage, state.wageBudget || Math.round(total * 0.04)));
         set({
           wageBill: bill,
           wageBudget: preferred,
-          budget: Math.max(0, total - preferred),
+          budget: Math.max(0, total - bill - preferred),
         });
       },
 
