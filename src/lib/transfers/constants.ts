@@ -38,7 +38,7 @@ export const MARKET_TIMING = {
    * cerrar en la ventana de verano. Un mercado de verano real mueve muchos
    * más nombres que el de invierno, así que el suelo es bastante más alto.
    */
-  minSigningsPerWindowSummer: 3,
+  minSigningsPerWindowSummer: 2,
   /**
    * Mínimo de ventas que todo club de la IA (menos el del usuario) debe
    * cerrar en verano. Sin este suelo, un club podía vender jugadores porque

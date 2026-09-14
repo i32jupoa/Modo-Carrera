@@ -120,6 +120,7 @@ export function setLockWindow(key: string): void {
   departures.clear();
   coreDepartures.clear();
   lastCoreLoss.clear();
+  lastCoreSigning.clear();
 }
 
 /** Ventana activa para los cerrojos. */

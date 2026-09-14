@@ -34,13 +34,22 @@ import {
   runClubTransferCycle,
   signBestFreeAgent,
   signBestMarketCandidate,
+  signEmergencyMarketCandidate,
 } from "./TransferEngine";
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
 import { runClubLoanCycle, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
 import { rumorBidWar, rumorInterest, rumorRenewal, rumorSearching } from "./RumorEngine";
-import { setLockWindow, windowDeficit, recentCoreLossOvr } from "./MarketLocks";
+import {
+  setLockWindow,
+  windowDeficit,
+  recentCoreLossOvr,
+  recentCoreSigningOvr,
+  departuresFor,
+  coreDeparturesFor,
+} from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
+import { POSITION_GROUPS } from "./types";
 import type { MarketDayResult, MarketSimulationState, MarketWindow, Rumor } from "./types";
 
 // ============================================================================
@@ -179,6 +188,21 @@ function minSigningsFor(window: MarketWindow): number {
     : MARKET_TIMING.minSigningsPerWindow;
 }
 
+/**
+ * Posiciones que han perdido un jugador importante en esta ventana y todavía
+ * no han recibido una incorporación que las cubra. No cuenta el número total
+ * de salidas: vender varios jugadores de banquillo no obliga a comprar uno
+ * por uno; obliga a reforzar las zonas realmente debilitadas.
+ */
+function unreplacedCoreGroupsFor(clubId: string): number {
+  return POSITION_GROUPS.filter((group) => {
+    const lost = recentCoreLossOvr(clubId, group);
+    const signed = recentCoreSigningOvr(clubId, group);
+    return lost > 0 && signed <= 0;
+  }).length;
+}
+
+
 /** Mínimo de ventas exigido a un club de la IA según la ventana (0 fuera de verano). */
 function minSalesFor(window: MarketWindow): number {
   return window === "summer" ? MARKET_TIMING.minSalesPerWindowSummer : 0;
@@ -303,8 +327,13 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
     // entra en la rotación aunque el sorteo diario no lo hubiese elegido.
     // Antes esta condición no existía y un club podía llegar al cierre de la
     // ventana sin pasar jamás por su red de seguridad.
+    const requiredSignings = Math.max(
+      minSigningsFor(state.window),
+      departuresFor(clubId),
+      coreDeparturesFor(clubId),
+    );
     if (
-      window.signings < minSigningsFor(state.window) &&
+      window.signings < requiredSignings &&
       (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
     ) return true;
     if (
@@ -411,8 +440,7 @@ function runClubDay(
   const rollsToShop = seededUnit(clubId, date, "shopping-roll") < shoppingRamp(date);
   const canBuy =
     window.signings < MARKET_TIMING.maxSigningsPerWindow &&
-    (deficit > 0 ||
-      idleTooLong ||
+    (idleTooLong ||
       hasCriticalReactiveNeed ||
       state.deadlineDay ||
       (rollsToShop &&
@@ -444,13 +472,11 @@ function runClubDay(
       ? profile.aggression > 0.6
         ? 5
         : 3
-      : deficit > 0
-        ? Math.min(deficit + 1, 3)
-        : hasCriticalReactiveNeed
+      : hasCriticalReactiveNeed
+        ? 2
+        : belowMinimum
           ? 2
-          : belowMinimum
-            ? 2
-            : 1;
+          : 1;
     const maxSignings = Math.max(1, Math.round(baseSignings * burst));
     const cycle = runClubTransferCycle(clubId, {
       date,
@@ -543,7 +569,15 @@ function runClubDay(
   // primer partido de liga sin haber movido una ficha. Si falla, no se
   // reintenta cada día (caro y casi siempre inútil) sino cada pocos días,
   // salvo en el deadline day, que siempre da un último empujón.
-  const requiredSignings = minSigningsFor(state.window);
+  const unreplacedCoreGroups = unreplacedCoreGroupsFor(clubId);
+  // La obligación no es "igualar salidas con entradas". Un club puede vender
+  // cinco jugadores y fichar tres si su plantilla lo permite. Lo que sí es
+  // obligatorio es (1) hacer al menos dos incorporaciones en verano y (2)
+  // reaccionar ante cada zona que haya perdido un jugador importante.
+  const requiredSignings = Math.max(
+    minSigningsFor(state.window),
+    unreplacedCoreGroups,
+  );
   if (
     window.signings < requiredSignings &&
     (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
@@ -553,9 +587,11 @@ function runClubDay(
       // El agente libre queda como último recurso. Esto evita escenarios
       // absurdos como el Real Madrid vendiendo tres jugadores y terminando el
       // verano sin una sola incorporación propia.
+      const mustReplaceDepartures = unreplacedCoreGroupsFor(clubId) > 0;
       const record =
         signBestMarketCandidate(clubId, date, state.deadlineDay) ??
-        signBestFreeAgent(clubId, date, state.deadlineDay);
+        signEmergencyMarketCandidate(clubId, date, mustReplaceDepartures) ??
+        signBestFreeAgent(clubId, date, state.deadlineDay || mustReplaceDepartures);
       if (!record) {
         window.nextSigningAttempt = state.windowDay + MARKET_TIMING.safetyNetRetryGapDays;
         break;

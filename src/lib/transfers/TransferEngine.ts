@@ -53,6 +53,7 @@ import {
 import { getSquadReport, playerImprovesSquad, priorityNeeds, weakestGroupNeed } from "./SquadAnalyzer";
 import {
   coreDeparturesFor,
+  departuresFor,
   isUserApprovedMove,
   recentCoreLossOvr,
   registerCoreDeparture,
@@ -1299,6 +1300,90 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
  * ya está completa, de modo que un club grande puede reforzar profundidad o
  * incorporar una promesa sin necesitar un agujero numérico previo.
  */
+
+/**
+ * Fichaje de emergencia: sólo se usa cuando un club ha perdido más jugadores
+ * de los que ha incorporado. A diferencia de la búsqueda normal, no exige
+ * que el candidato "mejore" una demarcación que ya era fuerte ni que encaje
+ * en un techo de gasto escalonado. Primero intenta cubrir posiciones con
+ * pérdidas recientes de nivel; después, los huecos estructurales; y por
+ * último cualquier jugador razonable y asequible.
+ *
+ * Esta función existe para una regla de realismo básica: un Real Madrid que
+ * pierde cuatro jugadores en verano no puede terminar con cero entradas por
+ * una cadena de negociaciones fallidas. Se prueban muchos candidatos y la
+ * negociación se ejecuta en modo crítico, de forma que un fallo con un nombre
+ * concreto no deja al club sin plan B, C o D.
+ */
+export function signEmergencyMarketCandidate(
+  clubId: string,
+  date: string,
+  replacingDepartures = true,
+): TransferRecord | null {
+  const report = getSquadReport(clubId, date);
+  const userClubId = getUserClubId();
+  const spendCeiling = maxSpend(clubId);
+  const wageCeiling = maxWageOffer(clubId);
+  if (report.size >= SQUAD_LIMITS.maxSquadSize + 4 || spendCeiling <= 0) return null;
+
+  const recentGroups = POSITION_GROUPS
+    .map((group) => ({ group, loss: recentCoreLossOvr(clubId, group) }))
+    .filter((x) => x.loss > 0)
+    .sort((a, b) => b.loss - a.loss);
+  const structural = POSITION_GROUPS
+    .map((group) => ({
+      group,
+      missing: Math.max(0, IDEAL_SQUAD_SHAPE[group].min - report.countByGroup[group]),
+      qualityGap: report.startingRating - report.ratingByGroup[group],
+    }))
+    .sort((a, b) => b.missing - a.missing || b.qualityGap - a.qualityGap);
+  const preferredGroups = Array.from(
+    new Set([
+      ...recentGroups.map((x) => x.group),
+      ...structural.map((x) => x.group),
+      ...POSITION_GROUPS,
+    ]),
+  );
+
+  const pool = Array.from(getMarketIndex().byId.values())
+    .filter((player) => {
+      if (!player.clubId || player.clubId === clubId) return false;
+      if (userClubId && player.clubId === userClubId) return false;
+      if (player.age >= 35 && player.ovr < report.startingRating - 4) return false;
+      if (wageDemand(player.id, clubId) > wageCeiling) return false;
+      if (!isAvailable(player.id, date, { clubId, spendCeiling, critical: true })) return false;
+      const valuation = valuePlayer(player.id, { cacheKey: date, competition: competitionFor(player.id, clubId), deadlineDay: true });
+      if (valuation.listPrice > spendCeiling) return false;
+      if (isPursuitOnCooldown(clubId, player.id, date)) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const ai = preferredGroups.indexOf(a.group);
+      const bi = preferredGroups.indexOf(b.group);
+      const ag = ai < 0 ? 99 : ai;
+      const bg = bi < 0 ? 99 : bi;
+      if (ag !== bg) return ag - bg;
+      const aLoss = recentCoreLossOvr(clubId, a.group);
+      const bLoss = recentCoreLossOvr(clubId, b.group);
+      const aFit = replacingDepartures && aLoss > 0 ? Math.max(0, 20 - Math.abs(a.ovr - aLoss)) : a.ovr;
+      const bFit = replacingDepartures && bLoss > 0 ? Math.max(0, 20 - Math.abs(b.ovr - bLoss)) : b.ovr;
+      return (bFit + b.ovr * 0.35 + b.potential * 0.15) - (aFit + a.ovr * 0.35 + a.potential * 0.15);
+    })
+    .slice(0, 40);
+
+  for (const player of pool) {
+    const lossOvr = recentCoreLossOvr(clubId, player.group);
+    const attempt = pursueTarget(clubId, player.id, {
+      date,
+      deadlineDay: true,
+      critical: replacingDepartures || lossOvr > 0,
+    });
+    if (attempt.outcome === "signed" && attempt.record) return attempt.record;
+  }
+
+  return null;
+}
+
 export function signBestMarketCandidate(
   clubId: string,
   date: string,
