@@ -14,6 +14,7 @@ import rawPlayers from "@/data/playersData";
 import { getAllTeams, findTeamStrict, type Team } from "@/data/teams";
 import { marketValueFor } from "@/data/players";
 import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
+import { estimateAnnualWage } from "./SalaryEngine";
 import { clamp, seededRange, seededUnit } from "./random";
 import { isBlockedUserMove } from "./MarketLocks";
 import {
@@ -86,7 +87,7 @@ function buildContract(value: number, age: number, ovr: number, seed: string): C
     CONTRACT_RULES.minYears,
     CONTRACT_RULES.maxYears,
   );
-  const wage = Math.max(WAGE_RULES.minimumWage, Math.round(value * WAGE_RULES.valueToWage));
+  const wage = Math.max(WAGE_RULES.minimumWage, estimateAnnualWage(value, age, ovr));
   return {
     yearsLeft,
     wage,
@@ -289,6 +290,16 @@ export function getClubPlayers(clubId: string): MarketPlayer[] {
   return idsToPlayers(index, index.byClub.get(clubId) ?? []);
 }
 
+
+/** Salario anual determinista del jugador tal y como lo usa el mercado. */
+export function getPlayerAnnualWage(playerId: string): number {
+  return getMarketIndex().byId.get(String(playerId))?.contract.wage ?? 0;
+}
+
+/** Masa salarial anual estimada de una plantilla. */
+export function getClubWageBill(clubId: string): number {
+  return getClubPlayers(clubId).reduce((sum, player) => sum + player.contract.wage, 0);
+}
 /** Jugadores de una liga. */
 export function getLeaguePlayers(leagueId: string): MarketPlayer[] {
   const index = getMarketIndex();

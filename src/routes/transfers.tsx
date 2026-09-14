@@ -22,7 +22,8 @@ import {
   FcPlayer,
   clubOfPlayer,
 } from "@/store/playersStore";
-import { Search, Wallet, UserPlus, Filter, X } from "lucide-react";
+import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { useUserMarket } from "@/hooks/useUserMarket";
@@ -279,6 +280,10 @@ function TransfersPage() {
   const { q: initialQuery, player: initialPlayerId } = Route.useSearch();
   const { loading, ready } = usePlayersReady();
   const budget = usePlayersStore((s) => s.budget);
+  const wageBudget = usePlayersStore((s) => s.wageBudget);
+  const wageBill = usePlayersStore((s) => s.wageBill);
+  const setWageBudget = usePlayersStore((s) => s.setWageBudget);
+  const totalEconomicBudget = budget + wageBudget;
   const rawPlayers = usePlayersStore((s) => s.getRawPlayers?.() || []);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
@@ -428,6 +433,42 @@ function TransfersPage() {
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
       <MarketStatusBanner className="mb-6" />
+
+      <div className="mb-6 rounded-2xl border border-border bg-card/70 p-4 md:p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground font-bold">Presupuesto del club</p>
+            <h2 className="text-lg font-black mt-1">Fichajes y salarios</h2>
+            <p className="text-xs text-muted-foreground mt-1">Reparte el presupuesto total según tu estrategia. La masa salarial actual es un mínimo obligatorio.</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Presupuesto total</p>
+            <p className="text-lg font-black">{formatEuro(totalEconomicBudget)}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+          <div className="rounded-xl bg-secondary/60 p-3 flex items-center gap-3">
+            <Banknote className="h-5 w-5 text-primary" />
+            <div><p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Disponible para fichajes</p><p className="font-black text-lg">{formatEuro(budget)}</p></div>
+          </div>
+          <div className="rounded-xl bg-secondary/60 p-3 flex items-center gap-3">
+            <Coins className="h-5 w-5 text-primary" />
+            <div><p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Salarios asignados / gastados</p><p className="font-black text-lg">{formatEuro(wageBudget)} <span className="text-xs text-muted-foreground font-normal">/ {formatEuro(wageBill)} actuales</span></p></div>
+          </div>
+        </div>
+        <Slider
+          value={[wageBudget]}
+          min={Math.min(wageBill, totalEconomicBudget)}
+          max={totalEconomicBudget}
+          step={250_000}
+          onValueChange={(values) => setWageBudget(values[0] ?? wageBudget)}
+          aria-label="Distribución del presupuesto entre salarios y fichajes"
+        />
+        <div className="flex justify-between mt-2 text-[0.7rem] text-muted-foreground">
+          <span>Más dinero para fichajes</span>
+          <span>Más dinero para salarios</span>
+        </div>
+      </div>
 
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
         <div>

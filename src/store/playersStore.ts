@@ -121,6 +121,7 @@ import { runSwissDraw, assignmentsToFixtures } from "@/lib/uclDraw";
 import { LEAGUES, getPrimaryLeagueForCountry } from "@/data/teams";
 import { getClubProfile, estimateFinancialPower } from "@/lib/transfers/ClubStrategy";
 import { initialBudget as computeClubInitialBudget } from "@/lib/transfers/BudgetManager";
+import { estimateAnnualWage } from "@/lib/transfers/SalaryEngine";
 
 // Big 5 European leagues for VIP deep simulation
 
@@ -743,6 +744,8 @@ type PlayersState = {
   resetAllStats: () => void;
 
   resetBudget: () => void;
+  /** Reparte el presupuesto total entre fichajes y salarios. */
+  setWageBudget: (value: number) => void;
 
   importLegacyStats: (players: Record<string, Player>) => void;
 
@@ -850,6 +853,20 @@ export async function withPlayerStatsBatchAsync<T>(fn: () => Promise<T>): Promis
   }
 }
 
+function estimateSquadWageBill(teamId: string, squad: FcPlayer[]): number {
+  if (!squad.length) return 0;
+  const avg = squad.reduce((sum, p) => sum + p.OVR, 0) / squad.length;
+  return squad.reduce((sum, p) => {
+    const value = marketValueEuros(p, teamId, teamById(teamId).league, avg);
+    return sum + estimateAnnualWage(value, p.Age, p.OVR);
+  }, 0);
+}
+
+function initialWageBudget(teamId: string, squad: FcPlayer[], transferBudget: number): number {
+  const wageBill = estimateSquadWageBill(teamId, squad);
+  return Math.max(wageBill * 1.22, transferBudget * 0.68);
+}
+
 export const usePlayersStore = create<PlayersState>()(
   persist(
     (set, get) => ({
@@ -863,6 +880,10 @@ export const usePlayersStore = create<PlayersState>()(
       clubOverrides: {},
 
       budget: INITIAL_BUDGET,
+
+      wageBudget: Math.round(INITIAL_BUDGET * 0.68),
+
+      wageBill: 0,
 
       currentDate: GAME_START_DATE,
 
@@ -1464,6 +1485,11 @@ export const usePlayersStore = create<PlayersState>()(
             opts?.resetBudget || prev.myTeamId !== teamId
               ? teamInitialBudget(avgOvr, team.league, team.id)
               : prev.budget,
+          wageBill: estimateSquadWageBill(teamId, defaultSquad),
+          wageBudget:
+            opts?.resetBudget || prev.myTeamId !== teamId
+              ? initialWageBudget(teamId, defaultSquad, teamInitialBudget(avgOvr, team.league, team.id))
+              : Math.max(prev.wageBudget ?? 0, estimateSquadWageBill(teamId, defaultSquad)),
         });
       },
 
@@ -1479,7 +1505,12 @@ export const usePlayersStore = create<PlayersState>()(
 
           const ids = defaultSquad.map((p) => String(p.ID));
 
-          set({ rosterIds: ids, squad: defaultSquad });
+          set({
+            rosterIds: ids,
+            squad: defaultSquad,
+            wageBill: estimateSquadWageBill(myTeamId, defaultSquad),
+            wageBudget: Math.max(estimateSquadWageBill(myTeamId, defaultSquad), get().wageBudget ?? 0),
+          });
 
           return;
         }
@@ -1497,6 +1528,8 @@ export const usePlayersStore = create<PlayersState>()(
           myTeamId: null,
 
           budget: INITIAL_BUDGET,
+          wageBudget: Math.round(INITIAL_BUDGET * 0.68),
+          wageBill: 0,
 
           currentDate: GAME_START_DATE,
 
@@ -1511,7 +1544,21 @@ export const usePlayersStore = create<PlayersState>()(
 
       resetAllStats: () => set({ stats: {} }),
 
-      resetBudget: () => set({ budget: INITIAL_BUDGET }),
+      resetBudget: () => {
+        const state = get();
+        const team = state.myTeamId ? teamById(state.myTeamId) : null;
+        const transferBudget = team ? teamInitialBudget(Math.round(team.att + team.mid + team.def) / 3, team.league, team.id) : INITIAL_BUDGET;
+        const wageBill = state.myTeamId ? estimateSquadWageBill(state.myTeamId, state.squad) : 0;
+        set({ budget: transferBudget, wageBill, wageBudget: Math.max(wageBill, initialWageBudget(state.myTeamId ?? "", state.squad, transferBudget)) });
+      },
+
+      setWageBudget: (value) => {
+        const state = get();
+        const minimum = Math.max(0, state.wageBill || 0);
+        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0));
+        const nextWage = Math.min(total, Math.max(minimum, Math.round(value)));
+        set({ wageBudget: nextWage, budget: Math.max(0, total - nextWage) });
+      },
 
       isInMyRoster: (playerId) => get().rosterIds.includes(playerId),
 
@@ -2138,6 +2185,9 @@ export const usePlayersStore = create<PlayersState>()(
 
           ...saved,
 
+          wageBudget: saved.wageBudget ?? Math.round((saved.budget ?? INITIAL_BUDGET) * 0.68),
+          wageBill: saved.wageBill ?? 0,
+
           rosterIds,
 
           squad: syncSquadFromRoster(rosterIds),
@@ -2156,6 +2206,8 @@ export const usePlayersStore = create<PlayersState>()(
               clubOverrides: s.clubOverrides,
 
               budget: s.budget,
+              wageBudget: s.wageBudget,
+              wageBill: s.wageBill,
               currentDate: s.currentDate,
               dismissedMatchIds: s.dismissedMatchIds,
             }
@@ -2168,6 +2220,8 @@ export const usePlayersStore = create<PlayersState>()(
               clubOverrides: s.clubOverrides,
 
               budget: s.budget,
+              wageBudget: s.wageBudget,
+              wageBill: s.wageBill,
 
               currentDate: s.currentDate,
 

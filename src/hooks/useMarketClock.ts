@@ -44,6 +44,8 @@ export function useMarketClock(): void {
       clubId: myTeamId,
       getBudget: () => usePlayersStore.getState().budget,
       setBudget: (value) => usePlayersStore.setState({ budget: Math.max(0, Math.round(value)) }),
+      getWageBudget: () => usePlayersStore.getState().wageBudget,
+      setWageBudget: (value) => usePlayersStore.setState({ wageBudget: Math.max(usePlayersStore.getState().wageBill, Math.round(value)) }),
     });
     return () => setUserClubBridge(null);
   }, [myTeamId]);

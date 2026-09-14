@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { usePlayersStore } from "@/store/playersStore";
+import { formatEuro, usePlayersStore } from "@/store/playersStore";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import {
   acceptClubDemand,
@@ -138,9 +138,14 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
    */
   const syncBudget = useCallback(() => {
     if (!myTeamId) return;
-    const engineBudget = getFinances(myTeamId).budget;
-    if (usePlayersStore.getState().budget !== engineBudget) {
-      usePlayersStore.setState({ budget: Math.max(0, Math.round(engineBudget)) });
+    const finances = getFinances(myTeamId);
+    const current = usePlayersStore.getState();
+    if (current.budget !== finances.budget || current.wageBudget !== finances.wageBudget || current.wageBill !== finances.wageBill) {
+      usePlayersStore.setState({
+        budget: Math.max(0, Math.round(finances.budget)),
+        wageBudget: Math.max(finances.wageBill, Math.round(finances.wageBudget)),
+        wageBill: Math.max(0, Math.round(finances.wageBill)),
+      });
     }
   }, [myTeamId]);
 
@@ -152,9 +157,15 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const makeOffer = useCallback<UserMarketApi["makeOffer"]>(
     ({ playerId, amount, wageOffer, clauses }) => {
       if (!myTeamId) return;
-      const budget = usePlayersStore.getState().budget;
+      const store = usePlayersStore.getState();
+      const budget = store.budget;
+      const wageRoom = Math.max(0, store.wageBudget - store.wageBill);
       if (amount > budget) {
         toast.error("No tienes presupuesto para esa oferta.");
+        return;
+      }
+      if (wageOffer > wageRoom) {
+        toast.error(`No tienes margen salarial suficiente (disponible: ${formatEuro(wageRoom)} al año).`);
         return;
       }
       const result = submitUserOffer({

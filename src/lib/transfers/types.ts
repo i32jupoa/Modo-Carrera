@@ -146,8 +146,10 @@ export interface ClubFinances {
   clubId: string;
   /** Presupuesto de fichajes disponible en euros. */
   budget: number;
-  /** Presupuesto inicial de la ventana (para métricas). */
+  /** Presupuesto de fichajes al comenzar la ventana (para métricas). */
   initialBudget: number;
+  /** Presupuesto económico total de la ventana (traspasos + salarios). */
+  totalBudget: number;
   /** Límite de masa salarial anual en euros. */
   wageBudget: number;
   /** Masa salarial comprometida en euros. */

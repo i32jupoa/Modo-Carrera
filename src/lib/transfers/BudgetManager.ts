@@ -70,11 +70,13 @@ function createFinances(clubId: string): ClubFinances {
   const profile = getClubProfile(clubId);
   const budget = initialBudget(profile);
   const wageBill = currentWageBill(clubId);
+  const wageBudget = Math.max(wageBill * 1.22, Math.round(budget * 0.68));
   return {
     clubId,
     budget,
     initialBudget: budget,
-    wageBudget: Math.max(wageBill * 1.12, Math.round(budget * WAGE_RULES.wageBudgetFactor)),
+    totalBudget: budget + wageBudget,
+    wageBudget,
     wageBill,
     spent: 0,
     earned: 0,
@@ -95,6 +97,8 @@ interface UserClubBridge {
   clubId: string;
   getBudget: () => number;
   setBudget: (value: number) => void;
+  getWageBudget: () => number;
+  setWageBudget: (value: number) => void;
 }
 
 let userBridge: UserClubBridge | null = null;
@@ -133,7 +137,11 @@ export function getFinances(clubId: string): ClubFinances {
   }
   // El club del usuario siempre refleja el presupuesto real de la partida.
   const bridge = bridgeFor(clubId);
-  if (bridge) entry.budget = bridge.getBudget();
+  if (bridge) {
+    entry.budget = bridge.getBudget();
+    entry.wageBudget = Math.max(entry.wageBill, Math.round(bridge.getWageBudget()));
+    entry.totalBudget = entry.budget + entry.wageBudget;
+  }
   return entry;
 }
 
@@ -161,6 +169,14 @@ export function maxSpend(clubId: string): number {
 }
 
 /** Salario máximo que el club puede ofrecer a un solo jugador. */
+/** Ajusta la partida salarial del club manteniendo el suelo de la masa actual. */
+export function setWageBudget(clubId: string, value: number): void {
+  const entry = getFinances(clubId);
+  entry.wageBudget = Math.max(entry.wageBill, Math.round(value));
+  entry.totalBudget = entry.budget + entry.wageBudget;
+  bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
+}
+
 export function maxWageOffer(clubId: string): number {
   const entry = getFinances(clubId);
   const room = entry.wageBudget - entry.wageBill;
@@ -177,9 +193,13 @@ export function canAfford(clubId: string, fee: number, wage: number): boolean {
 export function registerSigning(clubId: string, fee: number, wage: number): void {
   const entry = getFinances(clubId);
   entry.budget = Math.max(0, entry.budget - fee);
+  entry.totalBudget = entry.budget + entry.wageBudget;
   entry.spent += fee;
   entry.wageBill += wage;
+  entry.wageBudget = Math.max(entry.wageBudget, entry.wageBill);
+  entry.totalBudget = entry.budget + entry.wageBudget;
   bridgeFor(clubId)?.setBudget(entry.budget);
+  bridgeFor(clubId)?.setWageBudget(entry.wageBudget);
 }
 
 /** Registra una venta: parte del ingreso vuelve al presupuesto. */
@@ -190,8 +210,10 @@ export function registerSale(clubId: string, fee: number, wage: number): void {
   entry.budget += bridge ? fee : Math.round(fee * BUDGET_RULES.saleReinvestment);
   entry.earned += fee;
   entry.wageBill = Math.max(0, entry.wageBill - wage);
+  entry.totalBudget = entry.budget + entry.wageBudget;
   if (!bridge) capBudget(entry);
   bridge?.setBudget(entry.budget);
+  bridge?.setWageBudget(entry.wageBudget);
 }
 
 /** Registra el ahorro salarial de una cesión con reparto de sueldo. */
@@ -214,6 +236,8 @@ export function refillForNewWindow(clubId: string): void {
     entry.spent = 0;
     entry.earned = 0;
     entry.wageBill = currentWageBill(clubId);
+    entry.wageBudget = Math.max(entry.wageBill, Math.round(entry.wageBudget));
+    entry.totalBudget = entry.budget + entry.wageBudget;
     return;
   }
 
@@ -225,13 +249,16 @@ export function refillForNewWindow(clubId: string): void {
   entry.spent = 0;
   entry.earned = 0;
   entry.wageBill = currentWageBill(clubId);
+  entry.wageBudget = Math.max(entry.wageBill, Math.round(entry.wageBudget));
+  entry.totalBudget = entry.budget + entry.wageBudget;
 }
 
 /** Restaura las finanzas guardadas en una partida. */
 export function restoreFinances(entries: readonly ClubFinances[]): void {
   finances.clear();
   for (const entry of entries) {
-    const copy = { ...entry };
+    const copy = { ...entry, totalBudget: entry.totalBudget ?? entry.budget + entry.wageBudget };
+    copy.wageBudget = Math.max(copy.wageBill, copy.wageBudget);
     // Migra partidas guardadas antes del techo de presupuesto: sin esto, una
     // partida vieja con un club de la IA ya inflado a cientos o miles de
     // millones se quedaría así para siempre, porque `capBudget` sólo actúa
