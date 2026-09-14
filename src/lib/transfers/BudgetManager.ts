@@ -67,7 +67,7 @@ function leagueBudgetMultiplier(leagueId: string): number {
  * tienen equipos definidos de forma estática en el juego. Así el presupuesto
  * no depende de pequeñas variaciones en la media del equipo y mantiene una
  * escala coherente entre gigantes, aspirantes y clubes modestos.
- * El resto de ligas conserva la fórmula económica existente.
+ * El resto de ligas conserva la fórmula económica existente y recibe también la reducción global del 30%.
  */
 const CLUB_BUDGET_OVERRIDES: Record<string, number> = {
   // LaLiga
@@ -246,9 +246,13 @@ const CLUB_BUDGET_OVERRIDES: Record<string, number> = {
  * vez de las cifras infladas de antes (+40% de "identidad de mercado" plano
  * que no representaba nada concreto).
  */
+const GLOBAL_BUDGET_MULTIPLIER = 0.70; // Reducción global del 30% del presupuesto inicial.
+
 export function initialBudget(profile: ClubProfile): number {
   const override = CLUB_BUDGET_OVERRIDES[profile.clubId];
-  if (override !== undefined) return Math.round(override * 1_000_000);
+  if (override !== undefined) {
+    return Math.max(BUDGET_RULES.floor, Math.round(override * 1_000_000 * GLOBAL_BUDGET_MULTIPLIER));
+  }
 
   const power = clamp(profile.financialPower, 0, 1);
 
@@ -270,7 +274,7 @@ export function initialBudget(profile: ClubProfile): number {
     budget = referenceFloor + (referenceBudget - referenceFloor) * ratio;
   }
 
-  return Math.max(BUDGET_RULES.floor, Math.round(budget));
+  return Math.max(BUDGET_RULES.floor, Math.round(budget * GLOBAL_BUDGET_MULTIPLIER));
 }
 
 /** Masa salarial comprometida hoy por el club. */

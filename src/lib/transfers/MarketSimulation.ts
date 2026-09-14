@@ -33,6 +33,7 @@ import {
   runClubOpportunisticCycle,
   runClubTransferCycle,
   signBestFreeAgent,
+  signBestMarketCandidate,
 } from "./TransferEngine";
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
 import { runClubLoanCycle, resolveLoansEndOfSeason } from "./LoanEngine";
@@ -295,8 +296,24 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
   const urgency = clamp((state.windowDay - 5) / 25, 0, 1);
   return allClubIds().filter((clubId) => {
     if (clubWantsToActToday(clubId, date, share)) return true;
-    if (urgency <= 0) return false;
     const window = clubWindowState(clubId);
+
+    // Las redes de seguridad son obligaciones, no una lotería: si un club ya
+    // alcanzó su día asignado y aún no cumple el mínimo de fichajes/ventas,
+    // entra en la rotación aunque el sorteo diario no lo hubiese elegido.
+    // Antes esta condición no existía y un club podía llegar al cierre de la
+    // ventana sin pasar jamás por su red de seguridad.
+    if (
+      window.signings < minSigningsFor(state.window) &&
+      (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
+    ) return true;
+    if (
+      state.window === "summer" &&
+      window.sales < minSalesFor(state.window) &&
+      (state.deadlineDay || state.windowDay >= window.nextSalesAttempt)
+    ) return true;
+
+    if (urgency <= 0) return false;
     if (window.signings + window.sales + window.loans > 0) return false;
     return seededUnit(clubId, date, "catch-up") < share + urgency * 0.5;
   });
@@ -532,7 +549,13 @@ function runClubDay(
     (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
   ) {
     while (window.signings < requiredSignings) {
-      const record = signBestFreeAgent(clubId, date, state.deadlineDay);
+      // Primero se busca un fichaje de mercado real (jugador con contrato).
+      // El agente libre queda como último recurso. Esto evita escenarios
+      // absurdos como el Real Madrid vendiendo tres jugadores y terminando el
+      // verano sin una sola incorporación propia.
+      const record =
+        signBestMarketCandidate(clubId, date, state.deadlineDay) ??
+        signBestFreeAgent(clubId, date, state.deadlineDay);
       if (!record) {
         window.nextSigningAttempt = state.windowDay + MARKET_TIMING.safetyNetRetryGapDays;
         break;

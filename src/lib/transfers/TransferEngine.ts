@@ -50,7 +50,7 @@ import {
   reassignPlayerClub,
   updatePlayer,
 } from "./PlayerIndex";
-import { getSquadReport, playerImprovesSquad } from "./SquadAnalyzer";
+import { getSquadReport, playerImprovesSquad, priorityNeeds, weakestGroupNeed } from "./SquadAnalyzer";
 import {
   coreDeparturesFor,
   isUserApprovedMove,
@@ -1289,6 +1289,73 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
  * vendedor que pueda bloquear la operación, así que sirve para que ningún
  * equipo termine el mercado completamente parado.
  */
+/**
+ * Fichaje obligatorio de mercado para cumplir el suelo de incorporaciones.
+ *
+ * A diferencia de `signBestFreeAgent`, esta vía busca primero jugadores con
+ * contrato en otros clubes. Se usa como red de seguridad para que el mínimo
+ * de fichajes de la ventana no se convierta accidentalmente en "mínimo de
+ * agentes libres". También admite una necesidad blanda cuando la plantilla
+ * ya está completa, de modo que un club grande puede reforzar profundidad o
+ * incorporar una promesa sin necesitar un agujero numérico previo.
+ */
+export function signBestMarketCandidate(
+  clubId: string,
+  date: string,
+  deadlineDay = false,
+): TransferRecord | null {
+  const report = getSquadReport(clubId, date);
+  if (report.size >= SQUAD_LIMITS.maxSquadSize + 2) return null;
+
+  const needs = priorityNeeds(clubId, date, 4);
+  const fallback = weakestGroupNeed(clubId, date);
+  let targets: SquadNeed[] = needs.slice();
+
+  if (fallback && !targets.some((need) => need.group === fallback.group)) {
+    targets.push({ ...fallback, priority: "medium" });
+  }
+
+  // Incluso una plantilla perfectamente equilibrada debe poder cumplir el
+  // mínimo anual: se ataca el grupo con peor media antes que forzar un agente
+  // libre de nivel muy inferior. Esto afecta sobre todo a clubes de élite.
+  if (targets.length === 0) {
+    const weakest = POSITION_GROUPS
+      .filter((group) => report.countByGroup[group] > 0)
+      .sort((a, b) => report.ratingByGroup[a] - report.ratingByGroup[b])[0];
+    if (weakest) {
+      targets.push({
+        group: weakest,
+        urgency: 0.3,
+        count: report.countByGroup[weakest],
+        quality: report.ratingByGroup[weakest],
+        priority: "medium",
+      });
+    }
+  }
+
+  for (const need of targets) {
+    const shortlist = buildShortlist(clubId, need, {
+      cacheKey: date,
+      deadlineDay,
+      lenient: true,
+      size: 10,
+    });
+
+    for (const candidate of shortlist) {
+      const attempt = pursueTarget(clubId, candidate.player.id, {
+        date,
+        deadlineDay,
+        critical: need.priority === "critical" || recentCoreLossOvr(clubId, need.group) > 0,
+      });
+      if (attempt.outcome === "signed" && attempt.record) return attempt.record;
+      // Un rechazo o "waiting" no debe impedir que la red de seguridad pruebe
+      // otro objetivo disponible dentro de la misma jornada.
+    }
+  }
+
+  return null;
+}
+
 export function signBestFreeAgent(
   clubId: string,
   date: string,
