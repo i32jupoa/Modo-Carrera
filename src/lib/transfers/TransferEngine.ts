@@ -12,7 +12,7 @@
  */
 
 import { teamById } from "@/data/teams";
-import { transferWindowKey } from "../transferWindows";
+import { transferWindowKey, windowForDate } from "../transferWindows";
 import {
   BIG_DEAL_DAILY_LIMIT,
   CONTRACT_RULES,
@@ -1092,7 +1092,12 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
   // operación que él haya cerrado (`UserNegotiation`). Cualquier otra vía
   // —IA, cesiones, obligaciones de compra— queda anulada aquí.
   const userClub = getUserClubId();
-  if (userClub && sellerId === userClub && buyerId !== userClub && !isUserApprovedMove()) {
+  if (
+    userClub &&
+    sellerId !== buyerId &&
+    (sellerId === userClub || buyerId === userClub) &&
+    !isUserApprovedMove()
+  ) {
     return null;
   }
   const buyerLeague = teamById(buyerId).league;
@@ -1126,8 +1131,17 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
   }
 
   if (isLoan) {
+    const durationMonths =
+      offer.clauses.loanDurationMonths > 0
+        ? offer.clauses.loanDurationMonths
+        : windowForDate(date) === "winter"
+          ? 6
+          : 12;
+    const baseDate = new Date(`${date}T00:00:00Z`);
+    baseDate.setUTCMonth(baseDate.getUTCMonth() + durationMonths);
     updatePlayer(player.id, {
       loanClubId: buyerId,
+      loanEndDate: baseDate.toISOString().slice(0, 10),
       loanListed: false,
       minutesShare: 0,
     });
@@ -1148,7 +1162,10 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
     });
   }
 
-  registerSigning(buyerId, offer.amount, offer.wageOffer);
+  const wageCommitment = isLoan
+    ? Math.round(offer.wageOffer * clamp(offer.clauses.wageShare, 0, 1))
+    : offer.wageOffer;
+  registerSigning(buyerId, offer.amount, wageCommitment);
   if (sellerId && !isLoan) {
     registerSale(sellerId, offer.amount, player.contract.wage);
     if (sellerId !== buyerId) recordBuyerSellerDeal(date, buyerId, sellerId);

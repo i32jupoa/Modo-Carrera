@@ -151,21 +151,15 @@ function RootComponent() {
 function AppShell() {
   usePlayersReady();
 
-  // Las partidas guardadas viven en IndexedDB (sin el tope de ~5 MB de
-  // `localStorage`), que es asíncrono, así que hay que traerlas a memoria
-  // ANTES de pintar cualquier pantalla: el juego lee la partida de forma
-  // síncrona en todas ellas. Es una sola lectura por sesión.
-  const [savesReady, setSavesReady] = useState(false);
-
+  // IndexedDB se inicializa en segundo plano. El juego NO debe bloquear el
+  // render esperando a IndexedDB: loadSave() dispone de `localStorage` como
+  // respaldo inmediato y el espejo de IndexedDB se sincroniza cuando termina
+  // la inicialización. Esto evita quedar atrapado indefinidamente en
+  // "Cargando tu partida…" por una base de datos bloqueada o corrupta.
   useEffect(() => {
-    let cancelled = false;
     void initSaveStorage().then(() => {
       cleanupOrphanedSaveSlots();
-      if (!cancelled) setSavesReady(true);
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   // Al cerrar o esconder la pestaña, asegura que la última jornada jugada
@@ -195,17 +189,6 @@ function AppShell() {
     // se ejecuta una única vez por partida guardada y no bloquea nada.
     void migrateAllMarketDataFromLocalStorage();
   }, []);
-
-  if (!savesReady) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-          <p className="text-sm text-muted-foreground">Cargando tu partida…</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <SidebarProvider>

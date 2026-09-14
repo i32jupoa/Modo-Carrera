@@ -48,7 +48,14 @@ function roundFee(amount: number): number {
 }
 
 export function emptyClauses(): OfferClauses {
-  return { sellOnPercent: 0, addOns: 0, wageShare: 0, optionFee: 0, playerSwapIds: [] };
+  return {
+    sellOnPercent: 0,
+    addOns: 0,
+    wageShare: 0,
+    optionFee: 0,
+    loanDurationMonths: 0,
+    playerSwapIds: [],
+  };
 }
 
 // ============================================================================

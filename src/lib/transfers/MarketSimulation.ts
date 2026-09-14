@@ -37,7 +37,7 @@ import {
   signEmergencyMarketCandidate,
 } from "./TransferEngine";
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
-import { runClubLoanCycle, resolveLoansEndOfSeason } from "./LoanEngine";
+import { runClubLoanCycle, resolveLoansDue, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
 import { rumorBidWar, rumorInterest, rumorRenewal, rumorSearching } from "./RumorEngine";
 import {
@@ -646,6 +646,8 @@ export function simulateDay(date: string): MarketDayResult {
     advanceSeason(date);
     seasonLoanReturns = resolveLoansEndOfSeason(date);
     sim.lastSeasonRolled = season;
+  } else {
+    seasonLoanReturns = resolveLoansDue(date);
   }
 
   // Cambio de ventana: presupuestos nuevos e intensidad nueva.

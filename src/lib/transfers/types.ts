@@ -79,6 +79,8 @@ export interface MarketPlayer {
   loanListed: boolean;
   /** Club al que está cedido, si procede. */
   loanClubId: string | null;
+  /** Fecha exacta de finalización de la cesión (YYYY-MM-DD). */
+  loanEndDate: string | null;
   /** Minutos acumulados en la temporada (aproximación para decisiones). */
   minutesShare: number;
   /**
@@ -243,6 +245,8 @@ export interface OfferClauses {
   wageShare: number;
   /** Coste de la opción/obligación de compra en cesiones. */
   optionFee: number;
+  /** Duración contractual de la cesión, en meses. */
+  loanDurationMonths: number;
   /** Jugadores incluidos en el trato. */
   playerSwapIds: string[];
 }

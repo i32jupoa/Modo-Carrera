@@ -10,6 +10,7 @@ import {
   counterIncomingOffer,
   finalizeUserDeal,
   freshRumors,
+  getPlayer,
   currentWindowStart,
   getFinances,
   rumorsSince,
@@ -23,12 +24,14 @@ import {
   saveTransferSystem,
   scoutPlayer,
   setUserPlayerTransferListed,
+  submitUserLoanOutOffer,
   submitUserOffer,
   summarize,
   syncUserFinances,
   withdrawUserDeal,
   type OfferClauses,
   type Rumor,
+  type TransferType,
   type ScoutingReport,
   type TransferRecord,
   type UserDeal,
@@ -61,7 +64,16 @@ export interface UserMarketApi {
     playerId: string;
     amount: number;
     wageOffer: number;
+    type?: TransferType;
     clauses?: Partial<OfferClauses>;
+  }) => void;
+  makeLoanOutOffer: (input: {
+    playerId: string;
+    borrowerClubId: string;
+    loanFee: number;
+    wageShare: number;
+    durationMonths?: number;
+    type?: Extract<TransferType, "loan" | "loan-option" | "loan-obligation">;
   }) => void;
   improveOffer: (dealId: string, amount: number, wageOffer: number) => void;
   acceptDemand: (dealId: string) => void;
@@ -95,6 +107,17 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   }, [ready, notificationsVersion, currentDate, refresh]);
 
   const state = ready ? getSimulationState() : null;
+
+  useEffect(() => {
+    if (!ready || !myTeamId) return;
+    const loans = usePlayersStore.getState().loanedPlayers;
+    for (const [playerId] of Object.entries(loans)) {
+      const marketPlayer = getPlayer(playerId);
+      if (!marketPlayer || marketPlayer.loanClubId !== myTeamId) {
+        usePlayersStore.getState().removeLoanedPlayer(playerId);
+      }
+    }
+  }, [ready, myTeamId, currentDate, tick]);
 
   const deals = useMemo(() => (ready ? listUserDeals() : []), [ready, tick, currentDate]);
   const incoming = useMemo(() => deals.filter((d) => d.direction === "out"), [deals]);
@@ -155,17 +178,22 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   );
 
   const makeOffer = useCallback<UserMarketApi["makeOffer"]>(
-    ({ playerId, amount, wageOffer, clauses }) => {
+    ({ playerId, amount, wageOffer, type, clauses }) => {
       if (!myTeamId) return;
       const store = usePlayersStore.getState();
       const budget = store.budget;
       const wageRoom = Math.max(0, store.wageBudget);
+      const isLoan =
+        type === "loan" || type === "loan-option" || type === "loan-obligation";
+      const wageCommitment = isLoan
+        ? wageOffer * Math.max(0, Math.min(1, clauses?.wageShare ?? 0.5))
+        : wageOffer;
       if (amount > budget) {
         toast.error("No tienes presupuesto para esa oferta.");
         return;
       }
-      if (wageOffer > wageRoom) {
-        toast.error(`No tienes margen salarial suficiente (disponible: ${formatEuro(wageRoom)} al año).`);
+      if (wageCommitment > wageRoom) {
+        toast.error("No tienes margen salarial suficiente para asumir esa parte de la ficha.");
         return;
       }
       const result = submitUserOffer({
@@ -174,10 +202,32 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         date: currentDate,
         amount,
         wageOffer,
+        type,
         clauses,
       });
       commit(
         result.ok ? "Oferta enviada. El club responderá en unos días." : undefined,
+        result.reason,
+      );
+    },
+    [myTeamId, currentDate, commit],
+  );
+
+  const makeLoanOutOffer = useCallback<UserMarketApi["makeLoanOutOffer"]>(
+    ({ playerId, borrowerClubId, loanFee, wageShare, durationMonths, type }) => {
+      if (!myTeamId) return;
+      const result = submitUserLoanOutOffer({
+        playerId,
+        userClubId: myTeamId,
+        borrowerClubId,
+        date: currentDate,
+        loanFee,
+        wageShare,
+        durationMonths,
+        type,
+      });
+      commit(
+        result.ok ? "Propuesta de cesión enviada al club." : undefined,
         result.reason,
       );
     },
@@ -195,6 +245,10 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const acceptDemand = useCallback(
     (dealId: string) => {
       const result = acceptClubDemand(dealId, currentDate);
+      if (result.silent) {
+        commit();
+        return;
+      }
       commit(result.ok ? "Has igualado lo que pide el club." : undefined, result.reason);
     },
     [currentDate, commit],
@@ -238,6 +292,30 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit(undefined, result.reason ?? "No se pudo cerrar la operación.");
         return;
       }
+      if (
+        result.record.type === "loan" ||
+        result.record.type === "loan-option" ||
+        result.record.type === "loan-obligation"
+      ) {
+        const marketPlayer = getPlayer(result.record.playerId);
+        const endDate = marketPlayer?.loanEndDate;
+        const fromClubId = result.record.fromClubId;
+        if (!endDate || !fromClubId) {
+          commit(undefined, "La cesión se cerró pero no pudo registrarse su fecha de retorno.");
+          return;
+        }
+        const loaned = store.addLoanedPlayer(result.record.playerId, fromClubId, endDate);
+        if (!loaned.ok) {
+          syncUserFinances(myTeamId!, result.fee, result.wage ?? 0, true);
+          commit(undefined, loaned.reason ?? "No se pudo integrar el cedido en la plantilla.");
+          return;
+        }
+        flushWorldMoves();
+        syncBudget();
+        commit(`Cesión cerrada por ${(result.fee / 1_000_000).toFixed(1)}M € · vuelve el ${endDate}.`);
+        return;
+      }
+
       const bought = store.buyPlayer(result.record.playerId, 0);
       if (!bought.ok) {
         // La plantilla no lo admite: se devuelve el dinero ya descontado.
@@ -267,13 +345,34 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const acceptIncoming = useCallback(
     (dealId: string) => {
       const store = usePlayersStore.getState();
-      if (store.rosterIds.length <= 11) {
+      const pendingDeal = listUserDeals().find((d) => d.id === dealId);
+      const isLoan = pendingDeal?.offer?.type === "loan" || pendingDeal?.offer?.type === "loan-option" || pendingDeal?.offer?.type === "loan-obligation";
+      // Una venta definitiva necesita mantener 11 jugadores. Una cesión de
+      // salida no reduce la plantilla porque el propietario sigue siendo el
+      // club del usuario.
+      if (!isLoan && store.rosterIds.length <= 11) {
         commit(undefined, "Debes mantener al menos 11 jugadores en la plantilla.");
         return;
       }
       const result = acceptIncomingOffer(dealId, currentDate);
+      if (result.silent) {
+        commit();
+        return;
+      }
       if (!result.ok || result.fee === undefined || !result.record) {
-        commit(undefined, result.reason ?? "La venta no se pudo cerrar.");
+        commit(undefined, result.reason ?? (isLoan ? "La cesión no se pudo cerrar." : "La venta no se pudo cerrar."));
+        return;
+      }
+      if (
+        result.record.type === "loan" ||
+        result.record.type === "loan-option" ||
+        result.record.type === "loan-obligation"
+      ) {
+        // Cesión de salida: el jugador no abandona la plantilla del propietario.
+        // El motor ya ha registrado la parte de salario que asume el receptor.
+        flushWorldMoves();
+        syncBudget();
+        commit(`Cesión cerrada por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
         return;
       }
       const playerBeforeSale = store.getSimPlayer(result.record.playerId);
@@ -283,8 +382,6 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit(undefined, sold.reason ?? "La venta no se pudo aplicar a tu plantilla.");
         return;
       }
-      // La venta se liquida en el motor económico una sola vez: entra el 100%
-      // del traspaso y se libera la masa salarial del contrato que acaba de salir.
       syncUserFinances(myTeamId!, result.fee, previousWage, true);
       flushWorldMoves();
       syncBudget();
@@ -292,7 +389,6 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     },
     [currentDate, commit, myTeamId, syncBudget],
   );
-
   const counterIncoming = useCallback(
     (dealId: string, demand: number) => {
       const result = counterIncomingOffer(dealId, demand, currentDate);
@@ -337,6 +433,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     windowDay: state?.windowDay ?? 0,
     scout,
     makeOffer,
+    makeLoanOutOffer,
     improveOffer,
     acceptDemand,
     improveWage,

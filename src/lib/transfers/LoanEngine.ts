@@ -15,7 +15,7 @@
 import { teamById } from "@/data/teams";
 import { CONTRACT_RULES, LOAN_RULES, MARKET_TIMING, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
-import { maxWageOffer, registerLoanOut, registerSale, registerSigning } from "./BudgetManager";
+import { getUserClubId, maxWageOffer, registerLoanOut, registerSale, registerSigning } from "./BudgetManager";
 import {
   getClubPlayers,
   getMarketIndex,
@@ -32,6 +32,7 @@ import { contractYearsForAge } from "./ContractEngine";
 import { recordTransfer, transfersForPlayer } from "./TransferHistory";
 import { arrivalsFor, isPlayerSettled } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
+import { windowForDate } from "@/lib/transferWindows";
 import type { MarketPlayer, TransferRecord, TransferType } from "./types";
 
 /** Llegadas máximas por club y ventana (compras + cesiones). */
@@ -50,6 +51,21 @@ export interface LoanResult {
   type: LoanType;
   record: TransferRecord | null;
   message: string;
+}
+
+function addMonths(date: string, months: number): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  const day = parsed.getUTCDate();
+  parsed.setUTCDate(1);
+  parsed.setUTCMonth(parsed.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, 0)).getUTCDate();
+  parsed.setUTCDate(Math.min(day, lastDay));
+  return parsed.toISOString().slice(0, 10);
+}
+
+export function loanDurationMonthsForDate(date: string): number {
+  return windowForDate(date) === "winter" ? 6 : 12;
 }
 
 // ============================================================================
@@ -191,7 +207,11 @@ export function arrangeLoan(
   if (!player || !player.clubId || player.loanClubId) return base;
   if (player.clubId === borrowerClubId) return base;
 
-  const clauses = buildLoanTerms(playerId, type, `${playerId}-${borrowerClubId}-${options.date}`);
+  const durationMonths = loanDurationMonthsForDate(options.date);
+  const clauses = {
+    ...buildLoanTerms(playerId, type, `${playerId}-${borrowerClubId}-${options.date}`),
+    loanDurationMonths: durationMonths,
+  };
   if (!wantsToLoanIn(borrowerClubId, playerId, clauses.wageShare, options.date)) {
     return { ...base, message: `${teamById(borrowerClubId).name} no ve encaje a la cesión.` };
   }
@@ -229,7 +249,11 @@ export function arrangeLoan(
   const record = completeTransfer(offer, options.date);
   if (!record) return base;
 
-  updatePlayer(playerId, { loanListed: false });
+  updatePlayer(playerId, {
+    loanListed: false,
+    loanClubId: borrowerClubId,
+    loanEndDate: addMonths(options.date, durationMonths),
+  });
   registerLoanOut(ownerClubId, wageBefore, clauses.wageShare);
 
   return {
@@ -259,6 +283,8 @@ export function runClubLoanCycle(
   clubId: string,
   options: { date: string; deadlineDay?: boolean; maxLoans?: number },
 ): LoanCycleResult {
+  // El club del usuario nunca participa en ciclos automáticos de IA.
+  if (clubId === getUserClubId()) return { clubId, loans: [] };
   const cacheKey = options.date;
   const maxLoans = options.maxLoans ?? 2;
   const result: LoanCycleResult = { clubId, loans: [] };
@@ -358,19 +384,26 @@ function executeLoanObligation(
  * cesión, en lugar de volver con su dueño original (antes esto no ocurría:
  * toda cesión volvía a su sitio sin más, aunque tuviera obligación de compra).
  */
-export function resolveLoansEndOfSeason(date: string): LoanReturn[] {
+/**
+ * Resuelve las cesiones cuya fecha contractual ya ha vencido.
+ * Las cesiones creadas a partir de esta versión siempre tienen una fecha exacta.
+ */
+export function resolveLoansDue(date: string): LoanReturn[] {
   const returns: LoanReturn[] = [];
   for (const player of getMarketIndex().byId.values()) {
-    if (!player.loanClubId || !player.clubId) continue;
+    if (!player.loanClubId || !player.clubId || !player.loanEndDate) continue;
+    if (player.loanEndDate > date) continue;
+
     const borrowerClubId = player.loanClubId;
     const ownerClubId = player.clubId;
-
-    const loanRecord = transfersForPlayer(player.id).find(
-      (r) =>
-        r.toClubId === borrowerClubId &&
-        r.fromClubId === ownerClubId &&
-        (r.type === "loan" || r.type === "loan-option" || r.type === "loan-obligation"),
-    );
+    const loanRecord = transfersForPlayer(player.id)
+      .filter(
+        (r) =>
+          r.toClubId === borrowerClubId &&
+          r.fromClubId === ownerClubId &&
+          (r.type === "loan" || r.type === "loan-option" || r.type === "loan-obligation"),
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
 
     if (loanRecord?.type === "loan-obligation") {
       const purchase = executeLoanObligation(player, ownerClubId, borrowerClubId, loanRecord, date);
@@ -384,7 +417,12 @@ export function resolveLoansEndOfSeason(date: string): LoanReturn[] {
       continue;
     }
 
-    updatePlayer(player.id, { loanClubId: null, loanListed: false, minutesShare: 0 });
+    updatePlayer(player.id, {
+      loanClubId: null,
+      loanEndDate: null,
+      loanListed: false,
+      minutesShare: 0,
+    });
     returns.push({
       playerId: player.id,
       playerName: player.name,
@@ -393,5 +431,55 @@ export function resolveLoansEndOfSeason(date: string): LoanReturn[] {
       message: `${player.name} vuelve de su cesión a ${teamById(ownerClubId).name} (${date}).`,
     });
   }
+  return returns;
+}
+
+/**
+ * Compatibilidad con partidas antiguas: cualquier cesión sin fecha exacta se
+ * resuelve al detectar un cambio de temporada.
+ */
+export function resolveLoansEndOfSeason(date: string): LoanReturn[] {
+  const returns = resolveLoansDue(date);
+
+  for (const player of getMarketIndex().byId.values()) {
+    if (!player.loanClubId || !player.clubId || player.loanEndDate) continue;
+
+    const borrowerClubId = player.loanClubId;
+    const ownerClubId = player.clubId;
+    const loanRecord = transfersForPlayer(player.id)
+      .filter(
+        (r) =>
+          r.toClubId === borrowerClubId &&
+          r.fromClubId === ownerClubId &&
+          (r.type === "loan" || r.type === "loan-option" || r.type === "loan-obligation"),
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+
+    if (loanRecord?.type === "loan-obligation") {
+      const purchase = executeLoanObligation(player, ownerClubId, borrowerClubId, loanRecord, date);
+      returns.push({
+        playerId: player.id,
+        playerName: player.name,
+        ownerClubId,
+        purchase,
+        message: `${teamById(borrowerClubId).name} ejecuta la obligación de compra de ${player.name}.`,
+      });
+    } else {
+      updatePlayer(player.id, {
+        loanClubId: null,
+        loanEndDate: null,
+        loanListed: false,
+        minutesShare: 0,
+      });
+      returns.push({
+        playerId: player.id,
+        playerName: player.name,
+        ownerClubId,
+        purchase: null,
+        message: `${player.name} vuelve de su cesión a ${teamById(ownerClubId).name} (${date}).`,
+      });
+    }
+  }
+
   return returns;
 }

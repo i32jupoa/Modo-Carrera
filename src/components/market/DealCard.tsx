@@ -52,6 +52,18 @@ export function DealCard({
     Math.round((deal.valuation.idealPrice || deal.offer.amount) / 100_000) / 10,
   );
   const closed = deal.stage === "completed" || deal.stage === "failed";
+  const isLoan =
+    deal.offer.type === "loan" ||
+    deal.offer.type === "loan-option" ||
+    deal.offer.type === "loan-obligation";
+  const operationLabel = isLoan
+    ? deal.direction === "in"
+      ? "Cesión desde "
+      : "Cesión a "
+    : deal.direction === "in"
+      ? "Compra a "
+      : "Venta a ";
+  const duration = deal.offer.clauses.loanDurationMonths || 0;
 
   return (
     <article
@@ -61,7 +73,7 @@ export function DealCard({
         <div className="min-w-0">
           <p className="font-bold truncate">{deal.playerName}</p>
           <p className="text-xs text-muted-foreground">
-            {deal.direction === "in" ? "Compra a " : "Venta a "}
+            {operationLabel}
             {clubName(deal.otherClubId)} · ronda {deal.rounds}
           </p>
         </div>
@@ -71,11 +83,23 @@ export function DealCard({
       </div>
 
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <Cell label="Tu oferta" value={formatEuro(deal.offer.amount)} />
+        <Cell label={isLoan ? "Prima de cesión" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
         <Cell label="Ficha" value={`${formatEuro(deal.offer.wageOffer)}/año`} />
         {deal.clubDemand > 0 && <Cell label="El club pide" value={formatEuro(deal.clubDemand)} />}
         {deal.playerWageDemand > 0 && (
           <Cell label="El jugador pide" value={`${formatEuro(deal.playerWageDemand)}/año`} />
+        )}
+        {isLoan && (
+          <>
+            <Cell
+              label={deal.direction === "in" ? "Ficha que asumes" : "Ficha que conserva tu club"}
+              value={`${Math.round((deal.offer.clauses.wageShare ?? 0) * 100)}%`}
+            />
+            <Cell label="Duración" value={`${duration} meses`} />
+            {deal.offer.type !== "loan" && (
+              <Cell label="Compra futura" value={deal.offer.type === "loan-option" ? "Opción" : "Obligación"} />
+            )}
+          </>
         )}
         {deal.offer.clauses.addOns > 0 && (
           <Cell label="Variables" value={formatEuro(deal.offer.clauses.addOns)} />
@@ -145,7 +169,7 @@ export function DealCard({
       {!closed && deal.stage === "ready" && (
         <div className="flex flex-wrap gap-2">
           <Action
-            label={deal.direction === "in" ? "Cerrar fichaje" : "Cerrar venta"}
+            label={isLoan ? "Cerrar cesión" : deal.direction === "in" ? "Cerrar fichaje" : "Cerrar venta"}
             primary
             onClick={() => onConfirm(deal.id)}
           />
@@ -155,7 +179,7 @@ export function DealCard({
 
       {!closed && deal.stage === "incoming" && (
         <div className="flex flex-wrap items-end gap-2">
-          <Action label="Aceptar venta" primary onClick={() => onAcceptIncoming(deal.id)} />
+          <Action label={isLoan ? "Aceptar cesión" : "Aceptar venta"} primary onClick={() => onAcceptIncoming(deal.id)} />
           <NumberInput label="Pedir (M €)" value={demand} onChange={setDemand} />
           <Action
             label="Contraofertar"

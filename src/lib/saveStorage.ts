@@ -52,6 +52,29 @@ function openDb(): Promise<IDBDatabase | null> {
       resolve(null);
       return;
     }
+
+    let settled = false;
+    const finish = (value: IDBDatabase | null) => {
+      if (settled) {
+        // Si la apertura termina después de nuestro límite, no dejamos una
+        // conexión abierta que pueda bloquear otras operaciones/actualizaciones.
+        try {
+          value?.close();
+        } catch {
+          /* noop */
+        }
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+
+    const timer = setTimeout(() => {
+      console.warn('[saveStorage] IndexedDB tardó demasiado en abrir; usando almacenamiento de respaldo.');
+      finish(null);
+    }, 2500);
+
     try {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
@@ -60,17 +83,18 @@ function openDb(): Promise<IDBDatabase | null> {
           database.createObjectStore(STORE);
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => finish(req.result);
       req.onerror = () => {
-        console.warn("[saveStorage] IndexedDB no disponible:", req.error);
-        resolve(null);
+        console.warn('[saveStorage] IndexedDB no disponible:', req.error);
+        finish(null);
       };
       req.onblocked = () => {
-        console.warn("[saveStorage] apertura de IndexedDB bloqueada por otra pestaña");
+        console.warn('[saveStorage] apertura de IndexedDB bloqueada; usando almacenamiento de respaldo temporal.');
+        finish(null);
       };
     } catch (e) {
-      console.warn("[saveStorage] IndexedDB no disponible:", (e as Error)?.message);
-      resolve(null);
+      console.warn('[saveStorage] IndexedDB no disponible:', (e as Error)?.message);
+      finish(null);
     }
   });
 }
@@ -121,8 +145,22 @@ function idbLoadAll(): Promise<Array<[string, string]>> {
       resolve([]);
       return;
     }
+
+    let settled = false;
+    const finish = (value: Array<[string, string]>) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+
+    const timer = setTimeout(() => {
+      console.warn('[saveStorage] La lectura inicial de partidas tardó demasiado; continuando con el espejo disponible.');
+      finish([]);
+    }, 4000);
+
     try {
-      const tx = db.transaction(STORE, "readonly");
+      const tx = db.transaction(STORE, 'readonly');
       const store = tx.objectStore(STORE);
       const keysReq = store.getAllKeys();
       const valsReq = store.getAll();
@@ -132,14 +170,14 @@ function idbLoadAll(): Promise<Array<[string, string]>> {
         const out: Array<[string, string]> = [];
         keys.forEach((k, i) => {
           const v = vals[i];
-          if (typeof k === "string" && typeof v === "string") out.push([k, v]);
+          if (typeof k === 'string' && typeof v === 'string') out.push([k, v]);
         });
-        resolve(out);
+        finish(out);
       };
-      tx.onerror = () => resolve([]);
-      tx.onabort = () => resolve([]);
+      tx.onerror = () => finish([]);
+      tx.onabort = () => finish([]);
     } catch {
-      resolve([]);
+      finish([]);
     }
   });
 }
@@ -193,58 +231,72 @@ function scheduleFlush(): void {
 export function initSaveStorage(): Promise<void> {
   if (initPromise) return initPromise;
   initPromise = (async () => {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       ready = true;
       return;
     }
+
     try {
       db = await openDb();
       usingFallback = !db;
 
+      // La carga de las partidas nunca debe bloquear el arranque. Si IndexedDB
+      // responde normalmente, volcamos sus ranuras al espejo; si tarda más del
+      // límite, continuamos y `getSaveItem()` podrá leer el legado de
+      // localStorage mientras termina la recuperación.
       if (db) {
         for (const [key, value] of await idbLoadAll()) mirror.set(key, value);
       }
-
-      // Migración desde `localStorage` (versiones anteriores del juego) y
-      // rescate de cualquier ranura que se hubiera guardado ahí como último
-      // recurso. Lo de IndexedDB manda si ambas existen.
-      const legacyKeys: string[] = [];
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith(SAVE_KEY_PREFIX)) legacyKeys.push(key);
-        }
-      } catch {
-        /* si no se puede listar, seguimos sin migrar */
-      }
-
-      for (const key of legacyKeys) {
-        let value: string | null = null;
-        try {
-          value = localStorage.getItem(key);
-        } catch {
-          value = null;
-        }
-        if (!value) continue;
-        if (!mirror.has(key)) {
-          mirror.set(key, value);
-          if (db) {
-            const ok = await idbPut(key, value);
-            // Sólo se libera `localStorage` si la copia quedó a salvo.
-            if (ok) safeRemoveItem(key);
-          }
-        } else if (db) {
-          safeRemoveItem(key);
-        }
-      }
     } catch (e) {
-      console.warn("[saveStorage] inicialización incompleta:", (e as Error)?.message);
+      console.warn('[saveStorage] inicialización incompleta:', (e as Error)?.message);
       usingFallback = !db;
     } finally {
       ready = true;
     }
+
+    // La migración de partidas antiguas puede implicar varios megabytes y
+    // muchas transacciones. Se ejecuta después de marcar el almacén como listo
+    // para que nunca sea responsable de dejar la pantalla de inicio congelada.
+    void migrateLegacySaveSlotsInBackground();
   })();
   return initPromise;
+}
+
+async function migrateLegacySaveSlotsInBackground(): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  try {
+    const legacyKeys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(SAVE_KEY_PREFIX)) legacyKeys.push(key);
+    }
+
+    // Sólo migramos ranuras que no estén ya en memoria. Conservar el dato en
+    // localStorage hasta confirmar la copia evita perder una carrera antigua
+    // si se interrumpe el navegador durante la migración.
+    for (const key of legacyKeys) {
+      let value: string | null = null;
+      try {
+        value = localStorage.getItem(key);
+      } catch {
+        value = null;
+      }
+      if (!value) continue;
+
+      if (!mirror.has(key)) {
+        mirror.set(key, value);
+        if (db) {
+          const ok = await idbPut(key, value);
+          if (ok) safeRemoveItem(key);
+        }
+      } else if (db) {
+        safeRemoveItem(key);
+      }
+    }
+  } catch (e) {
+    console.warn('[saveStorage] migración de partidas heredadas aplazada:', (e as Error)?.message);
+  }
 }
 
 export function isSaveStorageReady(): boolean {

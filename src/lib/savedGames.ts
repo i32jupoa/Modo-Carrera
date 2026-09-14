@@ -49,6 +49,7 @@ function snapshotPlayersStore() {
     fixtures: s.fixtures,
     stats: s.stats,
     rosterIds: s.rosterIds,
+    loanedPlayers: s.loanedPlayers,
     clubOverrides: s.clubOverrides,
     budget: s.budget,
     dismissedMatchIds: s.dismissedMatchIds,
@@ -237,9 +238,11 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
   }
 
   const clubOverrides = snap.clubOverrides ?? {};
+  const loanedPlayers = snap.loanedPlayers ?? {};
   const myTeamId = snap.myTeamId ?? save.myTeamId ?? null;
   const validRosterIds = (snap.rosterIds ?? []).filter((playerId: string) => {
     if (!myTeamId) return true;
+    if (loanedPlayers[playerId]) return true;
     const override = clubOverrides[playerId];
     if (override !== undefined) return override === myTeamId;
     const baseClub = baseClubOfPlayer(playerId);
@@ -261,6 +264,7 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
     fixtures: snap.fixtures ?? [],
     stats: snap.stats ?? {},
     rosterIds: validRosterIds,
+    loanedPlayers,
     clubOverrides,
     budget: snap.budget,
     dismissedMatchIds: snap.dismissedMatchIds ?? [],

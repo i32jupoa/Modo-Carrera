@@ -17,6 +17,7 @@ import {
   needsToSell,
   registerSale,
   registerSigning,
+  registerLoanOut,
 } from "./BudgetManager";
 import { getClubPlayers, getPlayer, updatePlayer } from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
@@ -153,6 +154,27 @@ function cacheKeyFor(date: string): string {
   return date;
 }
 
+function addMonths(date: string, months: number): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  const day = parsed.getUTCDate();
+  parsed.setUTCDate(1);
+  parsed.setUTCMonth(parsed.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  parsed.setUTCDate(Math.min(day, lastDay));
+  return parsed.toISOString().slice(0, 10);
+}
+
+function defaultLoanDuration(date: string): number {
+  return windowForDate(date) === "winter" ? 6 : 12;
+}
+
+function isLoanOffer(type: TransferType): boolean {
+  return type === "loan" || type === "loan-option" || type === "loan-obligation";
+}
+
 // ============================================================================
 // CONSULTAS
 // ============================================================================
@@ -239,6 +261,7 @@ export interface SubmitOfferResult {
   ok: boolean;
   reason?: string;
   deal?: UserDeal;
+  silent?: boolean;
 }
 
 /** Registra una oferta formal del usuario por un jugador. */
@@ -247,6 +270,7 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   if (!player) return { ok: false, reason: "Jugador no encontrado en el mercado." };
   if (!player.clubId) return { ok: false, reason: "Es agente libre: negocia sólo la ficha." };
   if (player.clubId === input.userClubId) return { ok: false, reason: "Ya es tu jugador." };
+  if (player.loanClubId) return { ok: false, reason: "El jugador está cedido y no puede cambiar de operación ahora." };
   if (input.userClubId === "ath" && player.nation.trim().toLowerCase() !== "españa") {
     return { ok: false, reason: "Athletic Club solo puede fichar jugadores españoles." };
   }
@@ -271,15 +295,36 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     deadlineDay: deadlineToday(input.date),
   });
 
+  const type = input.type ?? "permanent";
+  const isLoan = isLoanOffer(type);
+  const requestedClauses = {
+    ...emptyClauses(),
+    ...(input.clauses ?? {}),
+  };
+  if (isLoan) {
+    requestedClauses.loanDurationMonths =
+      requestedClauses.loanDurationMonths > 0
+        ? requestedClauses.loanDurationMonths
+        : defaultLoanDuration(input.date);
+    requestedClauses.wageShare = clamp(
+      requestedClauses.wageShare || 0.5,
+      0.2,
+      1,
+    );
+  }
+
   const offer = createTransferOffer({
     playerId: player.id,
     playerName: player.name,
     buyerClubId: input.userClubId,
     sellerClubId: player.clubId ?? "",
     amount: input.amount,
-    wageOffer: Math.max(WAGE_RULES.minimumWage, Math.round(input.wageOffer)),
-    type: input.type ?? "permanent",
-    clauses: input.clauses,
+    wageOffer: Math.max(
+      WAGE_RULES.minimumWage,
+      Math.round(isLoan ? player.contract.wage : input.wageOffer),
+    ),
+    type,
+    clauses: requestedClauses,
     date: input.date,
   });
 
@@ -308,7 +353,9 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     stage: "waiting-club",
     respondsOn: addDays(input.date, days),
     clubDemand: 0,
-    clubMessage: "Oferta enviada. El club la está estudiando.",
+    clubMessage: isLoan
+      ? "Oferta de cesión enviada. El club la está estudiando."
+      : "Oferta enviada. El club la está estudiando.",
     playerWageDemand: wageDemand(player.id, input.userClubId),
     playerMessage: "",
     competition,
@@ -318,7 +365,9 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     log: [
       {
         date: input.date,
-        text: `Oferta enviada: ${fmt(offer.amount)} más ${fmt(offer.wageOffer)}/año de ficha.`,
+        text: isLoan
+          ? `Oferta de cesión enviada: ${fmt(offer.amount)} de prima y ${Math.round(offer.clauses.wageShare * 100)}% de la ficha.`
+          : `Oferta enviada: ${fmt(offer.amount)} más ${fmt(offer.wageOffer)}/año de ficha.`,
       },
     ],
   };
@@ -368,7 +417,7 @@ export function improveUserOffer(
 export function acceptClubDemand(dealId: string, date: string): SubmitOfferResult {
   const deal = deals.get(dealId);
   if (!deal || deal.stage !== "club-counter") {
-    return { ok: false, reason: "No hay contraoferta que aceptar." };
+    return { ok: true, silent: true };
   }
   return improveUserOffer(dealId, { amount: deal.clubDemand }, date);
 }
@@ -437,13 +486,25 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
   const record = withUserApproval(() => completeTransfer(deal.offer, date));
   if (!record) return { ok: false, reason: "No se pudo cerrar la operación." };
   recordTransfer(record);
+  if (isLoanOffer(record.type) && record.fromClubId) {
+    const player = getPlayer(record.playerId);
+    if (player) {
+      registerLoanOut(
+        record.fromClubId,
+        player.contract.wage,
+        clamp(record.clauses.wageShare, 0, 1),
+      );
+    }
+  }
   deal.stage = "completed";
   log(
     deal,
     date,
-    deal.direction === "in"
-      ? `Fichaje cerrado por ${fmt(record.fee)}.`
-      : `Venta cerrada por ${fmt(record.fee)}.`,
+    isLoanOffer(record.type)
+      ? `Cesión cerrada por ${fmt(record.fee)}.`
+      : deal.direction === "in"
+        ? `Fichaje cerrado por ${fmt(record.fee)}.`
+        : `Venta cerrada por ${fmt(record.fee)}.`,
   );
   return { ok: true, record, fee: record.fee, wage: record.wage };
 }
@@ -527,6 +588,7 @@ export function advanceUserDeals(userClubId: string, date: string): UserDealEven
     if (deal.userClubId !== userClubId) continue;
     if (!isOnOrBefore(deal.respondsOn, date)) continue;
     if (deal.direction === "in") events.push(...processIncomingResponse(deal, date));
+    else if (isLoanOffer(deal.offer.type)) events.push(...processOutgoingLoanBid(deal, date));
     else events.push(...processOutgoingBid(deal, date));
   }
   events.push(...nudgeStaleUserDeals(userClubId, date));
@@ -571,6 +633,10 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
   });
 
   if (deal.stage === "player-terms") return processPlayerTerms(deal, date);
+
+  if (isLoanOffer(deal.offer.type)) {
+    return processIncomingLoanResponse(deal, date);
+  }
 
   // Con varios pretendientes y sin urgencia, el vendedor deja correr los días.
   const urgent = needsToSell(deal.otherClubId);
@@ -627,6 +693,89 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
     `Contraoferta por ${deal.playerName}: ${fmt(response.counterAmount)}.`,
     "info",
   );
+  return events;
+}
+
+/** Respuesta del club propietario a una propuesta de cesión del usuario. */
+function processIncomingLoanResponse(deal: UserDeal, date: string): UserDealEvent[] {
+  const events: UserDealEvent[] = [];
+  const player = getPlayer(deal.playerId);
+  if (!player || player.clubId !== deal.otherClubId || player.loanClubId) {
+    deal.stage = "failed";
+    deal.offer.status = "final-rejection";
+    log(deal, date, "El jugador ya no está disponible para cesión.");
+    pushEvent(events, deal, `${deal.playerName} ya no está disponible para cesión.`, "bad");
+    return events;
+  }
+
+  const minimumFee = Math.max(0, Math.round(player.value * 0.015));
+  const minimumWageShare = 0.5;
+  const enoughFee = deal.offer.amount >= minimumFee;
+  const enoughWage = deal.offer.clauses.wageShare >= minimumWageShare;
+
+  if (enoughFee && enoughWage) {
+    deal.offer.status = "accepted";
+    deal.stage = "player-terms";
+    deal.respondsOn = date;
+    deal.clubMessage = `El club acepta la cesión por ${fmt(deal.offer.amount)} y el ${Math.round(deal.offer.clauses.wageShare * 100)}% de la ficha.`;
+    log(deal, date, deal.clubMessage);
+    pushEvent(events, deal, `El club acepta la cesión de ${deal.playerName}: falta confirmar las condiciones del jugador.`, "good");
+    return [...events, ...processPlayerTerms(deal, date)];
+  }
+
+  deal.rounds += 1;
+  deal.offer.round += 1;
+  deal.stage = "club-counter";
+  deal.clubDemand = Math.max(deal.offer.amount, minimumFee);
+  deal.offer.clauses.wageShare = Math.max(
+    deal.offer.clauses.wageShare,
+    minimumWageShare,
+  );
+  deal.respondsOn = addDays(date, 30);
+  deal.clubMessage =
+    `Contraoferta de cesión: ${fmt(deal.clubDemand)} de prima y `
+    + `${Math.round(deal.offer.clauses.wageShare * 100)}% de la ficha.`;
+  log(deal, date, deal.clubMessage);
+  pushEvent(events, deal, deal.clubMessage, "info");
+  return events;
+}
+
+function processOutgoingLoanBid(deal: UserDeal, date: string): UserDealEvent[] {
+  const events: UserDealEvent[] = [];
+  const minimumFee = Math.max(0, Math.round(deal.valuation.marketValue * 0.015));
+  const minimumWageShare = 0.5;
+  const enoughFee = deal.offer.amount >= minimumFee;
+  const enoughWage = deal.offer.clauses.wageShare >= minimumWageShare;
+
+  if (enoughFee && enoughWage) {
+    deal.offer.status = "accepted";
+    deal.stage = "incoming";
+    deal.clubMessage = `El ${deal.otherClubId} acepta la propuesta de cesión.`;
+    deal.respondsOn = addDays(date, 30);
+    log(deal, date, deal.clubMessage);
+    pushEvent(events, deal, `${deal.otherClubId} acepta la cesión de ${deal.playerName}.`, "good");
+    return events;
+  }
+
+  if (deal.rounds >= MARKET_TIMING.maxNegotiationRounds) {
+    deal.stage = "failed";
+    deal.offer.status = "final-rejection";
+    log(deal, date, "La negociación de cesión se ha roto.");
+    pushEvent(events, deal, `Se rompe la negociación de cesión por ${deal.playerName}.`, "bad");
+    return events;
+  }
+
+  deal.rounds += 1;
+  deal.offer.round += 1;
+  deal.stage = "club-counter";
+  deal.clubDemand = Math.max(deal.offer.amount, minimumFee);
+  deal.offer.clauses.wageShare = Math.min(1, Math.max(deal.offer.clauses.wageShare, minimumWageShare));
+  deal.respondsOn = addDays(date, 30);
+  deal.clubMessage =
+    `El ${deal.otherClubId} pide ${fmt(deal.clubDemand)} de prima y `
+    + `${Math.round(deal.offer.clauses.wageShare * 100)}% de la ficha.`;
+  log(deal, date, deal.clubMessage);
+  pushEvent(events, deal, deal.clubMessage, "info");
   return events;
 }
 
@@ -699,6 +848,99 @@ function processOutgoingBid(deal: UserDeal, date: string): UserDealEvent[] {
   log(deal, date, decision.message);
   pushEvent(events, deal, decision.message);
   return events;
+}
+
+/**
+ * Abre una negociación de cesión propuesta por el usuario con un club
+ * receptor concreto. El propietario sigue siendo el club del usuario.
+ */
+export function submitUserLoanOutOffer(input: {
+  playerId: string;
+  userClubId: string;
+  borrowerClubId: string;
+  date: string;
+  loanFee: number;
+  wageShare: number;
+  durationMonths?: number;
+  type?: Extract<TransferType, "loan" | "loan-option" | "loan-obligation">;
+}): SubmitOfferResult {
+  const player = getPlayer(input.playerId);
+  if (!player) return { ok: false, reason: "Jugador no encontrado." };
+  if (player.clubId !== input.userClubId) {
+    return { ok: false, reason: "Solo puedes ceder jugadores que pertenecen a tu club." };
+  }
+  if (player.loanClubId) return { ok: false, reason: "El jugador ya está cedido." };
+  if (input.borrowerClubId === input.userClubId) {
+    return { ok: false, reason: "El destino de la cesión debe ser otro club." };
+  }
+  if (windowForDate(input.date) === "closed") {
+    return { ok: false, reason: "El mercado está cerrado." };
+  }
+  if (hasOpenDealFor(input.playerId)) {
+    return { ok: false, reason: "Ya tienes una negociación abierta por este jugador." };
+  }
+  if (listOpenUserDeals("out").length >= MARKET_TIMING.maxNegotiationsPerClub) {
+    return {
+      ok: false,
+      reason: `No puedes tener más de ${MARKET_TIMING.maxNegotiationsPerClub} negociaciones abiertas.`,
+    };
+  }
+
+  const type = input.type ?? "loan";
+  const clauses = {
+    ...emptyClauses(),
+    wageShare: clamp(input.wageShare, 0.2, 1),
+    loanDurationMonths: input.durationMonths ?? defaultLoanDuration(input.date),
+  };
+  if (type !== "loan") {
+    clauses.optionFee = Math.max(0, Math.round(player.value * 0.12));
+  }
+
+  const offer = createTransferOffer({
+    playerId: player.id,
+    playerName: player.name,
+    buyerClubId: input.borrowerClubId,
+    sellerClubId: input.userClubId,
+    amount: Math.max(0, Math.round(input.loanFee)),
+    wageOffer: Math.round(player.contract.wage),
+    type,
+    clauses,
+    date: input.date,
+  });
+
+  const valuation = valuePlayer(input.playerId, {
+    cacheKey: input.date,
+    deadlineDay: deadlineToday(input.date),
+  });
+
+  const deal: UserDeal = {
+    id: nextDealId(),
+    direction: "out",
+    playerId: player.id,
+    playerName: player.name,
+    userClubId: input.userClubId,
+    otherClubId: input.borrowerClubId,
+    offer,
+    valuation,
+    stage: "waiting-club",
+    respondsOn: addDays(input.date, seededInt(1, 3, offer.id, "loan-out")),
+    clubDemand: 0,
+    clubMessage: `Propuesta de cesión enviada al club ${input.borrowerClubId}.`,
+    playerWageDemand: player.contract.wage,
+    playerMessage: "",
+    competition: 0,
+    rounds: 1,
+    createdOn: input.date,
+    updatedOn: input.date,
+    log: [
+      {
+        date: input.date,
+        text: `Cesión propuesta: ${fmt(offer.amount)} de prima, ${Math.round(clauses.wageShare * 100)}% de la ficha y ${clauses.loanDurationMonths} meses.`,
+      },
+    ],
+  };
+  deals.set(deal.id, deal);
+  return { ok: true, deal };
 }
 
 // ============================================================================
@@ -834,6 +1076,8 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
 
 export interface IncomingResponseResult extends FinalizeResult {
   deal?: UserDeal;
+  /** Operación atendida sin mostrar un error al usuario (p. ej. decisión del jugador). */
+  silent?: boolean;
 }
 
 /**
@@ -848,12 +1092,16 @@ export function acceptIncomingOffer(dealId: string, date: string): IncomingRespo
   }
   const deal = deals.get(dealId);
   if (!deal || deal.direction !== "out" || deal.stage !== "incoming") {
-    return { ok: false, reason: "No hay oferta que aceptar." };
+    return { ok: true, silent: true };
   }
 
   // El 80%/20% es deliberadamente una tirada separada de la decisión normal
   // sobre fichajes: aquí el club del usuario ya ha aceptado la oferta recibida.
   // `seededUnit` mantiene el resultado estable dentro de la misma partida.
+  if (isLoanOffer(deal.offer.type) && deal.clubDemand > deal.offer.amount) {
+    deal.offer.amount = deal.clubDemand;
+  }
+
   const playerLeaves = seededUnit(
     "incoming-sale-player-decision",
     deal.id,
@@ -865,14 +1113,13 @@ export function acceptIncomingOffer(dealId: string, date: string): IncomingRespo
   if (!playerLeaves) {
     deal.stage = "failed";
     deal.offer.status = "rejected";
-    deal.playerMessage = `${deal.playerName} ha decidido quedarse en el club. La venta ha sido cancelada porque no ha querido marcharse.`;
+    // El rechazo se conserva en el log interno, pero no se fuerza como error
+    // rojo ni como toast: es un resultado normal de la negociación.
+    const stayMessage = `${deal.playerName} ha decidido quedarse en el club. La venta ha sido cancelada porque no ha querido marcharse.`;
+    deal.playerMessage = "";
     dropInterest(deal.playerId, deal.otherClubId);
-    log(deal, date, deal.playerMessage);
-    return {
-      ok: false,
-      reason: deal.playerMessage,
-      deal,
-    };
+    log(deal, date, stayMessage);
+    return { ok: true, reason: undefined, deal, silent: true };
   }
 
   deal.playerMessage = `${deal.playerName} ha aceptado marcharse. La venta puede cerrarse.`;

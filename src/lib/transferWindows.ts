@@ -81,6 +81,21 @@ export function isMarketOpenForIso(iso: string): boolean {
   return isMarketOpenForDate(parseDateOnly(iso));
 }
 
+export type TransferWindowId = "summer" | "winter" | "closed";
+
+/**
+ * Devuelve la ventana de mercado activa para una fecha ISO.
+ * Se exporta desde este módulo porque es la fuente única de verdad de
+ * las fechas del mercado y varios motores/UI necesitan el mismo resultado.
+ */
+export function windowForDate(date: string): TransferWindowId {
+  const d = parseDateOnly(date);
+  if (isSummerTransferWindow(d)) return "summer";
+  if (isWinterTransferWindow(d)) return "winter";
+  return "closed";
+}
+
+
 export function activeTransferWindowLabel(d: Date): string | null {
   if (isSummerTransferWindow(d)) return TRANSFER_WINDOWS.summer.label;
   if (isWinterTransferWindow(d)) return TRANSFER_WINDOWS.winter.label;

@@ -684,6 +684,8 @@ type PlayersState = {
   squad: FcPlayer[];
 
   rosterIds: string[];
+  /** Jugadores cedidos al club del usuario: se integran en la plantilla sin cambiar su propietario. */
+  loanedPlayers: Record<string, { fromClubId: string; endDate: string }>;
   /** Traspasos aplicados al mundo: id de jugador -> id de club ("" = libre). */
   clubOverrides: Record<string, string>;
 
@@ -771,6 +773,10 @@ type PlayersState = {
    * Es el único punto por el que la IA modifica plantillas ajenas.
    */
   applyMarketMoves: (moves: { playerId: string; toClubId: string | null }[]) => void;
+  /** Añade/quita una cesión temporal en la plantilla del usuario. */
+  addLoanedPlayer: (playerId: string, fromClubId: string, endDate: string) => TransferResult;
+  removeLoanedPlayer: (playerId: string) => void;
+  isLoanedPlayer: (playerId: string) => boolean;
 
   sellPlayer: (playerId: string, price: number) => TransferResult;
 
@@ -894,6 +900,7 @@ export const usePlayersStore = create<PlayersState>()(
       squad: [],
 
       rosterIds: [],
+      loanedPlayers: {},
       clubOverrides: {},
 
       budget: INITIAL_BUDGET,
@@ -1507,6 +1514,8 @@ export const usePlayersStore = create<PlayersState>()(
           myTeamId: teamId,
           rosterIds,
           squad: defaultSquad,
+          loanedPlayers:
+            opts?.resetBudget || prev.myTeamId !== teamId ? {} : prev.loanedPlayers,
           budget: Math.max(0, total - wageBill - preferred),
           wageBill,
           wageBudget: preferred,
@@ -1545,6 +1554,7 @@ export const usePlayersStore = create<PlayersState>()(
           squad: [],
 
           rosterIds: [],
+          loanedPlayers: {},
           clubOverrides: {},
 
           myTeamId: null,
@@ -1691,6 +1701,39 @@ export const usePlayersStore = create<PlayersState>()(
         set({ clubOverrides: { ...getClubOverrides() } });
       },
 
+      addLoanedPlayer: (playerId, fromClubId, endDate) => {
+        const state = get();
+        if (!state.myTeamId) return { ok: false, reason: "No hay equipo seleccionado." };
+        if (state.rosterIds.includes(playerId)) {
+          return { ok: false, reason: "El jugador ya está en tu plantilla." };
+        }
+        const rosterIds = [...state.rosterIds, playerId];
+        set({
+          rosterIds,
+          loanedPlayers: {
+            ...state.loanedPlayers,
+            [playerId]: { fromClubId, endDate },
+          },
+          squad: syncSquadFromRoster(rosterIds),
+        });
+        return { ok: true };
+      },
+
+      removeLoanedPlayer: (playerId) => {
+        const state = get();
+        if (!state.loanedPlayers[playerId]) return;
+        const rosterIds = state.rosterIds.filter((id) => id !== playerId);
+        const nextLoans = { ...state.loanedPlayers };
+        delete nextLoans[playerId];
+        set({
+          rosterIds,
+          loanedPlayers: nextLoans,
+          squad: syncSquadFromRoster(rosterIds),
+        });
+      },
+
+      isLoanedPlayer: (playerId) => !!get().loanedPlayers[playerId],
+
       sellPlayer: (playerId, price) => {
         const state = get();
 
@@ -1709,6 +1752,13 @@ export const usePlayersStore = create<PlayersState>()(
 
         if (!state.rosterIds.includes(playerId)) {
           return { ok: false, reason: "El jugador no está en tu plantilla." };
+        }
+
+        if (state.loanedPlayers[playerId]) {
+          return {
+            ok: false,
+            reason: "Un jugador cedido no se puede vender: debe volver a su club de origen.",
+          };
         }
 
         if (state.rosterIds.length <= 11) {

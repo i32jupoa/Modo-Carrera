@@ -34,11 +34,38 @@ function queueMove(playerId: string, toClubId: string | null): void {
 }
 
 /** Vuelca al store todos los movimientos acumulados. */
+export function syncUserLoanRoster(): void {
+  const store = usePlayersStore.getState();
+  const myTeamId = store.myTeamId;
+  if (!myTeamId) return;
+
+  for (const playerId of Object.keys(store.loanedPlayers ?? {})) {
+    const player = getPlayer(playerId);
+    if (!player) {
+      store.removeLoanedPlayer(playerId);
+      continue;
+    }
+    if (player.clubId === myTeamId && !player.loanClubId) {
+      // Una obligación/opción de compra ya se ha convertido en propiedad:
+      // quitamos sólo la marca de "cedido", pero conservamos al jugador.
+      const remaining = { ...store.loanedPlayers };
+      delete remaining[playerId];
+      usePlayersStore.setState({ loanedPlayers: remaining });
+      continue;
+    }
+    if (player.loanClubId !== myTeamId) {
+      store.removeLoanedPlayer(playerId);
+    }
+  }
+}
+
 export function flushWorldMoves(): void {
-  if (pending.size === 0) return;
-  const moves = Array.from(pending.values());
-  pending.clear();
-  usePlayersStore.getState().applyMarketMoves(moves);
+  if (pending.size > 0) {
+    const moves = Array.from(pending.values());
+    pending.clear();
+    usePlayersStore.getState().applyMarketMoves(moves);
+  }
+  syncUserLoanRoster();
 }
 
 /**
@@ -87,6 +114,9 @@ export function hydrateWorld(): void {
   const league = teamById(myTeamId).league;
 
   for (const playerId of roster) {
+    // Una cesión mantiene el propietario en el índice del mercado; sólo la
+    // plantilla del usuario debe incluir temporalmente al jugador.
+    if (state.loanedPlayers[playerId]) continue;
     const player = getPlayer(playerId);
     if (player && player.clubId !== myTeamId) {
       reassignPlayerClub(playerId, myTeamId, league, { force: true });
@@ -96,6 +126,8 @@ export function hydrateWorld(): void {
   // plantilla NO se liberan. Antes se les dejaba sin club y la IA los fichaba
   // como agentes libres (el caso de Rodrygo al Aston Villa): cualquier hueco
   // entre `rosterIds` y el índice se resolvía sacando gente de tu equipo.
+
+  syncUserLoanRoster();
 
   // La hidratación no debe reescribir el store con lo que acaba de leer.
   pending.clear();

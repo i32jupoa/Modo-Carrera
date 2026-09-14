@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { formatEuro } from "@/store/playersStore";
+import { windowForDate } from "@/lib/transferWindows";
 import type { OfferClauses, ScoutingReport } from "@/lib/transfers";
 
 interface Props {
@@ -12,7 +13,13 @@ interface Props {
   report: ScoutingReport | null;
   budget: number;
   wageBudget?: number;
-  onSubmit: (input: { amount: number; wageOffer: number; clauses: Partial<OfferClauses> }) => void;
+  currentDate: string;
+  onSubmit: (input: {
+    amount: number;
+    wageOffer: number;
+    type: "permanent" | "loan" | "loan-option" | "loan-obligation";
+    clauses: Partial<OfferClauses>;
+  }) => void;
   onClose: () => void;
 }
 
@@ -28,20 +35,26 @@ export function NegotiationModal({
   report,
   budget,
   wageBudget = 0,
+  currentDate,
   onSubmit,
   onClose,
 }: Props) {
   const asking = report?.askingPrice ?? 0;
+  const [type, setType] = useState<"permanent" | "loan" | "loan-option" | "loan-obligation">("permanent");
   const [amount, setAmount] = useState(Math.round(asking / 100_000) / 10);
   const [wage, setWage] = useState(Math.round((report?.wageDemand ?? 0) / 100_000) / 10);
   const [addOns, setAddOns] = useState(0);
   const [sellOn, setSellOn] = useState(0);
+  const [wageShare, setWageShare] = useState(70);
+  const loanMonths = windowForDate(currentDate) === "winter" ? 6 : 12;
 
   const amountEuros = Math.round(amount * 1_000_000);
   const wageEuros = Math.round(wage * 1_000_000);
   const overBudget = amountEuros > budget;
   const wageRoom = Math.max(0, wageBudget);
-  const overWageBudget = wageEuros > wageRoom;
+  const wageCommitmentEuros =
+    type === "permanent" ? wageEuros : Math.round(wageEuros * (wageShare / 100));
+  const overWageBudget = wageCommitmentEuros > wageRoom;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-auto">
@@ -89,10 +102,50 @@ export function NegotiationModal({
           </p>
         )}
 
+        <div className="space-y-1.5">
+          <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+            Tipo de operación
+          </label>
+          <select
+            value={type}
+            onChange={(e) =>
+              setType(e.target.value as "permanent" | "loan" | "loan-option" | "loan-obligation")
+            }
+            className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="permanent">Fichaje en propiedad</option>
+            <option value="loan">Cesión</option>
+            <option value="loan-option">Cesión + opción de compra</option>
+            <option value="loan-obligation">Cesión + obligación de compra</option>
+          </select>
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Traspaso (M €)" value={amount} onChange={setAmount} step={0.5} />
+          <Field
+            label={type === "permanent" ? "Traspaso (M €)" : "Prima de cesión (M €)"}
+            value={amount}
+            onChange={setAmount}
+            step={0.05}
+          />
           <Field label="Ficha anual (M €)" value={wage} onChange={setWage} step={0.1} />
           <Field label="Variables (M €)" value={addOns} onChange={setAddOns} step={0.5} />
+          {type !== "permanent" && (
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                % de ficha que paga tu club
+              </label>
+              <select
+                value={wageShare}
+                onChange={(e) => setWageShare(Number(e.target.value))}
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {[30, 40, 50, 60, 70, 80, 90, 100].map((share) => (
+                  <option key={share} value={share}>{share}%</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
               % futura venta
@@ -113,18 +166,32 @@ export function NegotiationModal({
 
         <div className="space-y-1 text-xs text-muted-foreground">
           <p>Presupuesto disponible:{" "}<span className="text-foreground font-bold">{formatEuro(budget)}</span>{overBudget && <span className="text-destructive"> · oferta por encima del presupuesto</span>}</p>
-          <p>Presupuesto salarial disponible:{" "}<span className="text-foreground font-bold">{formatEuro(wageRoom)} al año</span>{overWageBudget && <span className="text-destructive"> · No tienes margen salarial suficiente (disponible: {formatEuro(wageRoom)} al año).</span>}</p>
+          <p>Presupuesto salarial disponible:{" "}<span className="text-foreground font-bold">{formatEuro(wageRoom)} al año</span>{overWageBudget && <span className="text-destructive"> · No tienes margen salarial suficiente.</span>}</p>
+          {type !== "permanent" && (
+            <p>Duración: <span className="text-foreground font-bold">{loanMonths} meses</span> · tu club asume el <span className="text-foreground font-bold">{wageShare}%</span> de la ficha anual.</p>
+          )}
         </div>
 
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={overBudget || overWageBudget || amountEuros <= 0 || wageEuros < 0}
+            disabled={
+             overBudget ||
+             overWageBudget ||
+             (type === "permanent" ? amountEuros <= 0 : amountEuros < 0) ||
+             wageEuros < 0
+           }
             onClick={() =>
               onSubmit({
                 amount: amountEuros,
                 wageOffer: wageEuros,
-                clauses: { addOns: Math.round(addOns * 1_000_000), sellOnPercent: sellOn },
+                type,
+                clauses: {
+                  addOns: Math.round(addOns * 1_000_000),
+                  sellOnPercent: sellOn,
+                  wageShare: type === "permanent" ? 0 : wageShare / 100,
+                  loanDurationMonths: type === "permanent" ? 0 : loanMonths,
+                },
               })
             }
             className="flex-1 bg-primary text-primary-foreground py-2 rounded-lg font-bold disabled:opacity-40"
@@ -140,7 +207,8 @@ export function NegotiationModal({
           </button>
         </div>
         <p className="text-[0.65rem] text-muted-foreground">
-          El club tardará entre 1 y 3 días en responder. Pagar la cláusula obliga a vender.
+          El club tardará entre 1 y 3 días en responder. Las cesiones se integran en tu plantilla
+          de forma temporal y el jugador vuelve automáticamente al club propietario al vencer el contrato.
         </p>
       </div>
     </div>

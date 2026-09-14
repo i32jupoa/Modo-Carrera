@@ -232,6 +232,7 @@ function buildIndex(): MarketIndex {
       listReason: null,
       loanListed: false,
       loanClubId: null,
+      loanEndDate: null,
       minutesShare: 0,
       attributes: {
         pace: raw.PAC ?? 50,
@@ -430,6 +431,7 @@ export function reassignPlayerClub(
   player.transferListed = false;
   player.listReason = null;
   player.loanClubId = null;
+  player.loanEndDate = null;
 
   if (clubId) addTo(index.byClub, clubId, playerId);
   else index.freeAgents.add(playerId);
@@ -484,6 +486,7 @@ export interface PlayerDelta {
   listReason: TransferListReason | null;
   loanListed: boolean;
   loanClubId: string | null;
+  loanEndDate: string | null;
   minutesShare: number;
 }
 
@@ -497,6 +500,7 @@ function deltaOf(player: MarketPlayer): PlayerDelta {
     listReason: player.listReason,
     loanListed: player.loanListed,
     loanClubId: player.loanClubId,
+    loanEndDate: player.loanEndDate,
     minutesShare: player.minutesShare,
   };
 }
@@ -531,6 +535,7 @@ export function restorePlayerDeltas(deltas: readonly PlayerDelta[]): void {
       listReason: delta.listReason,
       loanListed: delta.loanListed,
       loanClubId: delta.loanClubId,
+      loanEndDate: delta.loanEndDate ?? null,
       minutesShare: delta.minutesShare,
     });
   }

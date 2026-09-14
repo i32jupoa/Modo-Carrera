@@ -30,6 +30,7 @@ import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { useUserMarket } from "@/hooks/useUserMarket";
 import { NegotiationModal } from "@/components/market/NegotiationModal";
 import { DealCard } from "@/components/market/DealCard";
+import { LoanOutModal } from "@/components/market/LoanOutModal";
 import { MarketFeed } from "@/components/market/MarketFeed";
 import type { ScoutingReport } from "@/lib/transfers";
 
@@ -267,12 +268,13 @@ function ovrBadgeClass(ovr: number): string {
   return "bg-muted text-muted-foreground border-border/40";
 }
 
-type MarketTab = "market" | "deals" | "offers" | "feed";
+type MarketTab = "market" | "deals" | "offers" | "loans" | "feed";
 
 const TABS: { value: MarketTab; label: string }[] = [
   { value: "market", label: "Buscar jugadores" },
   { value: "deals", label: "Mis negociaciones" },
   { value: "offers", label: "Ofertas recibidas" },
+  { value: "loans", label: "Cesiones" },
   { value: "feed", label: "Rumores y traspasos" },
 ];
 
@@ -289,6 +291,7 @@ function TransfersPage() {
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const rosterIds = usePlayersStore((s) => s.rosterIds);
+  const loanedPlayers = usePlayersStore((s) => s.loanedPlayers);
   const { isMarketOpen } = useTransferMarket();
   const market = useUserMarket(ready);
 
@@ -299,6 +302,7 @@ function TransfersPage() {
 
   // Jugador seleccionado para negociar y su informe de ojeadores.
   const [target, setTarget] = useState<FcPlayer | null>(null);
+  const [loanTarget, setLoanTarget] = useState<FcPlayer | null>(null);
   const [report, setReport] = useState<ScoutingReport | null>(null);
 
   // Calculate team averages for proper discount application
@@ -842,6 +846,54 @@ function TransfersPage() {
         </div>
       )}
 
+      {tab === "loans" && (
+        <div className="space-y-4">
+          <div className="panel p-4">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground font-bold">Cesiones del club</p>
+            <h2 className="text-lg font-black mt-1">Cede jugadores y controla su retorno</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Propón destino, prima y reparto de ficha. La duración se fija automáticamente:
+              12 meses en verano o 6 meses en invierno. El jugador mantiene tu club de origen
+              y vuelve automáticamente al terminar la cesión.
+            </p>
+          </div>
+
+          {!myTeamId ? (
+            <div className="panel p-10 text-center text-sm text-muted-foreground">Selecciona un club para gestionar cesiones.</div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {rawPlayers
+                .filter((p) => inRoster.has(String(p.ID)) && !loanedPlayers[String(p.ID)])
+                .map((p) => {
+                  const id = String(p.ID);
+                  return (
+                    <article key={id} className="panel p-4 flex items-center gap-3">
+                      {p.card ? (
+                        <img src={p.card} alt="" className="w-12 h-16 object-cover rounded shrink-0" />
+                      ) : (
+                        <div className="w-12 h-16 rounded bg-secondary/80 shrink-0 grid place-items-center text-xs font-black">{p.OVR}</div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold truncate">{p.Name}</p>
+                        <p className="text-xs text-muted-foreground">{p.OVR} media · {p.Age} años</p>
+                        <p className="text-xs text-muted-foreground mt-1">{formatEuro(getPlayerAnnualWage(id))}/año</p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!isMarketOpen || !market.ready}
+                        onClick={() => setLoanTarget(p)}
+                        className="shrink-0 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-bold disabled:opacity-40"
+                      >
+                        Ceder
+                      </button>
+                    </article>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === "feed" && (
         <MarketFeed
           rumors={market.rumors}
@@ -863,10 +915,35 @@ function TransfersPage() {
           report={report}
           budget={budget}
           wageBudget={wageBudget}
+          currentDate={market.currentDate}
           onClose={() => setTarget(null)}
-          onSubmit={({ amount, wageOffer, clauses }) => {
-            market.makeOffer({ playerId: String(target.ID), amount, wageOffer, clauses });
+          onSubmit={({ amount, wageOffer, type, clauses }) => {
+            market.makeOffer({ playerId: String(target.ID), amount, wageOffer, type, clauses });
             setTarget(null);
+          }}
+        />
+      )}
+
+      {loanTarget && myTeamId && (
+        <LoanOutModal
+          player={{
+            id: String(loanTarget.ID),
+            name: loanTarget.Name,
+            ovr: loanTarget.OVR,
+            age: loanTarget.Age,
+          }}
+          currentClubId={myTeamId}
+          currentDate={market.currentDate}
+          onClose={() => setLoanTarget(null)}
+          onSubmit={({ borrowerClubId, loanFee, wageShare, durationMonths }) => {
+            market.makeLoanOutOffer({
+              playerId: String(loanTarget.ID),
+              borrowerClubId,
+              loanFee,
+              wageShare,
+              durationMonths,
+            });
+            setLoanTarget(null);
           }}
         />
       )}
