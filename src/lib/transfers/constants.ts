@@ -13,9 +13,9 @@ import type { PositionGroup } from "./types";
 
 export const MARKET_TIMING = {
   /** Porcentaje de clubes que actúan cada día de mercado. */
-  dailyActiveClubShare: 0.55,
+  dailyActiveClubShare: 0.32,
   /** Porcentaje de clubes activos durante el deadline day. */
-  deadlineActiveClubShare: 1,
+  deadlineActiveClubShare: 0.85,
   /** Días finales de ventana considerados deadline day. */
   deadlineDays: 3,
   /** Máximo de negociaciones abiertas simultáneas por club. */
@@ -81,7 +81,7 @@ export const MARKET_TIMING = {
    * rango más amplio (hasta mediados de agosto), la actividad se nota más
    * a lo largo de toda la ventana en vez de agotarse de golpe al principio.
    */
-  safetyNetWindow: { minDay: 5, maxDay: 50 },
+  safetyNetWindow: { minDay: 8, maxDay: 58 },
   /**
    * Si la red de seguridad no encuentra con quién cerrar el cupo, no se
    * reintenta al día siguiente (casi siempre inútil y caro de comprobar):
@@ -187,18 +187,18 @@ export const ELITE_EXIT = {
 export const BIG_SIGNING_PACING = {
   /** Fracción del techo de gasto disponible para una sola operación desde
    *  el primer día de la ventana, en una necesidad normal. */
-  startRatio: 0.32,
+  startRatio: 0.12,
   /** Igual, pero para una necesidad crítica (agujero grave de plantilla):
    *  un club real también tapa urgencias de verdad más rápido. */
-  startRatioCritical: 0.55,
+  startRatioCritical: 0.28,
   /**
    * Rango, como fracción de la duración total de la ventana, en el que un
    * club deja de tener restricción de gasto por operación. Es un rango
    * amplio a propósito: unos clubes "se lanzan" pronto y otros esperan casi
    * hasta el final, así los grandes anuncios no llegan todos el mismo día.
    */
-  rampFractionMin: 0.08,
-  rampFractionMax: 0.7,
+  rampFractionMin: 0.22,
+  rampFractionMax: 0.82,
 } as const;
 
 /**
@@ -217,9 +217,9 @@ export const BIG_SIGNING_PACING = {
  */
 export const BIG_DEAL_DAILY_LIMIT = {
   /** Ficha a partir de la cual una operación cuenta como "bombazo". */
-  minFee: 25_000_000,
+  minFee: 60_000_000,
   /** Máximo de bombazos que se anuncian el mismo día en todo el mercado. */
-  maxPerDay: 6,
+  maxPerDay: 3,
 } as const;
 
 /**
@@ -521,9 +521,9 @@ export const RUMOR_RULES = {
 
 export const BALANCE = {
   /** Intensidad mínima de una ventana (temporadas tranquilas). */
-  minIntensity: 0.7,
+  minIntensity: 0.65,
   /** Intensidad máxima (mercados locos). */
-  maxIntensity: 1.6,
+  maxIntensity: 1.35,
   /**
    * Probabilidad de que un club sea "conservador" en la ventana: no sale a
    * fichar por iniciativa propia salvo en deadline day. IMPORTANTE: esto ya
@@ -544,14 +544,14 @@ export const BALANCE = {
    * el resto del año (más clubes activos cada día y más operaciones por
    * ciclo, ver `MarketSimulation.runClubDay`).
    */
-  summerFactor: 1.25,
+  summerFactor: 1.08,
   /**
    * Multiplicador sobre el número de fichajes que un club puede intentar
    * cerrar en un mismo ciclo diario durante el verano. En invierno no se
    * aplica: la ventana corta y el mercado más parado hacen que un club rara
    * vez necesite firmar varios jugadores el mismo día.
    */
-  summerSigningBurst: 1.3,
+  summerSigningBurst: 1.0,
 } as const;
 
 /**

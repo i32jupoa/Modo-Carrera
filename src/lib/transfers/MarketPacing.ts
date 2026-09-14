@@ -62,8 +62,35 @@ function rampDay(clubId: string, date: string): number {
  * nivel) siempre puede saltarse esta rampa: ver `runClubDay`.
  */
 function shoppingRamp(date: string): number {
-  const day = daysIntoTransferWindow(date);
-  return clamp(0.14 + day / 12, 0.14, 1);
+  const day = Math.max(0, daysIntoTransferWindow(date));
+  const length = Math.max(1, transferWindowLengthDays(date));
+  const progress = clamp(day / Math.max(1, length - 1), 0, 1);
+
+  // Mercado realista: apertura deliberadamente contenida, crecimiento
+  // progresivo durante julio/agosto y máxima actividad al acercarse el cierre.
+  // No usamos una rampa lineal rápida porque convierte el día 1 en una
+  // avalancha y deja agosto vacío.
+  const points = [
+    [0.00, 0.05],
+    [0.08, 0.10],
+    [0.18, 0.18],
+    [0.32, 0.30],
+    [0.48, 0.46],
+    [0.64, 0.62],
+    [0.80, 0.76],
+    [0.92, 0.88],
+    [1.00, 0.95],
+  ] as const;
+
+  for (let i = 1; i < points.length; i += 1) {
+    const [x1, y1] = points[i - 1];
+    const [x2, y2] = points[i];
+    if (progress <= x2) {
+      const t = (progress - x1) / Math.max(0.0001, x2 - x1);
+      return clamp(y1 + (y2 - y1) * t, 0.05, 0.95);
+    }
+  }
+  return 0.95;
 }
 
 export { shoppingRamp };

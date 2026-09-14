@@ -60,7 +60,7 @@ import {
   windowDeficit,
 } from "./MarketLocks";
 import { isAvailable, valuePlayer } from "./MarketValuation";
-import { decideOnMove, wageDemand } from "./PlayerDecision";
+import { decideOnMove, desireToLeave, wageDemand } from "./PlayerDecision";
 import { canPlayPosition, playerPosCodes } from "@/lib/positions";
 import {
   applyImprovement,
@@ -544,6 +544,22 @@ export function buildShortlist(
         MARKET_TIMING.maxSameSellerPurchasesPerBuyer
     )
       continue;
+    // Las estrellas deben fichar por proyectos acordes a su nivel. No es un
+    // bloqueo absoluto: si el jugador está realmente forzando una salida,
+    // existe una vía de excepción posterior en la decisión del propio jugador.
+    const sellerProfile = player.clubId ? getClubProfile(player.clubId) : null;
+    const reputationGap = sellerProfile
+      ? sellerProfile.reputation - profile.reputation
+      : 0;
+    if (sellerProfile && player.ovr >= 84 && reputationGap > 0.15) {
+      const leaveDesire = desireToLeave(player.id, options.cacheKey);
+      const exceptional =
+        leaveDesire >= 0.78 &&
+        profile.financialPower >= (player.ovr >= 92 ? 0.82 : player.ovr >= 88 ? 0.68 : 0.58) &&
+        profile.reputation >= (player.ovr >= 92 ? 0.82 : player.ovr >= 88 ? 0.70 : 0.62);
+      if (!exceptional) continue;
+    }
+
     if (player.contract.wage > wageCeiling * 1.4) continue;
     const entry = scoreCandidate({
       clubId,

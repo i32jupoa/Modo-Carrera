@@ -275,7 +275,10 @@ export function valuePlayer(
     // competencia, la dureza del club o el estatus del jugador.
     maximumPrice: Math.min(
       scale(valuation.maximumPrice),
-      Math.round(player.value * 1.5),
+      Math.round(
+        player.value *
+          (player.ovr >= 92 ? 2.2 : player.ovr >= 88 ? 1.9 : player.ovr >= 84 ? 1.7 : 1.5),
+      ),
       hardCeiling,
     ),
     listPrice: scale(valuation.listPrice),

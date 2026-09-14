@@ -198,6 +198,35 @@ export function decideOnMove(input: MoveDecisionInput): PlayerDecision {
   const moneyScore = clamp(normalize(wageRatio, 0.75, 1.4), 0, 1);
   let score = appeal * (0.5 - p.greed * 0.15) + moneyScore * (0.28 + p.greed * 0.22) + leave * 0.22;
 
+  // La calidad del destino importa mucho más cuando hablamos de estrellas.
+  // Un jugador de 85-90 OVR no suele aceptar un salto fuerte hacia abajo sólo
+  // porque el club pueda pagar la operación. Sigue siendo posible si existe
+  // una razón real (quiere salir, sueldo extraordinario, proyecto muy
+  // ambicioso), pero pasa a ser una excepción.
+  if (!input.loan) {
+    const target = getClubProfile(input.toClubId);
+    const origin = player.clubId ? getClubProfile(player.clubId) : null;
+    const reputationGap = origin ? origin.reputation - target.reputation : 0;
+    const eliteLevel =
+      player.ovr >= 92 ? 3 : player.ovr >= 88 ? 2 : player.ovr >= 84 ? 1 : 0;
+
+    if (eliteLevel > 0 && reputationGap > 0.12) {
+      const sportingPenalty =
+        eliteLevel === 3 ? 0.24 : eliteLevel === 2 ? 0.17 : 0.10;
+      score -= sportingPenalty * clamp(reputationGap / 0.35, 0.3, 1);
+
+      // Una oferta desproporcionada o una situación contractual difícil puede
+      // torcer la decisión, pero no elimina por completo el factor deportivo.
+      const exceptionalMove =
+        leave >= 0.8 &&
+        wageRatio >= (eliteLevel === 3 ? 1.30 : eliteLevel === 2 ? 1.24 : 1.18) &&
+        target.financialPower >= (eliteLevel === 3 ? 0.78 : 0.62);
+      if (!exceptionalMove && target.reputation < (eliteLevel === 3 ? 0.82 : 0.68)) {
+        score -= sportingPenalty * 0.85;
+      }
+    }
+  }
+
   if (input.loan) {
     // Una cesión no es dejar el club: lo que pesa son los minutos, y bajar de
     // nivel deportivo importa mucho menos.
