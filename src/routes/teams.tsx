@@ -34,10 +34,10 @@ import {
   getTeamStyle,
   levelLabel,
 } from "@/lib/teamProfile";
-import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace";
 import { TypicalElevenPitch } from "@/components/TypicalElevenPitch";
-import { Search, X, Trophy, CalendarDays, Repeat } from "lucide-react";
+import { getPlayerForm } from "@/lib/playerForm";
+import { Search, X, Trophy, CalendarDays, ArrowUp, ArrowDown, Minus } from "lucide-react";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -86,7 +86,6 @@ function TeamsPage() {
   const [tab, setTab] = useState<PanelTab>("squad");
   const teamsSectionRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const { isMarketOpen } = useTransferMarket();
 
   useEffect(() => {
     const s = loadSave();
@@ -226,7 +225,6 @@ function TeamsPage() {
 
   if (!save) return null;
 
-  const canOffer = isMarketOpen && !isUserTeam;
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -480,20 +478,12 @@ function TeamsPage() {
             >
               <CalendarDays className="w-3.5 h-3.5" /> Ver su calendario
             </Link>
-            {isUserTeam ? (
+            {isUserTeam && (
               <Link
                 to="/lineup"
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-primary/60 bg-primary/10 hover:bg-primary/20 flex items-center gap-1.5"
               >
                 Editar mis tácticas
-              </Link>
-            ) : (
-              <Link
-                to="/transfers"
-                search={{ q: selectedTeam.name }}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-border bg-card hover:border-primary/60 flex items-center gap-1.5"
-              >
-                <Repeat className="w-3.5 h-3.5" /> Ver en el mercado
               </Link>
             )}
           </div>
@@ -607,8 +597,7 @@ function TeamsPage() {
                       <th className="text-center py-2 px-1">Nota media</th>
                       <th className="text-center py-2 px-1">MVP</th>
                       <th className="text-center py-2 px-1">P0</th>
-                      <th className="text-center py-2 px-1">Estado</th>
-                      {canOffer && <th className="text-center py-2 px-1">Fichar</th>}
+                      <th className="text-center py-2 px-1">Forma</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -625,23 +614,7 @@ function TeamsPage() {
                       const mvpCount = dynamicStats?.seasonMVPs ?? stats.motm ?? 0;
                       const cleanSheets = dynamicStats?.seasonCleanSheets ?? stats.cleanSheets ?? 0;
 
-                      // Get suspension status (only for user's team)
-                      let suspensionStatus = "";
-                      if (isUserTeam) {
-                        const suspensions = save.suspensions[save.myTeamId] ?? [];
-                        const suspension = suspensions.find((s) => s.playerId === String(p.ID));
-                        if (suspension && suspension.matchdaysRemaining > 0) {
-                          suspensionStatus = `S${suspension.matchdaysRemaining}j`;
-                        }
-                      }
-
-                      // Check injury status
-                      let injuryStatus = "";
-                      if (stats.injuredUntil > 0) {
-                        injuryStatus = `I${stats.injuredUntil}j`;
-                      }
-
-                      const status = suspensionStatus || injuryStatus || "-";
+                      const form = getPlayerForm(stats);
 
                       return (
                         <tr key={p.ID} className="border-b border-border/30 hover:bg-secondary/20">
@@ -690,18 +663,14 @@ function TeamsPage() {
                           </td>
                           <td className="py-2 px-1 text-center scoreline font-semibold text-yellow-500">{mvpCount}</td>
                           <td className="py-2 px-1 text-center scoreline font-semibold text-sky-400">{cleanSheets}</td>
-                          <td className="py-2 px-1 text-center font-semibold">{status}</td>
-                          {canOffer && (
-                            <td className="py-2 px-1 text-center">
-                              <Link
-                                to="/transfers"
-                                search={{ q: p.Name, player: String(p.ID) }}
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[0.65rem] font-bold border border-primary/50 text-primary hover:bg-primary/10 transition whitespace-nowrap"
-                              >
-                                <Repeat className="w-3 h-3" /> Ofertar
-                              </Link>
-                            </td>
-                          )}
+                          <td className="py-2 px-1 text-center">
+                            <span
+                              title={form === "up" ? "Buena forma" : form === "down" ? "Mala forma" : "Forma estable"}
+                              className={`inline-flex items-center justify-center ${form === "up" ? "text-emerald-400" : form === "down" ? "text-destructive" : "text-muted-foreground"}`}
+                            >
+                              {form === "up" ? <ArrowUp className="h-4 w-4" /> : form === "down" ? <ArrowDown className="h-4 w-4" /> : <Minus className="h-4 w-4" />}
+                            </span>
+                          </td>
                         </tr>
                       );
                     })}
@@ -710,10 +679,7 @@ function TeamsPage() {
               </div>
               <p className="text-[0.65rem] text-muted-foreground mt-3">
                 Orden por posición · PJ = Partidos Jugados · Contrib. = Goles + Asistencias · TA/TR
-                = tarjetas · Nota media = media de las valoraciones de los partidos jugados · MVP = mejor jugador del partido · P0 = porterías a cero · Estado: S = Sancionado, I = Lesionado, j = jornadas restantes
-                {!isMarketOpen &&
-                  !isUserTeam &&
-                  " · el mercado está cerrado, no puedes ofertar ahora"}
+                = tarjetas · Nota media = media de las valoraciones de los partidos jugados · MVP = mejor jugador del partido · P0 = porterías a cero · Forma: últimos 5 partidos; ↑ ≥ 7, → 6–6,99, ↓ &lt; 6
               </p>
             </>
           )}
