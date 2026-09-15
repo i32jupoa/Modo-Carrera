@@ -60,7 +60,7 @@ export interface MarketPlayer {
   age: number;
   /** Media actual. */
   ovr: number;
-  /** Potencial estimado. */
+  /** Potencial real procedente de players.json. */
   potential: number;
   position: string;
   group: PositionGroup;

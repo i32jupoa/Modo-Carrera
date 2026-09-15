@@ -254,6 +254,9 @@ export type FcPlayer = {
 
   OVR: number;
 
+  /** Potencial real del dataset de jugadores. */
+  potential?: number;
+
   PAC: number;
 
   SHO: number;
@@ -536,8 +539,23 @@ export function marketValueMillions(
   leagueId = "",
   isStar = false,
   teamAvgRating = 75,
+  potential?: number,
 ): number {
-  const result = marketValueFor(ovr, age, pos, teamId, leagueId, 0, 0, 0, isStar, teamAvgRating);
+  const result = marketValueFor(
+    ovr,
+    age,
+    pos,
+    teamId,
+    leagueId,
+    0,
+    0,
+    0,
+    isStar,
+    teamAvgRating,
+    undefined,
+    undefined,
+    potential,
+  );
 
   return result.value;
 }
@@ -563,6 +581,7 @@ export function marketValueEuros(
       effectiveLeagueId,
       isStar,
       teamAvgRating,
+      fc.potential,
     ) * 1_000_000,
   );
 }
@@ -649,11 +668,22 @@ function fcToPlayer(
 
     rating: fc.OVR,
 
+    potential: Math.max(fc.OVR, Number(fc.potential ?? fc.OVR)),
+
     age: fc.Age,
 
     teamId,
 
-    marketValue: marketValueMillions(fc.OVR, fc.Age, fc.Position),
+    marketValue: marketValueMillions(
+      fc.OVR,
+      fc.Age,
+      fc.Position,
+      "",
+      "",
+      false,
+      75,
+      fc.potential,
+    ),
 
     isReal: true,
 

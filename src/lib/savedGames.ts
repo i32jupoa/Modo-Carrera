@@ -183,6 +183,7 @@ export function addSaveToMultiple(save: SaveGame) {
 export function deleteSave(id: string) {
   if (typeof window === "undefined") return;
   removeSaveItem(saveKeyFor(id));
+  localStorage.removeItem(`fcsim:scouting:v1:${id}`);
   // Borra también el mercado de esa partida (import perezoso para evitar un
   // ciclo de módulos: Persistence.ts ya importa `getCurrentSaveId` de aquí).
   import("@/lib/transfers/Persistence")

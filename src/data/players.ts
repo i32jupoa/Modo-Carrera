@@ -19,6 +19,8 @@ export type Player = {
   /** Demarcaciones reales (principal + alternativas), todas al mismo nivel. */
   positions: PosCode[];
   rating: number;
+  /** Potencial real del dataset (techo esperado del jugador). */
+  potential: number;
   age: number;
   teamId: string;
   marketValue: number;
@@ -163,7 +165,7 @@ export function formatMarketValue(valueM: number): string {
   return `€${Math.round(valueM * 1000)}K`;
 }
 
-// Main valuation function — curva continua por posición, edad, liga y equipo.
+// Main valuation function — curva continua por posición, edad, potencial, liga y equipo.
 // Este es el ÚNICO valor de mercado del juego: tanto la interfaz de
 // scouting como el motor de negociación (MarketValuation.ts) parten de este
 // número, así que el precio que se negocia nunca se dispara muy por encima
@@ -181,6 +183,7 @@ export function marketValueFor(
   teamAvgRating = 75,
   positions?: PosCode[],
   dynamicOVR?: number,
+  potential?: number,
 ): { value: number; explanation: string } {
   // Use dynamic OVR if provided, otherwise use static rating
   const effectiveRating = dynamicOVR || rating;
@@ -198,7 +201,26 @@ export function marketValueFor(
   const teamMult = teamValueMultiplier(teamAvgRating);
   const versatilityMult = positions ? calculateVersatilityBonus(positions) : 1.0;
 
-  let finalValue = cap * curve * ageMult * roleMult * leagueMult * teamMult * versatilityMult;
+  // Prima de potencial basada en el dato REAL de players.json.
+  // El potencial no sustituye al OVR actual: se suma como una prima de
+  // proyección sobre el valor ya calculado. Cuanto mayor sea la distancia
+  // entre OVR y potencial y cuanto más joven sea el jugador, mayor será la
+  // prima. Así un talento generacional de 19 años puede valer bastante más
+  // que un jugador de la misma media sin proyección, sin inflar por igual a
+  // todos los jóvenes.
+  const effectivePotential = clamp(potential ?? effectiveRating, effectiveRating, 99);
+  const potentialGap = Math.max(0, effectivePotential - effectiveRating);
+  const potentialWeight =
+    age <= 19 ? 0.06 :
+    age <= 21 ? 0.05 :
+    age <= 23 ? 0.04 :
+    age <= 25 ? 0.025 :
+    age <= 27 ? 0.015 :
+    0.005;
+  const potentialPremium = clamp(1 + potentialGap * potentialWeight, 1, 1.45);
+
+  let finalValue =
+    cap * curve * ageMult * roleMult * leagueMult * teamMult * versatilityMult * potentialPremium;
 
   // Techo absoluto global: ni el mejor jugador del juego en las mejores
   // condiciones puede superar el fichaje más caro de la historia real.
@@ -228,6 +250,7 @@ export function marketValueFor(
   else reasons.push("posición mixta");
 
   if (positions && positions.length > 1) reasons.push("versátil");
+  if (potentialGap >= 5) reasons.push(`potencial ${Math.round(effectivePotential)}`);
 
   if (TOP_LEAGUES.has(leagueId)) reasons.push("liga top");
   else if (MID_LEAGUES.has(leagueId)) reasons.push("liga media");
@@ -364,6 +387,7 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
       teamAvgRating,
       playerPositions,
       dynamicOVR,
+      Number(rp.rawData?.potential ?? rp.rating),
     );
 
     const playerObj: Player = {
@@ -374,6 +398,7 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
         rp.rawData?.["Alternative positions"],
       ),
       rating: effectiveRating,
+      potential: Math.max(effectiveRating, Number(rp.rawData?.potential ?? rp.rating)),
       age: rp.age,
       teamId: rp.teamId,
       marketValue: marketValueResult.value,

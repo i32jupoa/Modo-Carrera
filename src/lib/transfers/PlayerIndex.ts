@@ -31,6 +31,7 @@ interface RawPlayerRecord {
   ID?: number | string;
   Name?: string;
   OVR?: number;
+  potential?: number;
   Age?: number;
   Position?: string;
   Nation?: string;
@@ -52,14 +53,6 @@ export function positionGroupOf(position: string): PositionGroup {
   if (["LW", "RW", "LF", "RF"].includes(up)) return "WING";
   if (["ST", "CF"].includes(up)) return "ST";
   return "CM";
-}
-
-/** Potencial estimado: los jóvenes tienen recorrido, los veteranos no. */
-function estimatePotential(ovr: number, age: number, seed: string): number {
-  if (age >= 29) return ovr;
-  const room = clamp((29 - age) * 1.6, 0, 14);
-  const talent = seededUnit(seed, "potential");
-  return Math.round(clamp(ovr + room * (0.35 + talent * 0.65), ovr, 94));
 }
 
 /** Contrato inicial coherente con la edad y el valor del jugador. */
@@ -200,6 +193,7 @@ function buildIndex(): MarketIndex {
     const position = raw.Position ?? "CM";
     const stats = clubId ? ratingSum.get(clubId) : undefined;
     const clubAverage = stats && stats.count > 0 ? stats.sum / stats.count : 72;
+    const potential = Math.max(ovr, Number(raw.potential ?? ovr));
     const valueM = marketValueFor(
       ovr,
       age,
@@ -211,6 +205,9 @@ function buildIndex(): MarketIndex {
       0,
       false,
       clubAverage,
+      undefined,
+      undefined,
+      potential,
     ).value;
     const value = Math.round(valueM * 1_000_000);
 
@@ -219,7 +216,7 @@ function buildIndex(): MarketIndex {
       name: raw.Name ?? "Jugador",
       age,
       ovr,
-      potential: estimatePotential(ovr, age, id),
+      potential,
       position,
       group: positionGroupOf(position),
       nation: raw.Nation ?? "",

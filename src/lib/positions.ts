@@ -179,6 +179,29 @@ export function formatPositions(codes: PosCode[]): string {
   return codes.length ? codes.join(" · ") : "—";
 }
 
+/** Etiqueta corta para la interfaz del mercado (sin nombres largos). */
+export const POS_SHORT: Record<PosCode, string> = {
+  GK: "GK",
+  DFC: "DFC",
+  LD: "LD",
+  LI: "LI",
+  CAD: "CAD",
+  CAI: "CAI",
+  MCD: "MCD",
+  MC: "MC",
+  MCO: "MCO",
+  MD: "MD",
+  MI: "MI",
+  ED: "RW",
+  EI: "LW",
+  SD: "SD",
+  DC: "DC",
+};
+
+export function formatShortPositions(codes: PosCode[]): string {
+  return codes.length ? codes.map((code) => POS_SHORT[code] ?? code).join(" · ") : "—";
+}
+
 /** ¿Encaja exactamente el jugador en la demarcación pedida? */
 export function isNaturalFor(codes: PosCode[], slot: PosCode): boolean {
   return codes.includes(slot);

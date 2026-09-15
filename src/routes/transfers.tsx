@@ -18,20 +18,31 @@ import {
   formatEuro,
   marketValueEuros,
   mapEaPosition,
-  POS_LABEL_ES,
   FcPlayer,
   clubOfPlayer,
 } from "@/store/playersStore";
 import { getPlayerAnnualWage, getPlayer, isPlayerSettled } from "@/lib/transfers";
-import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins } from "lucide-react";
+import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, Radar, Eye, Trash2, Clock3 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { useUserMarket } from "@/hooks/useUserMarket";
 import { NegotiationModal } from "@/components/market/NegotiationModal";
+import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
+import { buildPositions, POS_NAME, formatShortPositions } from "@/lib/positions";
 import { DealCard } from "@/components/market/DealCard";
 import { MarketFeed } from "@/components/market/MarketFeed";
 import type { ScoutingReport } from "@/lib/transfers";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -267,10 +278,11 @@ function ovrBadgeClass(ovr: number): string {
   return "bg-muted text-muted-foreground border-border/40";
 }
 
-type MarketTab = "market" | "deals" | "offers" | "feed";
+type MarketTab = "market" | "scouting" | "deals" | "offers" | "feed";
 
 const TABS: { value: MarketTab; label: string }[] = [
   { value: "market", label: "Buscar jugadores" },
+  { value: "scouting", label: "Ojeador" },
   { value: "deals", label: "Mis negociaciones" },
   { value: "offers", label: "Ofertas recibidas" },
   { value: "feed", label: "Rumores y traspasos" },
@@ -300,6 +312,9 @@ function TransfersPage() {
   // Jugador seleccionado para negociar y su informe de ojeadores.
   const [target, setTarget] = useState<FcPlayer | null>(null);
   const [report, setReport] = useState<ScoutingReport | null>(null);
+  const [scoutingDetailsPlayer, setScoutingDetailsPlayer] = useState<FcPlayer | null>(null);
+  const [scoutingDetailsReport, setScoutingDetailsReport] = useState<ScoutingReport | null>(null);
+  const [removeScoutingId, setRemoveScoutingId] = useState<string | null>(null);
 
   // Calculate team averages for proper discount application
   const teamAverages = useMemo(() => {
@@ -387,6 +402,12 @@ function TransfersPage() {
     return sorted.slice(0, 250);
   }, [ready, filters, inRoster, search, rawPlayers, teamAverages]);
 
+  const scoutingMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof market.getScouting>>();
+    for (const entry of market.scouting) map.set(entry.playerId, entry);
+    return map;
+  }, [market.scouting, market.currentDate]);
+
   const activeFiltersCount = useMemo(
     () =>
       (["position", "price", "league", "team", "age", "rating"] as const).filter(
@@ -416,6 +437,24 @@ function TransfersPage() {
   function openNegotiation(player: FcPlayer) {
     setTarget(player);
     setReport(market.scout(String(player.ID)));
+  }
+
+  function startOrOpenScouting(player: FcPlayer) {
+    const id = String(player.ID);
+    const entry = scoutingMap.get(id);
+    if (!entry) {
+      market.startScouting(id);
+      return;
+    }
+    if (entry.status === "completed") {
+      setScoutingDetailsPlayer(player);
+      setScoutingDetailsReport(market.scout(id));
+    }
+  }
+
+  function openScoutingDetails(player: FcPlayer) {
+    setScoutingDetailsPlayer(player);
+    setScoutingDetailsReport(market.scout(String(player.ID)));
   }
 
   if (!save) return null;
@@ -510,11 +549,13 @@ function TransfersPage() {
       <div className="flex flex-wrap gap-2 mb-4">
         {TABS.map((option) => {
           const count =
-            option.value === "deals"
-              ? openDeals.length
-              : option.value === "offers"
-                ? openOffers.length
-                : 0;
+            option.value === "scouting"
+              ? market.activeScouts
+              : option.value === "deals"
+                ? openDeals.length
+                : option.value === "offers"
+                  ? openOffers.length
+                  : 0;
           return (
             <button
               key={option.value}
@@ -712,7 +753,8 @@ function TransfersPage() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {players.map((p) => {
                 const id = String(p.ID);
-                const pos = mapEaPosition(p.Position);
+                const positions = buildPositions(p.Position, p["Alternative positions"]);
+                const primaryPosition = positions[0];
                 const teamAvg = teamAverages[p.Team] || 75;
                 const cost = marketValueEuros(p, "", "", teamAvg);
                 const clubId = clubOfPlayer(id) ?? TEAM_NAME_TO_ID[p.Team];
@@ -746,7 +788,12 @@ function TransfersPage() {
                       <div className="min-w-0 flex-1">
                         <p className="font-bold truncate text-sm leading-tight">{p.Name}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {POS_LABEL_ES[pos]} · {p.Age}a
+                          <span>{formatShortPositions([primaryPosition].filter(Boolean) as any)} · {p.Age}a</span>
+                          {positions.length > 1 && (
+                            <span className="ml-1 text-[0.58rem] text-muted-foreground/70">
+                              · {formatShortPositions(positions.slice(1))}
+                            </span>
+                          )}
                         </p>
                         {club && (
                           <div className="flex items-center gap-1.5 mt-1.5">
@@ -783,15 +830,37 @@ function TransfersPage() {
                           <p className="font-black scoreline text-emerald-300">{formatEuro(getPlayerAnnualWage(id))}<span className="text-[0.55rem] font-medium text-muted-foreground">/año</span></p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        disabled={!isMarketOpen || negotiating || !market.ready}
-                        onClick={() => openNegotiation(p)}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
-                      >
-                        <UserPlus className="h-3.5 w-3.5" />
-                        {negotiating ? "Negociando" : "Negociar"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {(() => {
+                          const scout = scoutingMap.get(id);
+                          const pending = scout?.status === "pending";
+                          const completed = scout?.status === "completed";
+                          return (
+                            <button
+                              type="button"
+                              disabled={!market.ready || pending}
+                              onClick={() => startOrOpenScouting(p)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                                completed
+                                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15"
+                                  : "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
+                              }`}
+                            >
+                              {pending ? <Clock3 className="h-3.5 w-3.5 animate-pulse" /> : completed ? <Eye className="h-3.5 w-3.5" /> : <Radar className="h-3.5 w-3.5" />}
+                              {pending ? "Ojeando..." : completed ? "Ver detalles" : "Ojear"}
+                            </button>
+                          );
+                        })()}
+                        <button
+                          type="button"
+                          disabled={!isMarketOpen || negotiating || !market.ready}
+                          onClick={() => openNegotiation(p)}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
+                        >
+                          <UserPlus className="h-3.5 w-3.5" />
+                          {negotiating ? "Negociando" : "Negociar"}
+                        </button>
+                      </div>
                     </div>
                   </article>
                 );
@@ -799,6 +868,95 @@ function TransfersPage() {
             </div>
           )}
         </>
+      )}
+
+      {tab === "scouting" && (
+        <div className="space-y-4">
+          <div className="panel p-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Radar className="h-4 w-4 text-primary" />
+                <h3 className="font-black">Ojeador</h3>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Puedes tener hasta {market.maxActiveScouts} ojeos activos. Los informes tardan 3–5 días.
+              </p>
+            </div>
+            <div className="text-sm font-black">
+              {market.activeScouts}/{market.maxActiveScouts} activos
+            </div>
+          </div>
+
+          {market.scouting.length === 0 ? (
+            <div className="panel p-10 text-center text-sm text-muted-foreground">
+              Todavía no has enviado ningún jugador al ojeador.
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {market.scouting.map((entry) => {
+                const player = (rawPlayers as FcPlayer[]).find((candidate) => String(candidate.ID) === entry.playerId);
+                if (!player) return null;
+                const positions = buildPositions(player.Position, player["Alternative positions"]);
+                const teamAvg = teamAverages[player.Team] || 75;
+                const cost = marketValueEuros(player, "", "", teamAvg);
+                const clubId = clubOfPlayer(entry.playerId) ?? TEAM_NAME_TO_ID[player.Team];
+                const club = clubId ? teamById(clubId) : null;
+                const daysLeft = entry.status === "pending"
+                  ? Math.max(0, Math.ceil((new Date(`${entry.readyAt}T00:00:00Z`).getTime() - new Date(`${market.currentDate}T00:00:00Z`).getTime()) / 86400000))
+                  : 0;
+                return (
+                  <article key={entry.playerId} className="panel overflow-hidden flex flex-col">
+                    <div className="flex gap-3 p-3 border-b border-border/40">
+                      <div className="w-14 h-[4.5rem] shrink-0 rounded overflow-hidden bg-secondary/60 grid place-items-center">
+                        {player.card ? <img src={player.card} alt="" className="w-full h-full object-cover object-top" loading="lazy" /> : null}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold truncate text-sm leading-tight">{player.Name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {formatShortPositions(positions.slice(0, 1))} · {player.Age}a
+                          {positions.length > 1 && <span className="ml-1 text-[0.58rem] text-muted-foreground/70">· {formatShortPositions(positions.slice(1))}</span>}
+                        </p>
+                        {club && (
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <TeamLogo teamName={club.name} leagueName={getLeagueName(club.league)} size={18} />
+                            <span className="text-[0.65rem] text-muted-foreground truncate">{club.name}</span>
+                          </div>
+                        )}
+                      </div>
+                      <span className={`scoreline text-sm font-black px-2 py-1 rounded border h-fit ${ovrBadgeClass(player.OVR)}`}>{player.OVR}</span>
+                    </div>
+                    <div className="p-3 space-y-3 mt-auto">
+                      <div>
+                        <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
+                        <p className="font-black scoreline text-primary">{formatEuro(cost)}</p>
+                      </div>
+                      {entry.status === "pending" ? (
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 rounded-lg bg-primary/5 border border-primary/15 px-3 py-2 text-xs text-primary flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-2"><Clock3 className="h-3.5 w-3.5 animate-pulse" /> Ojeando...</span>
+                            <span>{daysLeft === 1 ? "1 día restante" : `${daysLeft} días restantes`}</span>
+                          </div>
+                          <button type="button" onClick={() => setRemoveScoutingId(entry.playerId)} className="inline-flex items-center justify-center px-3 py-2 rounded-lg border border-border bg-card text-muted-foreground hover:text-destructive hover:border-destructive/40 transition" aria-label={`Eliminar a ${player.Name} del ojeador`}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => openScoutingDetails(player)} className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold hover:brightness-110 transition">
+                            <Eye className="h-3.5 w-3.5" /> Ver detalles
+                          </button>
+                          <button type="button" onClick={() => setRemoveScoutingId(entry.playerId)} className="inline-flex items-center justify-center px-3 py-2 rounded-lg border border-border bg-card text-muted-foreground hover:text-destructive hover:border-destructive/40 transition" aria-label={`Eliminar a ${player.Name} del ojeador`}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
       {tab === "deals" && (
@@ -859,6 +1017,45 @@ function TransfersPage() {
           summary={market.summary}
           userDeals={market.deals}
           myTeamId={myTeamId}
+        />
+      )}
+
+      <AlertDialog open={!!removeScoutingId} onOpenChange={(open) => !open && setRemoveScoutingId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Quitar jugador del ojeador?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {(() => {
+                const target = removeScoutingId ? (rawPlayers as FcPlayer[]).find((candidate) => String(candidate.ID) === removeScoutingId) : null;
+                return target
+                  ? `Vas a quitar a ${target.Name} de tu lista de ojeador. Esta acción no cancela ninguna negociación.`
+                  : "Vas a quitar este jugador de tu lista de ojeador.";
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (removeScoutingId) market.removeScouting(removeScoutingId);
+                setRemoveScoutingId(null);
+              }}
+            >
+              Quitar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {scoutingDetailsPlayer && (
+        <ScoutingDetailsModal
+          player={scoutingDetailsPlayer}
+          report={scoutingDetailsReport}
+          open={!!scoutingDetailsPlayer}
+          onClose={() => {
+            setScoutingDetailsPlayer(null);
+            setScoutingDetailsReport(null);
+          }}
         />
       )}
 

@@ -51,6 +51,7 @@ export * from "./MarketLocks";
 export * from "./MarketSimulation";
 export * from "./Persistence";
 export * from "./UserNegotiation";
+export * from "./Scouting";
 
 /** ¿Está el sistema de mercado inicializado? */
 export function isTransferSystemInitialized(): boolean {

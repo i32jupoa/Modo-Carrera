@@ -36,6 +36,13 @@ import {
   type ScoutingReport,
   type TransferRecord,
   type UserDeal,
+  type ScoutingEntry,
+  startScouting,
+  getScoutingEntry,
+  listScouting,
+  removeScouting,
+  activeScoutingCount,
+  MAX_ACTIVE_SCOUTS,
 } from "@/lib/transfers";
 import { flushWorldMoves } from "@/lib/transfers/WorldSync";
 
@@ -61,6 +68,12 @@ export interface UserMarketApi {
   deadlineDay: boolean;
   windowDay: number;
   scout: (playerId: string) => ScoutingReport | null;
+  scouting: ScoutingEntry[];
+  activeScouts: number;
+  maxActiveScouts: number;
+  getScouting: (playerId: string) => ScoutingEntry | null;
+  startScouting: (playerId: string) => boolean;
+  removeScouting: (playerId: string) => void;
   makeOffer: (input: {
     playerId: string;
     amount: number;
@@ -178,6 +191,30 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     (playerId: string) => (ready && myTeamId ? scoutPlayer(playerId, myTeamId, currentDate) : null),
     [ready, myTeamId, currentDate],
   );
+
+  const scouting = useMemo(() => (ready ? listScouting(currentDate) : []), [ready, currentDate, tick]);
+  const activeScouts = useMemo(() => (ready ? activeScoutingCount(currentDate) : 0), [ready, currentDate, tick]);
+
+  const beginScouting = useCallback((playerId: string) => {
+    if (!ready) return false;
+    const result = startScouting(playerId, currentDate);
+    if (result.ok) {
+      toast.success("Jugador añadido al ojeador. El informe estará listo en 3–5 días.");
+      saveTransferSystem();
+      refresh();
+      return true;
+    }
+    toast.error(result.reason);
+    refresh();
+    return false;
+  }, [ready, currentDate, refresh]);
+
+  const deleteScouting = useCallback((playerId: string) => {
+    removeScouting(playerId);
+    toast.success("Jugador eliminado de la lista de ojeador.");
+    saveTransferSystem();
+    refresh();
+  }, [refresh]);
 
   const makeOffer = useCallback<UserMarketApi["makeOffer"]>(
     ({ playerId, amount, wageOffer, type, clauses }) => {
@@ -486,6 +523,12 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     deadlineDay: state?.deadlineDay ?? false,
     windowDay: state?.windowDay ?? 0,
     scout,
+    scouting,
+    activeScouts,
+    maxActiveScouts: MAX_ACTIVE_SCOUTS,
+    getScouting: (playerId: string) => (ready ? getScoutingEntry(playerId, currentDate) : null),
+    startScouting: beginScouting,
+    removeScouting: deleteScouting,
     makeOffer,
     setLoanListed,
     makeLoanOutOffer,
