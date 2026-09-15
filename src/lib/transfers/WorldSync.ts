@@ -39,25 +39,43 @@ export function syncUserLoanRoster(): void {
   const myTeamId = store.myTeamId;
   if (!myTeamId) return;
 
-  for (const playerId of Object.keys(store.loanedPlayers ?? {})) {
-    const player = getPlayer(playerId);
-    if (!player) {
-      store.removeLoanedPlayer(playerId);
-      continue;
-    }
-    if (player.clubId === myTeamId && !player.loanClubId) {
-      // Una obligación/opción de compra ya se ha convertido en propiedad:
-      // quitamos sólo la marca de "cedido", pero conservamos al jugador.
-      const remaining = { ...store.loanedPlayers };
-      delete remaining[playerId];
-      usePlayersStore.setState({ loanedPlayers: remaining });
-      continue;
-    }
-    if (player.loanClubId !== myTeamId) {
-      store.removeLoanedPlayer(playerId);
-    }
+  const active = new Map<string, { fromClubId: string; endDate: string }>();
+  for (const player of getMarketIndex().byId.values()) {
+    if (player.loanClubId !== myTeamId || !player.loanOwnerClubId) continue;
+    active.set(player.id, {
+      fromClubId: player.loanOwnerClubId,
+      endDate: player.loanEndDate ?? '',
+    });
+  }
+
+  const currentRoster = new Set(store.rosterIds);
+  const nextRoster = new Set(store.rosterIds);
+
+  // Las cesiones entrantes sí son parte de la plantilla del club usuario.
+  for (const playerId of active.keys()) nextRoster.add(playerId);
+
+  // Las cesiones salientes dejan la plantilla del usuario.
+  for (const [playerId, loan] of Object.entries(store.loanedPlayers ?? {})) {
+    if (loan.fromClubId === myTeamId) nextRoster.delete(playerId);
+  }
+
+  const changedRoster = currentRoster.size !== nextRoster.size || [...currentRoster].some((id) => !nextRoster.has(id));
+  const loanKeys = Object.keys(store.loanedPlayers ?? {});
+  const changedLoans = loanKeys.length !== active.size || loanKeys.some((id) => {
+    const a = store.loanedPlayers[id];
+    const b = active.get(id);
+    return !b || a.fromClubId !== b.fromClubId || a.endDate !== b.endDate;
+  });
+
+  if (changedRoster || changedLoans) {
+    usePlayersStore.setState({
+      rosterIds: [...nextRoster],
+      loanedPlayers: Object.fromEntries(active),
+      squad: usePlayersStore.getState().getFcSquadByTeamId(myTeamId),
+    });
   }
 }
+
 
 export function flushWorldMoves(): void {
   if (pending.size > 0) {
@@ -114,9 +132,8 @@ export function hydrateWorld(): void {
   const league = teamById(myTeamId).league;
 
   for (const playerId of roster) {
-    // Una cesión mantiene el propietario en el índice del mercado; sólo la
-    // plantilla del usuario debe incluir temporalmente al jugador.
-    if (state.loanedPlayers[playerId]) continue;
+    const loan = state.loanedPlayers[playerId];
+    if (loan?.fromClubId !== myTeamId) continue;
     const player = getPlayer(playerId);
     if (player && player.clubId !== myTeamId) {
       reassignPlayerClub(playerId, myTeamId, league, { force: true });

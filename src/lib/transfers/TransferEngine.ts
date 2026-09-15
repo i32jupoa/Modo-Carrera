@@ -39,6 +39,7 @@ import {
   needsToSell,
   registerSale,
   registerSigning,
+  registerLoanOut,
 } from "./BudgetManager";
 import {
   findCandidates,
@@ -1139,8 +1140,17 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
           : 12;
     const baseDate = new Date(`${date}T00:00:00Z`);
     baseDate.setUTCMonth(baseDate.getUTCMonth() + durationMonths);
+
+    // Una cesión mueve físicamente al jugador al club receptor en el mundo del
+    // juego. El propietario se conserva en `loanOwnerClubId` para poder
+    // devolverlo al terminar. Esto evita el estado imposible anterior en el
+    // que el historial decía "A -> B" pero el jugador seguía figurando en A.
+    if (sellerId && sellerId !== buyerId) {
+      reassignPlayerClub(player.id, buyerId, buyerLeague, { force: true });
+    }
     updatePlayer(player.id, {
       loanClubId: buyerId,
+      loanOwnerClubId: sellerId,
       loanEndDate: baseDate.toISOString().slice(0, 10),
       loanListed: false,
       minutesShare: 0,
@@ -1166,6 +1176,11 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
     ? Math.round(offer.wageOffer * clamp(offer.clauses.wageShare, 0, 1))
     : offer.wageOffer;
   registerSigning(buyerId, offer.amount, wageCommitment);
+  if (sellerId && isLoan) {
+    const coveredByBorrower = clamp(offer.clauses.wageShare, 0, 1);
+    registerSale(sellerId, offer.amount, 0);
+    registerLoanOut(sellerId, offer.wageOffer, coveredByBorrower);
+  }
   if (sellerId && !isLoan) {
     registerSale(sellerId, offer.amount, player.contract.wage);
     if (sellerId !== buyerId) recordBuyerSellerDeal(date, buyerId, sellerId);

@@ -25,6 +25,7 @@ import {
   scoutPlayer,
   setUserPlayerTransferListed,
   submitUserLoanOutOffer,
+  setUserPlayerLoanListed,
   submitUserOffer,
   summarize,
   syncUserFinances,
@@ -67,6 +68,7 @@ export interface UserMarketApi {
     type?: TransferType;
     clauses?: Partial<OfferClauses>;
   }) => void;
+  setLoanListed: (playerId: string, listed: boolean) => void;
   makeLoanOutOffer: (input: {
     playerId: string;
     borrowerClubId: string;
@@ -212,6 +214,11 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     },
     [myTeamId, currentDate, commit],
   );
+
+  const setLoanListed = useCallback((playerId: string, listed: boolean) => {
+    setUserPlayerLoanListed(playerId, listed);
+    commit(listed ? "Búsqueda de cesión activada." : "Búsqueda de cesión cancelada.");
+  }, [commit]);
 
   const makeLoanOutOffer = useCallback<UserMarketApi["makeLoanOutOffer"]>(
     ({ playerId, borrowerClubId, loanFee, wageShare, durationMonths, type }) => {
@@ -433,6 +440,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     windowDay: state?.windowDay ?? 0,
     scout,
     makeOffer,
+    setLoanListed,
     makeLoanOutOffer,
     improveOffer,
     acceptDemand,

@@ -11,6 +11,7 @@
  */
 
 import { getClubProfile, getAllClubProfiles } from "./ClubStrategy";
+import { teamById } from "@/data/teams";
 import {
   maxSpend,
   maxWageOffer,
@@ -21,10 +22,11 @@ import {
 } from "./BudgetManager";
 import { getClubPlayers, getPlayer, updatePlayer } from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
-import { askingPrice, isAvailable, valuePlayer } from "./MarketValuation";
+import { askingPrice, isAvailable, isKeyPlayer, valuePlayer } from "./MarketValuation";
 import { decideOnMove, wageDemand, wantsOut } from "./PlayerDecision";
 import { competitionFor, dropInterest, registerInterest, sellerShouldWait } from "./BidWar";
 import {
+  buildLoanTerms,
   createTransferOffer,
   decideImprovement,
   emptyClauses,
@@ -38,6 +40,7 @@ import { getSimulationState, isDeadlineDay, windowForDate } from "./MarketSimula
 import { MARKET_TIMING, WAGE_RULES } from "./constants";
 import { clamp, seededInt, seededUnit } from "./random";
 import type {
+  MarketPlayer,
   MarketValuation,
   OfferClauses,
   TransferOffer,
@@ -297,6 +300,12 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
 
   const type = input.type ?? "permanent";
   const isLoan = isLoanOffer(type);
+  if (isLoan && isKeyPlayer(input.playerId, input.date)) {
+    return {
+      ok: false,
+      reason: "El club considera al jugador pieza clave y no contempla una cesión.",
+    };
+  }
   const requestedClauses = {
     ...emptyClauses(),
     ...(input.clauses ?? {}),
@@ -593,6 +602,7 @@ export function advanceUserDeals(userClubId: string, date: string): UserDealEven
   }
   events.push(...nudgeStaleUserDeals(userClubId, date));
   events.push(...generateOffersForUserPlayers(userClubId, date));
+  events.push(...generateLoanOffersForUserPlayers(userClubId, date));
   return events;
 }
 
@@ -850,6 +860,16 @@ function processOutgoingBid(deal: UserDeal, date: string): UserDealEvent[] {
   return events;
 }
 
+/** Marca un jugador del usuario como disponible para recibir propuestas de cesión.
+ * No obliga a indicar un destino: los clubes interesados aparecerán como
+ * ofertas recibidas y se negociarán igual que un fichaje.
+ */
+export function setUserPlayerLoanListed(playerId: string, listed: boolean): void {
+  const player = getPlayer(playerId);
+  if (!player) return;
+  updatePlayer(playerId, { loanListed: listed });
+}
+
 /**
  * Abre una negociación de cesión propuesta por el usuario con un club
  * receptor concreto. El propietario sigue siendo el club del usuario.
@@ -1067,6 +1087,103 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
   };
   deals.set(deal.id, deal);
   pushEvent(events, deal, deal.clubMessage, "info");
+
+  return events;
+}
+
+function loanCandidateScore(player: MarketPlayer, cacheKey: string): number {
+  const playingNeed = clamp(1 - player.minutesShare, 0, 1);
+  const youth = clamp((22 - player.age) / 7, 0, 1);
+  const potential = clamp((player.potential - player.ovr) / 15, 0, 1);
+  const starPenalty = player.ovr >= 88 ? 2.5 : player.ovr >= 84 ? 1.2 : 0;
+  const listedBonus = player.loanListed ? 1.6 : 0;
+  return playingNeed * 1.4 + youth * 1.2 + potential + listedBonus - starPenalty + seededUnit("loan-candidate", player.id, cacheKey) * 0.5;
+}
+
+function loanSuitorsFor(playerId: string, userClubId: string, date: string): string[] {
+  const player = getPlayer(playerId);
+  if (!player) return [];
+  const result: string[] = [];
+  const cacheKey = cacheKeyFor(date);
+  for (const profile of getAllClubProfiles()) {
+    if (profile.clubId === userClubId) continue;
+    const report = getSquadReport(profile.clubId, cacheKey);
+    const need = report.needs.find((n) => n.group === player.group);
+    if (!need || need.urgency < 0.25) continue;
+    if (player.ovr > report.startingRating + 2.5 && player.age > 24) continue;
+    if (report.size <= 22 && player.age > 24 && player.ovr < report.startingRating - 4) continue;
+    if (need.urgency >= 0.55 || player.age <= 22) result.push(profile.clubId);
+  }
+  return result;
+}
+
+function generateLoanOffersForUserPlayers(userClubId: string, date: string): UserDealEvent[] {
+  const events: UserDealEvent[] = [];
+  if (windowForDate(date) === "closed") return events;
+  if (listOpenUserDeals("out").length >= 3) return events;
+  if (seededUnit("loan-offers", userClubId, date) > 0.38) return events;
+
+  const cacheKey = cacheKeyFor(date);
+  const candidates = getClubPlayers(userClubId)
+    .filter((p) => !p.loanClubId && !hasOpenDealFor(p.id))
+    .filter((p) => !isKeyPlayer(p.id, cacheKey) && p.ovr < 88)
+    .map((player) => ({ player, score: loanCandidateScore(player, cacheKey) }))
+    .filter(({ score }) => score >= 1.0)
+    .sort((a, b) => b.score - a.score);
+
+  for (const { player } of candidates.slice(0, 8)) {
+    const suitors = loanSuitorsFor(player.id, userClubId, date);
+    if (suitors.length === 0) continue;
+
+    const borrowerId = suitors[Math.floor(seededUnit("loan-suitor", player.id, date) * suitors.length)];
+    const typeRoll = seededUnit("loan-type", player.id, date);
+    const type: Extract<TransferType, "loan" | "loan-option" | "loan-obligation"> =
+      typeRoll < 0.72 ? "loan" : typeRoll < 0.93 ? "loan-option" : "loan-obligation";
+    const clauses = buildLoanTerms(player.id, type, `${player.id}-${date}`);
+    const fee = seededUnit("loan-fee", player.id, borrowerId, date) < 0.65
+      ? 0
+      : Math.max(0, Math.round(player.value * (0.005 + seededUnit("loan-fee-rate", player.id, borrowerId, date) * 0.02) / 100_000) * 100_000);
+
+    const offer = createTransferOffer({
+      playerId: player.id,
+      playerName: player.name,
+      buyerClubId: borrowerId,
+      sellerClubId: userClubId,
+      amount: fee,
+      wageOffer: player.contract.wage,
+      type,
+      clauses: { ...clauses, loanDurationMonths: defaultLoanDuration(date) },
+      date,
+    });
+    const valuation = valuePlayer(player.id, { cacheKey, deadlineDay: deadlineToday(date) });
+    const deal: UserDeal = {
+      id: nextDealId(),
+      direction: "out",
+      playerId: player.id,
+      playerName: player.name,
+      userClubId,
+      otherClubId: borrowerId,
+      offer,
+      valuation,
+      stage: "incoming",
+      respondsOn: addDays(date, 30),
+      clubDemand: fee,
+      clubMessage: `${teamById(borrowerId).name} ofrece hacerse cargo de parte de la ficha de ${player.name}.`,
+      playerWageDemand: player.contract.wage,
+      playerMessage: "",
+      competition: 0,
+      rounds: 1,
+      createdOn: date,
+      updatedOn: date,
+      log: [{
+        date,
+        text: `Oferta de cesión desde ${teamById(borrowerId).name}: ${fmt(fee)} de prima y ${Math.round(clauses.wageShare * 100)}% de la ficha.`,
+      }],
+    };
+    deals.set(deal.id, deal);
+    pushEvent(events, deal, `Oferta de cesión recibida por ${player.name} desde ${teamById(borrowerId).name}.`, "good");
+    break;
+  }
   return events;
 }
 

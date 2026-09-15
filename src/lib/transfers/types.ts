@@ -77,8 +77,10 @@ export interface MarketPlayer {
   listReason: TransferListReason | null;
   /** Está disponible para cesión. */
   loanListed: boolean;
-  /** Club al que está cedido, si procede. */
+  /** Club que recibe al jugador mientras dura la cesión. */
   loanClubId: string | null;
+  /** Club propietario del jugador durante la cesión. */
+  loanOwnerClubId: string | null;
   /** Fecha exacta de finalización de la cesión (YYYY-MM-DD). */
   loanEndDate: string | null;
   /** Minutos acumulados en la temporada (aproximación para decisiones). */

@@ -11,7 +11,7 @@
  */
 
 import rawPlayers from "@/data/playersData";
-import { getAllTeams, findTeamStrict, type Team } from "@/data/teams";
+import { getAllTeams, findTeamStrict, teamById, type Team } from "@/data/teams";
 import { marketValueFor } from "@/data/players";
 import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { estimateAnnualWage } from "./SalaryEngine";
@@ -232,6 +232,7 @@ function buildIndex(): MarketIndex {
       listReason: null,
       loanListed: false,
       loanClubId: null,
+      loanOwnerClubId: null,
       loanEndDate: null,
       minutesShare: 0,
       attributes: {
@@ -486,6 +487,7 @@ export interface PlayerDelta {
   listReason: TransferListReason | null;
   loanListed: boolean;
   loanClubId: string | null;
+  loanOwnerClubId: string | null;
   loanEndDate: string | null;
   minutesShare: number;
 }
@@ -500,6 +502,7 @@ function deltaOf(player: MarketPlayer): PlayerDelta {
     listReason: player.listReason,
     loanListed: player.loanListed,
     loanClubId: player.loanClubId,
+    loanOwnerClubId: player.loanOwnerClubId,
     loanEndDate: player.loanEndDate,
     minutesShare: player.minutesShare,
   };
@@ -526,8 +529,17 @@ export function restorePlayerDeltas(deltas: readonly PlayerDelta[]): void {
   for (const delta of deltas) {
     const player = getPlayer(delta.id);
     if (!player) continue;
-    if (player.clubId !== delta.clubId || player.leagueId !== delta.leagueId) {
-      reassignPlayerClub(delta.id, delta.clubId, delta.leagueId);
+
+    // Migración de partidas anteriores: antes `clubId` seguía siendo el
+    // propietario y `loanClubId` era sólo el destino. Ahora el jugador vive
+    // en el destino y guardamos al propietario en `loanOwnerClubId`.
+    const legacyLoan = !!delta.loanClubId && !delta.loanOwnerClubId;
+    const effectiveClubId = legacyLoan ? delta.loanClubId : delta.clubId;
+    const effectiveLeague = legacyLoan && delta.loanClubId
+      ? (teamById(delta.loanClubId).league)
+      : delta.leagueId;
+    if (player.clubId !== effectiveClubId || player.leagueId !== effectiveLeague) {
+      reassignPlayerClub(delta.id, effectiveClubId, effectiveLeague, { force: true });
     }
     updatePlayer(delta.id, {
       contract: { ...delta.contract },
@@ -535,6 +547,7 @@ export function restorePlayerDeltas(deltas: readonly PlayerDelta[]): void {
       listReason: delta.listReason,
       loanListed: delta.loanListed,
       loanClubId: delta.loanClubId,
+      loanOwnerClubId: delta.loanOwnerClubId ?? (legacyLoan ? delta.clubId : null),
       loanEndDate: delta.loanEndDate ?? null,
       minutesShare: delta.minutesShare,
     });

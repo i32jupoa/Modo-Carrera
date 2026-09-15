@@ -245,7 +245,6 @@ export function arrangeLoan(
   }
 
   const ownerClubId = player.clubId;
-  const wageBefore = player.contract.wage;
   const record = completeTransfer(offer, options.date);
   if (!record) return base;
 
@@ -254,7 +253,6 @@ export function arrangeLoan(
     loanClubId: borrowerClubId,
     loanEndDate: addMonths(options.date, durationMonths),
   });
-  registerLoanOut(ownerClubId, wageBefore, clauses.wageShare);
 
   return {
     playerId,
@@ -345,6 +343,7 @@ function executeLoanObligation(
   reassignPlayerClub(player.id, borrowerClubId, teamById(borrowerClubId).league);
   updatePlayer(player.id, {
     loanClubId: null,
+    loanOwnerClubId: null,
     loanListed: false,
     minutesShare: 0,
     contract: {
@@ -395,7 +394,8 @@ export function resolveLoansDue(date: string): LoanReturn[] {
     if (player.loanEndDate > date) continue;
 
     const borrowerClubId = player.loanClubId;
-    const ownerClubId = player.clubId;
+    const ownerClubId = player.loanOwnerClubId ?? null;
+    if (!borrowerClubId || !ownerClubId) continue;
     const loanRecord = transfersForPlayer(player.id)
       .filter(
         (r) =>
@@ -417,8 +417,15 @@ export function resolveLoansDue(date: string): LoanReturn[] {
       continue;
     }
 
+    const wageShare = clamp(loanRecord?.clauses.wageShare ?? 0, 0, 1);
+    if (wageShare > 0) {
+      registerSale(borrowerClubId, 0, player.contract.wage * wageShare);
+      registerSigning(ownerClubId, 0, player.contract.wage * wageShare);
+    }
+    reassignPlayerClub(player.id, ownerClubId, teamById(ownerClubId).league, { force: true });
     updatePlayer(player.id, {
       loanClubId: null,
+      loanOwnerClubId: null,
       loanEndDate: null,
       loanListed: false,
       minutesShare: 0,
@@ -445,7 +452,8 @@ export function resolveLoansEndOfSeason(date: string): LoanReturn[] {
     if (!player.loanClubId || !player.clubId || player.loanEndDate) continue;
 
     const borrowerClubId = player.loanClubId;
-    const ownerClubId = player.clubId;
+    const ownerClubId = player.loanOwnerClubId ?? null;
+    if (!borrowerClubId || !ownerClubId) continue;
     const loanRecord = transfersForPlayer(player.id)
       .filter(
         (r) =>
@@ -465,8 +473,15 @@ export function resolveLoansEndOfSeason(date: string): LoanReturn[] {
         message: `${teamById(borrowerClubId).name} ejecuta la obligación de compra de ${player.name}.`,
       });
     } else {
+      const wageShare = clamp(loanRecord?.clauses.wageShare ?? 0, 0, 1);
+      if (wageShare > 0) {
+        registerSale(borrowerClubId, 0, player.contract.wage * wageShare);
+        registerSigning(ownerClubId, 0, player.contract.wage * wageShare);
+      }
+      reassignPlayerClub(player.id, ownerClubId, teamById(ownerClubId).league, { force: true });
       updatePlayer(player.id, {
         loanClubId: null,
+        loanOwnerClubId: null,
         loanEndDate: null,
         loanListed: false,
         minutesShare: 0,

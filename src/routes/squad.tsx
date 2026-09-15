@@ -32,8 +32,10 @@ import {
   Banknote,
   ArrowUpRight,
   CircleDollarSign,
+  Handshake,
 } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
+import { useUserMarket } from "@/hooks/useUserMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import {
   getPlayer,
@@ -379,6 +381,74 @@ function NumberField({
   );
 }
 
+function LoanSearchModal({
+  p,
+  listed,
+  onToggle,
+  onClose,
+}: {
+  p: FcPlayer;
+  listed: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+}) {
+  const marketPlayer = getPlayer(String(p.ID));
+  const loaned = !!marketPlayer?.loanClubId;
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-md overflow-hidden p-0">
+        <div className="bg-gradient-to-br from-primary/20 via-card to-transparent p-5">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-black">
+              <Handshake className="h-5 w-5 text-primary" />
+              Buscar cesión
+            </DialogTitle>
+            <DialogDescription>
+              {p.Name} · {p.OVR} OVR · {p.Age} años
+            </DialogDescription>
+          </DialogHeader>
+        </div>
+        <div className="space-y-4 p-5">
+          <div className="rounded-xl border border-border/60 bg-card/60 p-4 text-sm">
+            <p className="font-bold">Buscar destino temporal</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Activa la búsqueda para indicar que escuchas propuestas. Los clubes interesados enviarán
+              ofertas y la negociación continuará desde Mercado → Ofertas recibidas. La prima suele ser
+              gratis o baja, y se negocia qué porcentaje del salario paga cada club. También pueden llegar
+              ofertas sin activar esta búsqueda.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-lg border border-border/50 bg-secondary/40 p-3">
+              <p className="text-muted-foreground">Estado</p>
+              <p className="mt-1 font-black">{loaned ? "Ya está cedido" : listed ? "Buscando destino" : "Sin búsqueda"}</p>
+            </div>
+            <div className="rounded-lg border border-border/50 bg-secondary/40 p-3">
+              <p className="text-muted-foreground">Prima habitual</p>
+              <p className="mt-1 font-black">0 € / baja</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={loaned}
+              onClick={onToggle}
+              className={`flex-1 rounded-xl px-4 py-3 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                listed ? "border border-amber-500/40 bg-amber-500/15 text-amber-300" : "bg-primary text-primary-foreground"
+              }`}
+            >
+              {listed ? "Cancelar búsqueda" : "Buscar destino"}
+            </button>
+            <button type="button" onClick={onClose} className="rounded-xl bg-secondary px-4 py-3 text-sm font-bold">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SquadPage() {
   const navigate = useNavigate();
   const { loading } = usePlayersReady();
@@ -391,8 +461,11 @@ function SquadPage() {
   const renewPlayerContract = usePlayersStore((s) => s.renewPlayerContract);
   const syncWageStateFromMarket = usePlayersStore((s) => s.syncWageStateFromMarket);
   const { isMarketOpen } = useTransferMarket();
+  const market = useUserMarket(!!myTeamId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [renewalPlayerId, setRenewalPlayerId] = useState<string | null>(null);
+  const [loanSearchPlayerId, setLoanSearchPlayerId] = useState<string | null>(null);
+  const [loanSearchListed, setLoanSearchListed] = useState(false);
   const [listed, setListed] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
@@ -480,6 +553,13 @@ function SquadPage() {
       });
     }
     void saveTransferSystem();
+  }
+
+  function handleToggleLoanSearch(p: FcPlayer) {
+    const id = String(p.ID);
+    const next = !(getPlayer(id)?.loanListed ?? false);
+    market.setLoanListed(id, next);
+    setLoanSearchListed(next);
   }
 
   if (!myTeamId) return null;
@@ -731,7 +811,7 @@ function SquadPage() {
                     )}
 
                     {/* Actions */}
-                    <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-3">
                       <button
                         type="button"
                         onClick={() => setRenewalPlayerId(String(selected.ID))}
@@ -753,6 +833,22 @@ function SquadPage() {
                         <Tag className="h-4 w-4" />
                         {isListed ? "Retirar de venta" : "Poner en venta"}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLoanSearchPlayerId(String(selected.ID));
+                          setLoanSearchListed(getPlayer(String(selected.ID))?.loanListed ?? false);
+                        }}
+                        disabled={!isMarketOpen || !!getPlayer(String(selected.ID))?.loanClubId}
+                        className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                          getPlayer(String(selected.ID))?.loanListed
+                            ? "border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
+                            : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+                        }`}
+                      >
+                        <Handshake className="h-4 w-4" />
+                        {getPlayer(String(selected.ID))?.loanListed ? "Cancelar búsqueda" : "Buscar cesión"}
+                      </button>
                     </div>
 
                     {!isMarketOpen && (
@@ -767,6 +863,19 @@ function SquadPage() {
             })()}
         </DialogContent>
       </Dialog>
+
+      {loanSearchPlayerId && (() => {
+        const loanPlayer = squad.find((player) => String(player.ID) === loanSearchPlayerId);
+        if (!loanPlayer) return null;
+        return (
+          <LoanSearchModal
+            p={loanPlayer}
+            listed={loanSearchListed}
+            onClose={() => setLoanSearchPlayerId(null)}
+            onToggle={() => handleToggleLoanSearch(loanPlayer)}
+          />
+        );
+      })()}
 
       {renewalPlayerId && (() => {
         const renewalPlayer = squad.find((p) => String(p.ID) === renewalPlayerId) ?? null;
