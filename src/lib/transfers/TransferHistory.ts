@@ -31,7 +31,7 @@ export function recordTransfer(record: TransferRecord): TransferRecord {
   history.push(record);
   // El jugador queda asentado en su nuevo club: no se moverá otra vez en la
   // misma ventana de mercado.
-  lockPlayer(record.playerId);
+  lockPlayer(record.playerId, record.type);
   registerArrival(record.toClubId);
   registerDeparture(record.fromClubId);
 

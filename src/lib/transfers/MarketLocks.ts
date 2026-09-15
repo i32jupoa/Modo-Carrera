@@ -20,6 +20,18 @@ let activeWindowKey = "";
 /** playerId -> ventana en la que se movió. */
 const settled = new Map<string, string>();
 
+/**
+ * playerId -> ventana en la que se cedió (subconjunto de `settled`).
+ *
+ * Un jugador recién fichado en firme SÍ puede salir cedido en la misma
+ * ventana (ejemplo real: el Madrid ficha a Mayulu y lo cede para que tenga
+ * minutos). Lo que no puede pasar es que, tras fichar en firme, otro club se
+ * lo lleve también en firme en la misma ventana — eso ya lo cubre `settled`.
+ * Este mapa aparte solo bloquea una SEGUNDA cesión del mismo jugador en la
+ * misma ventana (no tendría sentido cederlo dos veces en pocas semanas).
+ */
+const loanSettled = new Map<string, string>();
+
 /** clubId -> nº de jugadores que han llegado en la ventana activa. */
 const arrivals = new Map<string, number>();
 
@@ -116,6 +128,7 @@ export function setLockWindow(key: string): void {
   if (key === activeWindowKey) return;
   activeWindowKey = key;
   settled.clear();
+  loanSettled.clear();
   arrivals.clear();
   departures.clear();
   coreDepartures.clear();
@@ -128,16 +141,40 @@ export function currentLockWindow(): string {
   return activeWindowKey;
 }
 
-/** Marca a un jugador como recién fichado: no se moverá más esta ventana. */
-export function lockPlayer(playerId: string): void {
+/**
+ * Marca a un jugador como recién movido esta ventana: no se podrá volver a
+ * FICHAR EN FIRME hasta la siguiente. Si el movimiento es una cesión, además
+ * queda marcado aparte (`loanSettled`) para impedir una segunda cesión, sin
+ * afectar a si puede seguir siendo fichado en firme por su club actual (ya
+ * bloqueado por este mismo cerrojo) ni a si un fichaje en firme previo le
+ * sigue permitiendo salir cedido.
+ */
+export function lockPlayer(playerId: string, type?: string): void {
   if (!activeWindowKey) return;
   settled.set(playerId, activeWindowKey);
+  if (type && type.startsWith("loan")) {
+    loanSettled.set(playerId, activeWindowKey);
+  }
 }
 
 /** ¿El jugador ya ha cambiado de club en esta ventana? */
 export function isPlayerSettled(playerId: string): boolean {
   if (!activeWindowKey) return false;
   return settled.get(playerId) === activeWindowKey;
+}
+
+/**
+ * ¿El jugador ya ha salido cedido en esta ventana?
+ *
+ * A diferencia de `isPlayerSettled` (que bloquea cualquier segundo fichaje en
+ * firme tras CUALQUIER movimiento), esto solo bloquea una SEGUNDA cesión. Un
+ * jugador recién fichado en firme (settled=true, loanSettled=false) sigue
+ * pudiendo salir cedido: así un club puede fichar a un joven y cederlo en la
+ * misma ventana para que tenga minutos en otro sitio.
+ */
+export function isPlayerLoanSettled(playerId: string): boolean {
+  if (!activeWindowKey) return false;
+  return loanSettled.get(playerId) === activeWindowKey;
 }
 
 /** Registra una llegada a un club en la ventana activa. */
@@ -239,6 +276,7 @@ export function windowDeficit(clubId: string): number {
 export function resetMarketLocks(): void {
   activeWindowKey = "";
   settled.clear();
+  loanSettled.clear();
   arrivals.clear();
   departures.clear();
   coreDepartures.clear();
@@ -257,10 +295,12 @@ export function rebuildLocks(
     toClubId: string;
     fromClubId?: string | null;
     date: string;
+    type?: string;
   }[],
   windowKeyOf: (date: string) => string,
 ): void {
   settled.clear();
+  loanSettled.clear();
   arrivals.clear();
   departures.clear();
   coreDepartures.clear();
@@ -269,6 +309,7 @@ export function rebuildLocks(
   for (const record of records) {
     if (windowKeyOf(record.date) !== activeWindowKey) continue;
     settled.set(record.playerId, activeWindowKey);
+    if (record.type?.startsWith("loan")) loanSettled.set(record.playerId, activeWindowKey);
     if (record.toClubId) arrivals.set(record.toClubId, (arrivals.get(record.toClubId) ?? 0) + 1);
     if (record.fromClubId) {
       departures.set(record.fromClubId, (departures.get(record.fromClubId) ?? 0) + 1);

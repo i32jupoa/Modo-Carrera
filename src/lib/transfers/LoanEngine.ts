@@ -30,7 +30,7 @@ import { buildLoanTerms, createTransferOffer, emptyClauses } from "./Negotiation
 import { completeTransfer } from "./TransferEngine";
 import { contractYearsForAge } from "./ContractEngine";
 import { recordTransfer, transfersForPlayer } from "./TransferHistory";
-import { arrivalsFor, isPlayerSettled } from "./MarketLocks";
+import { arrivalsFor, isPlayerLoanSettled } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import { windowForDate } from "@/lib/transferWindows";
 import type { MarketPlayer, TransferRecord, TransferType } from "./types";
@@ -94,7 +94,7 @@ export function wantsToLoanOut(clubId: string, playerId: string, cacheKey: strin
 /** Jugadores que el club pondría en el mercado de cesiones hoy. */
 export function loanCandidates(clubId: string, cacheKey: string): MarketPlayer[] {
   return getClubPlayers(clubId)
-    .filter((player) => !isPlayerSettled(player.id) && wantsToLoanOut(clubId, player.id, cacheKey))
+    .filter((player) => !isPlayerLoanSettled(player.id) && wantsToLoanOut(clubId, player.id, cacheKey))
     .sort((a, b) => b.potential - a.potential);
 }
 
@@ -127,7 +127,7 @@ export function wantsToLoanIn(
 ): boolean {
   const player = getPlayer(playerId);
   if (!player) return false;
-  if (isPlayerSettled(playerId)) return false;
+  if (isPlayerLoanSettled(playerId)) return false;
   // Ningún club acapara el mercado: como mucho tres llegadas por ventana.
   if (arrivalsFor(borrowerClubId) >= MAX_ARRIVALS_PER_WINDOW) return false;
   const report = getSquadReport(borrowerClubId, cacheKey);

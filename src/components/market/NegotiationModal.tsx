@@ -15,6 +15,13 @@ interface Props {
   wageBudget?: number;
   currentWage?: number;
   currentDate: string;
+  /**
+   * El jugador acaba de fichar en firme esta misma ventana: no se puede
+   * volver a ofertar por él en firme hasta la siguiente. El traspaso queda
+   * bloqueado en el propio formulario (no como error al enviar) y solo cabe
+   * negociar una cesión.
+   */
+  transferLocked?: boolean;
   onSubmit: (input: {
     amount: number;
     wageOffer: number;
@@ -39,11 +46,14 @@ export function NegotiationModal({
   wageBudget = 0,
   currentWage = 0,
   currentDate,
+  transferLocked = false,
   onSubmit,
   onClose,
 }: Props) {
   const asking = report?.askingPrice ?? 0;
-  const [operation, setOperation] = useState<"transfer" | "loan">("transfer");
+  const [operation, setOperation] = useState<"transfer" | "loan">(
+    transferLocked ? "loan" : "transfer",
+  );
   const [loanType, setLoanType] = useState<"loan" | "loan-option" | "loan-obligation">("loan");
   const type = operation === "transfer" ? "permanent" : loanType;
   const [amount, setAmount] = useState(Math.round(asking / 100_000) / 10);
@@ -108,6 +118,12 @@ export function NegotiationModal({
           </p>
         )}
 
+        {transferLocked && (
+          <p className="text-xs text-amber-400">
+            {playerName} acaba de fichar en firme esta ventana: solo se puede negociar una cesión hasta la próxima.
+          </p>
+        )}
+
         <div className="space-y-2">
           <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
             Tipo de operación
@@ -115,11 +131,15 @@ export function NegotiationModal({
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
+              disabled={transferLocked}
               onClick={() => setOperation("transfer")}
+              title={transferLocked ? "Recién fichado: no se puede ofertar en firme hasta la próxima ventana." : undefined}
               className={`rounded-xl border px-3 py-3 text-sm font-black transition ${
-                operation === "transfer"
-                  ? "border-primary bg-primary/15 text-primary"
-                  : "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                transferLocked
+                  ? "border-border/40 bg-secondary/40 text-muted-foreground/40 cursor-not-allowed"
+                  : operation === "transfer"
+                    ? "border-primary bg-primary/15 text-primary"
+                    : "border-border bg-secondary text-muted-foreground hover:text-foreground"
               }`}
             >
               Traspaso

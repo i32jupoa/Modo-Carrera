@@ -22,7 +22,7 @@ import {
   FcPlayer,
   clubOfPlayer,
 } from "@/store/playersStore";
-import { getPlayerAnnualWage, getPlayer } from "@/lib/transfers";
+import { getPlayerAnnualWage, getPlayer, isPlayerSettled } from "@/lib/transfers";
 import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
@@ -720,6 +720,10 @@ function TransfersPage() {
                 const negotiating = market.deals.some(
                   (d) => d.playerId === id && d.stage !== "completed" && d.stage !== "failed",
                 );
+                // Recién fichado en firme esta ventana: solo se puede negociar
+                // una cesión hasta la siguiente. Se avisa en la propia tarjeta
+                // para no descubrirlo al enviar la oferta y que rebote.
+                const justSettled = isPlayerSettled(id);
 
                 return (
                   <article
@@ -755,6 +759,11 @@ function TransfersPage() {
                               {club.name}
                             </span>
                           </div>
+                        )}
+                        {justSettled && (
+                          <p className="text-[0.6rem] text-amber-400 mt-1">
+                            Recién fichado: solo cesión esta ventana
+                          </p>
                         )}
                       </div>
                       <span
@@ -864,6 +873,7 @@ function TransfersPage() {
           budget={budget}
           wageBudget={wageBudget}
           currentWage={target ? getPlayerAnnualWage(String(target.ID)) : 0}
+          transferLocked={target ? isPlayerSettled(String(target.ID)) : false}
           currentDate={market.currentDate}
           onClose={() => setTarget(null)}
           onSubmit={({ amount, wageOffer, type, clauses }) => {

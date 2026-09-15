@@ -35,7 +35,7 @@ import {
 } from "./NegotiationEngine";
 import { completeTransfer } from "./TransferEngine";
 import { recordTransfer } from "./TransferHistory";
-import { withUserApproval } from "./MarketLocks";
+import { withUserApproval, isPlayerSettled } from "./MarketLocks";
 import { getSimulationState, isDeadlineDay, windowForDate } from "./MarketSimulation";
 import { MARKET_TIMING, WAGE_RULES } from "./constants";
 import { clamp, seededInt, seededUnit } from "./random";
@@ -300,6 +300,17 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
 
   const type = input.type ?? "permanent";
   const isLoan = isLoanOffer(type);
+  // Un jugador que ya ha cambiado de club esta misma ventana está "asentado":
+  // ningún otro club puede ficharlo en firme hasta la siguiente. Sí puede
+  // salir cedido por su club actual (por ejemplo, un joven recién fichado al
+  // que le conviene tener minutos en otro sitio esa misma ventana), así que
+  // esta comprobación sólo se aplica a ofertas de compra, no a cesiones.
+  if (!isLoan && isPlayerSettled(input.playerId)) {
+    return {
+      ok: false,
+      reason: "El jugador acaba de fichar por su club: no se puede ofertar en firme por él hasta la próxima ventana.",
+    };
+  }
   if (isLoan && isKeyPlayer(input.playerId, input.date)) {
     return {
       ok: false,
