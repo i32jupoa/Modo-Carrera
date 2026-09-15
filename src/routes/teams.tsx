@@ -604,6 +604,9 @@ function TeamsPage() {
                       <th className="text-center py-2 px-1">Contrib.</th>
                       <th className="text-center py-2 px-1">TA</th>
                       <th className="text-center py-2 px-1">TR</th>
+                      <th className="text-center py-2 px-1">Nota media</th>
+                      <th className="text-center py-2 px-1">MVP</th>
+                      <th className="text-center py-2 px-1">P0</th>
                       <th className="text-center py-2 px-1">Estado</th>
                       {canOffer && <th className="text-center py-2 px-1">Fichar</th>}
                     </tr>
@@ -612,6 +615,15 @@ function TeamsPage() {
                     {sortedSquad.map((p) => {
                       const stats = getPlayerStats(String(p.ID));
                       const goalContributions = stats.goals + stats.assists;
+                      const dynamicStats = stats.dynamicStats;
+                      const averageRating =
+                        dynamicStats?.seasonAppearances > 0
+                          ? dynamicStats.seasonAverageRating
+                          : stats.formHistory?.length
+                            ? stats.formHistory.reduce((sum, value) => sum + value, 0) / stats.formHistory.length
+                            : null;
+                      const mvpCount = dynamicStats?.seasonMVPs ?? stats.motm ?? 0;
+                      const cleanSheets = dynamicStats?.seasonCleanSheets ?? stats.cleanSheets ?? 0;
 
                       // Get suspension status (only for user's team)
                       let suspensionStatus = "";
@@ -673,6 +685,11 @@ function TeamsPage() {
                             {stats.yellowCards}
                           </td>
                           <td className="py-2 px-1 text-center text-red-500">{stats.redCards}</td>
+                          <td className="py-2 px-1 text-center scoreline font-semibold">
+                            {averageRating == null ? "—" : averageRating.toFixed(2)}
+                          </td>
+                          <td className="py-2 px-1 text-center scoreline font-semibold text-yellow-500">{mvpCount}</td>
+                          <td className="py-2 px-1 text-center scoreline font-semibold text-sky-400">{cleanSheets}</td>
                           <td className="py-2 px-1 text-center font-semibold">{status}</td>
                           {canOffer && (
                             <td className="py-2 px-1 text-center">
@@ -693,7 +710,7 @@ function TeamsPage() {
               </div>
               <p className="text-[0.65rem] text-muted-foreground mt-3">
                 Orden por posición · PJ = Partidos Jugados · Contrib. = Goles + Asistencias · TA/TR
-                = tarjetas · Estado: S = Sancionado, I = Lesionado, j = jornadas restantes
+                = tarjetas · Nota media = media de las valoraciones de los partidos jugados · MVP = mejor jugador del partido · P0 = porterías a cero · Estado: S = Sancionado, I = Lesionado, j = jornadas restantes
                 {!isMarketOpen &&
                   !isUserTeam &&
                   " · el mercado está cerrado, no puedes ofertar ahora"}

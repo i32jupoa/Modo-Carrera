@@ -42,6 +42,7 @@ const PRINCIPAL: Item[] = [
 
 const MI_EQUIPO: Item[] = [
   { title: "Plantilla", url: "/squad", icon: Users },
+  { title: "Estadísticas de equipo", url: "/team-stats", icon: Activity },
   { title: "Dirección de equipo", url: "/lineup", icon: ClipboardList },
   { title: "Lesiones", url: "/injuries", icon: Activity },
 ];

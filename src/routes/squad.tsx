@@ -160,9 +160,9 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
           >
             {p.OVR}
           </div>
-          <div className="rounded-lg border border-primary/30 bg-primary/10 px-2 py-1 text-center">
+          <div className="px-1 text-center">
             <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">POT</p>
-            <p className="scoreline text-sm font-black text-primary">{potential}</p>
+            <p className="scoreline text-sm font-black text-muted-foreground">{potential}</p>
           </div>
         </div>
         <div className="min-w-0 flex-1">
@@ -687,9 +687,9 @@ function SquadPage() {
                           >
                             {selected.OVR}
                           </div>
-                          <div className="rounded-lg border border-primary/30 bg-primary/10 px-2 py-1 text-center">
+                          <div className="px-1 text-center">
                             <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">POT</p>
-                            <p className="scoreline text-sm font-black text-primary">
+                            <p className="scoreline text-sm font-black text-muted-foreground">
                               {Math.max(selected.OVR, Number(selected.potential ?? selected.OVR))}
                             </p>
                           </div>
