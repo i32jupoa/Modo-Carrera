@@ -16,6 +16,7 @@ import {
   ensureStatsForLeague,
   squadForTeam,
   syncSquadFromRoster,
+  clubOfPlayer,
   type PlayerStats,
   type FcPlayer,
 } from "@/store/playersStore";
@@ -296,7 +297,10 @@ function TeamsPage() {
                   Jugadores
                 </div>
                 {playerResults.map((p) => {
-                  const club = getAllTeams().find((t) => t.name === p.Team);
+                  const realClubId = clubOfPlayer(String(p.ID));
+                  const club = realClubId
+                    ? teamById(realClubId)
+                    : getAllTeams().find((t) => t.name === p.Team);
                   return (
                     <button
                       key={p.ID}
@@ -312,7 +316,7 @@ function TeamsPage() {
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold truncate">{p.Name}</div>
                         <div className="text-[0.65rem] text-muted-foreground truncate">
-                          {p.Team}
+                          {club?.name ?? p.Team}
                         </div>
                       </div>
                       <span className="text-sm font-black scoreline">{p.OVR}</span>

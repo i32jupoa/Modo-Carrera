@@ -752,7 +752,7 @@ function TransfersPage() {
                               size={18}
                             />
                             <span className="text-[0.65rem] text-muted-foreground truncate">
-                              {p.Team}
+                              {club.name}
                             </span>
                           </div>
                         )}
@@ -859,7 +859,7 @@ function TransfersPage() {
           playerCard={target.card}
           ovr={target.OVR}
           age={target.Age}
-          clubName={target.Team}
+          clubName={target ? (teamById(clubOfPlayer(String(target.ID)) ?? TEAM_NAME_TO_ID[target.Team])?.name ?? target.Team) : ""}
           report={report}
           budget={budget}
           wageBudget={wageBudget}
