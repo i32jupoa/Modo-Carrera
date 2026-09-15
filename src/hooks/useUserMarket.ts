@@ -270,6 +270,65 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   );
 
   /**
+   * Aplica a la partida una salida ya cerrada por el motor: venta definitiva o
+   * cesión saliente.
+   *
+   * Clave: `flushWorldMoves()` se ejecuta SIEMPRE, incluso si `sellPlayer`
+   * rechaza la operación por sus propias reglas. El motor ya ha movido al
+   * jugador a su nuevo club, así que la plantilla del usuario tiene que
+   * reconciliarse con el índice del mercado en este mismo evento. Antes, un
+   * `sellPlayer` fallido cortaba la función antes del volcado y el traspaso no
+   * se veía hasta avanzar un día (las cesiones no pasaban por ahí, y por eso
+   * sí funcionaban al instante).
+   */
+  const applyUserExit = useCallback(
+    (result: {
+      ok: boolean;
+      reason?: string;
+      fee?: number;
+      record?: TransferRecord;
+    }) => {
+      const type = result.record?.type;
+      const isLoan = type === "loan" || type === "loan-option" || type === "loan-obligation";
+
+      if (!result.ok || result.fee === undefined || !result.record) {
+        flushWorldMoves();
+        syncBudget();
+        commit(undefined, result.reason ?? "La operación no se pudo cerrar.");
+        return;
+      }
+
+      if (isLoan) {
+        // El club sigue siendo el propietario, pero el jugador pasa a jugar en
+        // el club receptor: sale de tu plantilla hasta que termine la cesión.
+        flushWorldMoves();
+        syncBudget();
+        commit(`Cesión cerrada por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
+        return;
+      }
+
+      const store = usePlayersStore.getState();
+      const playerBeforeSale = store.getSimPlayer(result.record.playerId);
+      const previousWage = playerBeforeSale?.contract.wage ?? result.record.wage ?? 0;
+      const sold = store.sellPlayer(result.record.playerId, 0);
+      if (sold.ok) syncUserFinances(myTeamId!, result.fee, previousWage, true);
+
+      flushWorldMoves();
+      syncBudget();
+
+      // Solo es un error real si, después de reconciliar, el jugador sigue
+      // siendo tuyo en el motor.
+      const stillMine = getPlayer(result.record.playerId)?.clubId === myTeamId;
+      if (!sold.ok && stillMine) {
+        commit(undefined, sold.reason ?? "La venta no se pudo aplicar a tu plantilla.");
+        return;
+      }
+      commit(`Venta cerrada por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
+    },
+    [commit, myTeamId, syncBudget],
+  );
+
+  /**
    * Cierra el fichaje de forma atómica.
    *
    * El dinero lo mueve una sola vez el motor (que escribe en el presupuesto de
@@ -285,6 +344,21 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         return;
       }
       const store = usePlayersStore.getState();
+
+      // Una negociación de SALIDA (vendes tú) también puede llegar a la fase
+      // "ready" y mostrar el botón "Cerrar venta". Antes caía en la lógica de
+      // fichaje de abajo y se estrellaba contra "El jugador ya está en tu
+      // plantilla", dejando la operación a medias: el motor la cerraba más
+      // tarde y el jugador solo se iba al avanzar día.
+      if (deal.direction === "out") {
+        if (store.rosterIds.length <= 11) {
+          commit(undefined, "Debes mantener al menos 11 jugadores en la plantilla.");
+          return;
+        }
+        applyUserExit(finalizeUserDeal(dealId, currentDate));
+        return;
+      }
+
       const fee = deal.offer?.amount ?? 0;
       if (store.budget < fee) {
         commit(undefined, `Presupuesto insuficiente para cerrar el fichaje.`);
@@ -334,7 +408,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       syncBudget();
       commit(`Fichaje cerrado por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
     },
-    [currentDate, commit, myTeamId, syncBudget],
+    [currentDate, commit, myTeamId, syncBudget, applyUserExit],
   );
 
   const abandonDeal = useCallback(
@@ -345,6 +419,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     [currentDate, commit],
   );
 
+
   /**
    * Acepta la venta de forma atómica: se valida la plantilla antes de cerrar y
    * el ingreso lo aplica el motor una sola vez (precio 0 en el store).
@@ -352,8 +427,6 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const acceptIncoming = useCallback(
     (dealId: string) => {
       const store = usePlayersStore.getState();
-      const pendingDeal = listUserDeals().find((d) => d.id === dealId);
-      const isLoan = pendingDeal?.offer?.type === "loan" || pendingDeal?.offer?.type === "loan-option" || pendingDeal?.offer?.type === "loan-obligation";
       // Tanto una venta definitiva como una cesión de salida liberan una
       // plaza de la plantilla del usuario. La diferencia es que en la cesión
       // el club sigue siendo el propietario y el jugador regresará al terminar.
@@ -366,35 +439,9 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit();
         return;
       }
-      if (!result.ok || result.fee === undefined || !result.record) {
-        commit(undefined, result.reason ?? (isLoan ? "La cesión no se pudo cerrar." : "La venta no se pudo cerrar."));
-        return;
-      }
-      if (
-        result.record.type === "loan" ||
-        result.record.type === "loan-option" ||
-        result.record.type === "loan-obligation"
-      ) {
-        // Cesión de salida: el jugador no abandona la plantilla del propietario.
-        // El motor ya ha registrado la parte de salario que asume el receptor.
-        flushWorldMoves();
-        syncBudget();
-        commit(`Cesión cerrada por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
-        return;
-      }
-      const playerBeforeSale = store.getSimPlayer(result.record.playerId);
-      const previousWage = playerBeforeSale?.contract.wage ?? result.record.wage ?? 0;
-      const sold = store.sellPlayer(result.record.playerId, 0);
-      if (!sold.ok) {
-        commit(undefined, sold.reason ?? "La venta no se pudo aplicar a tu plantilla.");
-        return;
-      }
-      syncUserFinances(myTeamId!, result.fee, previousWage, true);
-      flushWorldMoves();
-      syncBudget();
-      commit(`Venta cerrada por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
+      applyUserExit(result);
     },
-    [currentDate, commit, myTeamId, syncBudget],
+    [currentDate, commit, applyUserExit],
   );
   const counterIncoming = useCallback(
     (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => {

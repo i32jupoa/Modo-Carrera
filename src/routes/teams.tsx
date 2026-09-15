@@ -15,6 +15,7 @@ import {
   usePlayersStore,
   ensureStatsForLeague,
   squadForTeam,
+  syncSquadFromRoster,
   type PlayerStats,
   type FcPlayer,
 } from "@/store/playersStore";
@@ -158,10 +159,20 @@ function TeamsPage() {
   /* ------------------------------------------------- equipo seleccionado */
 
   const clubOverrides = usePlayersStore((s: any) => s.clubOverrides);
+  const myTeamId = usePlayersStore((s: any) => s.myTeamId);
+  const myRosterIds = usePlayersStore((s: any) => s.rosterIds);
+  // `clubOverrides` y `rosterIds` DEBEN estar en las dependencias: son los que
+  // cambian al cerrar una venta o una cesión. Sin ellos el `useMemo` devolvía
+  // la plantilla cacheada y el jugador seguía apareciendo en la ficha del
+  // equipo aunque ya se hubiera marchado.
   const teamSquad = useMemo(() => {
     if (!selectedTeam) return [];
+    // Para tu propio club manda siempre el roster real de la partida.
+    if (myTeamId && selectedTeam.id === myTeamId && myRosterIds?.length) {
+      return syncSquadFromRoster(myRosterIds);
+    }
     return squadForTeam(selectedTeam.id);
-  }, [selectedTeam]);
+  }, [selectedTeam, clubOverrides, myTeamId, myRosterIds]);
 
   const isUserTeam = !!save && selectedTeam?.id === save.myTeamId;
 

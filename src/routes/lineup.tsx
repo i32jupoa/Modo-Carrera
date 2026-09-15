@@ -84,6 +84,12 @@ function LineupPage() {
   const search = useSearch({ from: "/lineup" });
   const { ready, loading } = usePlayersReady();
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
+  // Suscripciones reactivas: `getSimSquad` es una referencia estable, así que
+  // por sí sola nunca vuelve a ejecutar el `useMemo` de abajo. Al vender o
+  // ceder a un jugador cambian `rosterIds` y `clubOverrides`, y es eso lo que
+  // debe reconstruir la plantilla de Dirección de equipo en el acto.
+  const rosterIds = usePlayersStore((s) => s.rosterIds);
+  const clubOverrides = usePlayersStore((s) => s.clubOverrides);
   const [save, setSave] = useState<SaveGame | null>(null);
   const [selectedFormation, setSelectedFormation] = useState<FormationName>("Táctica 4-3-3");
   const [startingXI, setStartingXI] = useState<string[]>([]);
@@ -146,9 +152,40 @@ function LineupPage() {
 
   const squad = useMemo(
     () => (save && ready ? getSimSquad(save.myTeamId) : []),
-    [save, ready, getSimSquad],
+    [save, ready, getSimSquad, rosterIds, clubOverrides],
   );
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
+
+  // Sincronización inmediata de Dirección de equipo con la plantilla real.
+  // Una venta/cesión cambia `squad` en el store en el mismo evento que cierra
+  // la operación; el XI y el banquillo locales también deben eliminar al
+  // futbolista en ese mismo render, sin esperar a avanzar días. El hueco que
+  // deja en el once queda libre a propósito.
+  useEffect(() => {
+    if (liveMode || !save || !ready || squad.length === 0) return;
+    const available = new Set(squad.map((player) => player.id));
+
+    // Un jugador que ya no está en la plantilla deja su hueco VACÍO en la
+    // pizarra: no se rellena solo con otro futbolista. El slot se conserva
+    // como cadena vacía para no descolocar el resto del dibujo, y el usuario
+    // decide a quién pone ahí.
+    const nextXI = startingXI.map((id) => (id && available.has(id) ? id : ""));
+
+    const inXI = new Set(nextXI.filter((id) => id));
+    const nextBench = bench.filter((id) => available.has(id) && !inXI.has(id));
+    const usedAnywhere = new Set<string>([...inXI, ...nextBench]);
+    for (const player of squad) {
+      if (usedAnywhere.has(player.id)) continue;
+      nextBench.push(player.id);
+      usedAnywhere.add(player.id);
+    }
+
+    const sameArray = (a: string[], b: string[]) =>
+      a.length === b.length && a.every((id, i) => id === b[i]);
+
+    if (!sameArray(nextXI, startingXI)) setStartingXI(nextXI);
+    if (!sameArray(nextBench, bench)) setBench(nextBench);
+  }, [squad, liveMode, save, ready, startingXI, bench]);
 
   useEffect(() => {
     if (liveMode) return;

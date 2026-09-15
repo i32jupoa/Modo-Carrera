@@ -15,8 +15,8 @@
  * `set`, para no provocar un render por fichaje durante la simulación diaria.
  */
 
-import { usePlayersStore } from "@/store/playersStore";
-import { getMarketIndex, getPlayer, reassignPlayerClub, setClubMoveListener } from "./PlayerIndex";
+import { syncSquadFromRoster, usePlayersStore } from "@/store/playersStore";
+import { getClubWageBill, getMarketIndex, getPlayer, reassignPlayerClub, setClubMoveListener } from "./PlayerIndex";
 import { teamById } from "@/data/teams";
 
 /** Movimiento pendiente de volcar al store. */
@@ -81,10 +81,20 @@ export function syncUserLoanRoster(): void {
   });
 
   if (changedRoster || changedLoans) {
+    const nextRosterIds = [...nextRoster];
+    const nextWageBill = getClubWageBill(myTeamId);
+    const currentWageBudget = usePlayersStore.getState().wageBudget || 0;
+    // La plantilla visible debe derivarse del roster QUE ESTAMOS ESCRIBIENDO.
+    // Leerla del store antes del `setState` devolvía la plantilla anterior
+    // (el store todavía tenía los `rosterIds` viejos), así que un jugador
+    // vendido o cedido seguía apareciendo hasta que algo más forzaba un
+    // recálculo. Ese era el origen de "lo cedo y sigue en mi plantilla".
     usePlayersStore.setState({
-      rosterIds: [...nextRoster],
+      rosterIds: nextRosterIds,
       loanedPlayers: Object.fromEntries(active),
-      squad: usePlayersStore.getState().getFcSquadByTeamId(myTeamId),
+      squad: syncSquadFromRoster(nextRosterIds),
+      wageBill: nextWageBill,
+      wageBudget: Math.max(currentWageBudget, nextWageBill),
     });
   }
 }

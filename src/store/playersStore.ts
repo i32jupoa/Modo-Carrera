@@ -606,7 +606,7 @@ export const POS_LABEL_ES: Record<Position, string> = {
   FWD: "DEL",
 };
 
-function syncSquadFromRoster(rosterIds: string[]): FcPlayer[] {
+export function syncSquadFromRoster(rosterIds: string[]): FcPlayer[] {
   return rosterIds
 
     .map((id) => FC_BY_ID.get(id))
@@ -1774,10 +1774,15 @@ export const usePlayersStore = create<PlayersState>()(
         // respeta; si la venta se hace fuera del mercado, queda sin equipo.
         if (clubOfPlayer(playerId) === state.myTeamId) setPlayerClub(playerId, null);
 
+        const nextWageBill = getClubWageBill(state.myTeamId);
+        const nextWageBudget = Math.max(state.wageBudget || 0, nextWageBill);
+
         set({
           clubOverrides: { ...getClubOverrides() },
 
           budget: state.budget + price,
+          wageBill: nextWageBill,
+          wageBudget: nextWageBudget,
 
           rosterIds,
 
