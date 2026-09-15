@@ -4,6 +4,7 @@ import { loadSave, saveSave } from "@/lib/store";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace";
+import { faceUrl } from "@/lib/playerFaces";
 import {
   usePlayersStore,
   type FcPlayer,
@@ -30,7 +31,6 @@ import {
   Shield,
   CalendarDays,
   Banknote,
-  ArrowUpRight,
   CircleDollarSign,
   Handshake,
 } from "lucide-react";
@@ -135,6 +135,7 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
   const injured = (stats?.injuredUntil ?? 0) > 0;
   const contract = getPlayer(String(p.ID))?.contract;
   const wage = contract?.wage ?? getPlayerAnnualWage(String(p.ID));
+  const potential = Math.max(p.OVR, Number(p.potential ?? p.OVR));
 
   return (
     <button
@@ -151,12 +152,18 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
           size={54}
           className="bg-secondary/40"
         />
-        <div
-          className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl border scoreline text-lg font-black ${ovrTone(
-            p.OVR,
-          )}`}
-        >
-          {p.OVR}
+        <div className="flex shrink-0 flex-col gap-1">
+          <div
+            className={`grid h-10 w-12 place-items-center rounded-xl border scoreline text-lg font-black ${ovrTone(
+              p.OVR,
+            )}`}
+          >
+            {p.OVR}
+          </div>
+          <div className="rounded-lg border border-primary/30 bg-primary/10 px-2 py-1 text-center">
+            <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">POT</p>
+            <p className="scoreline text-sm font-black text-primary">{potential}</p>
+          </div>
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -503,11 +510,8 @@ function SquadPage() {
     ? (squad.reduce((s, p) => s + p.OVR, 0) / squad.length).toFixed(1)
     : "—";
   const totalValue = squad.reduce((s, p) => s + marketValueEuros(p), 0);
-  const realWageBill = squad.reduce((sum, p) => sum + getPlayerAnnualWage(String(p.ID)), 0);
-  const realWageBudget = Math.max(wageBudget || 0, realWageBill);
-  const wageUsage = realWageBudget > 0 ? Math.min(100, (realWageBill / realWageBudget) * 100) : 0;
-  const totalEconomicBudget = budget + realWageBudget;
-  const salaryShare = totalEconomicBudget > 0 ? (realWageBudget / totalEconomicBudget) * 100 : 0;
+  const currentWageBill = squad.reduce((sum, p) => sum + getPlayerAnnualWage(String(p.ID)), 0);
+  const effectiveWageBudget = Math.max(wageBudget || 0, currentWageBill);
 
   const selected = selectedId ? (squad.find((p) => String(p.ID) === selectedId) ?? null) : null;
   const selectedStats = selected
@@ -597,41 +601,6 @@ function SquadPage() {
         </div>
       </div>
 
-      <div className="mb-6 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
-        <div className="rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/10 via-card/70 to-card/50 p-4 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted-foreground">Masa salarial real</p>
-              <p className="mt-1 text-xl font-black">{formatEuro(realWageBill)} <span className="text-xs font-semibold text-muted-foreground">/ año</span></p>
-              <p className="mt-1 text-xs text-muted-foreground">Suma exacta de las fichas de todos los jugadores de tu plantilla.</p>
-            </div>
-            <div className="text-right">
-              <p className="text-[0.62rem] font-bold uppercase tracking-wider text-muted-foreground">Presupuesto salarial</p>
-              <p className="mt-1 text-lg font-black text-primary">{formatEuro(realWageBudget)}</p>
-              <p className={`text-[0.6rem] font-black ${salaryShare >= 33 ? "text-amber-300" : "text-emerald-300"}`}>
-                {salaryShare.toFixed(1)}% del total
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-muted/50">
-            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${wageUsage}%` }} />
-          </div>
-          <div className="mt-2 flex items-center justify-between text-[0.6rem] font-semibold text-muted-foreground">
-            <span>Comprometido: {formatEuro(realWageBill)}</span>
-            <span>Máximo de asignación: 50%</span>
-          </div>
-        </div>
-        <div className="rounded-2xl border border-border/60 bg-card/70 p-4">
-          <div className="flex items-center gap-2 text-xs font-black">
-            <ArrowUpRight className="h-4 w-4 text-primary" />
-            Gestiona cada contrato desde la ficha del jugador
-          </div>
-          <p className="mt-2 text-xs leading-5 text-muted-foreground">
-            Renueva con salario, duración, cláusula y prima. Para vender, pon al jugador en el mercado y recibirás ofertas en la sección correspondiente.
-          </p>
-        </div>
-      </div>
-
       {squad.length === 0 ? (
         <div className="panel p-6">
           <p className="text-sm text-muted-foreground">
@@ -701,10 +670,29 @@ function SquadPage() {
                     </button>
                     <DialogHeader className="space-y-3">
                       <div className="flex items-center gap-4">
-                        <div
-                          className={`grid h-16 w-16 place-items-center rounded-xl border scoreline text-2xl font-black ${ovrTone(selected.OVR)}`}
-                        >
-                          {selected.OVR}
+                        <div className="w-20 shrink-0 overflow-hidden rounded-xl border border-border/60 bg-secondary/50">
+                          {faceUrl(String(selected.ID), selected.card) ? (
+                            <img
+                              src={faceUrl(String(selected.ID), selected.card)}
+                              alt={selected.Name}
+                              className="h-24 w-full object-cover object-top"
+                            />
+                          ) : (
+                            <div className="grid h-24 place-items-center text-xs text-muted-foreground">Sin foto</div>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 flex-col gap-2">
+                          <div
+                            className={`grid h-12 w-16 place-items-center rounded-xl border scoreline text-xl font-black ${ovrTone(selected.OVR)}`}
+                          >
+                            {selected.OVR}
+                          </div>
+                          <div className="rounded-lg border border-primary/30 bg-primary/10 px-2 py-1 text-center">
+                            <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">POT</p>
+                            <p className="scoreline text-sm font-black text-primary">
+                              {Math.max(selected.OVR, Number(selected.potential ?? selected.OVR))}
+                            </p>
+                          </div>
                         </div>
                         <div className="min-w-0">
                           <DialogTitle className="truncate text-xl font-black">
@@ -884,8 +872,8 @@ function SquadPage() {
           <RenewalModal
             p={renewalPlayer}
             budget={budget}
-            wageBill={realWageBill}
-            wageBudget={realWageBudget}
+            wageBill={currentWageBill}
+            wageBudget={effectiveWageBudget}
             onClose={() => setRenewalPlayerId(null)}
             onConfirm={handleRenewSubmit}
           />
