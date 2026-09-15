@@ -397,6 +397,15 @@ function maybeInjury(
  * Goals are not uniformly distributed across a match: there are more goals in
  * the second half and a clear spike in the closing minutes.
  */
+function seededNoise(value: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < value.length; i++) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h % 10000) / 10000;
+}
+
 function goalMinute(from = 1, to = 90): number {
   const span = to - from + 1;
   const r = rand();
@@ -412,6 +421,7 @@ export function generateTacticalSubs(
   bench: Player[],
   team: "home" | "away",
   redCardedPlayers: Map<string, number> = new Map(),
+  context?: { teamStyle?: "defensive" | "balanced" | "offensive"; teamStrength?: number; opponentStrength?: number; isHome?: boolean; seed?: string },
 ): SubstitutionEvent[] {
   if (bench.length === 0 || xi.length === 0) return [];
 
@@ -487,15 +497,28 @@ export function generateTacticalSubs(
   const usedOut = new Set<string>();
   const usedIn = new Set<string>();
   
-  // Tired/weaker starters tend to come off first.
-  const outPool = [...availableOut].sort((a, b) => a.rating - b.rating);
+  // No se repite siempre el mismo orden de cambios: la prioridad combina
+  // media, perfil táctico, contexto del rival y una semilla estable por partido.
+  const seed = context?.seed ?? `${team}:${xi.map((p) => p.id).join(",")}:${bench.map((p) => p.id).join(",")}`;
+  const style = context?.teamStyle ?? "balanced";
+  const strengthDiff = (context?.teamStrength ?? 75) - (context?.opponentStrength ?? 75);
+
+  const outPool = [...availableOut].sort((a, b) => {
+    const impactA = style === "offensive" && isAttacking(a.positions) ? 2 : style === "defensive" && isDefensive(a.positions) ? 1.5 : 0;
+    const impactB = style === "offensive" && isAttacking(b.positions) ? 2 : style === "defensive" && isDefensive(b.positions) ? 1.5 : 0;
+    const fatigueA = (Math.max(0, 90 - a.rating) / 10) + (seededNoise(`${seed}:out:${a.id}`) * 2);
+    const fatigueB = (Math.max(0, 90 - b.rating) / 10) + (seededNoise(`${seed}:out:${b.id}`) * 2);
+    const contextA = strengthDiff > 6 && style === "offensive" && isAttacking(a.positions) ? 0.6 : impactA;
+    const contextB = strengthDiff > 6 && style === "offensive" && isAttacking(b.positions) ? 0.6 : impactB;
+    return (a.rating - fatigueA - contextA) - (b.rating - fatigueB - contextB);
+  });
   
   for (let windowIdx = 0; windowIdx < numWindows; windowIdx++) {
     const minute = windowMinutes[windowIdx];
     const numSubsInWindow = subsPerWindow[windowIdx];
     
     for (let i = 0; i < numSubsInWindow; i++) {
-      if (!addSub(subs, minute, team, outPool, availableIn, usedOut, usedIn)) break;
+      if (!addSub(subs, minute, team, outPool, availableIn, usedOut, usedIn, { style, strengthDiff, seed, windowIdx, changeIndex: i })) break;
     }
   }
 
@@ -510,8 +533,13 @@ function addSub(
   availableIn: Player[],
   usedOut: Set<string>,
   usedIn: Set<string>,
+  context?: { style: "defensive" | "balanced" | "offensive"; strengthDiff: number; seed: string; windowIdx: number; changeIndex: number },
 ): boolean {
-  const playerOut = outPool.find((p) => !usedOut.has(p.id));
+  const playerOut = outPool.filter((p) => !usedOut.has(p.id)).sort((a, b) => {
+    const pa = seededNoise(`${context?.seed ?? ""}:outpick:${context?.windowIdx}:${context?.changeIndex}:${a.id}`);
+    const pb = seededNoise(`${context?.seed ?? ""}:outpick:${context?.windowIdx}:${context?.changeIndex}:${b.id}`);
+    return (b.rating * 0.08 + pb) - (a.rating * 0.08 + pa);
+  })[0];
   if (!playerOut) return false;
   
   const candidatesIn = availableIn.filter((p) => !usedIn.has(p.id));
@@ -521,7 +549,20 @@ function addSub(
     p.positions.some((pos) => playerOut.positions.includes(pos)),
   );
   const pool = samePos.length > 0 ? samePos : candidatesIn;
-  const playerIn = pool.slice().sort((a, b) => b.rating - a.rating)[0];
+  const playerIn = pool.slice().sort((a, b) => {
+    const score = (p: Player) => {
+      const noise = seededNoise(`${context?.seed ?? ""}:inpick:${context?.windowIdx}:${context?.changeIndex}:${p.id}`) * 3;
+      const roleBoost =
+        context?.style === "offensive" && isAttacking(p.positions)
+          ? 2
+          : context?.style === "defensive" && isDefensive(p.positions)
+            ? 1.5
+            : 0;
+      const underdogBoost = context?.strengthDiff < -6 && isAttacking(p.positions) ? 1.5 : 0;
+      return p.rating + noise + roleBoost + underdogBoost;
+    };
+    return score(b) - score(a);
+  })[0];
 
   usedOut.add(playerOut.id);
   usedIn.add(playerIn.id);
@@ -670,14 +711,28 @@ export function simulateMatchFast(
 ): SimResult {
   const homeBench = opts.homeBench ?? [];
   const awayBench = opts.awayBench ?? [];
+  const homeTactics = opts.homeTactics ?? null;
+  const awayTactics = opts.awayTactics ?? null;
   const homeFormation = opts.homeFormation ?? "Táctica 4-4-2";
   const awayFormation = opts.awayFormation ?? "Táctica 4-4-2";
 
   // Generate substitutions before any match event so every later event uses
   // the correct players actually on the pitch.
   const substitutions = [
-    ...generateTacticalSubs(homeXI, homeBench, "home"),
-    ...generateTacticalSubs(awayXI, awayBench, "away"),
+    ...generateTacticalSubs(homeXI, homeBench, "home", new Map(), {
+      teamStyle: homeTactics?.style,
+      teamStrength: (homeXI.reduce((s, p) => s + p.rating, 0) / Math.max(1, homeXI.length)),
+      opponentStrength: (awayXI.reduce((s, p) => s + p.rating, 0) / Math.max(1, awayXI.length)),
+      isHome: true,
+      seed: `home:${home.name}:${away.name}:${homeXI.map((p) => p.id).join(",")}:${awayXI.map((p) => p.id).join(",")}`,
+    }),
+    ...generateTacticalSubs(awayXI, awayBench, "away", new Map(), {
+      teamStyle: awayTactics?.style,
+      teamStrength: (awayXI.reduce((s, p) => s + p.rating, 0) / Math.max(1, awayXI.length)),
+      opponentStrength: (homeXI.reduce((s, p) => s + p.rating, 0) / Math.max(1, homeXI.length)),
+      isHome: false,
+      seed: `away:${home.name}:${away.name}:${homeXI.map((p) => p.id).join(",")}:${awayXI.map((p) => p.id).join(",")}`,
+    }),
   ].sort((a, b) => a.minute - b.minute);
 
   const { lh, la } = expectedGoals(home, away, homeXI, awayXI, opts.homeTactics, opts.awayTactics);
@@ -892,8 +947,20 @@ export function simulateMatch(
   // the match timeline authoritative: once a player leaves, he is no longer
   // eligible for goals, assists, cards, injuries or highlights.
   let substitutions = [
-    ...generateTacticalSubs(homeXI, homeBench, "home"),
-    ...generateTacticalSubs(awayXI, awayBench, "away"),
+    ...generateTacticalSubs(homeXI, homeBench, "home", new Map(), {
+      teamStyle: homeTactics?.style,
+      teamStrength: (homeXI.reduce((s, p) => s + p.rating, 0) / Math.max(1, homeXI.length)),
+      opponentStrength: (awayXI.reduce((s, p) => s + p.rating, 0) / Math.max(1, awayXI.length)),
+      isHome: true,
+      seed: `home:${home.name}:${away.name}:${homeXI.map((p) => p.id).join(",")}:${awayXI.map((p) => p.id).join(",")}`,
+    }),
+    ...generateTacticalSubs(awayXI, awayBench, "away", new Map(), {
+      teamStyle: awayTactics?.style,
+      teamStrength: (awayXI.reduce((s, p) => s + p.rating, 0) / Math.max(1, awayXI.length)),
+      opponentStrength: (homeXI.reduce((s, p) => s + p.rating, 0) / Math.max(1, homeXI.length)),
+      isHome: false,
+      seed: `away:${home.name}:${away.name}:${homeXI.map((p) => p.id).join(",")}:${awayXI.map((p) => p.id).join(",")}`,
+    }),
   ].sort((a, b) => a.minute - b.minute);
 
   /** Designated taker from the tactics screen, if he is on the pitch. */

@@ -253,38 +253,228 @@ function pickXIForFormation(
   return { ids: slotIds.filter((id): id is string => !!id), score };
 }
 
-// Genera el once de un equipo CPU eligiendo, entre el catálogo de
-// formaciones típicas de su estilo de juego (ofensivo / equilibrado /
-// defensivo — el mismo catálogo que el 11 ideal de /equipos), la que mejor
-// encaje con los jugadores realmente disponibles en ese momento (se excluyen
-// lesionados y sancionados vía `unavailable`). Así, si un titular habitual
-// no puede jugar, tanto la alineación como la táctica se adaptan a lo que
-// queda en la plantilla, en vez de forzar siempre el mismo dibujo.
+// Contexto del próximo partido para que la IA pueda variar XI y dibujo con
+// sentido: rival, local/visitante y competición. Se busca el primer partido
+// todavía sin resultado en el calendario real de la partida.
+type CpuFixtureContext = {
+  fixtureId: string;
+  opponentId: string;
+  isHome: boolean;
+  competition: "league" | "cup" | "ucl";
+  matchday: number;
+};
+
+function hashString(value: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < value.length; i++) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function seeded01(seed: string): number {
+  return (hashString(seed) % 100000) / 100000;
+}
+
+function findNextCpuFixture(save: SaveGame, teamId: string): CpuFixtureContext | null {
+  const candidates: { fixture: Fixture; competition: CpuFixtureContext["competition"] }[] = [];
+  for (const list of Object.values(save.fixtures ?? {})) {
+    for (const fixture of (list ?? []) as Fixture[]) {
+      if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
+        candidates.push({ fixture, competition: "league" });
+      }
+    }
+  }
+  for (const list of Object.values(save.cupFixtures ?? {})) {
+    for (const fixture of (list ?? []) as Fixture[]) {
+      if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
+        candidates.push({ fixture, competition: "cup" });
+      }
+    }
+  }
+  for (const fixture of ((save.uclFixtures ?? []) as Fixture[])) {
+    if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
+      candidates.push({ fixture, competition: "ucl" });
+    }
+  }
+  for (const fixture of ((save.ucl?.fixtures ?? []) as Fixture[])) {
+    if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
+      candidates.push({ fixture, competition: "ucl" });
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => {
+    const aTime = Date.parse((a.fixture as any).date ?? "") || 0;
+    const bTime = Date.parse((b.fixture as any).date ?? "") || 0;
+    if (aTime !== bTime) return aTime - bTime;
+    return ((a.fixture as any).matchday ?? 0) - ((b.fixture as any).matchday ?? 0);
+  });
+
+  const { fixture, competition } = candidates[0];
+  return {
+    fixtureId: fixture.id,
+    opponentId: fixture.homeId === teamId ? fixture.awayId : fixture.homeId,
+    isHome: fixture.homeId === teamId,
+    competition,
+    matchday: fixture.matchday,
+  };
+}
+
+function squadStrengthForSelection(squad: Player[]): number {
+  return squad
+    .slice()
+    .sort((a, b) => b.rating - a.rating)
+    .slice(0, 11)
+    .reduce((sum, p) => sum + p.rating, 0) / Math.max(1, Math.min(11, squad.length));
+}
+
+/**
+ * Coloca 11 jugadores disponibles en una formación. Con rotationLevel > 0
+ * introduce una rotación controlada y determinista: las estrellas siguen
+ * teniendo más opciones de jugar, pero ante rivales inferiores o partidos de
+ * menor prioridad pueden descansar y entrar otros jugadores de la plantilla.
+ */
+function pickXIForFormationWithRotation(
+  squad: Player[],
+  unavailable: Set<string>,
+  formation: FormationName,
+  rotationLevel = 0,
+  seed = "",
+): { ids: string[]; score: number } {
+  const coords = FORMATION_COORDINATES[formation];
+  const slotKeys = Object.keys(coords);
+  const available = squad.filter((p) => !unavailable.has(p.id));
+  const rankMap = new Map(
+    [...available].sort((a, b) => b.rating - a.rating).map((p, i) => [p.id, i]),
+  );
+  const used = new Set<string>();
+  const slotIds: (string | null)[] = new Array(slotKeys.length).fill(null);
+  let score = 0;
+
+  slotKeys.forEach((key, idx) => {
+    const required = slotPosCode(key);
+    const candidates = available
+      .filter((p) => !used.has(p.id))
+      .map((p) => {
+        const natural = isNaturalFor(p.positions, required);
+        const can = canPlayPosition(p.positions, required);
+        const rank = rankMap.get(p.id) ?? 99;
+        const noise = (seeded01(`${seed}:xi:${formation}:${key}:${p.id}`) - 0.5) * (rotationLevel * 7);
+        const eliteRest =
+          rotationLevel > 0 &&
+          rank < 8 &&
+          seeded01(`${seed}:rest:${p.id}`) < rotationLevel * 0.58
+            ? (8 - rank) * rotationLevel
+            : 0;
+        const positionalPenalty = natural ? 0 : 5;
+        return {
+          p,
+          natural,
+          can,
+          score: p.rating + noise - positionalPenalty - eliteRest,
+        };
+      })
+      .filter((c) => c.can)
+      .sort((a, b) => b.score - a.score || b.p.rating - a.p.rating);
+
+    if (candidates.length > 0) {
+      const pick = candidates[0];
+      used.add(pick.p.id);
+      slotIds[idx] = pick.p.id;
+      score += pick.p.rating - (pick.natural ? 0 : 5);
+    } else {
+      score -= 40;
+    }
+  });
+
+  if (slotIds.some((id) => id === null)) {
+    const leftovers = available
+      .filter((p) => !used.has(p.id))
+      .sort((a, b) => b.rating - a.rating);
+    for (let i = 0; i < slotIds.length; i++) {
+      if (slotIds[i] === null && leftovers.length > 0) {
+        const p = leftovers.shift()!;
+        slotIds[i] = p.id;
+        used.add(p.id);
+      }
+    }
+  }
+
+  return { ids: slotIds.filter((id): id is string => !!id), score };
+}
+
+// Genera el once de un equipo CPU respetando su estilo, pero variando de forma
+// controlada tanto la formación como el XI. Cada club tiene una formación
+// favorita (la guardada en save.formations); esa favorita tiene más peso, pero
+// no se usa obligatoriamente todos los partidos.
 function generateCPUXI(
   squad: Player[],
   unavailable: Set<string>,
   team: Team,
   forcedFormation?: FormationName,
+  rotationSeed = "",
+  context: CpuFixtureContext | null = null,
 ): { ids: string[]; formation: FormationName } {
-  if (forcedFormation) {
-    const { ids } = pickXIForFormation(squad, unavailable, forcedFormation);
-    return { ids, formation: forcedFormation };
-  }
-
   const { style } = getTeamStyle(team);
   const candidateFormations = formationsForStyle(style);
 
-  let best: { ids: string[]; formation: FormationName; score: number } | null = null;
-  for (const formation of candidateFormations) {
-    const picked = pickXIForFormation(squad, unavailable, formation);
-    const fiveBackBonus = FIVE_DEFENDER_TEAMS.has(team.name) && formation.includes("5-") ? 12 : 0;
-    const score = picked.score + fiveBackBonus;
-    if (!best || score > best.score) {
-      best = { ids: picked.ids, formation, score };
+  const ranked = candidateFormations
+    .map((formation) => {
+      const picked = pickXIForFormationWithRotation(squad, unavailable, formation, 0, rotationSeed);
+      const fiveBackBonus = FIVE_DEFENDER_TEAMS.has(team.name) && formation.includes("5-") ? 12 : 0;
+      return { formation, ids: picked.ids, score: picked.score + fiveBackBonus };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const favorite = forcedFormation || ranked[0]?.formation || "Táctica 4-4-2";
+  const alternatives = candidateFormations.filter((f) => f !== favorite);
+
+  let formation = favorite;
+  if (!forcedFormation && alternatives.length > 0) {
+    const favoriteChance = context?.competition === "ucl" ? 0.82 : context?.competition === "cup" ? 0.72 : 0.64;
+    const strength = squadStrengthForSelection(squad);
+    const opponent = context?.opponentId ? teamById(context.opponentId) : null;
+    const opponentSquad = opponent ? usePlayersStore.getState().getSimSquad(opponent.id) : [];
+    const oppStrength = opponentSquad.length ? squadStrengthForSelection(opponentSquad) : strength;
+    const strengthDiff = strength - oppStrength;
+    const adjustedFavoriteChance = Math.max(
+      0.5,
+      Math.min(0.9, favoriteChance + (strengthDiff > 7 ? 0.08 : strengthDiff < -7 ? 0.1 : 0)),
+    );
+
+    if (seeded01(`${rotationSeed}:formation`) >= adjustedFavoriteChance) {
+      const viable = ranked.filter((r) => r.formation !== favorite).slice(0, Math.min(3, ranked.length - 1));
+      if (viable.length > 0) {
+        formation = viable[Math.floor(seeded01(`${rotationSeed}:formation:choice`) * viable.length)].formation;
+      } else {
+        formation = alternatives[Math.floor(seeded01(`${rotationSeed}:formation:fallback`) * alternatives.length)];
+      }
     }
   }
 
-  return { ids: best!.ids, formation: best!.formation };
+  const strength = squadStrengthForSelection(squad);
+  const opponent = context?.opponentId ? teamById(context.opponentId) : null;
+  const opponentSquad = opponent ? usePlayersStore.getState().getSimSquad(opponent.id) : [];
+  const oppStrength = opponentSquad.length ? squadStrengthForSelection(opponentSquad) : strength;
+  const strengthDiff = strength - oppStrength;
+
+  // Rotación realista: rival claramente inferior = más posibilidades de dar
+  // descanso a una estrella; Champions/partidos de copa importantes = menos.
+  let rotationLevel = Math.max(0, Math.min(0.62, (strengthDiff - 3) / 18));
+  if (context?.competition === "ucl") rotationLevel *= 0.35;
+  else if (context?.competition === "cup") rotationLevel *= 0.65;
+  if (context?.isHome) rotationLevel *= 0.92;
+
+  const picked = pickXIForFormationWithRotation(
+    squad,
+    unavailable,
+    formation,
+    rotationLevel,
+    `${rotationSeed}:${formation}`,
+  );
+  return { ids: picked.ids, formation };
 }
 
 // Helper to determine winner of a cup match (considering extra time and penalties)
@@ -387,9 +577,11 @@ export function fixCupDraws(save: SaveGame): SaveGame {
 
         if (!home || !away) continue;
 
-        const homeXI = getStarters(next, f.homeId);
+        const homeData = getStartersWithFormation(next, f.homeId, { fixture: { fixtureId: f.id, opponentId: f.awayId, isHome: true, competition: "cup", matchday: f.matchday } });
 
-        const awayXI = getStarters(next, f.awayId);
+        const awayData = getStartersWithFormation(next, f.awayId, { fixture: { fixtureId: f.id, opponentId: f.homeId, isHome: false, competition: "cup", matchday: f.matchday } });
+        const homeXI = homeData.players;
+        const awayXI = awayData.players;
 
         // Simulate extra time
 
@@ -1070,7 +1262,7 @@ function decreaseSuspensions(save: SaveGame): SaveGame {
 export function getStartersWithFormation(
   save: SaveGame,
   teamId: string,
-  options?: { randomFormation?: boolean },
+  options?: { randomFormation?: boolean; fixture?: CpuFixtureContext | null },
 ): { players: Player[]; formation: FormationName } {
   const store = usePlayersStore.getState();
 
@@ -1104,16 +1296,29 @@ export function getStartersWithFormation(
   const isUserTeam = teamId === save.myTeamId;
 
   if (!isUserTeam || lineup.length === 0 || options?.randomFormation) {
-    const savedFormation = save.formations[teamId] as FormationName | undefined;
-    const existingFormation = options?.randomFormation
-      ? undefined
-      : FIVE_DEFENDER_TEAMS.has(team.name) && !savedFormation?.includes("5-")
-        ? undefined
-        : savedFormation;
+    // `save.formations[teamId]` representa la formación FAVORITA del club,
+    // no una formación obligatoria. En cada partido la IA puede escoger otra
+    // dentro del catálogo de su estilo, manteniendo la favorita como opción
+    // con mayor probabilidad.
+    const fixtureContext = options?.fixture ?? findNextCpuFixture(save, teamId);
+    const rotationSeed = `${save.season}:${teamId}:${fixtureContext?.fixtureId ?? save.currentMatchday[lg] ?? 0}`;
+    const { ids: autoIds, formation } = generateCPUXI(
+      squad,
+      unavailable,
+      team,
+      undefined,
+      rotationSeed + (options?.randomFormation ? ":preview" : ""),
+      fixtureContext,
+    );
 
-    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, existingFormation);
-
-    if (!save.formations[teamId]) save.formations[teamId] = formation;
+    if (!save.formations[teamId]) {
+      // Guardar como favorita la mejor que encaja con la plantilla; la
+      // selección de cada partido no sobreescribe esta preferencia.
+      const favoriteCandidate = formationsForStyle(getTeamStyle(team).style)
+        .map((f) => ({ f, ...pickXIForFormationWithRotation(squad, unavailable, f, 0, `${rotationSeed}:favorite`) }))
+        .sort((a, b) => (b.score + (FIVE_DEFENDER_TEAMS.has(team.name) && b.f.includes("5-") ? 12 : 0)) - (a.score + (FIVE_DEFENDER_TEAMS.has(team.name) && a.f.includes("5-") ? 12 : 0)))[0];
+      save.formations[teamId] = favoriteCandidate?.f || formation;
+    }
 
     const players = autoIds
       .map((id) => store.getSimPlayer(id))
@@ -1122,7 +1327,7 @@ export function getStartersWithFormation(
 
     return {
       players,
-      formation: (save.formations[teamId] as FormationName) || formation,
+      formation,
     };
   }
 
@@ -1136,7 +1341,7 @@ export function getStartersWithFormation(
   };
 }
 
-export function getStarters(save: SaveGame, teamId: string): Player[] {
+export function getStarters(save: SaveGame, teamId: string, options?: { fixture?: CpuFixtureContext | null }): Player[] {
   const store = usePlayersStore.getState();
 
   store.init();
@@ -1179,8 +1384,9 @@ export function getStarters(save: SaveGame, teamId: string): Player[] {
   const isUserTeam = teamId === save.myTeamId;
 
   if (!isUserTeam || lineup.length === 0) {
-    const existingFormation = save.formations[teamId] as FormationName | undefined;
-    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, existingFormation);
+    const fixtureContext = options?.fixture ?? findNextCpuFixture(save, teamId);
+    const rotationSeed = `${save.season}:${teamId}:${fixtureContext?.fixtureId ?? save.currentMatchday[lg] ?? 0}`;
+    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, undefined, rotationSeed, fixtureContext);
 
     if (!save.formations[teamId]) {
       save.formations[teamId] = formation;
@@ -1244,9 +1450,11 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
   const store = usePlayersStore.getState();
 
-  const homeXI = getStarters(save, fixture.homeId);
+  const homeData = getStartersWithFormation(save, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "cup", matchday: fixture.matchday } });
 
-  const awayXI = getStarters(save, fixture.awayId);
+  const awayData = getStartersWithFormation(save, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "cup", matchday: fixture.matchday } });
+  const homeXI = homeData.players;
+  const awayXI = awayData.players;
 
   let updatedSave = save;
 
@@ -1594,9 +1802,15 @@ function simulateFixtureInline(
     };
   }
 
-  const homeXI = getStarters(save, fixture.homeId);
+  const homeData = getStartersWithFormation(save, fixture.homeId, {
+    fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: isCup ? "cup" : "league", matchday: fixture.matchday },
+  });
 
-  const awayXI = getStarters(save, fixture.awayId);
+  const awayData = getStartersWithFormation(save, fixture.awayId, {
+    fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: isCup ? "cup" : "league", matchday: fixture.matchday },
+  });
+  const homeXI = homeData.players;
+  const awayXI = awayData.players;
 
   // If either team has no players, return a default result
 
@@ -1626,10 +1840,8 @@ function simulateFixtureInline(
 
   // Use fast simulation for bulk matchdays, detailed for user's matches
 
-  const homeFormationForSim =
-    (save.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2";
-  const awayFormationForSim =
-    (save.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2";
+  const homeFormationForSim = homeData?.formation || (save.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2";
+  const awayFormationForSim = awayData?.formation || (save.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2";
   const homeBenchForSim = getBenchForTeam(save, fixture.homeId, homeXI);
   const awayBenchForSim = getBenchForTeam(save, fixture.awayId, awayXI);
 
@@ -2107,9 +2319,11 @@ export async function simulateCupMatchdayLayered(
       if (league === userCupLeague) {
         // DEEP SIMULATION for user's own cup
 
-        const homeXI = getStarters(next, fixture.homeId);
+        const homeData = getStartersWithFormation(next, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "cup", matchday: fixture.matchday } });
 
-        const awayXI = getStarters(next, fixture.awayId);
+        const awayData = getStartersWithFormation(next, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "cup", matchday: fixture.matchday } });
+        const homeXI = homeData.players;
+        const awayXI = awayData.players;
 
         if (homeXI.length === 0 || awayXI.length === 0) {
           result = {
@@ -2123,12 +2337,10 @@ export async function simulateCupMatchdayLayered(
           };
         } else {
           result = simulateCupMatch(home, away, homeXI, awayXI, {
-            homeTactics: loadTactics(fixture.homeId),
-            awayTactics: loadTactics(fixture.awayId),
-            homeFormation:
-              (next.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2",
-            awayFormation:
-              (next.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2",
+            homeTactics: loadTactics(f.homeId),
+            awayTactics: loadTactics(f.awayId),
+            homeFormation: homeData.formation,
+            awayFormation: awayData.formation,
           });
 
           next = applyMatchToStats(next, { ...fixture, result });
@@ -2289,9 +2501,11 @@ export async function simulateRemainingCupMatches(
       if (isVIP) {
         // DEEP SIMULATION for VIP countries - EXACT same logic as league VIP matches
 
-        const homeXI = getStarters(next, f.homeId);
+        const homeData = getStartersWithFormation(next, f.homeId, { fixture: { fixtureId: f.id, opponentId: f.awayId, isHome: true, competition: "cup", matchday: f.matchday } });
 
-        const awayXI = getStarters(next, f.awayId);
+        const awayData = getStartersWithFormation(next, f.awayId, { fixture: { fixtureId: f.id, opponentId: f.homeId, isHome: false, competition: "cup", matchday: f.matchday } });
+        const homeXI = homeData.players;
+        const awayXI = awayData.players;
 
         if (homeXI.length === 0 || awayXI.length === 0) {
           console.warn(
@@ -2388,9 +2602,9 @@ export async function simulateRemainingCupMatches(
           if (totalHome === totalAway) {
             // Simulate penalty shootout using the same function as VIP for consistency
 
-            const homeXI = getStarters(next, f.homeId);
+            const homeXI = getStartersWithFormation(next, f.homeId, { fixture: { fixtureId: f.id, opponentId: f.awayId, isHome: true, competition: "cup", matchday: f.matchday } }).players;
 
-            const awayXI = getStarters(next, f.awayId);
+            const awayXI = getStartersWithFormation(next, f.awayId, { fixture: { fixtureId: f.id, opponentId: f.homeId, isHome: false, competition: "cup", matchday: f.matchday } }).players;
 
             const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
 
@@ -3671,9 +3885,11 @@ export async function advanceMatchdayLayered(
         if (league === userLeague) {
           // DEEP SIMULATION for user's own league
 
-          const homeXI = getStarters(next, fixture.homeId);
+          const homeData = getStartersWithFormation(next, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "league", matchday: fixture.matchday } });
 
-          const awayXI = getStarters(next, fixture.awayId);
+          const awayData = getStartersWithFormation(next, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "league", matchday: fixture.matchday } });
+          const homeXI = homeData.players;
+          const awayXI = awayData.players;
 
           if (homeXI.length === 0 || awayXI.length === 0) {
             result = {
@@ -3691,10 +3907,8 @@ export async function advanceMatchdayLayered(
               awayBench: getBenchForTeam(next, fixture.awayId, awayXI),
               homeTactics: loadTactics(fixture.homeId),
               awayTactics: loadTactics(fixture.awayId),
-              homeFormation:
-                (next.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2",
-              awayFormation:
-                (next.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2",
+              homeFormation: homeData.formation,
+              awayFormation: awayData.formation,
             });
 
             next = applyMatchToStats(next, { ...fixture, result });
@@ -3703,8 +3917,8 @@ export async function advanceMatchdayLayered(
           // FAST, pero detallada: incluso los partidos de otros equipos deben
           // guardar XI, formación, goleadores, asistencias, tarjetas, paradones,
           // palos y sustituciones para que la pantalla de crónica sea completa.
-          const homeData = getStartersWithFormation(next, fixture.homeId);
-          const awayData = getStartersWithFormation(next, fixture.awayId);
+          const homeData = getStartersWithFormation(next, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "league", matchday: fixture.matchday } });
+          const awayData = getStartersWithFormation(next, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "league", matchday: fixture.matchday } });
           const hXI = homeData.players;
           const aXI = awayData.players;
 
@@ -5145,8 +5359,10 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
         if (aggHome === aggAway && !simmed.result.extraTime) {
           const home = teamById(simmed.homeId);
           const away = teamById(simmed.awayId);
-          const homeXI = getStarters(next, simmed.homeId);
-          const awayXI = getStarters(next, simmed.awayId);
+          const homeData = getStartersWithFormation(next, simmed.homeId, { fixture: { fixtureId: simmed.id, opponentId: simmed.awayId, isHome: true, competition: "ucl", matchday: simmed.matchday } });
+          const awayData = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } });
+          const homeXI = homeData.players;
+          const awayXI = awayData.players;
           const etResult = simulateExtraTime(home, away, homeXI, awayXI);
           simmed.result.extraTime = {
             homeGoals: etResult.homeGoals,
@@ -5307,8 +5523,8 @@ export function simulateBackgroundUCLDay(
           if (leg2HomeAgg === leg2AwayAgg) {
             const home = teamById(simmed.homeId);
             const away = teamById(simmed.awayId);
-            const homeXI = getStarters(next, simmed.homeId);
-            const awayXI = getStarters(next, simmed.awayId);
+            const homeXI = getStartersWithFormation(next, simmed.homeId, { fixture: { fixtureId: simmed.id, opponentId: simmed.awayId, isHome: true, competition: "ucl", matchday: simmed.matchday } }).players;
+            const awayXI = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } }).players;
             const etResult = simulateExtraTime(home, away, homeXI, awayXI);
             simmed.result.extraTime = {
               homeGoals: etResult.homeGoals,
@@ -5420,8 +5636,8 @@ export function simulateUserPhaseUCLDay(
           if (leg2HomeAgg === leg2AwayAgg) {
             const home = teamById(simmed.homeId);
             const away = teamById(simmed.awayId);
-            const homeXI = getStarters(next, simmed.homeId);
-            const awayXI = getStarters(next, simmed.awayId);
+            const homeXI = getStartersWithFormation(next, simmed.homeId, { fixture: { fixtureId: simmed.id, opponentId: simmed.awayId, isHome: true, competition: "ucl", matchday: simmed.matchday } }).players;
+            const awayXI = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } }).players;
             const etResult = simulateExtraTime(home, away, homeXI, awayXI);
             simmed.result.extraTime = {
               homeGoals: etResult.homeGoals,
