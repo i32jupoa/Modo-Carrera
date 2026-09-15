@@ -412,10 +412,10 @@ function LoanSearchModal({
           <div className="rounded-xl border border-border/60 bg-card/60 p-4 text-sm">
             <p className="font-bold">Buscar destino temporal</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Activa la búsqueda para indicar que escuchas propuestas. Los clubes interesados enviarán
-              ofertas y la negociación continuará desde Mercado → Ofertas recibidas. La prima suele ser
-              gratis o baja, y se negocia qué porcentaje del salario paga cada club. También pueden llegar
-              ofertas sin activar esta búsqueda.
+              Lista al jugador como disponible para una cesión. Los clubes interesados enviarán ofertas
+              y la negociación continuará desde Mercado → Ofertas recibidas. La prima suele ser gratis o
+              baja, y se negocia qué porcentaje del salario paga cada club. También pueden llegar ofertas
+              sin haberlo listado.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -425,7 +425,7 @@ function LoanSearchModal({
             </div>
             <div className="rounded-lg border border-border/50 bg-secondary/40 p-3">
               <p className="text-muted-foreground">Prima habitual</p>
-              <p className="mt-1 font-black">0 € / baja</p>
+              <p className="mt-1 font-black">Gratis / baja</p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -847,7 +847,7 @@ function SquadPage() {
                         }`}
                       >
                         <Handshake className="h-4 w-4" />
-                        {getPlayer(String(selected.ID))?.loanListed ? "Cancelar búsqueda" : "Buscar cesión"}
+                        {getPlayer(String(selected.ID))?.loanListed ? "Retirar de cesión" : "Listar en cesión"}
                       </button>
                     </div>
 

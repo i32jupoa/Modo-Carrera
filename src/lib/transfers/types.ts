@@ -241,8 +241,6 @@ export type NegotiationStatus =
 export interface OfferClauses {
   /** Porcentaje de futura venta (0..1). */
   sellOnPercent: number;
-  /** Variables en euros condicionadas al rendimiento. */
-  addOns: number;
   /** Porcentaje del salario que asume el club receptor en cesiones (0..1). */
   wageShare: number;
   /** Coste de la opción/obligación de compra en cesiones. */

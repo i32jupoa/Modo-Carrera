@@ -222,7 +222,7 @@ export function arrangeLoan(
     buyerClubId: borrowerClubId,
     sellerClubId: player.clubId,
     amount: 0,
-    wageOffer: Math.round(player.contract.wage * clauses.wageShare),
+    wageOffer: Math.round(player.contract.wage),
     type,
     clauses,
     date: options.date,

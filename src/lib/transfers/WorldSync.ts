@@ -51,10 +51,23 @@ export function syncUserLoanRoster(): void {
   const currentRoster = new Set(store.rosterIds);
   const nextRoster = new Set(store.rosterIds);
 
+  // Una plantilla debe representar siempre dónde juega el futbolista HOY.
+  // Por tanto, cualquier jugador cuyo club efectivo ya no sea el usuario debe
+  // salir de `rosterIds`. Esto cubre especialmente las cesiones salientes:
+  // antes el motor movía al jugador al destino, pero el roster del usuario
+  // conservaba su id y acababa mostrándolo en ambos clubes.
+  for (const playerId of [...nextRoster]) {
+    const marketPlayer = getPlayer(playerId);
+    if (marketPlayer && marketPlayer.clubId !== myTeamId) {
+      nextRoster.delete(playerId);
+    }
+  }
+
   // Las cesiones entrantes sí son parte de la plantilla del club usuario.
   for (const playerId of active.keys()) nextRoster.add(playerId);
 
-  // Las cesiones salientes dejan la plantilla del usuario.
+  // Compatibilidad con partidas antiguas que aún tenían registrada una cesión
+  // saliente pero mantenían el jugador en el roster.
   for (const [playerId, loan] of Object.entries(store.loanedPlayers ?? {})) {
     if (loan.fromClubId === myTeamId) nextRoster.delete(playerId);
   }

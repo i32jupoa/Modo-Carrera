@@ -77,13 +77,13 @@ export interface UserMarketApi {
     durationMonths?: number;
     type?: Extract<TransferType, "loan" | "loan-option" | "loan-obligation">;
   }) => void;
-  improveOffer: (dealId: string, amount: number, wageOffer: number) => void;
+  improveOffer: (dealId: string, amount: number, wageOffer: number, clauses?: Partial<OfferClauses>) => void;
   acceptDemand: (dealId: string) => void;
   improveWage: (dealId: string, wage: number) => void;
   confirmDeal: (dealId: string) => void;
   abandonDeal: (dealId: string) => void;
   acceptIncoming: (dealId: string) => void;
-  counterIncoming: (dealId: string, demand: number) => void;
+  counterIncoming: (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => void;
   rejectIncoming: (dealId: string) => void;
   toggleTransferList: (playerId: string, listed: boolean) => void;
   clearFinished: () => void;
@@ -242,8 +242,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   );
 
   const improveOffer = useCallback(
-    (dealId: string, amount: number, wageOffer: number) => {
-      const result = improveUserOffer(dealId, { amount, wageOffer }, currentDate);
+    (dealId: string, amount: number, wageOffer: number, clauses?: Partial<OfferClauses>) => {
+      const result = improveUserOffer(dealId, { amount, wageOffer, clauses }, currentDate);
       commit(result.ok ? "Oferta mejorada." : undefined, result.reason);
     },
     [currentDate, commit],
@@ -354,10 +354,10 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       const store = usePlayersStore.getState();
       const pendingDeal = listUserDeals().find((d) => d.id === dealId);
       const isLoan = pendingDeal?.offer?.type === "loan" || pendingDeal?.offer?.type === "loan-option" || pendingDeal?.offer?.type === "loan-obligation";
-      // Una venta definitiva necesita mantener 11 jugadores. Una cesión de
-      // salida no reduce la plantilla porque el propietario sigue siendo el
-      // club del usuario.
-      if (!isLoan && store.rosterIds.length <= 11) {
+      // Tanto una venta definitiva como una cesión de salida liberan una
+      // plaza de la plantilla del usuario. La diferencia es que en la cesión
+      // el club sigue siendo el propietario y el jugador regresará al terminar.
+      if (store.rosterIds.length <= 11) {
         commit(undefined, "Debes mantener al menos 11 jugadores en la plantilla.");
         return;
       }
@@ -397,8 +397,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     [currentDate, commit, myTeamId, syncBudget],
   );
   const counterIncoming = useCallback(
-    (dealId: string, demand: number) => {
-      const result = counterIncomingOffer(dealId, demand, currentDate);
+    (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => {
+      const result = counterIncomingOffer(dealId, demand, currentDate, clauses);
       commit(result.ok ? "Contraoferta enviada." : undefined, result.reason);
     },
     [currentDate, commit],

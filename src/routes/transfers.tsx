@@ -863,6 +863,7 @@ function TransfersPage() {
           report={report}
           budget={budget}
           wageBudget={wageBudget}
+          currentWage={target ? getPlayerAnnualWage(String(target.ID)) : 0}
           currentDate={market.currentDate}
           onClose={() => setTarget(null)}
           onSubmit={({ amount, wageOffer, type, clauses }) => {

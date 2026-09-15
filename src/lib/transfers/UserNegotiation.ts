@@ -309,6 +309,7 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   const requestedClauses = {
     ...emptyClauses(),
     ...(input.clauses ?? {}),
+    sellOnPercent: clamp(input.clauses?.sellOnPercent ?? 0, 0, 0.5),
   };
   if (isLoan) {
     requestedClauses.loanDurationMonths =
@@ -316,8 +317,8 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
         ? requestedClauses.loanDurationMonths
         : defaultLoanDuration(input.date);
     requestedClauses.wageShare = clamp(
-      requestedClauses.wageShare || 0.5,
-      0.2,
+      requestedClauses.wageShare,
+      0,
       1,
     );
   }
@@ -401,10 +402,33 @@ export function improveUserOffer(
 
   const amount = Math.max(deal.offer.amount, Math.round(patch.amount ?? deal.offer.amount));
   deal.offer.amount = amount;
-  if (patch.wageOffer !== undefined) {
+  const loanDeal = isLoanOffer(deal.offer.type);
+  if (!loanDeal && patch.wageOffer !== undefined) {
     deal.offer.wageOffer = Math.max(WAGE_RULES.minimumWage, Math.round(patch.wageOffer));
   }
-  if (patch.clauses) deal.offer.clauses = { ...deal.offer.clauses, ...patch.clauses };
+  if (loanDeal) {
+    const player = getPlayer(deal.playerId);
+    if (player) deal.offer.wageOffer = Math.round(player.contract.wage);
+    if (patch.clauses) {
+      const next = { ...deal.offer.clauses };
+      if (patch.clauses.wageShare !== undefined) next.wageShare = clamp(patch.clauses.wageShare, 0, 1);
+      if (patch.clauses.loanDurationMonths !== undefined) {
+        const duration = Math.round(patch.clauses.loanDurationMonths);
+        next.loanDurationMonths = duration === 6 || duration === 12 || duration === 24 ? duration : next.loanDurationMonths;
+      }
+      deal.offer.clauses = next;
+    }
+  } else if (patch.clauses) {
+    deal.offer.clauses = {
+      ...deal.offer.clauses,
+      ...patch.clauses,
+      sellOnPercent: clamp(
+        patch.clauses.sellOnPercent ?? deal.offer.clauses.sellOnPercent,
+        0,
+        0.5,
+      ),
+    };
+  }
   deal.offer.round += 1;
   deal.offer.status = "pending";
   deal.rounds += 1;
@@ -440,6 +464,9 @@ export function improvePlayerTerms(
   const deal = deals.get(dealId);
   if (!deal || deal.stage !== "player-terms") {
     return { ok: false, reason: "No hay negociación de ficha abierta." };
+  }
+  if (isLoanOffer(deal.offer.type)) {
+    return { ok: false, reason: "En una cesión no se modifica el sueldo anual del jugador; sólo el porcentaje que asume cada club." };
   }
   deal.offer.wageOffer = Math.max(WAGE_RULES.minimumWage, Math.round(wageOffer));
   deal.respondsOn = addDays(date, 1);
@@ -495,16 +522,6 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
   const record = withUserApproval(() => completeTransfer(deal.offer, date));
   if (!record) return { ok: false, reason: "No se pudo cerrar la operación." };
   recordTransfer(record);
-  if (isLoanOffer(record.type) && record.fromClubId) {
-    const player = getPlayer(record.playerId);
-    if (player) {
-      registerLoanOut(
-        record.fromClubId,
-        player.contract.wage,
-        clamp(record.clauses.wageShare, 0, 1),
-      );
-    }
-  }
   deal.stage = "completed";
   log(
     deal,
@@ -725,12 +742,12 @@ function processIncomingLoanResponse(deal: UserDeal, date: string): UserDealEven
 
   if (enoughFee && enoughWage) {
     deal.offer.status = "accepted";
-    deal.stage = "player-terms";
+    deal.stage = "ready";
     deal.respondsOn = date;
-    deal.clubMessage = `El club acepta la cesión por ${fmt(deal.offer.amount)} y el ${Math.round(deal.offer.clauses.wageShare * 100)}% de la ficha.`;
+    deal.clubMessage = `El club acepta la cesión por ${fmt(deal.offer.amount)}, el ${Math.round(deal.offer.clauses.wageShare * 100)}% del sueldo y ${deal.offer.clauses.loanDurationMonths} meses.`;
     log(deal, date, deal.clubMessage);
-    pushEvent(events, deal, `El club acepta la cesión de ${deal.playerName}: falta confirmar las condiciones del jugador.`, "good");
-    return [...events, ...processPlayerTerms(deal, date)];
+    pushEvent(events, deal, `El club acepta la cesión de ${deal.playerName}: puedes cerrar la operación.`, "good");
+    return events;
   }
 
   deal.rounds += 1;
@@ -907,10 +924,13 @@ export function submitUserLoanOutOffer(input: {
   }
 
   const type = input.type ?? "loan";
+  const requestedDuration = Math.round(input.durationMonths ?? defaultLoanDuration(input.date));
   const clauses = {
     ...emptyClauses(),
-    wageShare: clamp(input.wageShare, 0.2, 1),
-    loanDurationMonths: input.durationMonths ?? defaultLoanDuration(input.date),
+    wageShare: clamp(input.wageShare, 0, 1),
+    loanDurationMonths: requestedDuration === 6 || requestedDuration === 12 || requestedDuration === 24
+      ? requestedDuration
+      : defaultLoanDuration(input.date),
   };
   if (type !== "loan") {
     clauses.optionFee = Math.max(0, Math.round(player.value * 0.12));
@@ -1253,6 +1273,7 @@ export function counterIncomingOffer(
   dealId: string,
   demand: number,
   date: string,
+  clauses?: Partial<OfferClauses>,
 ): IncomingResponseResult {
   const deal = deals.get(dealId);
   if (!deal || deal.direction !== "out" || deal.stage !== "incoming") {
@@ -1261,11 +1282,37 @@ export function counterIncomingOffer(
   if (deal.rounds >= MARKET_TIMING.maxNegotiationRounds) {
     return { ok: false, reason: "El club no negociará más rondas." };
   }
-  // La cantidad la pone el usuario: se respeta exactamente lo que pide.
+  // En una cesión se negocian todas las condiciones económicas/deportivas:
+  // prima, porcentaje del salario asumido por el destino, duración y, cuando
+  // corresponda, precio de la opción/obligación de compra. La ficha anual
+  // nunca se modifica: siempre es el salario vigente del jugador.
   deal.clubDemand = Math.max(0, Math.round(demand));
+  // La contraoferta pasa a ser la nueva propuesta real que debe valorar el
+  // otro club; `clubDemand` se conserva como referencia visual.
+  deal.offer.amount = deal.clubDemand;
+  if (isLoanOffer(deal.offer.type)) {
+    const next = { ...deal.offer.clauses };
+    if (clauses?.wageShare !== undefined) next.wageShare = clamp(clauses.wageShare, 0, 1);
+    if (clauses?.loanDurationMonths !== undefined) {
+      const duration = Math.round(clauses.loanDurationMonths);
+      if (duration === 6 || duration === 12 || duration === 24) next.loanDurationMonths = duration;
+    }
+    if (clauses?.optionFee !== undefined && deal.offer.type !== "loan") {
+      next.optionFee = Math.max(0, Math.round(clauses.optionFee));
+    }
+    deal.offer.clauses = next;
+    const destinationShare = Math.round(next.wageShare * 100);
+    const ownerShare = 100 - destinationShare;
+    const purchaseText = deal.offer.type === "loan"
+      ? "sin opción de compra"
+      : `${deal.offer.type === "loan-option" ? "opción" : "compra obligatoria"} de ${fmt(next.optionFee)}`;
+    deal.clubMessage = `Contraoferta de cesión: ${fmt(deal.clubDemand)} de prima · ${destinationShare}% del sueldo el destino / ${ownerShare}% tu club · ${next.loanDurationMonths} meses · ${purchaseText}.`;
+    log(deal, date, `Has contraofertado la cesión: ${fmt(deal.clubDemand)}, ${destinationShare}% del sueldo al destino, ${next.loanDurationMonths} meses y ${purchaseText}.`);
+  } else {
+    log(deal, date, `Has pedido ${fmt(deal.clubDemand)} para negociar la salida.`);
+  }
   deal.stage = "waiting-club";
   deal.respondsOn = addDays(date, seededInt(1, 2, deal.id, deal.rounds));
-  log(deal, date, `Has pedido ${fmt(deal.clubDemand)} para negociar la salida.`);
   return { ok: true, deal };
 }
 

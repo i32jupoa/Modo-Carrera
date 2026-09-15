@@ -3,7 +3,7 @@
  *
  * Cubre el ciclo completo de una operación entre dos clubes: creación de la
  * oferta, valoración por parte del vendedor (aceptar / rechazar / contraoferta
- * / rechazo definitivo), cláusulas (porcentaje de futura venta, variables,
+ * / rechazo definitivo), cláusulas (porcentaje de futura venta,
  * intercambio de jugadores, cesión con opción u obligación de compra), mejora
  * de la oferta por parte del comprador y abandono de la negociación.
  *
@@ -50,7 +50,6 @@ function roundFee(amount: number): number {
 export function emptyClauses(): OfferClauses {
   return {
     sellOnPercent: 0,
-    addOns: 0,
     wageShare: 0,
     optionFee: 0,
     loanDurationMonths: 0,
@@ -90,7 +89,11 @@ export function createTransferOffer(input: CreateOfferInput): TransferOffer {
       Math.round(input.wageOffer ?? input.amount * WAGE_RULES.valueToWage * 0.5),
     ),
     type: input.type ?? "permanent",
-    clauses: { ...emptyClauses(), ...(input.clauses ?? {}) },
+    clauses: {
+      ...emptyClauses(),
+      ...(input.clauses ?? {}),
+      sellOnPercent: clamp(input.clauses?.sellOnPercent ?? 0, 0, 0.5),
+    },
     status: "pending",
     date: input.date ?? new Date().toISOString().slice(0, 10),
     round: 1,
@@ -98,9 +101,9 @@ export function createTransferOffer(input: CreateOfferInput): TransferOffer {
 }
 
 /**
- * Cláusulas que un comprador añade para acercar posiciones sin subir el fijo:
- * variables y porcentaje de futura venta según su paciencia y el hueco que le
- * queda respecto a lo que pide el vendedor.
+ * Cláusulas que un comprador puede añadir para acercar posiciones sin subir el
+ * fijo: principalmente porcentaje de futura venta según su paciencia y el hueco
+ * que le queda respecto a lo que pide el vendedor.
  */
 export function proposeClauses(
   buyerClubId: string,
@@ -111,10 +114,6 @@ export function proposeClauses(
   const profile = getClubProfile(buyerClubId);
   const clauses = emptyClauses();
   if (gap <= 0) return clauses;
-
-  // Cuanto más paciente es el club, más recurre a variables antes que al fijo.
-  const addOnShare = clamp(0.2 + profile.patience * 0.4, 0.2, 0.6);
-  clauses.addOns = roundFee(Math.min(gap * addOnShare, valuation.expectedPrice * 0.25));
 
   const wantsSellOn = seededUnit(seed, "sellon") < 0.35 + profile.patience * 0.25;
   if (wantsSellOn) {
@@ -143,7 +142,7 @@ export function buildLoanTerms(
 
 /**
  * Valor real de una oferta para el vendedor: fijo, más una parte de las
- * variables (nunca cuentan al 100 %), más el valor de los jugadores incluidos
+ * cláusulas contingentes (que nunca cuentan al 100 %), más el valor de los jugadores incluidos
  * en el intercambio, menos lo que le "cuesta" ceder futura venta.
  */
 export function offerWorth(offer: TransferOffer): number {
@@ -151,9 +150,8 @@ export function offerWorth(offer: TransferOffer): number {
     const player = getPlayer(id);
     return sum + (player ? player.value * 0.8 : 0);
   }, 0);
-  const addOnValue = offer.clauses.addOns * 0.5;
   const sellOnCost = offer.amount * offer.clauses.sellOnPercent * 0.25;
-  return Math.max(0, offer.amount + addOnValue + swapValue + offer.clauses.optionFee - sellOnCost);
+  return Math.max(0, offer.amount + swapValue + offer.clauses.optionFee - sellOnCost);
 }
 
 // ============================================================================
@@ -242,7 +240,6 @@ export function processCounterOffer(
   const demands: OfferClauses = {
     ...emptyClauses(),
     sellOnPercent: val.isStar ? 0.1 : 0,
-    addOns: offer.clauses.addOns,
     wageShare: offer.clauses.wageShare,
     optionFee: offer.clauses.optionFee,
     playerSwapIds: offer.clauses.playerSwapIds,
@@ -312,7 +309,6 @@ export function decideImprovement(
     amount,
     clauses: {
       ...offer.clauses,
-      addOns: Math.max(offer.clauses.addOns, extra.addOns),
       sellOnPercent: Math.max(
         offer.clauses.sellOnPercent,
         response.demands?.sellOnPercent ?? extra.sellOnPercent,
