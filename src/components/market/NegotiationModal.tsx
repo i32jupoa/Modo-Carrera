@@ -60,7 +60,6 @@ export function NegotiationModal({
   const type = operation === "transfer" ? "permanent" : loanType;
   const [amount, setAmount] = useState(Math.round(asking / 100_000) / 10);
   const [sellOn, setSellOn] = useState(0);
-  const [squadRole, setSquadRole] = useState<SquadRole>(defaultSquadRole(ovr, age));
   const [wageShare, setWageShare] = useState(50);
   const [loanSellOn, setLoanSellOn] = useState(0);
   const [loanOptionFee, setLoanOptionFee] = useState(Math.round((asking * 1.1) / 100_000) / 10);
@@ -108,7 +107,6 @@ export function NegotiationModal({
               value={`${formatEuro(report.valuation.minimumPrice)} – ${formatEuro(report.valuation.idealPrice)}`}
             />
             <Info label="Techo estimado" value={formatEuro(report.valuation.maximumPrice)} />
-            <Info label="Ficha estimada" value={`${formatEuro(report.wageDemand)}/año`} />
             <Info label="Contrato" value={`${report.contractYearsLeft} temporada(s)`} />
             <Info
               label="Competencia"
@@ -213,16 +211,7 @@ export function NegotiationModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                  Sueldo anual del jugador
-                </label>
-                <div className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm font-bold">
-                  {formatEuro(currentWage)} <span className="text-muted-foreground font-normal">/año · no ajustable</span>
-                </div>
-              </div>
-              <div className="space-y-1.5">
+            <div className="space-y-1.5">
                 <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
                   % del sueldo que paga el destino
                 </label>
@@ -236,22 +225,6 @@ export function NegotiationModal({
                   ))}
                 </select>
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                Rol acordado con el club destino
-              </label>
-              <select
-                value={squadRole}
-                onChange={(e) => setSquadRole(e.target.value as SquadRole)}
-                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm font-semibold"
-              >
-                {SQUAD_ROLE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </div>
 
             {loanType !== "loan" && (
               <>
@@ -335,7 +308,6 @@ export function NegotiationModal({
                       sellOnPercent: loanType === "loan" ? 0 : loanSellOn,
                       wageShare: wageShare / 100,
                       loanDurationMonths,
-                      squadRole,
                       optionFee: loanType === "loan" ? 0 : Math.max(0, Math.round(loanOptionFee * 1_000_000)),
                     },
               })

@@ -247,6 +247,8 @@ export interface OfferClauses {
   wageShare: number;
   /** Coste de la opción/obligación de compra en cesiones. */
   optionFee: number;
+  /** Tipo de cesión solicitado en una contraoferta (uso de negociación). */
+  loanType?: Extract<TransferType, "loan" | "loan-option" | "loan-obligation">;
   /** Duración contractual de la cesión, en meses. */
   loanDurationMonths: number;
   /** Rol deportivo prometido al jugador en el nuevo club. */

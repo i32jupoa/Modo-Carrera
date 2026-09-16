@@ -23,6 +23,54 @@ import {
 } from "@/lib/transfers/WorldSync";
 
 /**
+ * Refleja en el estado jugable una liquidación que el mercado ha ejecutado
+ * automáticamente al avanzar el calendario.
+ */
+function applyAutomaticSettlement(events: Array<{
+  settlement?: { fee: number; wage: number; type: string; wageShare?: number };
+  direction: "in" | "out";
+}>): void {
+  const settlementEvents = events.filter((event) => event.settlement);
+  if (settlementEvents.length === 0) return;
+
+  const store = usePlayersStore.getState();
+  let budget = Math.max(0, store.budget);
+  let wageBill = Math.max(0, store.wageBill);
+
+  for (const event of settlementEvents) {
+    const settlement = event.settlement!;
+    const isLoan =
+      settlement.type === "loan" ||
+      settlement.type === "loan-option" ||
+      settlement.type === "loan-obligation";
+
+    if (isLoan) {
+      const destinationShare = Math.max(0, Math.min(1, settlement.wageShare ?? 0));
+      if (event.direction === "in") {
+        // El usuario es el destino: asume la parte pactada de la ficha.
+        const paidByUser = settlement.wage * destinationShare;
+        budget = Math.max(0, budget - settlement.fee - paidByUser);
+        wageBill += paidByUser;
+      } else {
+        // El usuario es el propietario: el destino aporta su parte y reduce
+        // nuestra masa salarial en esa cuantía.
+        const coveredByBorrower = settlement.wage * destinationShare;
+        budget += settlement.fee + coveredByBorrower;
+        wageBill = Math.max(0, wageBill - coveredByBorrower);
+      }
+    } else if (event.direction === "out") {
+      // Venta definitiva: el ingreso y el salario liberado se hacen efectivos
+      // sólo cuando termina el día de cierre administrativo.
+      budget += settlement.fee + Math.max(0, settlement.wage);
+      wageBill = Math.max(0, wageBill - Math.max(0, settlement.wage));
+    }
+  }
+
+  usePlayersStore.setState({ budget, wageBill });
+  usePlayersStore.getState().syncWageStateFromMarket();
+}
+
+/**
  * Reloj del mercado: engancha la simulación al calendario del juego.
  *
  * - inicializa o restaura el mercado la primera vez (sólo en cliente),
@@ -97,6 +145,7 @@ export function useMarketClock(): void {
         try {
           const events = advanceUserDeals(myTeamId!, currentDate);
           const removedFinished = clearFinishedUserDeals(currentDate);
+          applyAutomaticSettlement(events);
           const add = useNotificationsStore.getState().add;
           if (events.length > 0) {
             add(
@@ -123,6 +172,7 @@ export function useMarketClock(): void {
       try {
         const events = advanceUserDeals(myTeamId!, currentDate);
         const removedFinished = clearFinishedUserDeals(currentDate);
+        applyAutomaticSettlement(events);
         const add = useNotificationsStore.getState().add;
         if (events.length > 0) {
           add(

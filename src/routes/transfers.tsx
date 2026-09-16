@@ -1005,6 +1005,7 @@ function TransfersPage() {
                 onAbandon={market.abandonDeal}
                 onAcceptIncoming={market.acceptIncoming}
                 onCounterIncoming={market.counterIncoming}
+                onCounterOutgoing={market.counterOutgoing}
                 onRejectIncoming={market.rejectIncoming}
               />
             ))
@@ -1030,6 +1031,7 @@ function TransfersPage() {
                 onAbandon={market.abandonDeal}
                 onAcceptIncoming={market.acceptIncoming}
                 onCounterIncoming={market.counterIncoming}
+                onCounterOutgoing={market.counterOutgoing}
                 onRejectIncoming={market.rejectIncoming}
               />
             ))

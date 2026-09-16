@@ -8,6 +8,7 @@ import {
   advanceUserDeals,
   clearFinishedUserDeals,
   counterIncomingOffer,
+  counterOutgoingDeal,
   finalizeUserDeal,
   freshRumors,
   getPlayer,
@@ -100,6 +101,7 @@ export interface UserMarketApi {
   abandonDeal: (dealId: string) => void;
   acceptIncoming: (dealId: string) => void;
   counterIncoming: (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => void;
+  counterOutgoing: (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => void;
   rejectIncoming: (dealId: string) => void;
   toggleTransferList: (playerId: string, listed: boolean) => void;
   clearFinished: () => void;
@@ -302,7 +304,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit();
         return;
       }
-      commit(result.ok ? "Has igualado lo que pide el club." : undefined, result.reason);
+      commit(result.ok ? "Has aceptado las condiciones propuestas por el club." : undefined, result.reason);
     },
     [currentDate, commit],
   );
@@ -557,13 +559,21 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit();
         return;
       }
-      applyUserExit(result, startingBudget);
+      applyUserExit(result, startingBudget, startingWageBill);
     },
     [currentDate, commit, applyUserExit],
   );
   const counterIncoming = useCallback(
     (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => {
       const result = counterIncomingOffer(dealId, demand, currentDate, clauses);
+      commit(result.ok ? "Contraoferta enviada." : undefined, result.reason);
+    },
+    [currentDate, commit],
+  );
+
+  const counterOutgoing = useCallback(
+    (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => {
+      const result = counterOutgoingDeal(dealId, demand, currentDate, clauses);
       commit(result.ok ? "Contraoferta enviada." : undefined, result.reason);
     },
     [currentDate, commit],
@@ -620,6 +630,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     abandonDeal,
     acceptIncoming,
     counterIncoming,
+    counterOutgoing,
     rejectIncoming,
     toggleTransferList,
     clearFinished,

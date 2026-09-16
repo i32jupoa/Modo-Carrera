@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { formatEuro, fcPlayerById } from "@/store/playersStore";
 import { stageLabel, type UserDeal, type SquadRole } from "@/lib/transfers";
@@ -14,6 +14,7 @@ interface Props {
   onAbandon: (dealId: string) => void;
   onAcceptIncoming: (dealId: string) => void;
   onCounterIncoming: (dealId: string, demand: number, clauses?: Partial<import("@/lib/transfers").OfferClauses>) => void;
+  onCounterOutgoing: (dealId: string, demand: number, clauses?: Partial<import("@/lib/transfers").OfferClauses>) => void;
   onRejectIncoming: (dealId: string) => void;
 }
 
@@ -39,6 +40,8 @@ const STAGE_TONE: Record<string, string> = {
   "club-counter": "border-yellow-500/40 text-yellow-400",
   "club-waiting": "border-blue-500/40 text-blue-300",
   "player-terms": "border-primary/50 text-primary",
+  "player-decision": "border-primary/40 text-primary",
+  closing: "border-primary/40 text-primary",
   ready: "border-green-500/50 text-green-400",
   incoming: "border-yellow-500/40 text-yellow-400",
   completed: "border-green-500/40 text-green-400",
@@ -55,6 +58,7 @@ export function DealCard({
   onAbandon,
   onAcceptIncoming,
   onCounterIncoming,
+  onCounterOutgoing,
   onRejectIncoming,
 }: Props) {
   const [amount, setAmount] = useState(Math.round(deal.offer.amount / 100_000) / 10);
@@ -70,17 +74,27 @@ export function DealCard({
   const [loanDurationMonths, setLoanDurationMonths] = useState(
     deal.offer.clauses.loanDurationMonths || 12,
   );
+  const isLoan =
+    deal.offer.type === "loan" ||
+    deal.offer.type === "loan-option" ||
+    deal.offer.type === "loan-obligation";
+  useEffect(() => {
+    if (!isLoan) return;
+    setLoanTypeDemand(deal.clubLoanTypeDemand ?? (deal.offer.type as "loan" | "loan-option" | "loan-obligation"));
+    setLoanWageShare(Math.round((deal.offer.clauses.wageShare ?? 0) * 100));
+    setLoanDurationMonths(deal.offer.clauses.loanDurationMonths || 12);
+    setLoanOptionFee(Math.round((deal.offer.clauses.optionFee ?? 0) / 100_000) / 10);
+  }, [deal.id, deal.stage, deal.offer.type, deal.offer.amount, deal.offer.clauses.wageShare, deal.offer.clauses.loanDurationMonths, deal.offer.clauses.optionFee, deal.clubLoanTypeDemand, isLoan]);
   const [loanOptionFee, setLoanOptionFee] = useState(
     Math.round((deal.offer.clauses.optionFee ?? 0) / 100_000) / 10,
+  );
+  const [loanTypeDemand, setLoanTypeDemand] = useState<"loan" | "loan-option" | "loan-obligation">(
+    deal.clubLoanTypeDemand ?? (deal.offer.type as "loan" | "loan-option" | "loan-obligation"),
   );
   const [sellOn, setSellOn] = useState(
     Math.round((deal.offer.clauses.sellOnPercent ?? 0) * 100),
   );
   const closed = deal.stage === "completed" || deal.stage === "failed";
-  const isLoan =
-    deal.offer.type === "loan" ||
-    deal.offer.type === "loan-option" ||
-    deal.offer.type === "loan-obligation";
   const operationLabel = isLoan
     ? deal.direction === "in"
       ? "Cesión desde "
@@ -133,12 +147,11 @@ export function DealCard({
         <Cell label={isLoan ? "Prima de cesión" : deal.direction === "out" ? "Oferta del club" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
         {!isLoan && deal.stage === "player-terms" && <Cell label="Salario negociado con jugador" value={`${formatEuro(deal.offer.wageOffer)}/año`} />}
         {deal.clubDemand > 0 && <Cell label="El club pide" value={formatEuro(deal.clubDemand)} />}
-        {!isLoan && deal.direction === "in" && deal.playerWageDemand > 0 && (
+        {!isLoan && deal.direction === "in" && deal.stage === "player-terms" && deal.playerWageDemand > 0 && (
           <Cell label="El jugador pide" value={`${formatEuro(deal.playerWageDemand)}/año`} />
         )}
         {isLoan && (
           <>
-            <Cell label="Sueldo anual (ficha vigente)" value={`${formatEuro(deal.offer.wageOffer)}/año`} />
             <Cell
               label="Sueldo que paga el club destino"
               value={`${Math.round((deal.offer.clauses.wageShare ?? 0) * 100)}%`}
@@ -156,7 +169,7 @@ export function DealCard({
             )}
           </>
         )}
-        {deal.offer.clauses.squadRole && deal.direction === "in" && (
+        {deal.offer.clauses.squadRole && deal.direction === "in" && deal.stage === "player-terms" && (
           <Cell label="Rol en tu equipo" value={ROLE_LABELS[deal.offer.clauses.squadRole]} />
         )}
         {!isLoan && deal.offer.clauses.sellOnPercent > 0 && (
@@ -193,20 +206,26 @@ export function DealCard({
           </div>
           {isLoan && (
             <>
+              <div className="space-y-1.5">
+                <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Condición de compra</label>
+                <select
+                  value={loanTypeDemand}
+                  onChange={(e) => setLoanTypeDemand(e.target.value as "loan" | "loan-option" | "loan-obligation")}
+                  className="w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold"
+                >
+                  <option value="loan">Sin opción de compra</option>
+                  <option value="loan-option">Con opción de compra</option>
+                  <option value="loan-obligation">Con compra obligatoria</option>
+                </select>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <SelectNumber label="% del sueldo que paga el destino" value={loanWageShare} onChange={setLoanWageShare} options={[0,10,20,30,40,50,60,70,80,90,100]} />
                 <SelectNumber label="Duración" value={loanDurationMonths} onChange={setLoanDurationMonths} options={[6,12,24]} formatter={(v) => v === 6 ? "6 meses" : v === 12 ? "1 año" : "2 años"} />
               </div>
-              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                Rol acordado con el club destino
-                <select value={playerRole} onChange={(e) => setPlayerRole(e.target.value as SquadRole)} className="mt-1 w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold">
-                  {ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              {deal.offer.type !== "loan" && (
+              {loanTypeDemand !== "loan" && (
                 <div className="grid grid-cols-2 gap-2">
                   <NumberInput
-                    label={deal.offer.type === "loan-option" ? "Precio opción (M €)" : "Precio compra obligatoria (M €)"}
+                    label={loanTypeDemand === "loan-option" ? "Precio opción (M €)" : "Precio compra obligatoria (M €)"}
                     value={loanOptionFee}
                     onChange={setLoanOptionFee}
                     step={0.1}
@@ -223,27 +242,40 @@ export function DealCard({
           )}
           <div className="flex flex-wrap gap-2">
             <Action
-              label={`Igualar ${formatEuro(deal.clubDemand)}`}
+              label="Aceptar condiciones propuestas"
               onClick={() => onAcceptDemand(deal.id)}
               primary
             />
             <Action
-              label="Mejorar oferta"
+              label="Contraofertar"
               onClick={() =>
-                onImprove(
-                  deal.id,
-                  Math.round(amount * 1_000_000),
-                  isLoan ? deal.offer.wageOffer : Math.round(wage * 1_000_000),
-                  isLoan
-                    ? {
-                        wageShare: loanWageShare / 100,
-                        loanDurationMonths,
-                        squadRole: playerRole,
-                        sellOnPercent: deal.offer.type === "loan" ? 0 : sellOn / 100,
-                        optionFee: deal.offer.type === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
-                      }
-                    : { sellOnPercent: sellOn / 100 },
-                )
+                deal.direction === "out"
+                  ? onCounterOutgoing(
+                      deal.id,
+                      Math.round(amount * 1_000_000),
+                      isLoan
+                        ? {
+                            wageShare: loanWageShare / 100,
+                            loanDurationMonths,
+                            optionFee: loanTypeDemand === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
+                            loanType: loanTypeDemand,
+                          }
+                        : { sellOnPercent: sellOn / 100 },
+                    )
+                  : onImprove(
+                      deal.id,
+                      Math.round(amount * 1_000_000),
+                      isLoan ? deal.offer.wageOffer : Math.round(wage * 1_000_000),
+                      isLoan
+                        ? {
+                            wageShare: loanWageShare / 100,
+                            loanDurationMonths,
+                            squadRole: playerRole,
+                            sellOnPercent: deal.offer.type === "loan" ? 0 : sellOn / 100,
+                            optionFee: deal.offer.type === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
+                          }
+                        : { sellOnPercent: sellOn / 100 },
+                    )
               }
             />
             <Action label="Retirarse" onClick={() => onAbandon(deal.id)} />
@@ -313,6 +345,24 @@ export function DealCard({
         </div>
       )}
 
+      {!closed && deal.stage === "player-decision" && (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-3">
+          <p className="text-[0.62rem] uppercase tracking-wider text-primary font-black">Decisión del jugador</p>
+          <p className="mt-1 text-sm font-bold">{deal.playerMessage || "El jugador está valorando la operación."}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Recibirás la respuesta automáticamente en la fecha indicada.</p>
+        </div>
+      )}
+
+      {!closed && deal.stage === "closing" && (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-3">
+          <p className="text-[0.62rem] uppercase tracking-wider text-primary font-black">Cierre administrativo</p>
+          <p className="mt-1 text-sm font-bold">La operación ya está acordada.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            La venta se hará efectiva el {deal.respondsOn}. En ese momento se ingresará el importe y se liberará el salario.
+          </p>
+        </div>
+      )}
+
       {!closed && deal.stage === "ready" && (
         <div className="flex flex-wrap gap-2">
           <Action
@@ -332,8 +382,28 @@ export function DealCard({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <NumberInput label={isLoan ? "Pedir prima (M €)" : "Pedir precio (M €)"} value={demand} onChange={setDemand} />
+            {!isLoan && (
+              <SelectNumber
+                label="% de futura venta"
+                value={sellOn}
+                onChange={setSellOn}
+                options={[0,5,10,15,20,25,30,35,40,45,50]}
+              />
+            )}
             {isLoan && (
               <>
+                <div className="col-span-2 space-y-1.5">
+                  <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Condición de compra</label>
+                  <select
+                    value={loanTypeDemand}
+                    onChange={(e) => setLoanTypeDemand(e.target.value as "loan" | "loan-option" | "loan-obligation")}
+                    className="w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold"
+                  >
+                    <option value="loan">Sin opción de compra</option>
+                    <option value="loan-option">Con opción de compra</option>
+                    <option value="loan-obligation">Con compra obligatoria</option>
+                  </select>
+                </div>
                 <SelectNumber
                   label="% del sueldo que paga el destino"
                   value={loanWageShare}
@@ -347,8 +417,8 @@ export function DealCard({
                   options={[6,12,24]}
                   formatter={(v) => v === 6 ? "6 meses" : v === 12 ? "1 año" : "2 años"}
                 />
-                {deal.offer.type !== "loan" && (
-                  <NumberInput label={deal.offer.type === "loan-option" ? "Precio opción de compra (M €)" : "Precio compra obligatoria (M €)"} value={loanOptionFee} onChange={setLoanOptionFee} step={0.1} />
+                {loanTypeDemand !== "loan" && (
+                  <NumberInput label={loanTypeDemand === "loan-option" ? "Precio opción de compra (M €)" : "Precio compra obligatoria (M €)"} value={loanOptionFee} onChange={setLoanOptionFee} step={0.1} />
                 )}
               </>
             )}
@@ -359,7 +429,7 @@ export function DealCard({
             </p>
           )}
           <Action
-            label={isLoan ? "Contraofertar condiciones" : "Contraofertar precio"}
+            label="Contraofertar"
             primary
             onClick={() =>
               onCounterIncoming(
@@ -369,9 +439,11 @@ export function DealCard({
                   ? {
                       wageShare: loanWageShare / 100,
                       loanDurationMonths,
-                      optionFee: deal.offer.type === "loan" ? deal.offer.clauses.optionFee : Math.round(loanOptionFee * 1_000_000),
+                      optionFee: loanTypeDemand === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
+                      loanType: loanTypeDemand,
+                      sellOnPercent: 0,
                     }
-                  : undefined,
+                  : { sellOnPercent: sellOn / 100 },
               )
             }
           />
