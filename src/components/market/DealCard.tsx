@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { teamById } from "@/data/teams";
-import { formatEuro } from "@/store/playersStore";
+import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
+import { formatEuro, fcPlayerById } from "@/store/playersStore";
 import { stageLabel, type UserDeal } from "@/lib/transfers";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { TeamLogo } from "@/components/TeamLogo";
 
 interface Props {
   deal: UserDeal;
@@ -20,6 +22,15 @@ function clubName(clubId: string): string {
     return teamById(clubId)?.name ?? clubId;
   } catch {
     return clubId;
+  }
+}
+
+function leagueName(clubId: string): string {
+  try {
+    const league = teamById(clubId)?.league;
+    return league ? (LEAGUES[league as LeagueId]?.name ?? league) : "";
+  } catch {
+    return "";
   }
 }
 
@@ -73,23 +84,45 @@ export function DealCard({
       ? "Compra a "
       : "Venta a ";
   const duration = deal.offer.clauses.loanDurationMonths || 0;
+  const rawPlayer = fcPlayerById(deal.playerId);
+  const otherClub = teamById(deal.otherClubId);
+  const otherClubLeague = otherClub ? leagueName(deal.otherClubId) : "";
 
   return (
     <article
-      className={`panel p-4 space-y-3 border ${STAGE_TONE[deal.stage] ?? "border-border/60"}`}
+      className={`panel overflow-hidden border ${STAGE_TONE[deal.stage] ?? "border-border/60"}`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-bold truncate">{deal.playerName}</p>
-          <p className="text-xs text-muted-foreground">
-            {operationLabel}
-            {clubName(deal.otherClubId)} · ronda {deal.rounds}
-          </p>
+      <div className="relative p-4 pb-3 bg-gradient-to-r from-card via-card to-primary/5">
+        <div className="flex items-center gap-3">
+          <PlayerFace
+            name={deal.playerName}
+            image={rawPlayer?.card}
+            role={roleFromPosition(rawPlayer?.Position ?? "MID")}
+            size={58}
+            showRing={false}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="font-black truncate text-base">{deal.playerName}</p>
+            <div className="flex items-center gap-2 mt-1.5">
+              {otherClub && (
+                <TeamLogo
+                  teamName={otherClub.name}
+                  leagueName={otherClubLeague}
+                  size={24}
+                />
+              )}
+              <div className="min-w-0">
+                <p className="text-xs font-semibold truncate">{operationLabel}{clubName(deal.otherClubId)}</p>
+                <p className="text-[0.68rem] text-muted-foreground">Ronda {deal.rounds}</p>
+              </div>
+            </div>
+          </div>
+          <span className="text-[0.62rem] uppercase tracking-wider font-black shrink-0 px-2 py-1 rounded-full bg-secondary/70 border border-border/50">
+            {stageLabel(deal.stage)}
+          </span>
         </div>
-        <span className="text-[0.65rem] uppercase tracking-wider font-bold shrink-0">
-          {stageLabel(deal.stage)}
-        </span>
       </div>
+      <div className="p-4 space-y-3">
 
       <div className="grid grid-cols-2 gap-2 text-xs">
         <Cell label={isLoan ? "Prima de cesión" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
@@ -292,6 +325,7 @@ export function DealCard({
           ))}
         </ul>
       </details>
+      </div>
     </article>
   );
 }

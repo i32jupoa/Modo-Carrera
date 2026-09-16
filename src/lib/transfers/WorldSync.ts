@@ -83,7 +83,6 @@ export function syncUserLoanRoster(): void {
   if (changedRoster || changedLoans) {
     const nextRosterIds = [...nextRoster];
     const nextWageBill = getClubWageBill(myTeamId);
-    const currentWageBudget = usePlayersStore.getState().wageBudget || 0;
     // La plantilla visible debe derivarse del roster QUE ESTAMOS ESCRIBIENDO.
     // Leerla del store antes del `setState` devolvía la plantilla anterior
     // (el store todavía tenía los `rosterIds` viejos), así que un jugador
@@ -94,8 +93,10 @@ export function syncUserLoanRoster(): void {
       loanedPlayers: Object.fromEntries(active),
       squad: syncSquadFromRoster(nextRosterIds),
       wageBill: nextWageBill,
-      wageBudget: Math.max(currentWageBudget, nextWageBill),
     });
+    // La asignación salarial sigue siendo un porcentaje del presupuesto total;
+    // nunca se incrementa artificialmente hasta igualar la masa real.
+    usePlayersStore.getState().syncWageStateFromMarket();
   }
 }
 

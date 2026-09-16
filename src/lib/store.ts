@@ -2677,7 +2677,15 @@ export const UCL_PRIZES = {
 function addToUserBudget(save: SaveGame, teamId: string, amount: number) {
   if (!amount || teamId !== save.myTeamId) return;
   try {
-    usePlayersStore.setState((s) => ({ budget: (s as any).budget + amount }));
+    usePlayersStore.setState((s: any) => {
+      const oldTotal = Math.max(0, Math.round(s.budget || 0));
+      const nextTotal = Math.max(0, Math.round(oldTotal + amount));
+      const ratio = oldTotal > 0
+        ? Math.max(0.05, Math.min(0.30, (s.wageBudget || 0) / oldTotal))
+        : 0.2;
+      const wageBudget = Math.round(nextTotal * ratio);
+      return { budget: nextTotal, wageBudget };
+    });
   } catch {}
 }
 

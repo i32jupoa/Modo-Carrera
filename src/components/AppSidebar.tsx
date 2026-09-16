@@ -13,6 +13,9 @@ import {
   ChevronRight,
   Award,
   Swords,
+  CheckCircle2,
+  Info,
+  XCircle,
 } from "lucide-react";
 import {
   Sidebar,
@@ -183,17 +186,34 @@ export function AppSidebar() {
   );
 }
 
-/** Colores de cada tono de notificación. El círculo cambia de color según
- *  el tono (verde/azul/rojo), pero el número siempre en negro sólido. */
-const BADGE_STYLE: Record<NotificationKind, string> = {
-  good: "bg-emerald-500 text-black",
-  info: "bg-sky-500 text-black",
-  bad: "bg-red-500 text-black",
+/** Estilo semántico de las novedades del mercado.
+ *  No usamos círculos sólidos: cada estado tiene un icono claro y un fondo
+ *  suave para que el indicador se integre con el resto del menú. */
+const NOTIFICATION_META: Record<NotificationKind, {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  className: string;
+}> = {
+  good: {
+    icon: CheckCircle2,
+    label: "Éxito",
+    className: "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/25",
+  },
+  info: {
+    icon: Info,
+    label: "Oferta o contraoferta",
+    className: "bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/25",
+  },
+  bad: {
+    icon: XCircle,
+    label: "Rechazo",
+    className: "bg-red-500/15 text-red-300 ring-1 ring-red-500/25",
+  },
 };
 
 const BADGE_ORDER: NotificationKind[] = ["good", "info", "bad"];
 
-/** Círculos de colores con el número de novedades sin leer. */
+/** Indicadores de novedades sin leer del mercado. */
 function NotificationDots({
   counts,
   compact = false,
@@ -204,17 +224,27 @@ function NotificationDots({
   const visible = BADGE_ORDER.filter((kind) => counts[kind] > 0);
   if (visible.length === 0) return null;
   return (
-    <span className={compact ? "flex items-center -space-x-1" : "flex items-center gap-1"}>
-      {visible.map((kind) => (
-        <span
-          key={kind}
-          className={`grid place-items-center rounded-full font-bold tabular-nums ${BADGE_STYLE[kind]} ${
-            compact ? "h-3.5 w-3.5 text-[0.5rem]" : "h-5 min-w-5 px-1 text-[0.65rem]"
-          }`}
-        >
-          {counts[kind] > 99 ? "99+" : counts[kind]}
-        </span>
-      ))}
+    <span className={compact ? "flex items-center gap-0.5" : "flex items-center gap-1.5"}>
+      {visible.map((kind) => {
+        const meta = NOTIFICATION_META[kind];
+        const Icon = meta.icon;
+        const count = counts[kind] > 99 ? "99+" : counts[kind];
+        return (
+          <span
+            key={kind}
+            title={`${meta.label}: ${count}`}
+            aria-label={`${meta.label}: ${count}`}
+            className={`inline-flex items-center justify-center gap-1 font-black tabular-nums rounded-md ${meta.className} ${
+              compact
+                ? "h-4 min-w-4 px-0.5 text-[0.45rem]"
+                : "h-5 min-w-6 px-1.5 text-[0.62rem]"
+            }`}
+          >
+            <Icon className={compact ? "h-2.5 w-2.5" : "h-3 w-3"} />
+            <span>{count}</span>
+          </span>
+        );
+      })}
     </span>
   );
 }

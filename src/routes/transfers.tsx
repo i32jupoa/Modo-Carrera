@@ -22,7 +22,7 @@ import {
   clubOfPlayer,
 } from "@/store/playersStore";
 import { getPlayerAnnualWage, getPlayer, isPlayerSettled } from "@/lib/transfers";
-import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, Radar, Eye, Trash2, Clock3 } from "lucide-react";
+import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, Radar, Eye, Trash2, Clock3, ArrowDownToLine, ArrowUpFromLine, CheckCircle2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
@@ -32,6 +32,7 @@ import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
 import { buildPositions, POS_NAME, formatShortPositions } from "@/lib/positions";
 import { DealCard } from "@/components/market/DealCard";
 import { MarketFeed } from "@/components/market/MarketFeed";
+import { TransferHistoryCard } from "@/components/market/TransferHistoryCard";
 import type { ScoutingReport } from "@/lib/transfers";
 import {
   AlertDialog,
@@ -47,6 +48,13 @@ import {
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
+
+function formatMarketEuro(amount: number): string {
+  const safe = Number.isFinite(amount) ? amount : 0;
+  if (Math.abs(safe) >= 1_000_000) return `€${Math.round(safe / 1_000_000)}M`;
+  if (Math.abs(safe) >= 1_000) return `€${Math.round(safe / 1_000)}K`;
+  return `€${Math.round(safe)}`;
 }
 
 // Filter option types
@@ -278,13 +286,15 @@ function ovrBadgeClass(ovr: number): string {
   return "bg-muted text-muted-foreground border-border/40";
 }
 
-type MarketTab = "market" | "scouting" | "deals" | "offers" | "feed";
+type MarketTab = "market" | "scouting" | "deals" | "offers" | "entries" | "exits" | "feed";
 
 const TABS: { value: MarketTab; label: string }[] = [
   { value: "market", label: "Buscar jugadores" },
   { value: "scouting", label: "Ojeador" },
   { value: "deals", label: "Mis negociaciones" },
   { value: "offers", label: "Ofertas recibidas" },
+  { value: "entries", label: "Entradas" },
+  { value: "exits", label: "Salidas" },
   { value: "feed", label: "Rumores y traspasos" },
 ];
 
@@ -296,7 +306,8 @@ function TransfersPage() {
   const wageBudget = usePlayersStore((s) => s.wageBudget);
   const wageBill = usePlayersStore((s) => s.wageBill);
   const setWageBudget = usePlayersStore((s) => s.setWageBudget);
-  const totalEconomicBudget = budget + wageBudget + wageBill;
+  const totalEconomicBudget = budget;
+  const transferBudget = Math.max(0, totalEconomicBudget - wageBudget);
   const rawPlayers = usePlayersStore((s) => s.getRawPlayers?.() || []);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
@@ -419,6 +430,18 @@ function TransfersPage() {
   const leagueOptions = useMemo(() => getLeaguesFromTeams(), []);
   const teamOptions = useMemo(() => getTeamsForLeague(filters.league), [filters.league]);
 
+  const userEntries = useMemo(
+    () =>
+      market.history.filter(
+        (record) => record.toClubId === myTeamId && record.fromClubId !== myTeamId,
+      ),
+    [market.history, myTeamId],
+  );
+  const userExits = useMemo(
+    () => market.history.filter((record) => record.fromClubId === myTeamId && record.toClubId !== myTeamId),
+    [market.history, myTeamId],
+  );
+
   const resetFilters = () => {
     setFilters({
       position: "all",
@@ -491,7 +514,7 @@ function TransfersPage() {
             <Banknote className="h-5 w-5 text-primary" />
             <div>
               <p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Fichajes</p>
-              <p className="font-black text-lg">{formatEuro(budget)}</p>
+              <p className="font-black text-lg">{formatEuro(transferBudget)}</p>
             </div>
           </div>
           <div className="rounded-xl border border-border/50 bg-secondary/60 p-3 flex items-center gap-3">
@@ -508,20 +531,20 @@ function TransfersPage() {
         </div>
         <div className="flex items-center justify-between gap-3 text-xs font-bold">
           <span>Distribución económica</span>
-          <span className="text-primary">{totalEconomicBudget > 0 ? ((wageBudget / totalEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · máximo 17,5%</span>
+          <span className="text-primary">{totalEconomicBudget > 0 ? ((wageBudget / totalEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · entre 5% y 30%</span>
         </div>
         <Slider
-          value={[Math.min(Math.max(0, wageBudget), Math.floor(totalEconomicBudget * 0.175))]}
-          min={0}
-          max={Math.floor(totalEconomicBudget * 0.175)}
+          value={[Math.min(Math.max(Math.ceil(totalEconomicBudget * 0.05), wageBudget), Math.floor(totalEconomicBudget * 0.30))]}
+          min={Math.ceil(totalEconomicBudget * 0.05)}
+          max={Math.floor(totalEconomicBudget * 0.30)}
           step={250_000}
           onValueChange={(values) => setWageBudget(values[0] ?? wageBudget)}
-          aria-label="Distribución del presupuesto entre salarios y fichajes, máximo 17,5% para salarios"
+          aria-label="Distribución del presupuesto entre salarios y fichajes, entre 5% y 30% para salarios"
           className="mt-3"
         />
         <div className="flex justify-between mt-2 text-[0.7rem] text-muted-foreground">
           <span>Más dinero para fichajes</span>
-          <span>17,5% máximo para salarios</span>
+          <span>30% máximo para salarios</span>
         </div>
       </div>
 
@@ -823,11 +846,11 @@ function TransfersPage() {
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
-                          <p className="font-black scoreline text-primary">{formatEuro(cost)}</p>
+                          <p className="font-black scoreline text-primary">{formatMarketEuro(cost)}</p>
                         </div>
                         <div>
                           <p className="text-[0.6rem] uppercase text-muted-foreground">Salario actual</p>
-                          <p className="font-black scoreline text-emerald-300">{formatEuro(getPlayerAnnualWage(id))}<span className="text-[0.55rem] font-medium text-muted-foreground">/año</span></p>
+                          <p className="font-black scoreline text-emerald-300">{formatMarketEuro(getPlayerAnnualWage(id))}<span className="text-[0.55rem] font-medium text-muted-foreground">/año</span></p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -928,7 +951,7 @@ function TransfersPage() {
                     <div className="p-3 space-y-3 mt-auto">
                       <div>
                         <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
-                        <p className="font-black scoreline text-primary">{formatEuro(cost)}</p>
+                        <p className="font-black scoreline text-primary">{formatMarketEuro(cost)}</p>
                       </div>
                       {entry.status === "pending" ? (
                         <div className="flex items-center gap-2">
@@ -1009,6 +1032,66 @@ function TransfersPage() {
         </div>
       )}
 
+      {tab === "entries" && (
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-r from-emerald-500/10 via-card to-card p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-500/15 text-emerald-400">
+                <ArrowDownToLine className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-lg">Entradas</h3>
+                <p className="text-xs text-muted-foreground">Todos los jugadores que han llegado a tu club mediante un fichaje o una cesión.</p>
+              </div>
+              <span className="ml-auto rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-black text-emerald-400">{userEntries.length}</span>
+            </div>
+          </div>
+          {userEntries.length === 0 ? (
+            <div className="panel p-12 text-center">
+              <CheckCircle2 className="mx-auto h-9 w-9 text-muted-foreground/40" />
+              <p className="mt-3 font-bold">Todavía no hay entradas.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Las operaciones cerradas aparecerán aquí automáticamente.</p>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {userEntries.map((record) => (
+                <TransferHistoryCard key={record.id} record={record} direction="in" />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "exits" && (
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-orange-500/20 bg-gradient-to-r from-orange-500/10 via-card to-card p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-xl bg-orange-500/15 text-orange-400">
+                <ArrowUpFromLine className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-lg">Salidas</h3>
+                <p className="text-xs text-muted-foreground">Todos los jugadores que han abandonado tu club mediante un fichaje o una cesión.</p>
+              </div>
+              <span className="ml-auto rounded-full bg-orange-500/10 px-3 py-1 text-xs font-black text-orange-400">{userExits.length}</span>
+            </div>
+          </div>
+          {userExits.length === 0 ? (
+            <div className="panel p-12 text-center">
+              <CheckCircle2 className="mx-auto h-9 w-9 text-muted-foreground/40" />
+              <p className="mt-3 font-bold">Todavía no hay salidas.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Las operaciones cerradas aparecerán aquí automáticamente.</p>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {userExits.map((record) => (
+                <TransferHistoryCard key={record.id} record={record} direction="out" />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === "feed" && (
         <MarketFeed
           rumors={market.rumors}
@@ -1069,6 +1152,7 @@ function TransfersPage() {
           report={report}
           budget={budget}
           wageBudget={wageBudget}
+          wageBill={wageBill}
           currentWage={target ? getPlayerAnnualWage(String(target.ID)) : 0}
           transferLocked={target ? isPlayerSettled(String(target.ID)) : false}
           currentDate={market.currentDate}

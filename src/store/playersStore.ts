@@ -604,15 +604,14 @@ export function teamInitialBudget(avgOvr: number, leagueId = "", clubId = ""): n
 }
 
 export function formatEuro(amount: number): string {
-  if (amount >= 1_000_000) {
-    const m = amount / 1_000_000;
-
-    return m >= 10 ? `€${Math.round(m)}M` : `€${m.toFixed(1)}M`;
+  const safe = Number.isFinite(amount) ? amount : 0;
+  if (Math.abs(safe) >= 1_000_000) {
+    return `€${(safe / 1_000_000).toFixed(2)}M`;
   }
 
-  if (amount >= 1_000) return `€${Math.round(amount / 1_000)}K`;
+  if (Math.abs(safe) >= 1_000) return `€${(safe / 1_000).toFixed(2)}K`;
 
-  return `€${amount}`;
+  return `€${safe.toFixed(2)}`;
 }
 
 export const POS_LABEL_ES: Record<Position, string> = {
@@ -721,7 +720,7 @@ type PlayersState = {
 
   budget: number;
 
-  /** Margen salarial anual disponible adicional (máximo 17,5% del presupuesto económico total). */
+  /** Margen salarial anual disponible adicional (máximo 30% del presupuesto económico total). */
   wageBudget: number;
 
   /** Masa salarial anual comprometida por los jugadores de la plantilla. */
@@ -788,7 +787,7 @@ type PlayersState = {
   resetAllStats: () => void;
 
   resetBudget: () => void;
-  /** Reparte el presupuesto total entre fichajes y salarios, con tope del 50%. */
+  /** Reparte el presupuesto total entre fichajes y salarios, entre el 5% y el 30%. */
   setWageBudget: (value: number) => void;
   /** Sincroniza la masa salarial con los contratos reales del motor de mercado. */
   syncWageStateFromMarket: () => void;
@@ -914,10 +913,15 @@ function estimateSquadWageBill(teamId: string, squad: FcPlayer[]): number {
   }, 0);
 }
 
-function initialWageBudget(teamId: string, squad: FcPlayer[], transferBudget: number): number {
-  const wageBill = estimateSquadWageBill(teamId, squad);
-  // Arranque con margen, pero nunca por encima del 50% del presupuesto económico.
-  return Math.max(wageBill * 1.12, Math.round(transferBudget * 0.25));
+function wageAllocation(totalBudget: number, preferredRatio = 0.2): number {
+  const total = Math.max(0, Math.round(totalBudget));
+  if (total === 0) return 0;
+  const ratio = Math.max(0.05, Math.min(0.30, preferredRatio));
+  return Math.round(total * ratio);
+}
+
+function initialWageBudget(totalBudget: number): number {
+  return wageAllocation(totalBudget, 0.2);
 }
 
 export const usePlayersStore = create<PlayersState>()(
@@ -935,7 +939,7 @@ export const usePlayersStore = create<PlayersState>()(
 
       budget: INITIAL_BUDGET,
 
-      wageBudget: Math.round(INITIAL_BUDGET * 0.25),
+      wageBudget: initialWageBudget(INITIAL_BUDGET),
 
       wageBill: 0,
 
@@ -1521,62 +1525,58 @@ export const usePlayersStore = create<PlayersState>()(
         const prev = get();
         const avgOvr =
           defaultSquad.length > 0
-            ? Math.round(defaultSquad.reduce((s, p) => s + p.OVR, 0) / defaultSquad.length)
-            : Math.round((team.att + team.mid + team.def) / 3);
-        const transferBase =
-          opts?.resetBudget || prev.myTeamId !== teamId
-            ? teamInitialBudget(avgOvr, team.league, team.id)
-            : prev.budget;
+            ? defaultSquad.reduce((sum, p) => sum + p.OVR, 0) / defaultSquad.length
+            : (team.att + team.mid + team.def) / 3;
+
+        const shouldReset = opts?.resetBudget || prev.myTeamId !== teamId;
+        let totalBudget = shouldReset ? teamInitialBudget(avgOvr, team.league, team.id) : prev.budget;
         const wageBill = getClubWageBill(teamId);
-        // En un cambio de club, la masa salarial real se mantiene separada del
-        // margen salarial disponible. Ese margen adicional empieza en el 25%
-        // histórico, pero la barra lo limita ahora al 17,5% del presupuesto económico.
-        const previousWageBudget =
-          prev.myTeamId === teamId ? prev.wageBudget ?? 0 : 0;
-        const initialTotal = Math.ceil(transferBase / 0.75);
-        const maxWage = Math.floor(initialTotal / 2);
-        const defaultWage = Math.round(initialTotal * 0.25);
-        const preferredWage = Math.max(0, Math.min(maxWage, previousWageBudget || defaultWage));
-        const total = Math.max(0, initialTotal + wageBill);
-        const maxAdditionalWage = Math.floor(total * 0.175);
-        const preferred = Math.max(0, Math.min(maxAdditionalWage, previousWageBudget || Math.round(total * 0.04)));
+
+        totalBudget = Math.max(0, Math.round(totalBudget));
+        const previousRatio =
+          prev.myTeamId === teamId && prev.budget > 0
+            ? (prev.wageBudget ?? initialWageBudget(prev.budget)) / prev.budget
+            : 0.2;
+        const wageBudget = wageAllocation(totalBudget, previousRatio);
+
         set({
           myTeamId: teamId,
           rosterIds,
           squad: defaultSquad,
-          loanedPlayers:
-            opts?.resetBudget || prev.myTeamId !== teamId ? {} : prev.loanedPlayers,
-          budget: Math.max(0, total - wageBill - preferred),
+          loanedPlayers: shouldReset ? {} : prev.loanedPlayers,
+          budget: totalBudget,
           wageBill,
-          wageBudget: preferred,
+          wageBudget,
         });
       },
 
       hydrateMyTeam: () => {
         const { myTeamId, rosterIds } = get();
-
         if (!myTeamId) return;
 
-        if (rosterIds.length === 0) {
-          const team = teamById(myTeamId);
-
-          const defaultSquad = squadForTeam(team.id);
-
-          const ids = defaultSquad.map((p) => String(p.ID));
-
-          set({
-            rosterIds: ids,
-            squad: defaultSquad,
-            wageBill: getClubWageBill(myTeamId),
-          });
-          get().syncWageStateFromMarket();
-          return;
-        }
-
-        const nextSquad = syncSquadFromRoster(rosterIds);
+        const team = teamById(myTeamId);
+        const currentRosterIds =
+          rosterIds.length > 0 ? rosterIds : squadForTeam(team.id).map((p) => String(p.ID));
+        const state = get();
         const wageBill = getClubWageBill(myTeamId);
-        set({ squad: nextSquad, wageBill });
-        get().syncWageStateFromMarket();
+
+        // En el modelo actual `budget` es el presupuesto TOTAL. La masa salarial
+        // real (`wageBill`) nunca aumenta artificialmente ese presupuesto.
+        // Las partidas nuevas/actualizadas conservan el total directamente.
+        const totalBudget = Math.max(0, Math.round(state.budget || INITIAL_BUDGET));
+        const ratio =
+          state.budget > 0
+            ? (state.wageBudget || totalBudget * 0.2) / Math.max(1, state.budget)
+            : 0.2;
+        const wageBudget = wageAllocation(totalBudget, ratio);
+
+        set({
+          rosterIds: currentRosterIds,
+          squad: syncSquadFromRoster(currentRosterIds),
+          budget: totalBudget,
+          wageBill,
+          wageBudget,
+        });
       },
 
       clear: () =>
@@ -1590,7 +1590,7 @@ export const usePlayersStore = create<PlayersState>()(
           myTeamId: null,
 
           budget: INITIAL_BUDGET,
-          wageBudget: Math.round(INITIAL_BUDGET * 0.25),
+          wageBudget: initialWageBudget(INITIAL_BUDGET),
           wageBill: 0,
 
           currentDate: GAME_START_DATE,
@@ -1609,23 +1609,27 @@ export const usePlayersStore = create<PlayersState>()(
       resetBudget: () => {
         const state = get();
         const team = state.myTeamId ? teamById(state.myTeamId) : null;
-        const transferBudget = team ? teamInitialBudget(Math.round(team.att + team.mid + team.def) / 3, team.league, team.id) : INITIAL_BUDGET;
+        const baseTotal = team
+          ? teamInitialBudget((team.att + team.mid + team.def) / 3, team.league, team.id)
+          : INITIAL_BUDGET;
         const wageBill = state.myTeamId ? getClubWageBill(state.myTeamId) : 0;
-        const total = Math.ceil(Math.max(0, transferBudget) / 0.75);
-        const wageBudget = Math.round(total * 0.25);
-        set({ budget: Math.max(0, total - wageBudget), wageBill, wageBudget });
+        const total = Math.max(0, Math.round(baseTotal));
+        set({
+          budget: total,
+          wageBill,
+          wageBudget: wageAllocation(total, 0.2),
+        });
       },
 
       setWageBudget: (value) => {
         const state = get();
-        const marketBill = state.myTeamId ? getClubWageBill(state.myTeamId) : 0;
-        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0) + marketBill);
-        const maxWage = Math.floor(total * 0.175);
-        const nextWage = Math.max(0, Math.min(maxWage, Math.round(value)));
+        const total = Math.max(0, Math.round(state.budget || 0));
+        const requestedRatio = total > 0 ? Math.round(value) / total : 0.2;
+        const wageBill = state.myTeamId ? getClubWageBill(state.myTeamId) : state.wageBill;
         set({
-          wageBudget: nextWage,
-          budget: Math.max(0, total - marketBill - nextWage),
-          wageBill: marketBill,
+          budget: total,
+          wageBudget: wageAllocation(total, requestedRatio),
+          wageBill,
         });
       },
 
@@ -1633,13 +1637,15 @@ export const usePlayersStore = create<PlayersState>()(
         const state = get();
         if (!state.myTeamId) return;
         const bill = getClubWageBill(state.myTeamId);
-        const total = Math.max(0, (state.budget || 0) + (state.wageBudget || 0) + bill);
-        const maxWage = Math.floor(total * 0.175);
-        const preferred = Math.max(0, Math.min(maxWage, state.wageBudget || Math.round(total * 0.04)));
+        const total = Math.max(0, Math.round(state.budget || 0));
+        const ratio =
+          total > 0
+            ? (state.wageBudget || total * 0.2) / Math.max(1, state.budget || total)
+            : 0.2;
         set({
           wageBill: bill,
-          wageBudget: preferred,
-          budget: Math.max(0, total - bill - preferred),
+          wageBudget: wageAllocation(total, ratio),
+          budget: total,
         });
       },
 
@@ -1665,10 +1671,10 @@ export const usePlayersStore = create<PlayersState>()(
           const rosterIds = [...state.rosterIds];
           set({
             wageBill: getClubWageBill(state.myTeamId),
-            wageBudget: Math.max(get().wageBudget || 0, getClubWageBill(state.myTeamId)),
             squad: syncSquadFromRoster(rosterIds),
           });
           syncWageBill(state.myTeamId);
+          get().syncWageStateFromMarket();
           void saveTransferSystem();
         }
         return result;
@@ -1716,6 +1722,7 @@ export const usePlayersStore = create<PlayersState>()(
           clubOverrides: { ...getClubOverrides() },
 
           budget: state.budget - cost,
+          wageBill: getClubWageBill(state.myTeamId),
 
           rosterIds,
 
@@ -1805,17 +1812,23 @@ export const usePlayersStore = create<PlayersState>()(
         if (clubOfPlayer(playerId) === state.myTeamId) setPlayerClub(playerId, null);
 
         const nextWageBill = getClubWageBill(state.myTeamId);
-        const nextWageBudget = Math.max(state.wageBudget || 0, nextWageBill);
+        // Las ventas del mercado ya han actualizado la caja a través de
+        // BudgetManager.registerSale(). `sellPlayer()` solo reconcilia la
+        // plantilla; no vuelve a sumar el salario liberado ni la venta.
+        // Esto evita duplicar el ahorro salarial cuando el motor cierra una
+        // negociación y la UI sincroniza la plantilla inmediatamente.
+        const nextTotal = Math.max(0, Math.round(state.budget));
+        const ratio =
+          nextTotal > 0
+            ? (state.wageBudget || nextTotal * 0.20) / Math.max(1, state.budget)
+            : 0.20;
 
         set({
           clubOverrides: { ...getClubOverrides() },
-
-          budget: state.budget + price,
+          budget: nextTotal,
           wageBill: nextWageBill,
-          wageBudget: nextWageBudget,
-
+          wageBudget: wageAllocation(nextTotal, ratio),
           rosterIds,
-
           squad: syncSquadFromRoster(rosterIds),
         });
 

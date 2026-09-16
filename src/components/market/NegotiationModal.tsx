@@ -13,6 +13,7 @@ interface Props {
   report: ScoutingReport | null;
   budget: number;
   wageBudget?: number;
+  wageBill?: number;
   currentWage?: number;
   currentDate: string;
   /**
@@ -44,6 +45,7 @@ export function NegotiationModal({
   report,
   budget,
   wageBudget = 0,
+  wageBill = 0,
   currentWage = 0,
   currentDate,
   transferLocked = false,
@@ -66,11 +68,11 @@ export function NegotiationModal({
 
   const amountEuros = Math.round(amount * 1_000_000);
   const wageEuros = type === "permanent" ? Math.round(wage * 1_000_000) : Math.max(0, Math.round(currentWage));
-  const overBudget = amountEuros > budget;
-  const wageRoom = Math.max(0, wageBudget);
+  const transferBudget = Math.max(0, budget - wageBudget);
   const wageCommitmentEuros =
     type === "permanent" ? wageEuros : Math.round(wageEuros * (wageShare / 100));
-  const overWageBudget = wageCommitmentEuros > wageRoom;
+  const overBudget = amountEuros > transferBudget;
+  const overWageBudget = wageCommitmentEuros > wageBudget;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-auto">
@@ -248,8 +250,9 @@ export function NegotiationModal({
         </div>
 
         <div className="space-y-1 text-xs text-muted-foreground">
-          <p>Presupuesto disponible:{" "}<span className="text-foreground font-bold">{formatEuro(budget)}</span>{overBudget && <span className="text-destructive"> · oferta por encima del presupuesto</span>}</p>
-          <p>Presupuesto salarial disponible:{" "}<span className="text-foreground font-bold">{formatEuro(wageRoom)} al año</span>{overWageBudget && <span className="text-destructive"> · No tienes margen salarial suficiente.</span>}</p>
+          <p>Presupuesto total:{" "}<span className="text-foreground font-bold">{formatEuro(budget)}</span></p>
+          <p>Dinero para fichajes:{" "}<span className="text-foreground font-bold">{formatEuro(transferBudget)}</span>{overBudget && <span className="text-destructive"> · oferta por encima del dinero disponible</span>}</p>
+          <p>Presupuesto salarial:{" "}<span className="text-foreground font-bold">{formatEuro(wageBudget)} al año</span>{overWageBudget && <span className="text-destructive"> · el salario supera la asignación salarial</span>}</p>
           {type !== "permanent" && (
             <p>Duración: <span className="text-foreground font-bold">{loanDurationMonths === 6 ? "6 meses" : loanDurationMonths === 12 ? "1 año" : "2 años"}</span> · tu club asume el <span className="text-foreground font-bold">{wageShare}%</span> del sueldo actual.</p>
           )}

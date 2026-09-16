@@ -530,6 +530,13 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
   if (!deal) return { ok: false, reason: "Negociación no encontrada." };
   if (deal.stage !== "ready") return { ok: false, reason: "El acuerdo todavía no está cerrado." };
 
+  // Para una venta necesitamos conservar el salario que tenía el jugador
+  // antes de completarTransfer(), porque este último reemplaza su contrato
+  // al llegar al club comprador. Ese mismo salario es el que se devuelve a la
+  // caja del vendedor y el que debe desaparecer de su masa salarial.
+  const sellingPlayerWage =
+    deal.direction === "out" ? getPlayer(deal.playerId)?.contract.wage ?? 0 : deal.offer.wageOffer;
+
   const record = withUserApproval(() => completeTransfer(deal.offer, date));
   if (!record) return { ok: false, reason: "No se pudo cerrar la operación." };
   recordTransfer(record);
@@ -543,7 +550,12 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
         ? `Fichaje cerrado por ${fmt(record.fee)}.`
         : `Venta cerrada por ${fmt(record.fee)}.`,
   );
-  return { ok: true, record, fee: record.fee, wage: record.wage };
+  return {
+    ok: true,
+    record,
+    fee: record.fee,
+    wage: deal.direction === "out" ? sellingPlayerWage : record.wage,
+  };
 }
 
 // ============================================================================
@@ -1212,7 +1224,7 @@ function generateLoanOffersForUserPlayers(userClubId: string, date: string): Use
       }],
     };
     deals.set(deal.id, deal);
-    pushEvent(events, deal, `Oferta de cesión recibida por ${player.name} desde ${teamById(borrowerId).name}.`, "good");
+    pushEvent(events, deal, `Oferta de cesión recibida por ${player.name} desde ${teamById(borrowerId).name}.`, "info");
     break;
   }
   return events;

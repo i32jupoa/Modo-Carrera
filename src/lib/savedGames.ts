@@ -52,6 +52,8 @@ function snapshotPlayersStore() {
     loanedPlayers: s.loanedPlayers,
     clubOverrides: s.clubOverrides,
     budget: s.budget,
+    wageBudget: s.wageBudget,
+    wageBill: s.wageBill,
     dismissedMatchIds: s.dismissedMatchIds,
   };
 }
@@ -268,6 +270,8 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
     loanedPlayers,
     clubOverrides,
     budget: snap.budget,
+    wageBudget: snap.wageBudget,
+    wageBill: snap.wageBill,
     dismissedMatchIds: snap.dismissedMatchIds ?? [],
   } as any);
 }

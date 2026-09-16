@@ -47,7 +47,7 @@ export function MarketNotifier(): null {
     if (getSimulationState()?.window === "closed") clearFinishedUserDeals();
     if (events.length === 0) return;
     addNotifications(
-      events.map((event) => ({ kind: event.kind, text: event.text })),
+      events.map((event) => ({ dealId: event.dealId, kind: event.kind, text: event.text })),
       currentDate,
     );
     saveTransferSystem();

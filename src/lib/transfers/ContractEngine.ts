@@ -99,15 +99,30 @@ export function renewUserPlayer(input: UserRenewalInput): UserRenewalOutcome {
   syncWageBill(input.clubId);
   const finances = getFinances(input.clubId);
   const availableWageRoom = finances.wageBudget - finances.wageBill + player.contract.wage;
+  const wageDelta = wage - player.contract.wage;
+  const nextTotal = Math.max(0, finances.budget - signingBonus - wageDelta);
+  const nextWageBill = Math.max(0, finances.wageBill + wageDelta);
+  const nextWageAllocation = nextTotal > 0
+    ? Math.round(
+        nextTotal *
+          Math.max(
+            0.05,
+            Math.min(
+              0.2,
+              finances.budget > 0 ? finances.wageBudget / finances.budget : 0.2,
+            ),
+          ),
+      )
+    : 0;
 
-  if (wage > availableWageRoom) {
+  if (wage > availableWageRoom || nextWageBill > nextWageAllocation) {
     return {
       ...base,
       wage,
       years,
       releaseClause,
       signingBonus,
-      message: `La renovación supera el margen salarial disponible (${Math.round(availableWageRoom).toLocaleString("es-ES")} €).`,
+      message: `La renovación supera el margen salarial disponible (${Math.max(0, Math.round(availableWageRoom)).toLocaleString("es-ES")} €) o el 30% máximo de masa salarial.`,
     };
   }
   if (signingBonus > finances.budget) {

@@ -13,6 +13,7 @@ import {
   getPlayer,
   currentWindowStart,
   getFinances,
+  setFinances,
   rumorsSince,
   getSimulationState,
   improvePlayerTerms,
@@ -29,6 +30,7 @@ import {
   submitUserOffer,
   summarize,
   syncUserFinances,
+  canAfford,
   withdrawUserDeal,
   type OfferClauses,
   type Rumor,
@@ -171,20 +173,24 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   );
 
   /**
-   * Refleja al instante en la partida el presupuesto que ha quedado en el
-   * motor tras un fichaje o una venta (el motor es la única caja del club).
+   * Sincroniza el motor de mercado CON el estado de la partida.
+   *
+   * El presupuesto de un club usuario pertenece a `playersStore`; el motor
+   * sólo mantiene una copia auxiliar para simulaciones y negociaciones.
+   * Nunca debe poder sobrescribir la caja real con una cifra antigua.
    */
   const syncBudget = useCallback(() => {
     if (!myTeamId) return;
-    const finances = getFinances(myTeamId);
     const current = usePlayersStore.getState();
-    if (current.budget !== finances.budget || current.wageBudget !== finances.wageBudget || current.wageBill !== finances.wageBill) {
-      usePlayersStore.setState({
-        budget: Math.max(0, Math.round(finances.budget)),
-        wageBudget: Math.max(0, Math.round(finances.wageBudget)),
-        wageBill: Math.max(0, Math.round(finances.wageBill)),
-      });
-    }
+    const market = getFinances(myTeamId);
+    setFinances({
+      ...market,
+      clubId: myTeamId,
+      budget: Math.max(0, Math.round(current.budget)),
+      totalBudget: Math.max(0, Math.round(current.budget)),
+      wageBudget: Math.max(0, Math.round(current.wageBudget)),
+      wageBill: Math.max(0, Math.round(current.wageBill)),
+    });
   }, [myTeamId]);
 
   const scout = useCallback(
@@ -220,18 +226,19 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     ({ playerId, amount, wageOffer, type, clauses }) => {
       if (!myTeamId) return;
       const store = usePlayersStore.getState();
-      const budget = store.budget;
-      const wageRoom = Math.max(0, store.wageBudget);
+      const totalBudget = Math.max(0, store.budget);
+      const wageAllocation = Math.max(0, store.wageBudget);
+      const transferBudget = Math.max(0, totalBudget - wageAllocation);
       const isLoan =
         type === "loan" || type === "loan-option" || type === "loan-obligation";
       const wageCommitment = isLoan
         ? wageOffer * Math.max(0, Math.min(1, clauses?.wageShare ?? 0.5))
         : wageOffer;
-      if (amount > budget) {
-        toast.error("No tienes presupuesto para esa oferta.");
+      if (amount > transferBudget) {
+        toast.error("No tienes suficiente dinero destinado a fichajes para esa oferta.");
         return;
       }
-      if (wageCommitment > wageRoom) {
+      if (wageCommitment > wageAllocation) {
         toast.error("No tienes margen salarial suficiente para asumir esa parte de la ficha.");
         return;
       }
@@ -319,12 +326,17 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
    * sí funcionaban al instante).
    */
   const applyUserExit = useCallback(
-    (result: {
-      ok: boolean;
-      reason?: string;
-      fee?: number;
-      record?: TransferRecord;
-    }) => {
+    (
+      result: {
+        ok: boolean;
+        reason?: string;
+        fee?: number;
+        wage?: number;
+        record?: TransferRecord;
+      },
+      startingBudget?: number,
+      startingWageBill?: number,
+    ) => {
       const type = result.record?.type;
       const isLoan = type === "loan" || type === "loan-option" || type === "loan-obligation";
 
@@ -338,6 +350,23 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       if (isLoan) {
         // El club sigue siendo el propietario, pero el jugador pasa a jugar en
         // el club receptor: sale de tu plantilla hasta que termine la cesión.
+        if (startingBudget !== undefined) {
+          const current = usePlayersStore.getState();
+          const coveredWage =
+            (result.wage ?? 0) * Math.max(0, Math.min(1, result.record.clauses?.wageShare ?? 0));
+          const nextBudget = Math.max(0, startingBudget + result.fee + coveredWage);
+          const originalWage = Math.max(0, result.wage ?? 0);
+          const retainedWage = originalWage - coveredWage;
+          const nextWageBill = Math.max(0, (startingWageBill ?? current.wageBill) - originalWage + retainedWage);
+          const ratio = startingBudget > 0
+            ? Math.max(0.05, Math.min(0.30, current.wageBudget / startingBudget))
+            : 0.20;
+          usePlayersStore.setState({
+            budget: nextBudget,
+            wageBudget: Math.round(nextBudget * ratio),
+            wageBill: Math.round(nextWageBill),
+          });
+        }
         flushWorldMoves();
         syncBudget();
         commit(`Cesión cerrada por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
@@ -345,10 +374,25 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       }
 
       const store = usePlayersStore.getState();
-      const playerBeforeSale = store.getSimPlayer(result.record.playerId);
-      const previousWage = playerBeforeSale?.contract.wage ?? result.record.wage ?? 0;
+      // `completeTransfer()` ya ha aplicado el ingreso y la liberación salarial
+      // en el motor. Aquí sólo reconciliamos la plantilla; no se vuelve a
+      // registrar la venta para evitar duplicar el dinero.
       const sold = store.sellPlayer(result.record.playerId, 0);
-      if (sold.ok) syncUserFinances(myTeamId!, result.fee, previousWage, true);
+
+      // Reafirmamos la caja con la aritmética de la operación cerrada:
+      // presupuesto anterior + precio de venta + salario anual liberado.
+      // El salario viene del contrato anterior guardado por finalizeUserDeal.
+      if (startingBudget !== undefined) {
+        const current = usePlayersStore.getState();
+        const nextBudget = Math.max(0, startingBudget + result.fee + Math.max(0, result.wage ?? 0));
+        const ratio = startingBudget > 0
+          ? Math.max(0.05, Math.min(0.30, current.wageBudget / startingBudget))
+          : 0.20;
+        usePlayersStore.setState({
+          budget: nextBudget,
+          wageBudget: Math.round(nextBudget * ratio),
+        });
+      }
 
       flushWorldMoves();
       syncBudget();
@@ -381,6 +425,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         return;
       }
       const store = usePlayersStore.getState();
+      const startingBudget = store.budget;
+      const startingWageBill = store.wageBill;
 
       // Una negociación de SALIDA (vendes tú) también puede llegar a la fase
       // "ready" y mostrar el botón "Cerrar venta". Antes caía en la lógica de
@@ -392,13 +438,20 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
           commit(undefined, "Debes mantener al menos 11 jugadores en la plantilla.");
           return;
         }
-        applyUserExit(finalizeUserDeal(dealId, currentDate));
+        applyUserExit(finalizeUserDeal(dealId, currentDate), startingBudget, startingWageBill);
         return;
       }
 
       const fee = deal.offer?.amount ?? 0;
-      if (store.budget < fee) {
-        commit(undefined, `Presupuesto insuficiente para cerrar el fichaje.`);
+      const isLoan =
+        deal.offer?.type === "loan" ||
+        deal.offer?.type === "loan-option" ||
+        deal.offer?.type === "loan-obligation";
+      const wageOffer = deal.offer?.wageOffer ?? 0;
+      const wageShare = Math.max(0, Math.min(1, deal.offer?.clauses?.wageShare ?? 0.5));
+      const wageCommitment = isLoan ? wageOffer * wageShare : wageOffer;
+      if (!canAfford(myTeamId!, fee, wageCommitment)) {
+        commit(undefined, `El presupuesto o el margen salarial no permiten cerrar esta operación.`);
         return;
       }
       if (store.rosterIds.includes(deal.playerId)) {
@@ -428,6 +481,18 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
           commit(undefined, loaned.reason ?? "No se pudo integrar el cedido en la plantilla.");
           return;
         }
+        const loanWageShare = Math.max(0, Math.min(1, result.record.clauses?.wageShare ?? 0.5));
+        const wagePaidByUser = Math.max(0, (result.wage ?? 0) * loanWageShare);
+        const nextBudget = Math.max(0, startingBudget - result.fee - wagePaidByUser);
+        const currentAfterLoan = usePlayersStore.getState();
+        const nextRatio = startingBudget > 0
+          ? Math.max(0.05, Math.min(0.30, currentAfterLoan.wageBudget / startingBudget))
+          : 0.20;
+        usePlayersStore.setState({
+          budget: nextBudget,
+          wageBudget: Math.round(nextBudget * nextRatio),
+          wageBill: Math.round(startingWageBill + wagePaidByUser),
+        });
         flushWorldMoves();
         syncBudget();
         commit(`Cesión cerrada por ${(result.fee / 1_000_000).toFixed(1)}M € · vuelve el ${endDate}.`);
@@ -441,6 +506,18 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit(undefined, bought.reason ?? "La plantilla no admite el fichaje.");
         return;
       }
+      const feePaid = result.fee;
+      const wagePaid = isLoan
+        ? wageCommitment
+        : result.record.wage;
+      const nextBudget = Math.max(0, startingBudget - feePaid - wagePaid);
+      const nextRatio = startingBudget > 0
+        ? Math.max(0.05, Math.min(0.30, store.wageBudget / startingBudget))
+        : 0.20;
+      usePlayersStore.setState({
+        budget: nextBudget,
+        wageBudget: Math.round(nextBudget * nextRatio),
+      });
       flushWorldMoves();
       syncBudget();
       commit(`Fichaje cerrado por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
@@ -464,6 +541,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const acceptIncoming = useCallback(
     (dealId: string) => {
       const store = usePlayersStore.getState();
+      const startingBudget = store.budget;
+      const startingWageBill = store.wageBill;
       // Tanto una venta definitiva como una cesión de salida liberan una
       // plaza de la plantilla del usuario. La diferencia es que en la cesión
       // el club sigue siendo el propietario y el jugador regresará al terminar.
@@ -476,7 +555,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit();
         return;
       }
-      applyUserExit(result);
+      applyUserExit(result, startingBudget);
     },
     [currentDate, commit, applyUserExit],
   );

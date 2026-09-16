@@ -15,13 +15,15 @@ export function clubWageBill(clubId: string): number {
 }
 
 /**
- * El presupuesto total siempre tiene que soportar al menos la masa salarial
- * actual dentro de su máximo del 17,5%. Por tanto, total >= 2 * wageBill.
+ * Modelo económico del usuario:
+ * - `totalBudget` es todo el dinero disponible del club.
+ * - `wageBudget` es la parte reservada a salarios (5%–30% del total).
+ * - `transferBudget` es lo que queda para fichajes.
+ * La masa salarial real se mantiene aparte en `wageBill`.
  */
 export function normalizeClubBudget(totalBudget: number, wageBill: number): { totalBudget: number; wageBudget: number; transferBudget: number } {
-  const total = Math.max(0, Math.round(totalBudget), Math.round(wageBill * 2));
-  const maxWageBudget = Math.floor(total * 0.175);
-  const wageBudget = Math.min(maxWageBudget, Math.max(Math.round(wageBill), Math.round(total * 0.25)));
+  const total = Math.max(0, Math.round(totalBudget));
+  const wageBudget = Math.round(total * 0.20);
   return {
     totalBudget: total,
     wageBudget,
@@ -29,9 +31,9 @@ export function normalizeClubBudget(totalBudget: number, wageBill: number): { to
   };
 }
 
-export function clampWageAllocation(totalBudget: number, currentWageBill: number, requestedWageBudget: number): number {
-  const total = Math.max(Math.round(totalBudget), Math.round(currentWageBill * 2));
-  const minWage = Math.round(currentWageBill);
-  const maxWage = Math.floor(total * 0.175);
+export function clampWageAllocation(totalBudget: number, _currentWageBill: number, requestedWageBudget: number): number {
+  const total = Math.max(0, Math.round(totalBudget));
+  const minWage = Math.ceil(total * 0.05);
+  const maxWage = Math.floor(total * 0.30);
   return clamp(Math.round(requestedWageBudget), minWage, maxWage);
 }
