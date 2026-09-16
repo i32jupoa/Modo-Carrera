@@ -355,8 +355,10 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     ...emptyClauses(),
     ...(input.clauses ?? {}),
     sellOnPercent: clamp(input.clauses?.sellOnPercent ?? 0, 0, 0.5),
-    squadRole: input.clauses?.squadRole ?? "rotation",
-    contractYears: Math.max(1, Math.min(6, Math.round(input.clauses?.contractYears ?? 4))),
+    // En un traspaso el rol y los años pertenecen a la fase con el jugador.
+    // En una cesión, el rol sí forma parte del acuerdo entre clubes.
+    squadRole: isLoan ? (input.clauses?.squadRole ?? "rotation") : undefined,
+    contractYears: undefined,
   };
   if (isLoan) {
     requestedClauses.loanDurationMonths =
@@ -452,11 +454,9 @@ export function improveUserOffer(
   const amount = Math.max(deal.offer.amount, Math.round(patch.amount ?? deal.offer.amount));
   deal.offer.amount = amount;
   const loanDeal = isLoanOffer(deal.offer.type);
-  if (!loanDeal && patch.wageOffer !== undefined) {
-    deal.offer.wageOffer = Math.max(WAGE_RULES.minimumWage, Math.round(patch.wageOffer));
-  }
   if (loanDeal) {
     const player = getPlayer(deal.playerId);
+    // En una cesión la ficha anual vigente nunca se negocia con el club.
     if (player) deal.offer.wageOffer = Math.round(player.contract.wage);
     if (patch.clauses) {
       const next = { ...deal.offer.clauses };
@@ -465,17 +465,24 @@ export function improveUserOffer(
         const duration = Math.round(patch.clauses.loanDurationMonths);
         next.loanDurationMonths = duration === 6 || duration === 12 || duration === 24 ? duration : next.loanDurationMonths;
       }
+      if (patch.clauses.optionFee !== undefined && deal.offer.type !== "loan") {
+        next.optionFee = Math.max(0, Math.round(patch.clauses.optionFee));
+      }
+      if (patch.clauses.squadRole !== undefined) next.squadRole = patch.clauses.squadRole;
+      next.sellOnPercent = clamp(patch.clauses.sellOnPercent ?? next.sellOnPercent ?? 0, 0, 0.5);
       deal.offer.clauses = next;
     }
   } else if (patch.clauses) {
     deal.offer.clauses = {
       ...deal.offer.clauses,
-      ...patch.clauses,
       sellOnPercent: clamp(
         patch.clauses.sellOnPercent ?? deal.offer.clauses.sellOnPercent,
         0,
         0.5,
       ),
+      // Rol/salario/años no se tocan hasta que el club haya aceptado.
+      squadRole: undefined,
+      contractYears: undefined,
     };
   }
   deal.offer.round += 1;
@@ -517,11 +524,12 @@ export function improvePlayerTerms(
   const player = getPlayer(deal.playerId);
   if (!player) return { ok: false, reason: "Jugador no encontrado." };
 
-  if (input.wageOffer !== undefined && !isLoanOffer(deal.offer.type)) {
+  const loanDeal = isLoanOffer(deal.offer.type);
+  if (!loanDeal && input.wageOffer !== undefined) {
     deal.offer.wageOffer = Math.max(WAGE_RULES.minimumWage, Math.round(input.wageOffer));
   }
   if (input.squadRole) deal.offer.clauses.squadRole = input.squadRole;
-  if (!isLoanOffer(deal.offer.type) && input.contractYears !== undefined) {
+  if (!loanDeal && input.contractYears !== undefined) {
     deal.offer.clauses.contractYears = Math.max(1, Math.min(6, Math.round(input.contractYears)));
   }
 
@@ -533,7 +541,9 @@ export function improvePlayerTerms(
   log(
     deal,
     date,
-    `Nueva propuesta al jugador: ${fmt(deal.offer.wageOffer)}/año · ${deal.offer.clauses.squadRole ?? "rotation"} · ${deal.offer.clauses.contractYears ?? preferredContractYears(deal.playerId)} años.`,
+    loanDeal
+      ? `Nueva propuesta al jugador: rol ${deal.offer.clauses.squadRole ?? "rotation"} · ficha vigente ${fmt(deal.offer.wageOffer)}/año (no ajustable durante la cesión).`
+      : `Nueva propuesta al jugador: ${fmt(deal.offer.wageOffer)}/año · ${deal.offer.clauses.squadRole ?? "rotation"} · ${deal.offer.clauses.contractYears ?? preferredContractYears(deal.playerId)} años.`,
   );
   return { ok: true, deal };
 }
@@ -702,7 +712,7 @@ function nudgeStaleUserDeals(userClubId: string, date: string): UserDealEvent[] 
       deal,
       deal.stage === "club-counter"
         ? `Sigue pendiente tu decisión sobre la contraoferta por ${deal.playerName}.`
-        : `${deal.playerName} sigue esperando que ajustes su ficha para firmar.`,
+        : `${deal.playerName} sigue esperando que cierres sus condiciones para firmar.`,
       "info",
     );
   }
@@ -900,13 +910,13 @@ function processIncomingLoanResponse(deal: UserDeal, date: string): UserDealEven
   const enoughWage = deal.offer.clauses.wageShare >= minimumWageShare;
 
   if (enoughFee && enoughWage) {
-    deal.offer.status = "accepted";
-    deal.stage = "ready";
+    deal.offer.status = "pending";
+    deal.stage = "player-terms";
     deal.respondsOn = date;
     deal.clubMessage = `El club acepta la cesión por ${fmt(deal.offer.amount)}, el ${Math.round(deal.offer.clauses.wageShare * 100)}% del sueldo y ${deal.offer.clauses.loanDurationMonths} meses.`;
     log(deal, date, deal.clubMessage);
-    pushEvent(events, deal, `El club acepta la cesión de ${deal.playerName}: puedes cerrar la operación.`, "good");
-    return events;
+    pushEvent(events, deal, `El club acepta la cesión de ${deal.playerName}: ahora toca negociar con el jugador.`, "good");
+    return [...events, ...processPlayerTerms(deal, date)];
   }
 
   deal.rounds += 1;
@@ -997,6 +1007,7 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
   const roleGap = roleRank(requiredRole) - roleRank(role);
   const wageRequested = wageDemand(player.id, deal.userClubId);
   const wageRatio = deal.offer.wageOffer / Math.max(1, wageRequested);
+  const loanDeal = isLoanOffer(deal.offer.type);
   const years = deal.offer.clauses.contractYears ?? 4;
   const yearsGap = requiredYears - years;
 
@@ -1006,9 +1017,9 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
 
   const hardRoleMismatch = roleGap >= 2;
   const insufficientRole = roleGap === 1;
-  const insufficientWage = wageRatio < 0.90;
-  const shortContract = !isLoanOffer(deal.offer.type) && yearsGap >= 2;
-  const slightYearsIssue = !isLoanOffer(deal.offer.type) && yearsGap === 1;
+  const insufficientWage = !loanDeal && wageRatio < 0.90;
+  const shortContract = !loanDeal && yearsGap >= 2;
+  const slightYearsIssue = !loanDeal && yearsGap === 1;
 
   if (!isLoanOffer(deal.offer.type) && hardRoleMismatch) {
     deal.playerMessage = `${deal.playerName} rechaza ese rol. Considera que debería ser ${requiredRole === "star" ? "Estrella" : requiredRole === "starter" ? "Titular" : "Rotación"}. Está dispuesto a negociar otras condiciones, pero no ese papel.`;
@@ -1700,7 +1711,7 @@ export function stageLabel(stage: UserDealStage): string {
     case "club-waiting":
       return "El club espera otras ofertas";
     case "player-terms":
-      return "Negociando la ficha";
+      return "Negociación con el jugador";
     case "ready":
       return "Listo para cerrar";
     case "incoming":

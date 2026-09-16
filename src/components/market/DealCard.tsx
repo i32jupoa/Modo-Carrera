@@ -73,6 +73,9 @@ export function DealCard({
   const [loanOptionFee, setLoanOptionFee] = useState(
     Math.round((deal.offer.clauses.optionFee ?? 0) / 100_000) / 10,
   );
+  const [sellOn, setSellOn] = useState(
+    Math.round((deal.offer.clauses.sellOnPercent ?? 0) * 100),
+  );
   const closed = deal.stage === "completed" || deal.stage === "failed";
   const isLoan =
     deal.offer.type === "loan" ||
@@ -128,7 +131,7 @@ export function DealCard({
 
       <div className="grid grid-cols-2 gap-2 text-xs">
         <Cell label={isLoan ? "Prima de cesión" : deal.direction === "out" ? "Oferta del club" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
-        {!isLoan && <Cell label="Ficha" value={`${formatEuro(deal.offer.wageOffer)}/año`} />}
+        {!isLoan && deal.stage === "player-terms" && <Cell label="Salario negociado con jugador" value={`${formatEuro(deal.offer.wageOffer)}/año`} />}
         {deal.clubDemand > 0 && <Cell label="El club pide" value={formatEuro(deal.clubDemand)} />}
         {!isLoan && deal.direction === "in" && deal.playerWageDemand > 0 && (
           <Cell label="El jugador pide" value={`${formatEuro(deal.playerWageDemand)}/año`} />
@@ -173,21 +176,50 @@ export function DealCard({
 
       {!closed && deal.stage === "club-counter" && (
         <div className="space-y-2">
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <NumberInput
               label={isLoan ? "Prima (M €)" : "Nueva oferta (M €)"}
               value={amount}
               onChange={setAmount}
             />
             {!isLoan && (
-              <NumberInput label="Ficha (M €)" value={wage} onChange={setWage} step={0.1} />
+              <SelectNumber
+                label="% de futura venta"
+                value={sellOn}
+                onChange={setSellOn}
+                options={[0,5,10,15,20,25,30,35,40,45,50]}
+              />
             )}
           </div>
           {isLoan && (
-            <div className="grid grid-cols-2 gap-2">
-              <SelectNumber label="% de sueldo" value={loanWageShare} onChange={setLoanWageShare} options={[0,10,20,30,40,50,60,70,80,90,100]} />
-              <SelectNumber label="Duración" value={loanDurationMonths} onChange={setLoanDurationMonths} options={[6,12,24]} formatter={(v) => v === 6 ? "6 meses" : v === 12 ? "1 año" : "2 años"} />
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <SelectNumber label="% del sueldo que paga el destino" value={loanWageShare} onChange={setLoanWageShare} options={[0,10,20,30,40,50,60,70,80,90,100]} />
+                <SelectNumber label="Duración" value={loanDurationMonths} onChange={setLoanDurationMonths} options={[6,12,24]} formatter={(v) => v === 6 ? "6 meses" : v === 12 ? "1 año" : "2 años"} />
+              </div>
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Rol acordado con el club destino
+                <select value={playerRole} onChange={(e) => setPlayerRole(e.target.value as SquadRole)} className="mt-1 w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold">
+                  {ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              {deal.offer.type !== "loan" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <NumberInput
+                    label={deal.offer.type === "loan-option" ? "Precio opción (M €)" : "Precio compra obligatoria (M €)"}
+                    value={loanOptionFee}
+                    onChange={setLoanOptionFee}
+                    step={0.1}
+                  />
+                  <SelectNumber
+                    label="% para tu club en futura reventa"
+                    value={sellOn}
+                    onChange={setSellOn}
+                    options={[0,5,10,15,20,25,30,35,40,45,50]}
+                  />
+                </div>
+              )}
+            </>
           )}
           <div className="flex flex-wrap gap-2">
             <Action
@@ -203,8 +235,14 @@ export function DealCard({
                   Math.round(amount * 1_000_000),
                   isLoan ? deal.offer.wageOffer : Math.round(wage * 1_000_000),
                   isLoan
-                    ? { wageShare: loanWageShare / 100, loanDurationMonths }
-                    : undefined,
+                    ? {
+                        wageShare: loanWageShare / 100,
+                        loanDurationMonths,
+                        squadRole: playerRole,
+                        sellOnPercent: deal.offer.type === "loan" ? 0 : sellOn / 100,
+                        optionFee: deal.offer.type === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
+                      }
+                    : { sellOnPercent: sellOn / 100 },
                 )
               }
             />
@@ -221,30 +259,49 @@ export function DealCard({
       )}
 
       {!closed && deal.stage === "player-terms" && (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
+            <p className="text-[0.62rem] uppercase tracking-wider text-primary font-black">Paso 2 de 2</p>
+            <p className="mt-0.5 font-black text-sm">Negociación con el jugador</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              El club ya ha aceptado la operación. Ahora se negocian directamente las condiciones del jugador.
+            </p>
+          </div>
           {deal.playerRoleDemand && (
             <p className="text-xs text-muted-foreground">
               El jugador considera razonable como mínimo el rol <span className="font-bold text-foreground">{ROLE_LABELS[deal.playerRoleDemand]}</span>
               {!isLoan && deal.playerYearsDemand ? <> y {deal.playerYearsDemand} {deal.playerYearsDemand === 1 ? "año" : "años"} de contrato</> : null}.
             </p>
           )}
-          <div className="grid grid-cols-3 gap-2">
-            {!isLoan && <NumberInput label="Ficha (M €)" value={wage} onChange={setWage} step={0.1} />}
+          <div className={isLoan ? "grid grid-cols-2 gap-2" : "grid grid-cols-3 gap-2"}>
             <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
               Rol ofrecido
               <select value={playerRole} onChange={(e) => setPlayerRole(e.target.value as SquadRole)} className="mt-1 w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold">
                 {ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
+            <div className="space-y-1.5">
+              <span className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Salario anual</span>
+              {isLoan ? (
+                <div className="w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold">
+                  {formatEuro(deal.offer.wageOffer)}/año <span className="text-muted-foreground font-normal">· no ajustable</span>
+                </div>
+              ) : (
+                <NumberInput label="Salario anual (M €)" value={wage} onChange={setWage} step={0.1} />
+              )}
+            </div>
             {!isLoan && (
               <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                Años
+                Años de contrato
                 <select value={contractYears} onChange={(e) => setContractYears(Number(e.target.value))} className="mt-1 w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold">
                   {[1,2,3,4,5,6].map((years) => <option key={years} value={years}>{years}</option>)}
                 </select>
               </label>
             )}
           </div>
+          {isLoan && (
+            <p className="text-xs text-muted-foreground">La duración de la cesión y el reparto del sueldo ya quedaron acordados con el club en el paso 1.</p>
+          )}
           <div className="flex flex-wrap gap-2">
             <Action
               label="Negociar con el jugador"

@@ -59,20 +59,21 @@ export function NegotiationModal({
   const [loanType, setLoanType] = useState<"loan" | "loan-option" | "loan-obligation">("loan");
   const type = operation === "transfer" ? "permanent" : loanType;
   const [amount, setAmount] = useState(Math.round(asking / 100_000) / 10);
-  const [wage, setWage] = useState(Math.round((report?.wageDemand ?? 0) / 100_000) / 10);
   const [sellOn, setSellOn] = useState(0);
   const [squadRole, setSquadRole] = useState<SquadRole>(defaultSquadRole(ovr, age));
-  const [contractYears, setContractYears] = useState(defaultContractYears(age));
   const [wageShare, setWageShare] = useState(50);
+  const [loanSellOn, setLoanSellOn] = useState(0);
+  const [loanOptionFee, setLoanOptionFee] = useState(Math.round((asking * 1.1) / 100_000) / 10);
   const [loanDurationMonths, setLoanDurationMonths] = useState<number>(
     windowForDate(currentDate) === "winter" ? 6 : 12,
   );
 
   const amountEuros = Math.round(amount * 1_000_000);
-  const wageEuros = type === "permanent" ? Math.round(wage * 1_000_000) : Math.max(0, Math.round(currentWage));
+  const wageEuros = type === "permanent"
+    ? Math.max(0, Math.round(report?.wageDemand ?? 0))
+    : Math.max(0, Math.round(currentWage));
   const transferBudget = Math.max(0, budget - wageBudget);
-  const wageCommitmentEuros =
-    type === "permanent" ? wageEuros : Math.round(wageEuros * (wageShare / 100));
+  const wageCommitmentEuros = type === "permanent" ? 0 : Math.round(wageEuros * (wageShare / 100));
   const overBudget = amountEuros > transferBudget;
   const overWageBudget = wageCommitmentEuros > wageBudget;
 
@@ -128,6 +129,14 @@ export function NegotiationModal({
           </p>
         )}
 
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
+          <p className="text-[0.62rem] uppercase tracking-wider text-primary font-black">Paso 1 de 2</p>
+          <p className="mt-0.5 font-black text-sm">Negociación con el club</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Primero se acuerdan únicamente las condiciones de la operación con el club. El rol, el salario y la duración del contrato se negocian con el jugador después de la aceptación del club.
+          </p>
+        </div>
+
         <div className="space-y-2">
           <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
             Tipo de operación
@@ -162,96 +171,33 @@ export function NegotiationModal({
           </div>
         </div>
 
-        <div className="space-y-2">
-          <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-            Rol en tu equipo
-          </label>
-          <select
-            value={squadRole}
-            onChange={(e) => setSquadRole(e.target.value as SquadRole)}
-            className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm font-semibold"
-          >
-            {SQUAD_ROLE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <p className="text-[0.68rem] leading-relaxed text-muted-foreground">
-            {SQUAD_ROLE_OPTIONS.find((option) => option.value === squadRole)?.description}
-          </p>
-        </div>
-
         {operation === "loan" && (
-          <div className="space-y-1.5">
-            <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-              Condiciones de la cesión
-            </label>
-            <select
-              value={loanType}
-              onChange={(e) => setLoanType(e.target.value as "loan" | "loan-option" | "loan-obligation")}
-              className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="loan">Sin opción de compra</option>
-              <option value="loan-option">Con opción de compra</option>
-              <option value="loan-obligation">Con compra obligatoria</option>
-            </select>
-          </div>
-        )}
+          <div className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-3">
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Condiciones de la cesión
+              </label>
+              <select
+                value={loanType}
+                onChange={(e) => setLoanType(e.target.value as "loan" | "loan-option" | "loan-obligation")}
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="loan">Sin opción de compra</option>
+                <option value="loan-option">Con opción de compra</option>
+                <option value="loan-obligation">Con compra obligatoria</option>
+              </select>
+            </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field
-            label={type === "permanent" ? "Traspaso (M €)" : "Prima de cesión (M €)"}
-            value={amount}
-            onChange={setAmount}
-            step={0.05}
-          />
-
-          {type === "permanent" ? (
-            <>
-              <Field label="Ficha anual (M €)" value={wage} onChange={setWage} step={0.1} />
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label="Prima de cesión (M €)"
+                value={amount}
+                onChange={setAmount}
+                step={0.05}
+              />
               <div className="space-y-1.5">
                 <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                  Años de contrato
-                </label>
-                <select
-                  value={contractYears}
-                  onChange={(e) => setContractYears(Number(e.target.value))}
-                  className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
-                >
-                  {[1,2,3,4,5,6].map((years) => (
-                    <option key={years} value={years}>{years} {years === 1 ? "año" : "años"}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                  % futura venta
-                </label>
-                <select
-                  value={sellOn}
-                  onChange={(e) => setSellOn(Number(e.target.value))}
-                  className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
-                >
-                  {SELL_ON_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {Math.round(option * 100)}%
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="space-y-1.5">
-                <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                  Sueldo anual del jugador
-                </label>
-                <div className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm text-foreground font-bold">
-                  {formatEuro(currentWage)} <span className="text-muted-foreground font-normal">/año</span>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                  Tiempo cedido
+                  Duración de la cesión
                 </label>
                 <select
                   value={loanDurationMonths}
@@ -265,9 +211,20 @@ export function NegotiationModal({
                   ))}
                 </select>
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                  % del sueldo que paga tu club
+                  Sueldo anual del jugador
+                </label>
+                <div className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm font-bold">
+                  {formatEuro(currentWage)} <span className="text-muted-foreground font-normal">/año · no ajustable</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                  % del sueldo que paga el destino
                 </label>
                 <select
                   value={wageShare}
@@ -279,45 +236,113 @@ export function NegotiationModal({
                   ))}
                 </select>
               </div>
-            </>
-          )}
-        </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Rol acordado con el club destino
+              </label>
+              <select
+                value={squadRole}
+                onChange={(e) => setSquadRole(e.target.value as SquadRole)}
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm font-semibold"
+              >
+                {SQUAD_ROLE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {loanType !== "loan" && (
+              <>
+                <Field
+                  label={loanType === "loan-option" ? "Precio opción de compra (M €)" : "Precio compra obligatoria (M €)"}
+                  value={loanOptionFee}
+                  onChange={setLoanOptionFee}
+                  step={0.1}
+                />
+                <div className="space-y-1.5">
+                  <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                    % para tu club en una futura reventa
+                  </label>
+                <select
+                  value={loanSellOn}
+                  onChange={(e) => setLoanSellOn(Number(e.target.value))}
+                  className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+                >
+                  {SELL_ON_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{Math.round(option * 100)}%</option>
+                  ))}
+                </select>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {operation === "transfer" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field
+              label="Precio de traspaso (M €)"
+              value={amount}
+              onChange={setAmount}
+              step={0.05}
+            />
+            <div className="space-y-1.5">
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                % de futura venta
+              </label>
+              <select
+                value={sellOn}
+                onChange={(e) => setSellOn(Number(e.target.value))}
+                className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+              >
+                {SELL_ON_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{Math.round(option * 100)}%</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         <div className="space-y-1 text-xs text-muted-foreground">
-          <p>Presupuesto total:{" "}<span className="text-foreground font-bold">{formatEuro(budget)}</span></p>
-          <p>Dinero para fichajes:{" "}<span className="text-foreground font-bold">{formatEuro(transferBudget)}</span>{overBudget && <span className="text-destructive"> · oferta por encima del dinero disponible</span>}</p>
-          <p>Presupuesto salarial:{" "}<span className="text-foreground font-bold">{formatEuro(wageBudget)} al año</span>{overWageBudget && <span className="text-destructive"> · el salario supera la asignación salarial</span>}</p>
+          <p>Presupuesto total: <span className="text-foreground font-bold">{formatEuro(budget)}</span></p>
+          <p>Dinero para fichajes: <span className="text-foreground font-bold">{formatEuro(transferBudget)}</span>{overBudget && <span className="text-destructive"> · oferta por encima del dinero disponible</span>}</p>
           {type !== "permanent" && (
-            <p>Duración: <span className="text-foreground font-bold">{loanDurationMonths === 6 ? "6 meses" : loanDurationMonths === 12 ? "1 año" : "2 años"}</span> · tu club asume el <span className="text-foreground font-bold">{wageShare}%</span> del sueldo actual.</p>
+            <>
+              <p>Presupuesto salarial: <span className="text-foreground font-bold">{formatEuro(wageBudget)} al año</span>{overWageBudget && <span className="text-destructive"> · el porcentaje asumido supera la asignación salarial</span>}</p>
+              <p>El destino paga el <span className="text-foreground font-bold">{wageShare}%</span> del sueldo actual y tu club el <span className="text-foreground font-bold">{100 - wageShare}%</span>.</p>
+            </>
+          )}
+          {type === "permanent" && (
+            <p>El salario y los años de contrato no forman parte de esta oferta: se negocian en el paso 2 con el jugador.</p>
           )}
         </div>
 
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={
-             overBudget ||
-             overWageBudget ||
-             (type === "permanent" ? amountEuros <= 0 : amountEuros < 0) ||
-             wageEuros < 0
-           }
+            disabled={overBudget || overWageBudget || amountEuros <= 0}
             onClick={() =>
               onSubmit({
                 amount: amountEuros,
+                // El salario es un valor interno de arranque; en un traspaso no se negocia con el club.
                 wageOffer: wageEuros,
                 type,
-                clauses: {
-                  sellOnPercent: type === "permanent" ? sellOn : 0,
-                  wageShare: type === "permanent" ? 0 : wageShare / 100,
-                  loanDurationMonths: type === "permanent" ? 0 : loanDurationMonths,
-                  squadRole,
-                  contractYears: type === "permanent" ? contractYears : undefined,
-                },
+                clauses: type === "permanent"
+                  ? { sellOnPercent: sellOn }
+                  : {
+                      sellOnPercent: loanType === "loan" ? 0 : loanSellOn,
+                      wageShare: wageShare / 100,
+                      loanDurationMonths,
+                      squadRole,
+                      optionFee: loanType === "loan" ? 0 : Math.max(0, Math.round(loanOptionFee * 1_000_000)),
+                    },
               })
             }
             className="flex-1 bg-primary text-primary-foreground py-2 rounded-lg font-bold disabled:opacity-40"
           >
-            Enviar oferta
+            Enviar propuesta al club
           </button>
           <button
             type="button"
@@ -328,8 +353,7 @@ export function NegotiationModal({
           </button>
         </div>
         <p className="text-[0.65rem] text-muted-foreground">
-          El club tardará entre 1 y 3 días en responder. Las cesiones se integran en tu plantilla
-          de forma temporal y el jugador vuelve automáticamente al club propietario al vencer el contrato.
+          Si el club acepta, se abrirá el paso 2 para negociar directamente con el jugador.
         </p>
       </div>
     </div>
@@ -382,13 +406,6 @@ const SQUAD_ROLE_OPTIONS: Array<{ value: SquadRole; label: string; description: 
   { value: "prospect", label: "Futuro del club / Promesa", description: "Rol pensado para jóvenes con potencial: no exige un sitio en el primer equipo a corto plazo y una cesión puede encajar muy bien." },
 ];
 
-function defaultContractYears(age: number): number {
-  if (age <= 21) return 5;
-  if (age <= 24) return 4;
-  if (age <= 29) return 4;
-  if (age <= 32) return 3;
-  return 2;
-}
 
 function defaultSquadRole(ovr: number, age: number): SquadRole {
   if (age <= 21 && ovr < 78) return "prospect";
