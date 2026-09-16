@@ -1162,7 +1162,7 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
       loanClubId: null,
       loanListed: false,
       contract: {
-        yearsLeft: contractYearsFor(player.age),
+        yearsLeft: Math.max(1, Math.min(6, Math.round(offer.clauses.contractYears ?? contractYearsFor(player.age)))),
         wage: offer.wageOffer,
         releaseClause: Math.round(
           Math.max(player.value, offer.amount) * CONTRACT_RULES.releaseClauseFactor,

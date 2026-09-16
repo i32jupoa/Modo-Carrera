@@ -238,6 +238,8 @@ export type NegotiationStatus =
   | "expired";
 
 /** Cláusulas adicionales de una oferta. */
+export type SquadRole = "star" | "starter" | "rotation" | "secondary" | "prospect";
+
 export interface OfferClauses {
   /** Porcentaje de futura venta (0..1). */
   sellOnPercent: number;
@@ -247,6 +249,10 @@ export interface OfferClauses {
   optionFee: number;
   /** Duración contractual de la cesión, en meses. */
   loanDurationMonths: number;
+  /** Rol deportivo prometido al jugador en el nuevo club. */
+  squadRole?: SquadRole;
+  /** Duración del contrato permanente ofrecido al jugador, en años. */
+  contractYears?: number;
   /** Jugadores incluidos en el trato. */
   playerSwapIds: string[];
 }
@@ -318,6 +324,19 @@ export interface TransferRecord {
   wage: number;
   type: TransferType;
   clauses: OfferClauses;
+  /** Captura de la negociación del usuario para poder verla completa desde Entradas/Salidas. */
+  userNegotiation?: {
+    direction: "in" | "out";
+    clubDemand: number;
+    clubMessage: string;
+    playerWageDemand: number;
+    playerMessage: string;
+    competition: number;
+    rounds: number;
+    createdOn: string;
+    updatedOn: string;
+    log: Array<{ date: string; text: string }>;
+  };
 }
 
 export type RumorKind = "interest" | "wants-out" | "searching" | "bid-war" | "renewal";

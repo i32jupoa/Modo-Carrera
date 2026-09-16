@@ -21,7 +21,7 @@ import {
   FcPlayer,
   clubOfPlayer,
 } from "@/store/playersStore";
-import { getPlayerAnnualWage, getPlayer, isPlayerSettled } from "@/lib/transfers";
+import { getPlayerAnnualWage, getPlayer, isPlayerSettled, hasRejectedDealFor } from "@/lib/transfers";
 import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, Radar, Eye, Trash2, Clock3, ArrowDownToLine, ArrowUpFromLine, CheckCircle2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
@@ -33,6 +33,7 @@ import { buildPositions, POS_NAME, formatShortPositions } from "@/lib/positions"
 import { DealCard } from "@/components/market/DealCard";
 import { MarketFeed } from "@/components/market/MarketFeed";
 import { TransferHistoryCard } from "@/components/market/TransferHistoryCard";
+import { NegotiationDetailsModal } from "@/components/market/NegotiationDetailsModal";
 import type { ScoutingReport } from "@/lib/transfers";
 import {
   AlertDialog,
@@ -326,6 +327,8 @@ function TransfersPage() {
   const [scoutingDetailsPlayer, setScoutingDetailsPlayer] = useState<FcPlayer | null>(null);
   const [scoutingDetailsReport, setScoutingDetailsReport] = useState<ScoutingReport | null>(null);
   const [removeScoutingId, setRemoveScoutingId] = useState<string | null>(null);
+  const [detailsRecord, setDetailsRecord] = useState<import("@/lib/transfers").TransferRecord | null>(null);
+  const [detailsDirection, setDetailsDirection] = useState<"in" | "out">("in");
 
   // Calculate team averages for proper discount application
   const teamAverages = useMemo(() => {
@@ -458,8 +461,10 @@ function TransfersPage() {
 
   /** Abre la negociación con el informe real del motor de mercado. */
   function openNegotiation(player: FcPlayer) {
+    const id = String(player.ID);
+    if (myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate)) return;
     setTarget(player);
-    setReport(market.scout(String(player.ID)));
+    setReport(market.scout(id));
   }
 
   function startOrOpenScouting(player: FcPlayer) {
@@ -876,12 +881,12 @@ function TransfersPage() {
                         })()}
                         <button
                           type="button"
-                          disabled={!isMarketOpen || negotiating || !market.ready}
+                          disabled={!isMarketOpen || negotiating || !market.ready || (!!myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate))}
                           onClick={() => openNegotiation(p)}
                           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
                         >
                           <UserPlus className="h-3.5 w-3.5" />
-                          {negotiating ? "Negociando" : "Negociar"}
+                          {!!myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate) ? "Rechazado" : negotiating ? "Negociando" : "Negociar"}
                         </button>
                       </div>
                     </div>
@@ -1055,7 +1060,7 @@ function TransfersPage() {
           ) : (
             <div className="grid gap-3">
               {userEntries.map((record) => (
-                <TransferHistoryCard key={record.id} record={record} direction="in" />
+                <TransferHistoryCard key={record.id} record={record} direction="in" onDetails={(r) => { setDetailsRecord(r); setDetailsDirection("in"); }} />
               ))}
             </div>
           )}
@@ -1085,7 +1090,7 @@ function TransfersPage() {
           ) : (
             <div className="grid gap-3">
               {userExits.map((record) => (
-                <TransferHistoryCard key={record.id} record={record} direction="out" />
+                <TransferHistoryCard key={record.id} record={record} direction="out" onDetails={(r) => { setDetailsRecord(r); setDetailsDirection("out"); }} />
               ))}
             </div>
           )}
@@ -1129,6 +1134,14 @@ function TransfersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {detailsRecord && (
+        <NegotiationDetailsModal
+          record={detailsRecord}
+          direction={detailsDirection}
+          onClose={() => setDetailsRecord(null)}
+        />
+      )}
 
       {scoutingDetailsPlayer && (
         <ScoutingDetailsModal

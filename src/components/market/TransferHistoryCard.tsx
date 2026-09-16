@@ -1,4 +1,4 @@
-import { ArrowDownLeft, ArrowUpRight, BadgeEuro, CalendarDays } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, BadgeEuro, CalendarDays, Eye } from "lucide-react";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { fcPlayerById } from "@/store/playersStore";
 import { formatEuro } from "@/store/playersStore";
@@ -32,7 +32,7 @@ function ClubSide({ clubId, muted = false }: { clubId: string | null; muted?: bo
   );
 }
 
-export function TransferHistoryCard({ record, direction }: { record: TransferRecord; direction: "in" | "out" }) {
+export function TransferHistoryCard({ record, direction, onDetails }: { record: TransferRecord; direction: "in" | "out"; onDetails?: (record: TransferRecord) => void }) {
   const rawPlayer = fcPlayerById(record.playerId);
   const targetClubId = direction === "in" ? record.fromClubId : record.toClubId;
   const isLoan = record.type !== "permanent" && record.type !== "free";
@@ -66,9 +66,21 @@ export function TransferHistoryCard({ record, direction }: { record: TransferRec
               <ClubSide clubId={targetClubId} muted />
             </div>
           </div>
-          <div className="hidden sm:block text-right">
-            <p className="text-[0.58rem] uppercase font-black tracking-wider text-muted-foreground">{isLoan ? "Prima" : "Traspaso"}</p>
-            <p className="font-black text-primary">{formatEuro(record.fee)}</p>
+          <div className="flex items-end gap-2 ml-auto">
+            <div className="hidden sm:block text-right">
+              <p className="text-[0.58rem] uppercase font-black tracking-wider text-muted-foreground">{isLoan ? "Prima" : "Traspaso"}</p>
+              <p className="font-black text-primary">{formatEuro(record.fee)}</p>
+            </div>
+            {onDetails && (
+              <button
+                type="button"
+                onClick={() => onDetails(record)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 bg-secondary/70 px-3 py-2 text-xs font-black hover:bg-secondary transition-colors"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                Ver detalles
+              </button>
+            )}
           </div>
         </div>
 

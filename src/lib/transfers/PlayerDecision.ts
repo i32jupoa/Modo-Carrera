@@ -15,7 +15,7 @@ import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { getPlayer } from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
 import { clamp, lerp, normalize, seededRange } from "./random";
-import type { MarketPlayer, PlayerDecision, PlayerDecisionVerdict } from "./types";
+import type { MarketPlayer, PlayerDecision, PlayerDecisionVerdict, SquadRole } from "./types";
 
 // ============================================================================
 // SALARIO PEDIDO
@@ -101,6 +101,39 @@ function nationOf(player: MarketPlayer): string {
   return player.nation || "";
 }
 
+
+/** Rol mínimo que un jugador considera razonable para aceptar un destino. */
+export function minimumSquadRole(playerId: string, toClubId: string, cacheKey: string): SquadRole {
+  const player = getPlayer(playerId);
+  if (!player) return "rotation";
+  const playingTime = expectedPlayingTime(player, toClubId, cacheKey);
+  if (player.age <= 21 && player.ovr < 78) return "prospect";
+  if (player.ovr >= 88) return playingTime >= 0.62 ? "star" : "starter";
+  if (player.ovr >= 82) return playingTime >= 0.68 ? "star" : "starter";
+  if (player.ovr >= 76) return "rotation";
+  return "secondary";
+}
+
+export function preferredContractYears(playerId: string): number {
+  const player = getPlayer(playerId);
+  if (!player) return 3;
+  if (player.age <= 21) return 5;
+  if (player.age <= 24) return 4;
+  if (player.age <= 29) return 4;
+  if (player.age <= 32) return 3;
+  return 2;
+}
+
+const ROLE_RANK: Record<SquadRole, number> = {
+  secondary: 0,
+  prospect: 1,
+  rotation: 2,
+  starter: 3,
+  star: 4,
+};
+
+export function roleRank(role: SquadRole): number { return ROLE_RANK[role]; }
+
 // ============================================================================
 // ¿QUIERE SALIR?
 // ============================================================================
@@ -155,6 +188,8 @@ export interface MoveDecisionInput {
   loan?: boolean;
   /** Últimos días de la ventana: el jugador es menos exigente. */
   deadlineDay?: boolean;
+  /** Rol deportivo prometido por el club. */
+  squadRole?: SquadRole;
 }
 
 function verdictFor(score: number, wageRatio: number): PlayerDecisionVerdict {
@@ -197,6 +232,21 @@ export function decideOnMove(input: MoveDecisionInput): PlayerDecision {
   // El peso del dinero depende de la codicia; el del proyecto, de la ambición.
   const moneyScore = clamp(normalize(wageRatio, 0.75, 1.4), 0, 1);
   let score = appeal * (0.5 - p.greed * 0.15) + moneyScore * (0.28 + p.greed * 0.22) + leave * 0.22;
+
+  // El jugador tiene expectativas mínimas de rol. Un jugador de élite no
+  // acepta directamente un papel de suplente: primero lo contraoferta.
+  if (input.squadRole) {
+    const minimumRole = minimumSquadRole(input.playerId, input.toClubId, input.cacheKey);
+    const gap = roleRank(minimumRole) - roleRank(input.squadRole);
+    if (gap >= 2) score -= 0.42;
+    else if (gap === 1) score -= 0.22;
+    else if (gap === 0) score += 0.08;
+    else score += 0.04;
+
+    // Para estrellas y titulares, un rol claramente inferior siempre pasa por
+    // negociación aunque el sueldo sea atractivo.
+    if (gap > 0) score = Math.min(score, 0.57);
+  }
 
   // La calidad del destino importa mucho más cuando hablamos de estrellas.
   // Un jugador de 85-90 OVR no suele aceptar un salto fuerte hacia abajo sólo

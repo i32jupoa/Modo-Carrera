@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { TEAMS } from "@/data/teams";
 import { formatEuro } from "@/store/playersStore";
 import { windowForDate } from "@/lib/transferWindows";
+import type { SquadRole } from "@/lib/transfers";
 
 interface PlayerOption {
   id: string;
@@ -15,12 +16,14 @@ interface Props {
   player: PlayerOption;
   currentClubId: string;
   currentDate: string;
+  currentRole?: SquadRole;
   onClose: () => void;
   onSubmit: (input: {
     borrowerClubId: string;
     loanFee: number;
     wageShare: number;
     durationMonths: number;
+    squadRole?: SquadRole;
   }) => void;
 }
 
@@ -28,6 +31,7 @@ export function LoanOutModal({
   player,
   currentClubId,
   currentDate,
+  currentRole,
   onClose,
   onSubmit,
 }: Props) {
@@ -40,6 +44,7 @@ export function LoanOutModal({
   const [borrowerClubId, setBorrowerClubId] = useState(destinations[0]?.id ?? "");
   const [fee, setFee] = useState(0.25);
   const [wageShare, setWageShare] = useState(70);
+  const [squadRole, setSquadRole] = useState<SquadRole>(currentRole ?? (player.age <= 21 && player.ovr < 78 ? "prospect" : player.ovr >= 88 ? "star" : player.ovr >= 82 ? "starter" : player.ovr >= 76 ? "rotation" : "secondary"));
 
   const submit = () => {
     if (!borrowerClubId) return;
@@ -48,6 +53,7 @@ export function LoanOutModal({
       loanFee: Math.round(Math.max(0, fee) * 1_000_000),
       wageShare: wageShare / 100,
       durationMonths,
+      squadRole,
     });
   };
 
@@ -109,6 +115,21 @@ export function LoanOutModal({
               ))}
             </select>
           </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Rol previsto en el club receptor</label>
+          <select
+            value={squadRole}
+            onChange={(e) => setSquadRole(e.target.value as SquadRole)}
+            className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm font-semibold"
+          >
+            <option value="star">Estrella</option>
+            <option value="starter">Titular</option>
+            <option value="rotation">Rotación</option>
+            <option value="secondary">Rol Secundario</option>
+            <option value="prospect">Futuro del club / Promesa</option>
+          </select>
         </div>
 
         <p className="text-xs text-muted-foreground">

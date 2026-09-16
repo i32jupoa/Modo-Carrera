@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useNotificationsStore } from "@/store/notificationsStore";
 import { usePlayersStore } from "@/store/playersStore";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { getCurrentSaveId } from "@/lib/savedGames";
@@ -9,6 +10,10 @@ import {
   setMarketSeedSalt,
   setUserClubBridge,
   syncMarketWithGameDate,
+  advanceUserDeals,
+  clearFinishedUserDeals,
+  snapshotUserDeals,
+  restoreUserDeals,
 } from "@/lib/transfers";
 import {
   attachWorldBridge,
@@ -84,6 +89,25 @@ export function useMarketClock(): void {
         // Tras restaurar los contratos del mercado, la masa salarial de la partida
         // debe reflejar exactamente esas fichas.
         usePlayersStore.getState().syncWageStateFromMarket();
+
+        // El reloj oficial también resuelve las negociaciones del usuario.
+        // Esto evita que una cesión/fichaje quede desconectado del calendario
+        // cuando MarketNotifier aún no se ha montado o pierde un tick durante
+        // la inicialización.
+        try {
+          const events = advanceUserDeals(myTeamId!, currentDate);
+          const removedFinished = clearFinishedUserDeals(currentDate);
+          const add = useNotificationsStore.getState().add;
+          if (events.length > 0) {
+            add(
+              events.map((event) => ({ dealId: event.dealId, kind: event.kind, text: event.text })),
+              currentDate,
+            );
+          }
+          if (events.length > 0 || removedFinished) void saveTransferSystem();
+        } catch (error) {
+          console.error("[MarketClock] Error al resolver negociaciones restauradas.", error);
+        }
         void saveTransferSystem();
       })();
       return;
@@ -91,9 +115,33 @@ export function useMarketClock(): void {
 
     if (bootedFor.current === currentDate) return;
     bootedFor.current = currentDate;
-    syncMarketWithGameDate(currentDate);
-    // Los fichajes que ha cerrado la IA pasan a las plantillas del juego.
-    flushWorldMoves();
+    try {
+      syncMarketWithGameDate(currentDate);
+      // Este es el reloj oficial del juego: las negociaciones del usuario deben
+      // avanzar aquí, al mismo tiempo que el mercado mundial.
+      const dealsBeforeAdvance = snapshotUserDeals();
+      try {
+        const events = advanceUserDeals(myTeamId!, currentDate);
+        const removedFinished = clearFinishedUserDeals(currentDate);
+        const add = useNotificationsStore.getState().add;
+        if (events.length > 0) {
+          add(
+            events.map((event) => ({ dealId: event.dealId, kind: event.kind, text: event.text })),
+            currentDate,
+          );
+        }
+        if (events.length > 0 || removedFinished) void saveTransferSystem();
+      } catch (error) {
+        restoreUserDeals(dealsBeforeAdvance);
+        console.error("[MarketClock] Error al resolver negociaciones; se conserva su estado anterior.", error);
+      }
+      // Los fichajes que ha cerrado la IA pasan a las plantillas del juego.
+      flushWorldMoves();
+    } catch (error) {
+      // Un fallo puntual del motor mundial no debe tirar abajo la aplicación ni
+      // resetear el estado de las negociaciones del usuario.
+      console.error("[MarketClock] Error al sincronizar el mercado con la fecha.", error);
+    }
   }, [ready, currentDate]);
 }
 

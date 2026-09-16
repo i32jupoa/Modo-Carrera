@@ -61,11 +61,16 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
       // verde cada día. El dealId identifica de forma estable la operación;
       // para eventos antiguos sin dealId mantenemos el comportamiento previo.
       if (event.dealId) {
+        // Un éxito es una sola novedad por negociación. Aunque avance el día
+        // o el motor vuelva a emitir el mismo cierre con otro texto, nunca
+        // debe multiplicar el punto verde.
         const duplicate = existing.some(
-          (item) => item.dealId === event.dealId && item.kind === event.kind && item.text === event.text,
+          (item) => item.dealId === event.dealId && item.kind === event.kind &&
+            (event.kind === "good" || item.text === event.text),
         );
         if (duplicate || fresh.some(
-          (item) => item.dealId === event.dealId && item.kind === event.kind && item.text === event.text,
+          (item) => item.dealId === event.dealId && item.kind === event.kind &&
+            (event.kind === "good" || item.text === event.text),
         )) continue;
       }
 
@@ -108,7 +113,16 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     }
     try {
       const raw = window.localStorage.getItem(`${STORAGE_PREFIX}:${saveId}`);
-      const items = raw ? (JSON.parse(raw) as MarketNotification[]) : [];
+      const parsed = raw ? (JSON.parse(raw) as MarketNotification[]) : [];
+      const seenGood = new Set<string>();
+      const items = parsed.filter((item) => {
+        if (item.kind !== "good" || !item.dealId) return true;
+        const key = item.dealId;
+        if (seenGood.has(key)) return false;
+        seenGood.add(key);
+        return true;
+      });
+      if (items.length !== parsed.length) persist(items);
       set({ items, counts: countUnread(items) });
     } catch {
       set({ items: [], counts: emptyCounts() });

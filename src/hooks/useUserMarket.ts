@@ -90,11 +90,12 @@ export interface UserMarketApi {
     loanFee: number;
     wageShare: number;
     durationMonths?: number;
+    squadRole?: import("@/lib/transfers").SquadRole;
     type?: Extract<TransferType, "loan" | "loan-option" | "loan-obligation">;
   }) => void;
   improveOffer: (dealId: string, amount: number, wageOffer: number, clauses?: Partial<OfferClauses>) => void;
   acceptDemand: (dealId: string) => void;
-  improveWage: (dealId: string, wage: number) => void;
+  improveWage: (dealId: string, wage: number, clauses?: Partial<OfferClauses>) => void;
   confirmDeal: (dealId: string) => void;
   abandonDeal: (dealId: string) => void;
   acceptIncoming: (dealId: string) => void;
@@ -136,7 +137,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     }
   }, [ready, myTeamId, currentDate, tick]);
 
-  const deals = useMemo(() => (ready ? listUserDeals() : []), [ready, tick, currentDate]);
+  const deals = useMemo(() => (ready ? listUserDeals(undefined, currentDate) : []), [ready, tick, currentDate]);
   const incoming = useMemo(() => deals.filter((d) => d.direction === "out"), [deals]);
   const outgoing = useMemo(() => deals.filter((d) => d.direction === "in"), [deals]);
   const rumors = useMemo(
@@ -265,7 +266,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   }, [commit]);
 
   const makeLoanOutOffer = useCallback<UserMarketApi["makeLoanOutOffer"]>(
-    ({ playerId, borrowerClubId, loanFee, wageShare, durationMonths, type }) => {
+    ({ playerId, borrowerClubId, loanFee, wageShare, durationMonths, type, squadRole }) => {
       if (!myTeamId) return;
       const result = submitUserLoanOutOffer({
         playerId,
@@ -276,6 +277,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         wageShare,
         durationMonths,
         type,
+        squadRole,
       });
       commit(
         result.ok ? "Propuesta de cesión enviada al club." : undefined,
@@ -306,8 +308,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   );
 
   const improveWage = useCallback(
-    (dealId: string, wage: number) => {
-      const result = improvePlayerTerms(dealId, wage, currentDate);
+    (dealId: string, wage: number, clauses?: Partial<OfferClauses>) => {
+      const result = improvePlayerTerms(dealId, { wageOffer: wage, ...clauses }, currentDate);
       commit(result.ok ? "Nueva ficha ofrecida al jugador." : undefined, result.reason);
     },
     [currentDate, commit],
@@ -419,7 +421,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
    */
   const confirmDeal = useCallback(
     (dealId: string) => {
-      const deal = listUserDeals().find((d) => d.id === dealId);
+      const deal = listUserDeals(undefined, currentDate).find((d) => d.id === dealId);
       if (!deal) {
         commit(undefined, "La negociación ya no existe.");
         return;
@@ -584,7 +586,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   );
 
   const clearFinished = useCallback(() => {
-    clearFinishedUserDeals();
+    clearFinishedUserDeals(currentDate);
     commit();
   }, [commit]);
 

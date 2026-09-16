@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { formatEuro, fcPlayerById } from "@/store/playersStore";
-import { stageLabel, type UserDeal } from "@/lib/transfers";
+import { stageLabel, type UserDeal, type SquadRole } from "@/lib/transfers";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { TeamLogo } from "@/components/TeamLogo";
 
@@ -9,7 +9,7 @@ interface Props {
   deal: UserDeal;
   onImprove: (dealId: string, amount: number, wage: number, clauses?: Partial<import("@/lib/transfers").OfferClauses>) => void;
   onAcceptDemand: (dealId: string) => void;
-  onImproveWage: (dealId: string, wage: number) => void;
+  onImproveWage: (dealId: string, wage: number, clauses?: Partial<import("@/lib/transfers").OfferClauses>) => void;
   onConfirm: (dealId: string) => void;
   onAbandon: (dealId: string) => void;
   onAcceptIncoming: (dealId: string) => void;
@@ -59,6 +59,8 @@ export function DealCard({
 }: Props) {
   const [amount, setAmount] = useState(Math.round(deal.offer.amount / 100_000) / 10);
   const [wage, setWage] = useState(Math.round(deal.offer.wageOffer / 100_000) / 10);
+  const [playerRole, setPlayerRole] = useState<SquadRole>(deal.offer.clauses.squadRole ?? "rotation");
+  const [contractYears, setContractYears] = useState(deal.offer.clauses.contractYears ?? deal.playerYearsDemand ?? 4);
   const [demand, setDemand] = useState(
     Math.round((deal.valuation.idealPrice || deal.offer.amount) / 100_000) / 10,
   );
@@ -125,10 +127,10 @@ export function DealCard({
       <div className="p-4 space-y-3">
 
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <Cell label={isLoan ? "Prima de cesión" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
+        <Cell label={isLoan ? "Prima de cesión" : deal.direction === "out" ? "Oferta del club" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
         {!isLoan && <Cell label="Ficha" value={`${formatEuro(deal.offer.wageOffer)}/año`} />}
         {deal.clubDemand > 0 && <Cell label="El club pide" value={formatEuro(deal.clubDemand)} />}
-        {!isLoan && deal.playerWageDemand > 0 && (
+        {!isLoan && deal.direction === "in" && deal.playerWageDemand > 0 && (
           <Cell label="El jugador pide" value={`${formatEuro(deal.playerWageDemand)}/año`} />
         )}
         {isLoan && (
@@ -150,6 +152,9 @@ export function DealCard({
               />
             )}
           </>
+        )}
+        {deal.offer.clauses.squadRole && deal.direction === "in" && (
+          <Cell label="Rol en tu equipo" value={ROLE_LABELS[deal.offer.clauses.squadRole]} />
         )}
         {!isLoan && deal.offer.clauses.sellOnPercent > 0 && (
           <Cell
@@ -209,33 +214,45 @@ export function DealCard({
       )}
 
       {!closed && deal.stage === "club-waiting" && (
-        <div className="flex flex-wrap gap-2">
-          <NumberInput label={isLoan ? "Subir prima (M €)" : "Subir oferta (M €)"} value={amount} onChange={setAmount} />
-          <Action
-            label="Mejorar"
-            primary
-            onClick={() =>
-              onImprove(
-                deal.id,
-                Math.round(amount * 1_000_000),
-                deal.offer.wageOffer,
-                isLoan ? { wageShare: loanWageShare / 100, loanDurationMonths } : undefined,
-              )
-            }
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">El club está valorando tu propuesta. Espera su respuesta.</span>
           <Action label="Retirarse" onClick={() => onAbandon(deal.id)} />
         </div>
       )}
 
-      {!closed && deal.stage === "player-terms" && !isLoan && (
-        <div className="flex flex-wrap items-end gap-2">
-          <NumberInput label="Ficha ofrecida (M €)" value={wage} onChange={setWage} step={0.1} />
-          <Action
-            label="Ofrecer ficha"
-            primary
-            onClick={() => onImproveWage(deal.id, Math.round(wage * 1_000_000))}
-          />
-          <Action label="Abandonar" onClick={() => onAbandon(deal.id)} />
+      {!closed && deal.stage === "player-terms" && (
+        <div className="space-y-2">
+          {deal.playerRoleDemand && (
+            <p className="text-xs text-muted-foreground">
+              El jugador considera razonable como mínimo el rol <span className="font-bold text-foreground">{ROLE_LABELS[deal.playerRoleDemand]}</span>
+              {!isLoan && deal.playerYearsDemand ? <> y {deal.playerYearsDemand} {deal.playerYearsDemand === 1 ? "año" : "años"} de contrato</> : null}.
+            </p>
+          )}
+          <div className="grid grid-cols-3 gap-2">
+            {!isLoan && <NumberInput label="Ficha (M €)" value={wage} onChange={setWage} step={0.1} />}
+            <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+              Rol ofrecido
+              <select value={playerRole} onChange={(e) => setPlayerRole(e.target.value as SquadRole)} className="mt-1 w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold">
+                {ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            {!isLoan && (
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Años
+                <select value={contractYears} onChange={(e) => setContractYears(Number(e.target.value))} className="mt-1 w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold">
+                  {[1,2,3,4,5,6].map((years) => <option key={years} value={years}>{years}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Action
+              label="Negociar con el jugador"
+              primary
+              onClick={() => onImproveWage(deal.id, isLoan ? deal.offer.wageOffer : Math.round(wage * 1_000_000), { squadRole: playerRole, contractYears })}
+            />
+            <Action label="Abandonar" onClick={() => onAbandon(deal.id)} />
+          </div>
         </div>
       )}
 
@@ -253,11 +270,11 @@ export function DealCard({
       {!closed && deal.stage === "incoming" && (
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            <Action label={isLoan ? "Aceptar cesión" : "Aceptar venta"} primary onClick={() => onAcceptIncoming(deal.id)} />
+            <Action label={isLoan ? "Aceptar cesión" : "Aceptar oferta"} primary onClick={() => onAcceptIncoming(deal.id)} />
             <Action label="Rechazar" onClick={() => onRejectIncoming(deal.id)} />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <NumberInput label={isLoan ? "Pedir prima (M €)" : "Pedir (M €)"} value={demand} onChange={setDemand} />
+            <NumberInput label={isLoan ? "Pedir prima (M €)" : "Pedir precio (M €)"} value={demand} onChange={setDemand} />
             {isLoan && (
               <>
                 <SelectNumber
@@ -285,7 +302,7 @@ export function DealCard({
             </p>
           )}
           <Action
-            label={isLoan ? "Contraofertar cesión" : "Contraofertar"}
+            label={isLoan ? "Contraofertar condiciones" : "Contraofertar precio"}
             primary
             onClick={() =>
               onCounterIncoming(
@@ -417,3 +434,20 @@ function Action({
     </button>
   );
 }
+
+
+const ROLE_OPTIONS: Array<{ value: SquadRole; label: string }> = [
+  { value: "star", label: "Estrella" },
+  { value: "starter", label: "Titular" },
+  { value: "rotation", label: "Rotación" },
+  { value: "secondary", label: "Rol Secundario" },
+  { value: "prospect", label: "Futuro del club / Promesa" },
+];
+
+const ROLE_LABELS: Record<SquadRole, string> = {
+  star: "Estrella",
+  starter: "Titular",
+  rotation: "Rotación",
+  secondary: "Rol Secundario",
+  prospect: "Futuro del club / Promesa",
+};

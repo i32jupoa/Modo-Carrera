@@ -13,6 +13,7 @@
 
 import { INSULTING_OFFER_RATIO, LOAN_RULES, MARKET_TIMING, WAGE_RULES } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
+import { minimumSquadRole, preferredContractYears } from "./PlayerDecision";
 import { needsToSell } from "./BudgetManager";
 import { getPlayer } from "./PlayerIndex";
 import {
@@ -54,6 +55,7 @@ export function emptyClauses(): OfferClauses {
     optionFee: 0,
     loanDurationMonths: 0,
     playerSwapIds: [],
+    squadRole: "rotation",
   };
 }
 
@@ -93,6 +95,8 @@ export function createTransferOffer(input: CreateOfferInput): TransferOffer {
       ...emptyClauses(),
       ...(input.clauses ?? {}),
       sellOnPercent: clamp(input.clauses?.sellOnPercent ?? 0, 0, 0.5),
+      squadRole: input.clauses?.squadRole ?? (input.date ? minimumSquadRole(input.playerId, input.buyerClubId, input.date) : "rotation"),
+      contractYears: input.clauses?.contractYears ?? (input.type === "permanent" || !input.type ? preferredContractYears(input.playerId) : undefined),
     },
     status: "pending",
     date: input.date ?? new Date().toISOString().slice(0, 10),

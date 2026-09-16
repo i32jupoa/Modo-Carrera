@@ -2,7 +2,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { formatEuro } from "@/store/playersStore";
 import { windowForDate } from "@/lib/transferWindows";
-import type { OfferClauses, ScoutingReport } from "@/lib/transfers";
+import type { OfferClauses, ScoutingReport, SquadRole } from "@/lib/transfers";
 
 interface Props {
   playerName: string;
@@ -61,6 +61,8 @@ export function NegotiationModal({
   const [amount, setAmount] = useState(Math.round(asking / 100_000) / 10);
   const [wage, setWage] = useState(Math.round((report?.wageDemand ?? 0) / 100_000) / 10);
   const [sellOn, setSellOn] = useState(0);
+  const [squadRole, setSquadRole] = useState<SquadRole>(defaultSquadRole(ovr, age));
+  const [contractYears, setContractYears] = useState(defaultContractYears(age));
   const [wageShare, setWageShare] = useState(50);
   const [loanDurationMonths, setLoanDurationMonths] = useState<number>(
     windowForDate(currentDate) === "winter" ? 6 : 12,
@@ -160,6 +162,24 @@ export function NegotiationModal({
           </div>
         </div>
 
+        <div className="space-y-2">
+          <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+            Rol en tu equipo
+          </label>
+          <select
+            value={squadRole}
+            onChange={(e) => setSquadRole(e.target.value as SquadRole)}
+            className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm font-semibold"
+          >
+            {SQUAD_ROLE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <p className="text-[0.68rem] leading-relaxed text-muted-foreground">
+            {SQUAD_ROLE_OPTIONS.find((option) => option.value === squadRole)?.description}
+          </p>
+        </div>
+
         {operation === "loan" && (
           <div className="space-y-1.5">
             <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
@@ -188,6 +208,20 @@ export function NegotiationModal({
           {type === "permanent" ? (
             <>
               <Field label="Ficha anual (M €)" value={wage} onChange={setWage} step={0.1} />
+              <div className="space-y-1.5">
+                <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                  Años de contrato
+                </label>
+                <select
+                  value={contractYears}
+                  onChange={(e) => setContractYears(Number(e.target.value))}
+                  className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+                >
+                  {[1,2,3,4,5,6].map((years) => (
+                    <option key={years} value={years}>{years} {years === 1 ? "año" : "años"}</option>
+                  ))}
+                </select>
+              </div>
               <div className="space-y-1.5">
                 <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
                   % futura venta
@@ -276,6 +310,8 @@ export function NegotiationModal({
                   sellOnPercent: type === "permanent" ? sellOn : 0,
                   wageShare: type === "permanent" ? 0 : wageShare / 100,
                   loanDurationMonths: type === "permanent" ? 0 : loanDurationMonths,
+                  squadRole,
+                  contractYears: type === "permanent" ? contractYears : undefined,
                 },
               })
             }
@@ -335,4 +371,29 @@ function Field({
       />
     </div>
   );
+}
+
+
+const SQUAD_ROLE_OPTIONS: Array<{ value: SquadRole; label: string; description: string }> = [
+  { value: "star", label: "Estrella", description: "Titular indiscutible en los partidos importantes. Si encadena varios banquillos, su moral puede caer drásticamente." },
+  { value: "starter", label: "Titular", description: "Espera iniciar la mayoría de los partidos, pero entiende mejor la rotación y el descanso." },
+  { value: "rotation", label: "Rotación", description: "Espera minutos con regularidad, como suplente habitual o titular en partidos de rotación." },
+  { value: "secondary", label: "Rol Secundario", description: "Acepta pocos minutos y un papel de reserva, especialmente en copas menores, amistosos o por lesiones." },
+  { value: "prospect", label: "Futuro del club / Promesa", description: "Rol pensado para jóvenes con potencial: no exige un sitio en el primer equipo a corto plazo y una cesión puede encajar muy bien." },
+];
+
+function defaultContractYears(age: number): number {
+  if (age <= 21) return 5;
+  if (age <= 24) return 4;
+  if (age <= 29) return 4;
+  if (age <= 32) return 3;
+  return 2;
+}
+
+function defaultSquadRole(ovr: number, age: number): SquadRole {
+  if (age <= 21 && ovr < 78) return "prospect";
+  if (ovr >= 88) return "star";
+  if (ovr >= 82) return "starter";
+  if (ovr >= 76) return "rotation";
+  return "secondary";
 }
