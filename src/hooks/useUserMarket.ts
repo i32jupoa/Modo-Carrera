@@ -347,7 +347,10 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       if (!result.ok || result.fee === undefined || !result.record) {
         flushWorldMoves();
         syncBudget();
-        commit(undefined, result.reason ?? "La operación no se pudo cerrar.");
+        // Una liquidación que no puede aplicarse no debe mostrar una
+        // notificación global de error: el motor conserva la operación y
+        // el estado visible de la negociación es la fuente de verdad.
+        commit();
         return;
       }
 

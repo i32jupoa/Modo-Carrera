@@ -145,8 +145,9 @@ export function DealCard({
 
       <div className="grid grid-cols-2 gap-2 text-xs">
         <Cell label={isLoan ? "Prima de cesión" : deal.direction === "out" ? "Oferta del club" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
-        {!isLoan && deal.stage === "player-terms" && <Cell label="Salario negociado con jugador" value={`${formatEuro(deal.offer.wageOffer)}/año`} />}
-        {deal.clubDemand > 0 && <Cell label="El club pide" value={formatEuro(deal.clubDemand)} />}
+        {deal.clubDemand > 0 && !(deal.direction === "in" && deal.stage === "player-terms") && (
+          <Cell label="El club pide" value={formatEuro(deal.clubDemand)} />
+        )}
         {!isLoan && deal.direction === "in" && deal.stage === "player-terms" && deal.playerWageDemand > 0 && (
           <Cell label="El jugador pide" value={`${formatEuro(deal.playerWageDemand)}/año`} />
         )}
@@ -168,9 +169,6 @@ export function DealCard({
               />
             )}
           </>
-        )}
-        {deal.offer.clauses.squadRole && deal.direction === "in" && deal.stage === "player-terms" && (
-          <Cell label="Rol en tu equipo" value={ROLE_LABELS[deal.offer.clauses.squadRole]} />
         )}
         {!isLoan && deal.offer.clauses.sellOnPercent > 0 && (
           <Cell

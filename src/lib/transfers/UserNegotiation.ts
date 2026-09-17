@@ -181,6 +181,15 @@ function deadlineToday(date: string): boolean {
   return isDeadlineDay(date);
 }
 
+/**
+ * Fecha de decisión del jugador después de un acuerdo entre clubes.
+ * Normalmente tarda 2 días; en los últimos días del mercado la decisión es
+ * inmediata para evitar dejar operaciones pendientes al cierre.
+ */
+function playerDecisionDate(date: string): string {
+  return deadlineToday(date) ? date : addDays(date, 2);
+}
+
 function cacheKeyFor(date: string): string {
   return date;
 }
@@ -220,6 +229,13 @@ function defaultLoanDuration(date: string): number {
 
 function isLoanOffer(type: TransferType): boolean {
   return type === "loan" || type === "loan-option" || type === "loan-obligation";
+}
+
+/** Redondeo comercial de importes para las nuevas contraofertas. */
+function roundFee(amount: number): number {
+  if (amount <= 0) return 0;
+  const step = amount >= 20_000_000 ? 250_000 : amount >= 2_000_000 ? 100_000 : 25_000;
+  return Math.max(step, Math.round(amount / step) * step);
 }
 
 // ============================================================================
@@ -618,14 +634,24 @@ export function acceptClubDemand(dealId: string, date: string): SubmitOfferResul
     deal.offer.status = "accepted";
     if (isLoanOffer(deal.offer.type)) {
       deal.stage = "player-decision";
-      deal.respondsOn = addDays(date, 2);
+      deal.respondsOn = playerDecisionDate(date);
       deal.clubMessage = `${clubNameSafe(deal.otherClubId)} y tu club han acordado las condiciones de la cesión.`;
-      deal.playerMessage = `${deal.playerName} está valorando la cesión. Recibirás su decisión en unos 2 días.`;
-      log(deal, date, `Has aceptado las condiciones propuestas por ${clubNameSafe(deal.otherClubId)}. El jugador decidirá en unos 2 días.`);
+      deal.playerMessage = `${deal.playerName} está valorando la cesión.`
+        + (deal.respondsOn === date
+          ? " La decisión es inmediata porque quedan pocos días para el cierre del mercado."
+          : " Recibirás su decisión en unos 2 días.");
+      log(deal, date, `Has aceptado las condiciones propuestas por ${clubNameSafe(deal.otherClubId)}. ${deal.playerMessage}`);
       return { ok: true, deal };
     }
-    const events: UserDealEvent[] = [];
-    finalizeOutgoingPlayerDecision(deal, date, events);
+    deal.stage = "player-decision";
+    deal.respondsOn = playerDecisionDate(date);
+    deal.clubMessage = `${clubNameSafe(deal.otherClubId)} y tu club han acordado el traspaso.`;
+    deal.playerMessage = `${deal.playerName} está valorando su salida al ${clubNameSafe(deal.otherClubId)}.`
+      + (deal.respondsOn === date
+        ? " La decisión es inmediata porque quedan pocos días para el cierre del mercado."
+        : " Recibirás su decisión en unos 2 días.");
+    log(deal, date, `Has aceptado las condiciones propuestas por ${clubNameSafe(deal.otherClubId)}. Acuerdo entre clubes.`);
+    log(deal, date, deal.playerMessage);
     return { ok: true, deal };
   }
 
@@ -637,10 +663,13 @@ export function acceptClubDemand(dealId: string, date: string): SubmitOfferResul
     // Las condiciones de la contraoferta de cesión ya están reflejadas en la
     // oferta: prima, reparto salarial, duración y, si corresponde, opción.
     deal.stage = "player-decision";
-    deal.respondsOn = addDays(date, 2);
+    deal.respondsOn = playerDecisionDate(date);
     deal.clubMessage = `${clubNameSafe(deal.otherClubId)} acepta las condiciones acordadas para la cesión.`;
-    deal.playerMessage = `${deal.playerName} está valorando la cesión. Recibirás su decisión en unos 2 días.`;
-    log(deal, date, `Has aceptado las condiciones de ${clubNameSafe(deal.otherClubId)}: ${fmt(acceptedAmount)} de prima. El jugador decidirá en unos 2 días.`);
+    deal.playerMessage = `${deal.playerName} está valorando la cesión.`
+      + (deal.respondsOn === date
+        ? " La decisión es inmediata porque quedan pocos días para el cierre del mercado."
+        : " Recibirás su decisión en unos 2 días.");
+    log(deal, date, `Has aceptado las condiciones de ${clubNameSafe(deal.otherClubId)}: ${fmt(acceptedAmount)} de prima. ${deal.playerMessage}`);
     return { ok: true, deal };
   }
 
@@ -1087,11 +1116,15 @@ function processIncomingLoanResponse(deal: UserDeal, date: string): UserDealEven
   if (enoughFee && enoughWage) {
     deal.offer.status = "pending";
     deal.stage = "player-decision";
-    deal.respondsOn = addDays(date, 2);
+    deal.respondsOn = playerDecisionDate(date);
     deal.clubMessage = `El club acepta la cesión por ${fmt(deal.offer.amount)}, el ${Math.round(deal.offer.clauses.wageShare * 100)}% del sueldo y ${deal.offer.clauses.loanDurationMonths} meses.`;
-    deal.playerMessage = `${deal.playerName} está valorando la cesión. Recibirás su decisión en unos 2 días.`;
+    deal.playerMessage = `${deal.playerName} está valorando la cesión.`
+      + (deal.respondsOn === date
+        ? " La decisión es inmediata porque quedan pocos días para el cierre del mercado."
+        : " Recibirás su decisión en unos 2 días.");
     log(deal, date, deal.clubMessage);
-    pushEvent(events, deal, `El club acepta la cesión de ${deal.playerName}. El jugador responderá en unos 2 días.`, "good");
+    log(deal, date, deal.playerMessage);
+    pushEvent(events, deal, `El club acepta la cesión de ${deal.playerName}. ${deal.playerMessage}`, "good");
     return events;
   }
 
@@ -1164,10 +1197,14 @@ function processOutgoingLoanBid(deal: UserDeal, date: string): UserDealEvent[] {
     deal.clubLoanTypeDemand = undefined;
     deal.clubOptionFeeDemand = undefined;
     deal.clubMessage = `${clubNameSafe(deal.otherClubId)} acepta la cesión: ${fmt(askedFee)} de prima, ${Math.round(askedShare * 100)}% de la ficha y ${askedDuration} meses${askedType === "loan" ? " sin opción de compra" : askedType === "loan-option" ? ` con opción de compra de ${fmt(askedOptionFee)}` : ` con compra obligatoria de ${fmt(askedOptionFee)}`}.`;
-    deal.playerMessage = `${deal.playerName} está valorando la cesión a ${clubNameSafe(deal.otherClubId)}. Recibirás su decisión en unos 2 días.`;
-    deal.respondsOn = addDays(date, 2);
-    log(deal, date, `${deal.clubMessage} El jugador decidirá en unos 2 días.`);
-    pushEvent(events, deal, `El club comprador acepta las condiciones de la cesión de ${deal.playerName}. El jugador responderá en unos 2 días.`, "good");
+    deal.respondsOn = playerDecisionDate(date);
+    deal.playerMessage = `${deal.playerName} está valorando la cesión a ${clubNameSafe(deal.otherClubId)}.`
+      + (deal.respondsOn === date
+        ? " La decisión es inmediata porque quedan pocos días para el cierre del mercado."
+        : " Recibirás su decisión en unos 2 días.");
+    log(deal, date, deal.clubMessage);
+    log(deal, date, deal.playerMessage);
+    pushEvent(events, deal, `El club comprador acepta las condiciones de la cesión de ${deal.playerName}. ${deal.playerMessage}`, "good");
     return events;
   }
 
@@ -1398,7 +1435,9 @@ function processLoanPlayerDecision(deal: UserDeal, date: string): UserDealEvent[
     return events;
   }
 
-  deal.playerMessage = `${player.name} ha aceptado la cesión a ${clubNameSafe(targetClub)}.`;
+  deal.playerMessage = isLoanOffer(deal.offer.type)
+    ? `${player.name} ha aceptado la cesión a ${clubNameSafe(targetClub)}.`
+    : `${player.name} ha aceptado su marcha al ${clubNameSafe(targetClub)}.`;
   deal.stage = "ready";
   deal.offer.status = "accepted";
   deal.respondsOn = date;
@@ -1524,11 +1563,22 @@ function processOutgoingBid(deal: UserDeal, date: string): UserDealEvent[] {
   if (asked <= ceiling && asked <= offered * 1.05) {
     deal.offer.amount = asked;
     deal.offer.status = "accepted";
-    deal.stage = "ready";
+    deal.stage = "player-decision";
     deal.clubMessage = `${clubNameSafe(deal.otherClubId)} acepta el precio de ${fmt(asked)}.`;
-    deal.respondsOn = date;
+    deal.respondsOn = playerDecisionDate(date);
+    deal.playerMessage = `${deal.playerName} está valorando su salida al ${clubNameSafe(deal.otherClubId)}.`
+      + (deal.respondsOn === date
+        ? " La decisión es inmediata porque quedan pocos días para el cierre del mercado."
+        : " Recibirás su decisión en unos 2 días.");
     log(deal, date, `El club comprador acepta ${fmt(asked)}. Acuerdo entre clubes.`);
-    return finalizeOutgoingPlayerDecision(deal, date, events);
+    log(deal, date, deal.playerMessage);
+    pushEvent(
+      events,
+      deal,
+      `${deal.clubMessage} ${deal.playerMessage}`,
+      "good",
+    );
+    return events;
   }
 
   if (asked > ceiling) {
@@ -1919,29 +1969,20 @@ export function acceptIncomingOffer(dealId: string, date: string): IncomingRespo
     return { ok: true, silent: true };
   }
 
-  const events: UserDealEvent[] = [];
-  const resultEvents = finalizeOutgoingPlayerDecision(deal, date, events);
-  if (deal.stage === "failed") {
-    dropInterest(deal.playerId, deal.otherClubId);
-    return { ok: true, reason: undefined, deal, silent: true };
-  }
-  if (deal.stage === "completed") {
-    const result = finalizeUserDeal(deal.id, date);
-    return { ...result, deal, silent: false };
-  }
-
-  // Una venta saliente que ya ha sido aceptada por el jugador entra en
-  // `closing`: el acuerdo está cerrado y la liquidación económica se hace
-  // automáticamente en la fecha `respondsOn` (normalmente al día siguiente).
-  // No debemos convertirla a `ready`, porque esa transición impediría que
-  // `advanceUserDeals()` ejecutase el cierre diferido y podía acabar mostrando
-  // una operación como fracasada a pesar de que el jugador había aceptado.
-  if (deal.stage === "closing") {
-    return { ok: true, deal };
-  }
-
-  deal.stage = "ready";
-  log(deal, date, "La operación queda pendiente de cierre tras el acuerdo con el jugador.");
+  // El club ya ha aceptado la oferta, pero la decisión del jugador nunca debe
+  // resolverse en el mismo instante salvo en los últimos 2 días del mercado.
+  // Durante el resto de la ventana queda programada a +2 días y será procesada
+  // por `advanceUserDeals()`.
+  deal.offer.status = "accepted";
+  deal.stage = "player-decision";
+  deal.respondsOn = playerDecisionDate(date);
+  deal.clubMessage = `${clubNameSafe(deal.otherClubId)} acepta tu oferta y el acuerdo entre clubes queda alcanzado.`;
+  deal.playerMessage = `${deal.playerName} está valorando su salida al ${clubNameSafe(deal.otherClubId)}.`
+    + (deal.respondsOn === date
+      ? " La decisión es inmediata porque quedan pocos días para el cierre del mercado."
+      : " Recibirás su decisión en unos 2 días.");
+  log(deal, date, `Has aceptado la oferta de ${clubNameSafe(deal.otherClubId)}. Acuerdo entre clubes.`);
+  log(deal, date, deal.playerMessage);
   return { ok: true, deal };
 }
 
