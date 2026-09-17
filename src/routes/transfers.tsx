@@ -24,18 +24,20 @@ import {
   fcPlayerById,
 } from "@/store/playersStore";
 import { getPlayerAnnualWage, getPlayer, isPlayerSettled, hasRejectedDealFor } from "@/lib/transfers";
-import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, Radar, Eye, Trash2, Clock3, ArrowDownToLine, ArrowUpFromLine, CheckCircle2 } from "lucide-react";
+import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Radar, Eye, Clock3, Trash2, LockKeyhole } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { useUserMarket } from "@/hooks/useUserMarket";
 import { NegotiationModal } from "@/components/market/NegotiationModal";
-import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
 import { buildPositions, POS_NAME, formatShortPositions } from "@/lib/positions";
 import { DealCard } from "@/components/market/DealCard";
 import { MarketFeed } from "@/components/market/MarketFeed";
 import { TransferHistoryCard } from "@/components/market/TransferHistoryCard";
 import { NegotiationDetailsModal } from "@/components/market/NegotiationDetailsModal";
+import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
+import { useNotificationsStore } from "@/store/notificationsStore";
+import { getClubScout } from "@/lib/transfers";
 import type { ScoutingReport, UserDeal } from "@/lib/transfers";
 import {
   AlertDialog,
@@ -289,11 +291,10 @@ function ovrBadgeClass(ovr: number): string {
   return "bg-muted text-muted-foreground border-border/40";
 }
 
-type MarketTab = "market" | "scouting" | "deals" | "offers" | "entries" | "exits" | "feed";
+type MarketTab = "market" | "deals" | "offers" | "entries" | "exits" | "feed";
 
 const TABS: { value: MarketTab; label: string }[] = [
   { value: "market", label: "Buscar jugadores" },
-  { value: "scouting", label: "Ojeador" },
   { value: "deals", label: "Mis negociaciones" },
   { value: "offers", label: "Ofertas recibidas" },
   { value: "entries", label: "Entradas" },
@@ -353,6 +354,12 @@ function TransfersPage() {
   const [search, setSearch] = useState(initialQuery);
   const [showFilters, setShowFilters] = useState(false);
   const [tab, setTab] = useState<MarketTab>("market");
+  const markSectionRead = useNotificationsStore((s) => s.markSectionRead);
+
+  useEffect(() => {
+    if (tab === "offers") markSectionRead("offers");
+    if (tab === "deals") markSectionRead("deals");
+  }, [tab, markSectionRead]);
 
   // Jugador seleccionado para negociar y su informe de ojeadores.
   const [target, setTarget] = useState<FcPlayer | null>(null);
@@ -450,10 +457,13 @@ function TransfersPage() {
   }, [ready, filters, inRoster, search, rawPlayers, teamAverages]);
 
   const scoutingMap = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof market.getScouting>>();
+    const map = new Map<string, import("@/lib/transfers").ScoutingEntry>();
     for (const entry of market.scouting) map.set(entry.playerId, entry);
     return map;
-  }, [market.scouting, market.currentDate]);
+  }, [market.scouting]);
+
+  const hiredScout = market.ready ? getClubScout(market.currentDate) : null;
+
 
   const activeFiltersCount = useMemo(
     () =>
@@ -500,22 +510,31 @@ function TransfersPage() {
     setReport(market.scout(id));
   }
 
+  function openScoutingDetails(player: FcPlayer) {
+    const id = String(player.ID);
+    const entry = scoutingMap.get(id);
+    if (!entry || entry.status !== "completed" || !myTeamId) return;
+    setScoutingDetailsPlayer(player);
+    setScoutingDetailsReport(market.scout(id));
+  }
+
   function startOrOpenScouting(player: FcPlayer) {
     const id = String(player.ID);
     const entry = scoutingMap.get(id);
-    if (!entry) {
-      market.startScouting(id);
+    if (entry?.status === "completed") {
+      openScoutingDetails(player);
       return;
     }
-    if (entry.status === "completed") {
-      setScoutingDetailsPlayer(player);
-      setScoutingDetailsReport(market.scout(id));
+    if (entry?.status === "pending") return;
+    if (!hiredScout) {
+      toast.error("Tu club no dispone de ningún ojeador.", { description: "Contrata un ojeador en Mi equipo → Ojeador." });
+      return;
     }
-  }
-
-  function openScoutingDetails(player: FcPlayer) {
-    setScoutingDetailsPlayer(player);
-    setScoutingDetailsReport(market.scout(String(player.ID)));
+    if (market.activeScouts >= market.maxActiveScouts) {
+      toast.error("Has alcanzado el límite de ojeos simultáneos.");
+      return;
+    }
+    market.startScouting(id);
   }
 
   if (!save) return null;
@@ -610,9 +629,7 @@ function TransfersPage() {
       <div className="flex flex-wrap gap-2 mb-4">
         {TABS.map((option) => {
           const count =
-            option.value === "scouting"
-              ? market.activeScouts
-              : option.value === "deals"
+            option.value === "deals"
                 ? openDeals.length
                 : option.value === "offers"
                   ? openOffers.length
@@ -882,35 +899,42 @@ function TransfersPage() {
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 p-3 mt-auto">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
-                          <p className="font-black scoreline text-primary">{formatMarketEuro(cost)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[0.6rem] uppercase text-muted-foreground">Salario actual</p>
-                          <p className="font-black scoreline text-emerald-300">{formatMarketEuro(getPlayerAnnualWage(id))}<span className="text-[0.55rem] font-medium text-muted-foreground">/año</span></p>
-                        </div>
+                      <div>
+                        <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
+                        <p className="font-black scoreline text-primary">{formatMarketEuro(cost)}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         {(() => {
                           const scout = scoutingMap.get(id);
                           const pending = scout?.status === "pending";
                           const completed = scout?.status === "completed";
+                          const noScout = !hiredScout && !scout;
+                          const atCapacity = !!hiredScout && !scout && market.activeScouts >= market.maxActiveScouts;
+                          const disabled = !market.ready || noScout || atCapacity || pending;
                           return (
-                            <button
-                              type="button"
-                              disabled={!market.ready || pending}
-                              onClick={() => startOrOpenScouting(p)}
-                              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition disabled:opacity-50 disabled:cursor-not-allowed ${
-                                completed
-                                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15"
-                                  : "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
-                              }`}
-                            >
-                              {pending ? <Clock3 className="h-3.5 w-3.5 animate-pulse" /> : completed ? <Eye className="h-3.5 w-3.5" /> : <Radar className="h-3.5 w-3.5" />}
-                              {pending ? "Ojeando..." : completed ? "Ver detalles" : "Ojear"}
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                disabled={disabled}
+                                title={noScout ? "Contrata primero un ojeador en Mi equipo → Ojeador" : atCapacity ? "Has alcanzado la capacidad de tu ojeador" : pending ? "El informe aún está en preparación" : "Abrir o solicitar informe de ojeador"}
+                                onClick={() => startOrOpenScouting(p)}
+                                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition disabled:opacity-45 disabled:cursor-not-allowed ${completed ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15" : "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"}`}
+                              >
+                                {pending ? <Clock3 className="h-3.5 w-3.5 animate-pulse" /> : completed ? <Eye className="h-3.5 w-3.5" /> : noScout || atCapacity ? <LockKeyhole className="h-3.5 w-3.5" /> : <Radar className="h-3.5 w-3.5" />}
+                                {pending ? "Ojeando..." : completed ? "Ver informe" : "Ojear"}
+                              </button>
+                              {scout && (
+                                <button
+                                  type="button"
+                                  onClick={() => setRemoveScoutingId(id)}
+                                  className="inline-flex items-center justify-center rounded-lg border border-border bg-card px-2.5 py-2 text-muted-foreground hover:border-destructive/40 hover:text-destructive transition"
+                                  aria-label={`Eliminar a ${p.Name} del ojeo`}
+                                  title="Eliminar de la lista de ojeo"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </>
                           );
                         })()}
                         <button
@@ -930,95 +954,6 @@ function TransfersPage() {
             </div>
           )}
         </>
-      )}
-
-      {tab === "scouting" && (
-        <div className="space-y-4">
-          <div className="panel p-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <Radar className="h-4 w-4 text-primary" />
-                <h3 className="font-black">Ojeador</h3>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Puedes tener hasta {market.maxActiveScouts} ojeos activos. Los informes tardan 3–5 días.
-              </p>
-            </div>
-            <div className="text-sm font-black">
-              {market.activeScouts}/{market.maxActiveScouts} activos
-            </div>
-          </div>
-
-          {market.scouting.length === 0 ? (
-            <div className="panel p-10 text-center text-sm text-muted-foreground">
-              Todavía no has enviado ningún jugador al ojeador.
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {market.scouting.map((entry) => {
-                const player = (rawPlayers as FcPlayer[]).find((candidate) => String(candidate.ID) === entry.playerId);
-                if (!player) return null;
-                const positions = buildPositions(player.Position, player["Alternative positions"]);
-                const teamAvg = teamAverages[player.Team] || 75;
-                const cost = marketValueEuros(player, "", "", teamAvg);
-                const clubId = clubOfPlayer(entry.playerId) ?? TEAM_NAME_TO_ID[player.Team];
-                const club = clubId ? teamById(clubId) : null;
-                const daysLeft = entry.status === "pending"
-                  ? Math.max(0, Math.ceil((new Date(`${entry.readyAt}T00:00:00Z`).getTime() - new Date(`${market.currentDate}T00:00:00Z`).getTime()) / 86400000))
-                  : 0;
-                return (
-                  <article key={entry.playerId} className="panel overflow-hidden flex flex-col">
-                    <div className="flex gap-3 p-3 border-b border-border/40">
-                      <div className="w-14 h-[4.5rem] shrink-0 rounded overflow-hidden bg-secondary/60 grid place-items-center">
-                        {player.card ? <img src={player.card} alt="" className="w-full h-full object-cover object-top" loading="lazy" /> : null}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-bold truncate text-sm leading-tight">{player.Name}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatShortPositions(positions.slice(0, 1))} · {player.Age}a
-                          {positions.length > 1 && <span className="ml-1 text-[0.58rem] text-muted-foreground/70">· {formatShortPositions(positions.slice(1))}</span>}
-                        </p>
-                        {club && (
-                          <div className="flex items-center gap-1.5 mt-1.5">
-                            <TeamLogo teamName={club.name} leagueName={getLeagueName(club.league)} size={18} />
-                            <span className="text-[0.65rem] text-muted-foreground truncate">{club.name}</span>
-                          </div>
-                        )}
-                      </div>
-                      <span className={`scoreline text-sm font-black px-2 py-1 rounded border h-fit ${ovrBadgeClass(player.OVR)}`}>{player.OVR}</span>
-                    </div>
-                    <div className="p-3 space-y-3 mt-auto">
-                      <div>
-                        <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
-                        <p className="font-black scoreline text-primary">{formatMarketEuro(cost)}</p>
-                      </div>
-                      {entry.status === "pending" ? (
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 rounded-lg bg-primary/5 border border-primary/15 px-3 py-2 text-xs text-primary flex items-center justify-between gap-2">
-                            <span className="flex items-center gap-2"><Clock3 className="h-3.5 w-3.5 animate-pulse" /> Ojeando...</span>
-                            <span>{daysLeft === 1 ? "1 día restante" : `${daysLeft} días restantes`}</span>
-                          </div>
-                          <button type="button" onClick={() => setRemoveScoutingId(entry.playerId)} className="inline-flex items-center justify-center px-3 py-2 rounded-lg border border-border bg-card text-muted-foreground hover:text-destructive hover:border-destructive/40 transition" aria-label={`Eliminar a ${player.Name} del ojeador`}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => openScoutingDetails(player)} className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold hover:brightness-110 transition">
-                            <Eye className="h-3.5 w-3.5" /> Ver detalles
-                          </button>
-                          <button type="button" onClick={() => setRemoveScoutingId(entry.playerId)} className="inline-flex items-center justify-center px-3 py-2 rounded-lg border border-border bg-card text-muted-foreground hover:text-destructive hover:border-destructive/40 transition" aria-label={`Eliminar a ${player.Name} del ojeador`}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </div>
       )}
 
       {tab === "deals" && (
@@ -1289,13 +1224,11 @@ function TransfersPage() {
       <AlertDialog open={!!removeScoutingId} onOpenChange={(open) => !open && setRemoveScoutingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Quitar jugador del ojeador?</AlertDialogTitle>
+            <AlertDialogTitle>¿Eliminar jugador del ojeador?</AlertDialogTitle>
             <AlertDialogDescription>
               {(() => {
-                const target = removeScoutingId ? (rawPlayers as FcPlayer[]).find((candidate) => String(candidate.ID) === removeScoutingId) : null;
-                return target
-                  ? `Vas a quitar a ${target.Name} de tu lista de ojeador. Esta acción no cancela ninguna negociación.`
-                  : "Vas a quitar este jugador de tu lista de ojeador.";
+                const player = removeScoutingId ? (rawPlayers as FcPlayer[]).find((candidate) => String(candidate.ID) === removeScoutingId) : null;
+                return player ? `Se eliminará ${player.Name} de la lista de ojeados.` : "Se eliminará este jugador de la lista de ojeados.";
               })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1307,29 +1240,30 @@ function TransfersPage() {
                 setRemoveScoutingId(null);
               }}
             >
-              Quitar
+              Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {scoutingDetailsPlayer && (
+        <ScoutingDetailsModal
+          player={scoutingDetailsPlayer}
+          report={scoutingDetailsReport}
+          scoutingEntry={scoutingMap.get(String(scoutingDetailsPlayer.ID)) ?? null}
+          open={!!scoutingDetailsPlayer}
+          onClose={() => {
+            setScoutingDetailsPlayer(null);
+            setScoutingDetailsReport(null);
+          }}
+        />
+      )}
 
       {detailsRecord && (
         <NegotiationDetailsModal
           record={detailsRecord}
           direction={detailsDirection}
           onClose={() => setDetailsRecord(null)}
-        />
-      )}
-
-      {scoutingDetailsPlayer && (
-        <ScoutingDetailsModal
-          player={scoutingDetailsPlayer}
-          report={scoutingDetailsReport}
-          open={!!scoutingDetailsPlayer}
-          onClose={() => {
-            setScoutingDetailsPlayer(null);
-            setScoutingDetailsReport(null);
-          }}
         />
       )}
 

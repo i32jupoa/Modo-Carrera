@@ -787,6 +787,8 @@ type PlayersState = {
   resetAllStats: () => void;
 
   resetBudget: () => void;
+  /** Descuenta un gasto extraordinario del presupuesto total. */
+  spendBudget: (cost: number) => boolean;
   /** Reparte el presupuesto total entre fichajes y salarios, entre el 5% y el 30%. */
   setWageBudget: (value: number) => void;
   /** Sincroniza la masa salarial con los contratos reales del motor de mercado. */
@@ -1619,6 +1621,23 @@ export const usePlayersStore = create<PlayersState>()(
           wageBill,
           wageBudget: wageAllocation(total, 0.2),
         });
+      },
+
+      spendBudget: (cost) => {
+        const state = get();
+        const amount = Math.max(0, Math.round(cost));
+        if (amount <= 0 || state.budget < amount) return false;
+
+        const total = Math.max(0, state.budget - amount);
+        const ratio =
+          state.budget > 0
+            ? (state.wageBudget || state.budget * 0.2) / Math.max(1, state.budget)
+            : 0.2;
+        set({
+          budget: total,
+          wageBudget: wageAllocation(total, ratio),
+        });
+        return true;
       },
 
       setWageBudget: (value) => {

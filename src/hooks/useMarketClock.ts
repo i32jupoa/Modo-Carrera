@@ -131,6 +131,9 @@ export function useMarketClock(): void {
 
       (async () => {
         await loadOrInitTransferSystem(currentDate);
+        // Una vez cargadas las negociaciones de esta partida, podemos resolver
+        // correctamente a qué sección pertenece cada aviso ya guardado.
+        useNotificationsStore.getState().refreshCounts();
         // El mercado arranca desde el mundo real de la partida, no desde el JSON.
         attachWorldBridge();
         hydrateWorld();
@@ -149,7 +152,12 @@ export function useMarketClock(): void {
           const add = useNotificationsStore.getState().add;
           if (events.length > 0) {
             add(
-              events.map((event) => ({ dealId: event.dealId, kind: event.kind, text: event.text })),
+              events.map((event) => ({
+                dealId: event.dealId,
+                direction: event.direction,
+                kind: event.kind,
+                text: event.text,
+              })),
               currentDate,
             );
           }
@@ -176,7 +184,12 @@ export function useMarketClock(): void {
         const add = useNotificationsStore.getState().add;
         if (events.length > 0) {
           add(
-            events.map((event) => ({ dealId: event.dealId, kind: event.kind, text: event.text })),
+            events.map((event) => ({
+              dealId: event.dealId,
+              direction: event.direction,
+              kind: event.kind,
+              text: event.text,
+            })),
             currentDate,
           );
         }

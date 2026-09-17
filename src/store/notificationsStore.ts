@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { UserDealEventKind } from "@/lib/transfers/UserNegotiation";
+import { getUserDeal, type UserDealEventKind } from "@/lib/transfers/UserNegotiation";
 
 export type NotificationKind = UserDealEventKind;
 
@@ -7,17 +7,23 @@ export interface MarketNotification {
   id: string;
   /** Identificador estable de la negociación que originó el evento. */
   dealId?: string;
+  /** Sección donde debe consumirse esta novedad. */
+  section?: MarketNotificationSection;
   kind: NotificationKind;
   text: string;
   date: string;
   read: boolean;
 }
 
+export type MarketNotificationSection = "deals" | "offers";
+
 interface NotificationsState {
   items: MarketNotification[];
-  /** Notificaciones sin leer agrupadas por tono. */
-  counts: Record<NotificationKind, number>;
-  add: (events: Array<{ dealId?: string; kind: NotificationKind; text: string }>, date: string) => void;
+  /** Novedades sin leer separadas entre negociaciones y ofertas recibidas. */
+  counts: Record<MarketNotificationSection, number>;
+  add: (events: Array<{ dealId?: string; direction: "in" | "out"; kind: NotificationKind; text: string }>, date: string) => void;
+  markSectionRead: (section: MarketNotificationSection) => void;
+  refreshCounts: () => void;
   markAllRead: () => void;
   clear: () => void;
   hydrate: (saveId: string | null) => void;
@@ -28,13 +34,26 @@ const STORAGE_PREFIX = "fcsim:market-notifications:v1";
 
 let currentSaveId: string | null = null;
 
-function emptyCounts(): Record<NotificationKind, number> {
-  return { good: 0, info: 0, bad: 0 };
+function emptyCounts(): Record<MarketNotificationSection, number> {
+  return { deals: 0, offers: 0 };
 }
 
-function countUnread(items: MarketNotification[]): Record<NotificationKind, number> {
+function sectionForNotification(item: MarketNotification): MarketNotificationSection {
+  if (item.section) return item.section;
+  if (item.dealId) {
+    const deal = getUserDeal(item.dealId);
+    if (deal) return deal.direction === "out" ? "offers" : "deals";
+  }
+  // Compatibilidad con notificaciones antiguas que no puedan enlazarse con
+  // una negociación ya cargada: las conservamos en la sección principal.
+  return "deals";
+}
+
+function countUnread(items: MarketNotification[]): Record<MarketNotificationSection, number> {
   const counts = emptyCounts();
-  for (const item of items) if (!item.read) counts[item.kind] += 1;
+  for (const item of items) {
+    if (!item.read) counts[sectionForNotification(item)] += 1;
+  }
   return counts;
 }
 
@@ -79,6 +98,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
           ? `deal-${event.dealId}-${event.kind}-${event.text}`
           : `${date}-${Date.now().toString(36)}-${index}`,
         dealId: event.dealId,
+        section: event.direction === "out" ? "offers" : "deals",
         kind: event.kind,
         text: event.text,
         date,
@@ -90,6 +110,29 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     const items = [...fresh, ...existing].slice(0, MAX_ITEMS);
     persist(items);
     set({ items, counts: countUnread(items) });
+  },
+
+  markSectionRead: (section) => {
+    const { items } = get();
+    const read = items.map((item) =>
+      sectionForNotification(item) === section ? { ...item, read: true } : item,
+    );
+    if (read.every((item, index) => item.read === items[index]?.read)) return;
+    persist(read);
+    set({ items: read, counts: countUnread(read) });
+  },
+
+  refreshCounts: () => {
+    const { items } = get();
+    const enriched = items.map((item) => {
+      if (item.section || !item.dealId) return item;
+      const deal = getUserDeal(item.dealId);
+      if (!deal) return item;
+      return { ...item, section: deal.direction === "out" ? "offers" : "deals" };
+    });
+    const changed = enriched.some((item, index) => item.section !== items[index]?.section);
+    if (changed) persist(enriched);
+    set({ items: enriched, counts: countUnread(enriched) });
   },
 
   markAllRead: () => {

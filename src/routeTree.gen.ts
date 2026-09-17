@@ -18,6 +18,7 @@ import { Route as InjuriesRouteImport } from './routes/injuries'
 import { Route as LineupRouteImport } from './routes/lineup'
 import { Route as MatchRouteImport } from './routes/match'
 import { Route as ScorersRouteImport } from './routes/scorers'
+import { Route as ScoutingRouteImport } from './routes/scouting'
 import { Route as SeasonRouteImport } from './routes/season'
 import { Route as SquadRouteImport } from './routes/squad'
 import { Route as StandingsRouteImport } from './routes/standings'
@@ -71,6 +72,11 @@ const ScorersRoute = ScorersRouteImport.update({
   path: '/scorers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ScoutingRoute = ScoutingRouteImport.update({
+  id: '/scouting',
+  path: '/scouting',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SeasonRoute = SeasonRouteImport.update({
   id: '/season',
   path: '/season',
@@ -117,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/lineup': typeof LineupRoute
   '/match': typeof MatchRoute
   '/scorers': typeof ScorersRoute
+  '/scouting': typeof ScoutingRoute
   '/season': typeof SeasonRoute
   '/squad': typeof SquadRoute
   '/standings': typeof StandingsRoute
@@ -135,6 +142,7 @@ export interface FileRoutesByTo {
   '/lineup': typeof LineupRoute
   '/match': typeof MatchRoute
   '/scorers': typeof ScorersRoute
+  '/scouting': typeof ScoutingRoute
   '/season': typeof SeasonRoute
   '/squad': typeof SquadRoute
   '/standings': typeof StandingsRoute
@@ -154,6 +162,7 @@ export interface FileRoutesById {
   '/lineup': typeof LineupRoute
   '/match': typeof MatchRoute
   '/scorers': typeof ScorersRoute
+  '/scouting': typeof ScoutingRoute
   '/season': typeof SeasonRoute
   '/squad': typeof SquadRoute
   '/standings': typeof StandingsRoute
@@ -174,6 +183,7 @@ export interface FileRouteTypes {
     | '/lineup'
     | '/match'
     | '/scorers'
+    | '/scouting'
     | '/season'
     | '/squad'
     | '/standings'
@@ -192,6 +202,7 @@ export interface FileRouteTypes {
     | '/lineup'
     | '/match'
     | '/scorers'
+    | '/scouting'
     | '/season'
     | '/squad'
     | '/standings'
@@ -210,6 +221,7 @@ export interface FileRouteTypes {
     | '/lineup'
     | '/match'
     | '/scorers'
+    | '/scouting'
     | '/season'
     | '/squad'
     | '/standings'
@@ -229,6 +241,7 @@ export interface RootRouteChildren {
   LineupRoute: typeof LineupRoute
   MatchRoute: typeof MatchRoute
   ScorersRoute: typeof ScorersRoute
+  ScoutingRoute: typeof ScoutingRoute
   SeasonRoute: typeof SeasonRoute
   SquadRoute: typeof SquadRoute
   StandingsRoute: typeof StandingsRoute
@@ -303,6 +316,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ScorersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/scouting': {
+      id: '/scouting'
+      path: '/scouting'
+      fullPath: '/scouting'
+      preLoaderRoute: typeof ScoutingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/season': {
       id: '/season'
       path: '/season'
@@ -365,6 +385,7 @@ const rootRouteChildren: RootRouteChildren = {
   LineupRoute: LineupRoute,
   MatchRoute: MatchRoute,
   ScorersRoute: ScorersRoute,
+  ScoutingRoute: ScoutingRoute,
   SeasonRoute: SeasonRoute,
   SquadRoute: SquadRoute,
   StandingsRoute: StandingsRoute,

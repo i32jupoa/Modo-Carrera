@@ -45,7 +45,8 @@ import {
   listScouting,
   removeScouting,
   activeScoutingCount,
-  MAX_ACTIVE_SCOUTS,
+  getScoutCapabilities,
+  getScoutCapacity,
 } from "@/lib/transfers";
 import { flushWorldMoves } from "@/lib/transfers/WorldSync";
 
@@ -117,9 +118,9 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     enabled && typeof window !== "undefined" && isTransferSystemInitialized() && !!myTeamId;
 
   // Las negociaciones las avanza `MarketNotifier` de forma global (también
-  // con la pantalla de mercado cerrada) y sus novedades se muestran como
-  // círculos de colores en el menú lateral, no como avisos emergentes. Aquí
-  // sólo se refresca la vista cuando llegan novedades nuevas.
+  // con la pantalla de mercado cerrada) y sus novedades se reflejan en el
+  // contador único del menú lateral. Aquí sólo se refresca la vista cuando
+  // llegan novedades nuevas.
   const notificationsVersion = useNotificationsStore((s) => s.items.length);
   useEffect(() => {
     if (!ready) return;
@@ -208,7 +209,13 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     if (!ready) return false;
     const result = startScouting(playerId, currentDate);
     if (result.ok) {
-      toast.success("Jugador añadido al ojeador. El informe estará listo en 3–5 días.");
+      const scout = getScoutingEntry(playerId, currentDate);
+      const capabilities = scout ? getScoutCapabilities(scout.scoutRating) : null;
+      toast.success("Jugador añadido al ojeador.", {
+        description: capabilities
+          ? `El informe estará listo en ${capabilities.minDays}–${capabilities.maxDays} días.`
+          : undefined,
+      });
       saveTransferSystem();
       refresh();
       return true;
@@ -633,7 +640,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     scout,
     scouting,
     activeScouts,
-    maxActiveScouts: MAX_ACTIVE_SCOUTS,
+    maxActiveScouts: ready ? getScoutCapacity(currentDate) : 0,
     getScouting: (playerId: string) => (ready ? getScoutingEntry(playerId, currentDate) : null),
     startScouting: beginScouting,
     removeScouting: deleteScouting,

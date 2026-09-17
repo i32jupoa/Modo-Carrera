@@ -5,7 +5,9 @@ import {
   Users,
   ClipboardList,
   Activity,
+  BarChart3,
   Repeat,
+  Radar,
   Calendar,
   CalendarDays,
   Globe,
@@ -13,9 +15,6 @@ import {
   ChevronRight,
   Award,
   Swords,
-  CheckCircle2,
-  Info,
-  XCircle,
 } from "lucide-react";
 import {
   Sidebar,
@@ -33,7 +32,7 @@ import {
 import { loadSave } from "@/lib/store";
 import { loadAllSaves, loadSaveById } from "@/lib/savedGames";
 import { teamById } from "@/data/teams";
-import { useNotificationsStore, type NotificationKind } from "@/store/notificationsStore";
+import { useNotificationsStore } from "@/store/notificationsStore";
 import { useEffect, useState } from "react";
 
 type Item = { title: string; url: string; icon: React.ComponentType<{ className?: string }> };
@@ -45,9 +44,10 @@ const PRINCIPAL: Item[] = [
 
 const MI_EQUIPO: Item[] = [
   { title: "Plantilla", url: "/squad", icon: Users },
-  { title: "Estadísticas de equipo", url: "/team-stats", icon: Activity },
+  { title: "Ojeador", url: "/scouting", icon: Radar },
   { title: "Dirección de equipo", url: "/lineup", icon: ClipboardList },
   { title: "Lesiones", url: "/injuries", icon: Activity },
+  { title: "Estadísticas de equipo", url: "/team-stats", icon: BarChart3 },
 ];
 
 const COMPETICIONES: Item[] = [
@@ -57,10 +57,9 @@ const COMPETICIONES: Item[] = [
   { title: "Champions League", url: "/ucl", icon: Award },
 ];
 
-const ESTADISTICAS: Item[] = [{ title: "Rankings", url: "/scorers", icon: Award }];
-
 const MUNDO: Item[] = [
   { title: "Equipos", url: "/teams", icon: Globe },
+  { title: "Rankings", url: "/scorers", icon: Award },
   { title: "Mercado", url: "/transfers", icon: Repeat },
 ];
 
@@ -101,12 +100,6 @@ export function AppSidebar() {
   }, [pathname]); // Ejecutar cuando cambia el pathname
 
   const counts = useNotificationsStore((s) => s.counts);
-  const markAllRead = useNotificationsStore((s) => s.markAllRead);
-
-  // Entrar en el mercado da por vistas todas las novedades.
-  useEffect(() => {
-    if (pathname === "/transfers") markAllRead();
-  }, [pathname, markAllRead]);
 
   const isActive = (url: string) => pathname === url;
 
@@ -154,12 +147,6 @@ export function AppSidebar() {
               isActive={isActive}
             />
             <NavGroup
-              label="Estadísticas"
-              items={ESTADISTICAS}
-              collapsed={collapsed}
-              isActive={isActive}
-            />
-            <NavGroup
               label="Mundo"
               items={MUNDO}
               collapsed={collapsed}
@@ -186,65 +173,28 @@ export function AppSidebar() {
   );
 }
 
-/** Estilo semántico de las novedades del mercado.
- *  No usamos círculos sólidos: cada estado tiene un icono claro y un fondo
- *  suave para que el indicador se integre con el resto del menú. */
-const NOTIFICATION_META: Record<NotificationKind, {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  className: string;
-}> = {
-  good: {
-    icon: CheckCircle2,
-    label: "Éxito",
-    className: "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/25",
-  },
-  info: {
-    icon: Info,
-    label: "Oferta o contraoferta",
-    className: "bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/25",
-  },
-  bad: {
-    icon: XCircle,
-    label: "Rechazo",
-    className: "bg-red-500/15 text-red-300 ring-1 ring-red-500/25",
-  },
-};
-
-const BADGE_ORDER: NotificationKind[] = ["good", "info", "bad"];
-
-/** Indicadores de novedades sin leer del mercado. */
+/** Contador único de novedades sin leer del mercado. */
 function NotificationDots({
   counts,
   compact = false,
 }: {
-  counts: Record<NotificationKind, number>;
+  counts: { deals: number; offers: number };
   compact?: boolean;
 }) {
-  const visible = BADGE_ORDER.filter((kind) => counts[kind] > 0);
-  if (visible.length === 0) return null;
+  const total = counts.deals + counts.offers;
+  if (total <= 0) return null;
+  const displayCount = total > 99 ? "99+" : total;
   return (
-    <span className={compact ? "flex items-center gap-0.5" : "flex items-center gap-1.5"}>
-      {visible.map((kind) => {
-        const meta = NOTIFICATION_META[kind];
-        const Icon = meta.icon;
-        const count = counts[kind] > 99 ? "99+" : counts[kind];
-        return (
-          <span
-            key={kind}
-            title={`${meta.label}: ${count}`}
-            aria-label={`${meta.label}: ${count}`}
-            className={`inline-flex items-center justify-center gap-1 font-black tabular-nums rounded-md ${meta.className} ${
-              compact
-                ? "h-4 min-w-4 px-0.5 text-[0.45rem]"
-                : "h-5 min-w-6 px-1.5 text-[0.62rem]"
-            }`}
-          >
-            <Icon className={compact ? "h-2.5 w-2.5" : "h-3 w-3"} />
-            <span>{count}</span>
-          </span>
-        );
-      })}
+    <span
+      title={`Novedades del mercado: ${displayCount}`}
+      aria-label={`Novedades del mercado: ${displayCount}`}
+      className={`inline-flex items-center justify-center rounded-full bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/25 font-black tabular-nums ${
+        compact
+          ? "h-4 min-w-4 px-1 text-[0.48rem]"
+          : "h-5 min-w-6 px-1.5 text-[0.62rem]"
+      }`}
+    >
+      {displayCount}
     </span>
   );
 }
@@ -260,7 +210,7 @@ function NavGroup({
   items: Item[];
   collapsed: boolean;
   isActive: (url: string) => boolean;
-  badges?: Record<string, Record<NotificationKind, number>>;
+  badges?: Record<string, { deals: number; offers: number }>;
 }) {
   return (
     <SidebarGroup>
