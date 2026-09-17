@@ -16,6 +16,8 @@ interface Props {
   onCounterIncoming: (dealId: string, demand: number, clauses?: Partial<import("@/lib/transfers").OfferClauses>) => void;
   onCounterOutgoing: (dealId: string, demand: number, clauses?: Partial<import("@/lib/transfers").OfferClauses>) => void;
   onRejectIncoming: (dealId: string) => void;
+  /** Compacta la cabecera cuando la tarjeta ya vive dentro de un grupo por jugador. */
+  compactHeader?: boolean;
 }
 
 function clubName(clubId: string): string {
@@ -60,6 +62,7 @@ export function DealCard({
   onCounterIncoming,
   onCounterOutgoing,
   onRejectIncoming,
+  compactHeader = false,
 }: Props) {
   const isLoan =
     deal.offer.type === "loan" ||
@@ -202,19 +205,30 @@ export function DealCard({
     <article
       className={`panel overflow-hidden border ${STAGE_TONE[deal.stage] ?? "border-border/60"}`}
     >
-      <div className="relative p-4 pb-3 bg-gradient-to-r from-card via-card to-primary/5">
+      <div className={`relative ${compactHeader ? "p-3" : "p-4 pb-3"} bg-gradient-to-r from-card via-card to-primary/5`}>
         <div className="flex items-center gap-3">
-          <PlayerFace
-            name={deal.playerName}
-            image={rawPlayer?.card}
-            role={roleFromPosition(rawPlayer?.Position ?? "MID")}
-            size={58}
-            showRing={false}
-          />
+          {!compactHeader && (
+            <PlayerFace
+              name={deal.playerName}
+              image={rawPlayer?.card}
+              role={roleFromPosition(rawPlayer?.Position ?? "MID")}
+              size={58}
+              showRing={false}
+            />
+          )}
+          {compactHeader && otherClub && (
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-border/60 bg-secondary/60 shadow-sm">
+              <TeamLogo
+                teamName={otherClub.name}
+                leagueName={otherClubLeague}
+                size={30}
+              />
+            </div>
+          )}
           <div className="min-w-0 flex-1">
-            <p className="font-black truncate text-base">{deal.playerName}</p>
-            <div className="flex items-center gap-2 mt-1.5">
-              {otherClub && (
+            {!compactHeader && <p className="font-black truncate text-base">{deal.playerName}</p>}
+            <div className={`${compactHeader ? "" : "mt-1.5"} flex items-center gap-2`}>
+              {!compactHeader && otherClub && (
                 <TeamLogo
                   teamName={otherClub.name}
                   leagueName={otherClubLeague}
@@ -223,13 +237,22 @@ export function DealCard({
               )}
               <div className="min-w-0">
                 <p className="text-xs font-semibold truncate">{operationLabel}{clubName(deal.otherClubId)}</p>
-                <p className="text-[0.68rem] text-muted-foreground">Ronda {deal.stage === "player-terms" ? (deal.playerNegotiationRounds ?? 0) : deal.rounds}</p>
+                <p className="text-[0.68rem] text-muted-foreground">
+                  Ronda {deal.stage === "player-terms" ? (deal.playerNegotiationRounds ?? 0) : deal.rounds}
+                </p>
               </div>
             </div>
           </div>
-          <span className="text-[0.62rem] uppercase tracking-wider font-black shrink-0 px-2 py-1 rounded-full bg-secondary/70 border border-border/50">
-            {stageLabel(deal.stage)}
-          </span>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            {compactHeader && (
+              <span className="text-sm font-black tracking-tight text-foreground">
+                {formatEuro(deal.offer.amount)}
+              </span>
+            )}
+            <span className="text-[0.62rem] uppercase tracking-wider font-black px-2 py-1 rounded-full bg-secondary/70 border border-border/50">
+              {stageLabel(deal.stage)}
+            </span>
+          </div>
         </div>
       </div>
       <div className="p-4 space-y-3">

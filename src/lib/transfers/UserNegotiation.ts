@@ -2555,7 +2555,7 @@ export function submitUserLoanOutOffer(input: {
 // OFERTAS DE LA IA POR JUGADORES DEL USUARIO
 // ============================================================================
 
-/** Clubes con dinero y necesidad en la demarcación del jugador. */
+/** Clubes con dinero y una necesidad razonable en la demarcación del jugador. */
 function suitorsFor(playerId: string, userClubId: string, date: string): string[] {
   const player = getPlayer(playerId);
   if (!player) return [];
@@ -2563,27 +2563,103 @@ function suitorsFor(playerId: string, userClubId: string, date: string): string[
   const valuation = valuePlayer(playerId, { cacheKey });
   const suitors: string[] = [];
   const fallback: string[] = [];
+
   for (const profile of getAllClubProfiles()) {
     if (profile.clubId === userClubId) continue;
     if (maxSpend(profile.clubId) < valuation.minimumPrice) continue;
     if (maxWageOffer(profile.clubId) < wageDemand(playerId, profile.clubId)) continue;
+
     const report = getSquadReport(profile.clubId, cacheKey);
     const need = report.needs.find((n) => n.group === player.group);
-    if (need && player.ovr >= report.startingRating - 2) {
+    const groupRating = report.ratingByGroup[player.group] || report.benchRating || report.startingRating;
+    const benchRating = report.benchRating || Math.max(0, report.startingRating - 6);
+    const positionFit = player.ovr >= groupRating - 5 && player.ovr >= benchRating - 3;
+    const notTooStrong = player.ovr <= report.startingRating + 7 || profile.financialPower >= 0.8;
+
+    // Un club no necesita que el jugador sea titular indiscutible para hacer
+    // una oferta: también puede buscar profundidad, rotación o competencia.
+    if (need && positionFit && notTooStrong) {
       suitors.push(profile.clubId);
       continue;
     }
-    // Sin necesidad declarada, un club aún puede tantear a un jugador que
-    // mejore claramente su once: si no, había plantillas del usuario a las
-    // que no llegaba jamás una oferta.
-    if (player.ovr >= report.startingRating - 1) fallback.push(profile.clubId);
+
+    // Interés oportunista: el jugador mejora claramente el banquillo o encaja
+    // especialmente con un club que prioriza jóvenes.
+    const improvesDepth = player.ovr >= benchRating - 1 && notTooStrong;
+    const youthFit =
+      player.age <= 23 &&
+      player.potential >= player.ovr + 3 &&
+      profile.youthPreference >= 0.55;
+    if (
+      (improvesDepth || youthFit) &&
+      seededUnit("opportunistic-suitor", playerId, profile.clubId, date) < 0.58
+    ) {
+      fallback.push(profile.clubId);
+    }
   }
+
   return suitors.length > 0 ? suitors : fallback;
 }
 
 /**
- * Cada día, algún club puede presentar una oferta por un jugador del usuario:
- * primero los transferibles y los que quieren salir, después las estrellas.
+ * Peso de interés de mercado para una oferta de traspaso.
+ *
+ * El OVR deja de ser el selector principal. Los jugadores de rotación, con pocos
+ * minutos, transferibles, con contrato corto o que quieren salir reciben más
+ * peso que una estrella asentada. Las estrellas siguen siendo posibles, pero
+ * dejan de monopolizar las ofertas simplemente por ser las mejores.
+ */
+function permanentOfferWeight(player: MarketPlayer, cacheKey: string, date: string): number {
+  const report = player.clubId ? getSquadReport(player.clubId, cacheKey) : null;
+  const lowMinutes = clamp(1 - player.minutesShare, 0, 1);
+  const contractPressure =
+    player.contract.yearsLeft <= 1 ? 0.9 : player.contract.yearsLeft <= 2 ? 0.45 : 0;
+  const surplus = report && report.countByGroup[player.group] > 4 ? 0.75 : 0;
+  const wantsExit = wantsOut(player.id, cacheKey) ? 1.5 : 0;
+  const listed = player.transferListed ? 2.1 : 0;
+  const keyPenalty =
+    isKeyPlayer(player.id, cacheKey) && !wantsOut(player.id, cacheKey) ? 0.8 : 0;
+  const superstarPenalty = player.ovr >= 90 ? 0.7 : player.ovr >= 86 ? 0.35 : 0;
+  const middleClassBonus = player.ovr >= 68 && player.ovr <= 83 ? 0.35 : 0;
+  const youthContract =
+    player.age <= 24 && player.contract.yearsLeft >= 3 ? 0.15 : 0;
+
+  return Math.max(
+    0.25,
+    1 +
+      lowMinutes * 1.15 +
+      contractPressure +
+      surplus +
+      wantsExit +
+      listed +
+      middleClassBonus +
+      youthContract -
+      keyPenalty -
+      superstarPenalty +
+      seededUnit("market-noise", player.id, date) * 0.35,
+  );
+}
+
+/** Muestreo ponderado sin repetir jugadores en la misma jornada. */
+function weightedPlayerSelection(
+  candidates: Array<{ player: MarketPlayer; weight: number }>,
+  count: number,
+  seed: string,
+): MarketPlayer[] {
+  return candidates
+    .map(({ player, weight }) => {
+      const u = Math.max(0.000001, seededUnit(seed, player.id));
+      return { player, key: Math.pow(u, 1 / Math.max(weight, 0.01)) };
+    })
+    .sort((a, b) => b.key - a.key)
+    .slice(0, count)
+    .map(({ player }) => player);
+}
+
+/**
+ * Cada día, algún club puede presentar una oferta por un jugador del usuario.
+ * La selección es ponderada y no está ordenada por OVR, para repartir el
+ * mercado entre estrellas, titulares, rotación y jugadores con pocos minutos.
  */
 function generateOffersForUserPlayers(userClubId: string, date: string): UserDealEvent[] {
   const events: UserDealEvent[] = [];
@@ -2603,20 +2679,20 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
     .filter((p) => !p.loanClubId)
     .filter((p) => openIncomingOffersForPlayer(p.id).length < 3)
     .filter((p) => !hasRejectedDealFor(p.id, userClubId, date))
-    .map((p) => ({
-      player: p,
-      weight:
-        (p.transferListed ? 1 : 0) +
-        (wantsOut(p.id, cacheKey) ? 0.8 : 0) +
-        clamp((p.ovr - 74) / 20, 0, 0.7) +
-        seededUnit("target", p.id, date) * 0.4,
-    }))
-    .sort((a, b) => b.weight - a.weight);
+    .map((player) => ({
+      player,
+      weight: permanentOfferWeight(player, cacheKey, date),
+    }));
+
+  const selectedPlayers = weightedPlayerSelection(
+    candidates,
+    dailySlots,
+    `transfer-target-${userClubId}-${date}`,
+  );
 
   let created = 0;
-  for (const entry of candidates) {
+  for (const target of selectedPlayers) {
     if (created >= dailySlots) break;
-    const target = entry.player;
     const openForPlayer = openIncomingOffersForPlayer(target.id);
     if (openForPlayer.length >= 3) continue;
 
@@ -2725,11 +2801,20 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
 
 function loanCandidateScore(player: MarketPlayer, cacheKey: string): number {
   const playingNeed = clamp(1 - player.minutesShare, 0, 1);
-  const youth = clamp((22 - player.age) / 7, 0, 1);
+  const youth = clamp((23 - player.age) / 7, 0, 1);
   const potential = clamp((player.potential - player.ovr) / 15, 0, 1);
-  const starPenalty = player.ovr >= 88 ? 2.5 : player.ovr >= 84 ? 1.2 : 0;
-  const listedBonus = player.loanListed ? 1.6 : 0;
-  return playingNeed * 1.4 + youth * 1.2 + potential + listedBonus - starPenalty + seededUnit("loan-candidate", player.id, cacheKey) * 0.5;
+  const notEstablished = player.ovr < 82 ? 1 : player.ovr < 86 ? 0.55 : 0.15;
+  const listedBonus = player.loanListed ? 1.0 : 0;
+  const wantsPermanentMove = wantsOut(player.id, cacheKey) ? 0.35 : 0;
+  return (
+    playingNeed * 1.3 +
+    youth * 0.85 +
+    potential * 0.8 +
+    listedBonus +
+    notEstablished * 0.45 +
+    seededUnit("loan-candidate", player.id, cacheKey) * 0.45 -
+    wantsPermanentMove
+  );
 }
 
 function loanSuitorsFor(playerId: string, userClubId: string, date: string): string[] {
@@ -2763,13 +2848,18 @@ function generateLoanOffersForUserPlayers(userClubId: string, date: string): Use
     .filter((p) => !p.loanClubId)
     .filter((p) => openIncomingOffersForPlayer(p.id).length < 3)
     .filter((p) => !hasRejectedDealFor(p.id, userClubId, date))
-    .filter((p) => !isKeyPlayer(p.id, cacheKey) && p.ovr < 88)
+    .filter((p) => !isKeyPlayer(p.id, cacheKey) || wantsOut(p.id, cacheKey))
     .map((player) => ({ player, score: loanCandidateScore(player, cacheKey) }))
-    .filter(({ score }) => score >= 1.0)
-    .sort((a, b) => b.score - a.score);
+    .filter(({ score }) => score >= 1.0);
+
+  const selectedLoanPlayers = weightedPlayerSelection(
+    candidates.map(({ player, score }) => ({ player, weight: Math.max(0.25, score) })),
+    dailySlots,
+    `loan-target-${userClubId}-${date}`,
+  );
 
   let created = 0;
-  for (const { player } of candidates) {
+  for (const player of selectedLoanPlayers) {
     if (created >= dailySlots) break;
     if (openIncomingOffersForPlayer(player.id).length >= 3) continue;
 

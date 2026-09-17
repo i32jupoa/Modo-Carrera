@@ -4,6 +4,7 @@ import { loadSave, SaveGame } from "@/lib/store";
 import { TEAMS, teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
 import type { Position } from "@/data/players";
 import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import {
@@ -20,6 +21,7 @@ import {
   mapEaPosition,
   FcPlayer,
   clubOfPlayer,
+  fcPlayerById,
 } from "@/store/playersStore";
 import { getPlayerAnnualWage, getPlayer, isPlayerSettled, hasRejectedDealFor } from "@/lib/transfers";
 import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, Radar, Eye, Trash2, Clock3, ArrowDownToLine, ArrowUpFromLine, CheckCircle2 } from "lucide-react";
@@ -34,7 +36,7 @@ import { DealCard } from "@/components/market/DealCard";
 import { MarketFeed } from "@/components/market/MarketFeed";
 import { TransferHistoryCard } from "@/components/market/TransferHistoryCard";
 import { NegotiationDetailsModal } from "@/components/market/NegotiationDetailsModal";
-import type { ScoutingReport } from "@/lib/transfers";
+import type { ScoutingReport, UserDeal } from "@/lib/transfers";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -299,6 +301,27 @@ const TABS: { value: MarketTab; label: string }[] = [
   { value: "feed", label: "Rumores y traspasos" },
 ];
 
+const LOAN_OFFER_TYPES = new Set<UserDeal["offer"]["type"]>([
+  "loan",
+  "loan-option",
+  "loan-obligation",
+]);
+
+function isLoanOffer(deal: UserDeal): boolean {
+  return LOAN_OFFER_TYPES.has(deal.offer.type);
+}
+
+function groupIncomingOffersByPlayer(deals: UserDeal[]): Array<[string, UserDeal[]]> {
+  const groups = new Map<string, UserDeal[]>();
+  for (const deal of deals) {
+    const key = deal.playerId || deal.playerName;
+    const current = groups.get(key);
+    if (current) current.push(deal);
+    else groups.set(key, [deal]);
+  }
+  return Array.from(groups.entries());
+}
+
 function TransfersPage() {
   const navigate = useNavigate();
   const { q: initialQuery, player: initialPlayerId } = Route.useSearch();
@@ -316,6 +339,15 @@ function TransfersPage() {
   const rosterIds = usePlayersStore((s) => s.rosterIds);
   const { isMarketOpen } = useTransferMarket();
   const market = useUserMarket(ready);
+
+  const incomingTransferGroups = useMemo(
+    () => groupIncomingOffersByPlayer(market.incoming.filter((deal) => !isLoanOffer(deal))),
+    [market.incoming],
+  );
+  const incomingLoanGroups = useMemo(
+    () => groupIncomingOffersByPlayer(market.incoming.filter((deal) => isLoanOffer(deal))),
+    [market.incoming],
+  );
 
   const [save, setSave] = useState<SaveGame | null>(null);
   const [search, setSearch] = useState(initialQuery);
@@ -1016,28 +1048,170 @@ function TransfersPage() {
       )}
 
       {tab === "offers" && (
-        <div className="space-y-3">
-          {market.incoming.length === 0 ? (
-            <div className="panel p-10 text-center text-sm text-muted-foreground">
-              Ningún club ha ofertado por tus jugadores todavía.
+        <div className="space-y-6">
+          <section className="space-y-3">
+            <div className="rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 via-card to-card p-5 shadow-sm">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary/15 text-primary">
+                  <Banknote className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-lg">Traspasos recibidos</h3>
+                    <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-black text-primary">
+                      {market.incoming.filter((deal) => !isLoanOffer(deal)).length}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Todas las ofertas de compra agrupadas por jugador para comparar rápidamente a los clubes interesados.
+                  </p>
+                </div>
+              </div>
             </div>
-          ) : (
-            market.incoming.map((deal) => (
-              <DealCard
-                key={deal.id}
-                deal={deal}
-                onImprove={market.improveOffer}
-                onAcceptDemand={market.acceptDemand}
-                onImproveWage={market.improveWage}
-                onConfirm={market.confirmDeal}
-                onAbandon={market.abandonDeal}
-                onAcceptIncoming={market.acceptIncoming}
-                onCounterIncoming={market.counterIncoming}
-                onCounterOutgoing={market.counterOutgoing}
-                onRejectIncoming={market.rejectIncoming}
-              />
-            ))
-          )}
+
+            {incomingTransferGroups.length === 0 ? (
+              <div className="panel p-10 text-center text-sm text-muted-foreground">
+                Ningún club ha presentado una oferta de traspaso todavía.
+              </div>
+            ) : (
+              incomingTransferGroups.map(([playerId, deals]) => {
+                const player = fcPlayerById(playerId);
+                const playerName = deals[0]?.playerName ?? playerId;
+
+                return (
+                  <section
+                    key={`transfer-group-${playerId}`}
+                    className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm"
+                  >
+                    <div className="flex items-center gap-3 border-b border-border/60 bg-gradient-to-r from-secondary/70 via-card to-primary/5 px-4 py-3.5">
+                      <PlayerFace
+                        name={playerName}
+                        image={player?.card}
+                        role={roleFromPosition(player?.Position ?? "MID")}
+                        size={56}
+                        showRing={false}
+                        className="bg-secondary/70 shadow-sm"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <h4 className="truncate text-base font-black uppercase tracking-tight">{playerName}</h4>
+                          <span className="rounded-full bg-secondary px-2 py-0.5 text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">
+                            {deals.length} {deals.length === 1 ? "oferta" : "ofertas"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {deals.length > 1
+                            ? "Todos los clubes interesados en este jugador, juntos."
+                            : "Oferta recibida por tu jugador."}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 p-3 sm:p-4">
+                      {deals.map((deal) => (
+                        <DealCard
+                          key={deal.id}
+                          deal={deal}
+                          compactHeader
+                          onImprove={market.improveOffer}
+                          onAcceptDemand={market.acceptDemand}
+                          onImproveWage={market.improveWage}
+                          onConfirm={market.confirmDeal}
+                          onAbandon={market.abandonDeal}
+                          onAcceptIncoming={market.acceptIncoming}
+                          onCounterIncoming={market.counterIncoming}
+                          onCounterOutgoing={market.counterOutgoing}
+                          onRejectIncoming={market.rejectIncoming}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <div className="rounded-2xl border border-sky-500/20 bg-gradient-to-r from-sky-500/10 via-card to-card p-5 shadow-sm">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="grid h-11 w-11 place-items-center rounded-xl bg-sky-500/15 text-sky-300">
+                  <UserPlus className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-lg">Cesiones recibidas</h3>
+                    <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-xs font-black text-sky-300">
+                      {market.incoming.filter((deal) => isLoanOffer(deal)).length}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Ofertas de cesión separadas automáticamente de los traspasos y agrupadas por jugador.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {incomingLoanGroups.length === 0 ? (
+              <div className="panel p-10 text-center text-sm text-muted-foreground">
+                Ningún club ha enviado una oferta de cesión todavía.
+              </div>
+            ) : (
+              incomingLoanGroups.map(([playerId, deals]) => {
+                const player = fcPlayerById(playerId);
+                const playerName = deals[0]?.playerName ?? playerId;
+
+                return (
+                  <section
+                    key={`loan-group-${playerId}`}
+                    className="overflow-hidden rounded-2xl border border-sky-500/20 bg-card shadow-sm"
+                  >
+                    <div className="flex items-center gap-3 border-b border-sky-500/15 bg-gradient-to-r from-sky-500/10 via-card to-card px-4 py-3.5">
+                      <PlayerFace
+                        name={playerName}
+                        image={player?.card}
+                        role={roleFromPosition(player?.Position ?? "MID")}
+                        size={56}
+                        showRing={false}
+                        className="bg-secondary/70 shadow-sm"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <h4 className="truncate text-base font-black uppercase tracking-tight">{playerName}</h4>
+                          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[0.62rem] font-black uppercase tracking-wider text-sky-300">
+                            {deals.length} {deals.length === 1 ? "oferta" : "ofertas"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {deals.length > 1
+                            ? "Todas las propuestas de cesión para este jugador, juntas."
+                            : "Oferta de cesión recibida por tu jugador."}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 p-3 sm:p-4">
+                      {deals.map((deal) => (
+                        <DealCard
+                          key={deal.id}
+                          deal={deal}
+                          compactHeader
+                          onImprove={market.improveOffer}
+                          onAcceptDemand={market.acceptDemand}
+                          onImproveWage={market.improveWage}
+                          onConfirm={market.confirmDeal}
+                          onAbandon={market.abandonDeal}
+                          onAcceptIncoming={market.acceptIncoming}
+                          onCounterIncoming={market.counterIncoming}
+                          onCounterOutgoing={market.counterOutgoing}
+                          onRejectIncoming={market.rejectIncoming}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })
+            )}
+          </section>
         </div>
       )}
 
