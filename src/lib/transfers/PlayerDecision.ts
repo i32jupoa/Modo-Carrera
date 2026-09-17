@@ -14,7 +14,7 @@ import { getClubProfile } from "./ClubStrategy";
 import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { getPlayer } from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
-import { clamp, lerp, normalize, seededRange } from "./random";
+import { clamp, lerp, normalize, seededPick, seededRange } from "./random";
 import type { MarketPlayer, PlayerDecision, PlayerDecisionVerdict, SquadRole } from "./types";
 
 // ============================================================================
@@ -193,9 +193,9 @@ export interface MoveDecisionInput {
 }
 
 function verdictFor(score: number, wageRatio: number): PlayerDecisionVerdict {
-  if (wageRatio < 0.8) return "rejected-wage";
-  if (score >= 0.62) return "accepted";
-  if (score >= 0.5) return "negotiating";
+  if (wageRatio < 0.68) return "rejected-wage";
+  if (score >= 0.53) return "accepted";
+  if (score >= 0.43) return "negotiating";
   return "rejected-project";
 }
 
@@ -238,14 +238,11 @@ export function decideOnMove(input: MoveDecisionInput): PlayerDecision {
   if (input.squadRole) {
     const minimumRole = minimumSquadRole(input.playerId, input.toClubId, input.cacheKey);
     const gap = roleRank(minimumRole) - roleRank(input.squadRole);
-    if (gap >= 2) score -= 0.42;
-    else if (gap === 1) score -= 0.22;
+    if (gap >= 3) score -= 0.28;
+    else if (gap === 2) score -= 0.14;
+    else if (gap === 1) score -= 0.06;
     else if (gap === 0) score += 0.08;
     else score += 0.04;
-
-    // Para estrellas y titulares, un rol claramente inferior siempre pasa por
-    // negociación aunque el sueldo sea atractivo.
-    if (gap > 0) score = Math.min(score, 0.57);
   }
 
   // La calidad del destino importa mucho más cuando hablamos de estrellas.
@@ -308,17 +305,51 @@ function messageFor(
 ): string {
   switch (verdict) {
     case "accepted":
-      return `${player.name} acepta las condiciones y quiere firmar.`;
+      return seededPick(
+        [
+          `${player.name} acepta las condiciones y quiere firmar.`,
+          `${player.name} está satisfecho con la propuesta y da el sí.`,
+          `${player.name} considera que el acuerdo es razonable y quiere cerrar el fichaje.`,
+        ],
+        player.id,
+        "player-decision-accepted",
+      ) ?? `${player.name} acepta las condiciones y quiere firmar.`;
     case "negotiating":
-      return wageRatio < 1
-        ? `${player.name} está interesado, pero pide mejorar la ficha.`
-        : `${player.name} se lo está pensando.`;
+      return seededPick(
+        wageRatio < 1
+          ? [
+              `${player.name} está interesado, pero cree que todavía podemos ajustar un poco la ficha.`,
+              `${player.name} ve el acuerdo bastante bien, aunque pide una pequeña mejora salarial.`,
+              `${player.name} está cerca del sí y quiere que revisemos ligeramente la ficha.`,
+            ]
+          : [
+              `${player.name} está interesado y quiere perfilar algunos detalles antes de decidir.`,
+              `${player.name} considera atractivo el proyecto, pero prefiere negociar un último ajuste.`,
+              `${player.name} está abierto al fichaje y quiere terminar de pulir las condiciones.`,
+            ],
+        player.id,
+        "player-decision-negotiating",
+      ) ?? `${player.name} está interesado y quiere seguir negociando.`;
     case "rejected-wage":
-      return `${player.name} rechaza la ficha ofrecida: está muy por debajo de lo que pide.`;
+      return `${player.name} cree que la ficha ofrecida se queda demasiado lejos de sus expectativas.`;
     default:
       return appeal < 0.35
-        ? `${player.name} no ve atractivo el proyecto deportivo.`
-        : `${player.name} prefiere quedarse donde está.`;
+        ? seededPick(
+            [
+              `${player.name} no termina de ver claro el proyecto deportivo.`,
+              `${player.name} tiene dudas sobre el proyecto y prefiere no dar el paso todavía.`,
+            ],
+            player.id,
+            "player-decision-project",
+          ) ?? `${player.name} no termina de ver claro el proyecto deportivo.`
+        : seededPick(
+            [
+              `${player.name} prefiere quedarse donde está por ahora.`,
+              `${player.name} aún no está convencido de dejar su club actual.`,
+            ],
+            player.id,
+            "player-decision-stay",
+          ) ?? `${player.name} prefiere quedarse donde está por ahora.`;
   }
 }
 

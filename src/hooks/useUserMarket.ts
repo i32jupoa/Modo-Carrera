@@ -99,7 +99,7 @@ export interface UserMarketApi {
   improveWage: (dealId: string, wage: number, clauses?: Partial<OfferClauses>) => void;
   confirmDeal: (dealId: string) => void;
   abandonDeal: (dealId: string) => void;
-  acceptIncoming: (dealId: string) => void;
+  acceptIncoming: (dealId: string, clauses?: Partial<OfferClauses>) => void;
   counterIncoming: (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => void;
   counterOutgoing: (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => void;
   rejectIncoming: (dealId: string) => void;
@@ -241,7 +241,11 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         toast.error("No tienes suficiente dinero destinado a fichajes para esa oferta.");
         return;
       }
-      if (wageCommitment > wageAllocation) {
+      // En un traspaso permanente todavía no estamos negociando el contrato
+      // con el jugador: la ficha se discute después de que el club acepte la
+      // operación. Solo una cesión puede necesitar controlar ya el sueldo que
+      // asume nuestro club.
+      if (isLoan && wageCommitment > wageAllocation) {
         toast.error("No tienes margen salarial suficiente para asumir esa parte de la ficha.");
         return;
       }
@@ -292,13 +296,14 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const improveOffer = useCallback(
     (dealId: string, amount: number, wageOffer: number, clauses?: Partial<OfferClauses>) => {
       const result = improveUserOffer(dealId, { amount, wageOffer, clauses }, currentDate);
-      commit(result.ok ? "Oferta mejorada." : undefined, result.reason);
+      if (!result.silent) commit(undefined, result.reason);
+      else { saveTransferSystem(); refresh(); }
     },
-    [currentDate, commit],
+    [currentDate, commit, refresh],
   );
 
   const acceptDemand = useCallback(
-    (dealId: string) => {
+    (dealId: string, clauses?: Partial<OfferClauses>) => {
       const result = acceptClubDemand(dealId, currentDate);
       if (result.silent) {
         commit();
@@ -311,10 +316,19 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
 
   const improveWage = useCallback(
     (dealId: string, wage: number, clauses?: Partial<OfferClauses>) => {
+      // Puede haber cambiado el presupuesto después de cerrar otra operación
+      // mientras esta negociación estaba bloqueada. Sincronizamos primero para
+      // que el motor vea el mismo dinero que muestra la partida.
+      syncBudget();
       const result = improvePlayerTerms(dealId, { wageOffer: wage, ...clauses }, currentDate);
+      if (result.silent) {
+        saveTransferSystem();
+        refresh();
+        return;
+      }
       commit(result.ok ? "Nueva ficha ofrecida al jugador." : undefined, result.reason);
     },
-    [currentDate, commit],
+    [currentDate, commit, refresh, syncBudget],
   );
 
   /**
@@ -546,7 +560,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
    * el ingreso lo aplica el motor una sola vez (precio 0 en el store).
    */
   const acceptIncoming = useCallback(
-    (dealId: string) => {
+    (dealId: string, clauses?: Partial<OfferClauses>) => {
       const store = usePlayersStore.getState();
       const startingBudget = store.budget;
       const startingWageBill = store.wageBill;
@@ -557,7 +571,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit(undefined, "Debes mantener al menos 11 jugadores en la plantilla.");
         return;
       }
-      const result = acceptIncomingOffer(dealId, currentDate);
+      const result = acceptIncomingOffer(dealId, currentDate, clauses);
       if (result.silent) {
         commit();
         return;
@@ -577,7 +591,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const counterOutgoing = useCallback(
     (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => {
       const result = counterOutgoingDeal(dealId, demand, currentDate, clauses);
-      commit(result.ok ? "Contraoferta enviada." : undefined, result.reason);
+      commit(result.ok && !result.silent ? "Contraoferta enviada." : undefined, result.reason);
     },
     [currentDate, commit],
   );

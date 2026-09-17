@@ -464,12 +464,10 @@ export function canAfford(clubId: string, fee: number, wage: number): boolean {
     const cleanFee = Math.max(0, Math.round(fee));
     const cleanWage = Math.max(0, Math.round(wage));
     const transferRoom = Math.max(0, entry.budget - entry.wageBudget);
-    // La validación histórica de ofertas compara la ficha solicitada con la
-    // asignación salarial configurada, no con la masa salarial ya existente.
-    // La masa real es informativa y puede superar temporalmente la asignación;
-    // después de cerrar la operación, el presupuesto total y la asignación se
-    // recalculan manteniendo el porcentaje elegido.
-    return cleanFee <= transferRoom && cleanWage <= entry.wageBudget;
+    // Para el club del usuario, el salario nuevo debe caber en el margen real:
+    // presupuesto salarial asignado menos la masa salarial ya comprometida.
+    const wageRoom = Math.max(0, Math.round(entry.wageBudget - entry.wageBill));
+    return cleanFee <= transferRoom && cleanWage <= wageRoom;
   }
   return fee <= maxSpend(clubId) && wage <= maxWageOffer(clubId);
 }

@@ -15,6 +15,7 @@ import { teamById } from "@/data/teams";
 import {
   maxSpend,
   maxWageOffer,
+  getFinances,
   needsToSell,
   registerSale,
   registerSigning,
@@ -30,6 +31,8 @@ import {
   createTransferOffer,
   decideImprovement,
   emptyClauses,
+  expectedSellOnValue,
+  proposeClauses,
   offerWorth,
   processCounterOffer,
 } from "./NegotiationEngine";
@@ -38,7 +41,7 @@ import { recordTransfer } from "./TransferHistory";
 import { withUserApproval, isPlayerSettled } from "./MarketLocks";
 import { getSimulationState, isDeadlineDay, windowForDate } from "./MarketSimulation";
 import { MARKET_TIMING, WAGE_RULES } from "./constants";
-import { clamp, seededInt, seededUnit } from "./random";
+import { clamp, seededInt, seededPick, seededUnit } from "./random";
 import type {
   MarketPlayer,
   MarketValuation,
@@ -46,6 +49,7 @@ import type {
   TransferOffer,
   TransferRecord,
   TransferType,
+  SquadRole,
 } from "./types";
 
 // ============================================================================
@@ -113,6 +117,26 @@ export interface UserDeal {
   playerRoleDemand?: import("./types").SquadRole;
   /** Años de contrato que pide el jugador. */
   playerYearsDemand?: number;
+  /** Número de rondas ya disputadas en la fase de condiciones del jugador. */
+  playerNegotiationRounds?: number;
+  /** Primer día en que comenzó la negociación directa con el jugador. */
+  playerTermsStartedOn?: string;
+  /** Inicio del bloqueo temporal por falta de presupuesto salarial para este fichaje. */
+  playerFinancialBlockStartedOn?: string;
+  /** Último día del bloqueo temporal por falta de presupuesto salarial. */
+  playerFinancialBlockUntil?: string;
+  /** Último día para que el usuario responda al último mensaje del jugador. */
+  playerResponseDeadline?: string;
+  /** Número de contraofertas que el usuario ha hecho en una salida/cesión.
+   *  No se comparte con `rounds`: las respuestas del club no consumen las
+   *  oportunidades de contraofertar del usuario. */
+  outgoingCounterRounds?: number;
+  /** Último importe exacto pedido por el usuario en una contraoferta de salida/cesión. */
+  lastUserCounterAmount?: number;
+  /** Últimas condiciones exactas pedidas por el usuario; no se mezclan con la propuesta del club. */
+  lastUserCounterClauses?: Partial<OfferClauses>;
+  /** Rol que el usuario pide al club comprador para una cesión saliente. */
+  clubSquadRoleDemand?: import("./types").SquadRole;
   playerMessage: string;
   /** Clubes que compiten por el jugador. */
   competition: number;
@@ -198,6 +222,267 @@ function marketWindowKey(date: string): string {
   return `${date.slice(0, 4)}:${windowForDate(date)}`;
 }
 
+function legacyPlayerNegotiationRounds(deal: UserDeal): number {
+  return deal.log.filter((entry) => entry.text.startsWith("Nueva propuesta al jugador:")).length;
+}
+
+function playerNegotiationExhausted(deal: UserDeal, _date: string): boolean {
+  const rounds = deal.playerNegotiationRounds ?? legacyPlayerNegotiationRounds(deal);
+  // La fase con el jugador tiene exactamente cuatro oportunidades. Si la
+  // cuarta propuesta no le convence, la operación termina de inmediato.
+  return rounds >= MARKET_TIMING.maxPlayerNegotiationRounds;
+}
+
+function playerWageBudgetForDeal(deal: UserDeal): number {
+  if (deal.direction !== "in" || isLoanOffer(deal.offer.type)) return Number.POSITIVE_INFINITY;
+  const finances = getFinances(deal.userClubId);
+  const totalBudget = Math.max(0, Math.round(finances.budget));
+  const wageBudget = Math.max(0, Math.round(finances.wageBudget));
+  const agreedFee = Math.max(0, Math.round(deal.offer.amount));
+  return Math.min(wageBudget, Math.max(0, totalBudget - agreedFee));
+}
+
+/**
+ * Coste salarial anual que todavía tendría que asumir el club del usuario
+ * para completar la operación. En una cesión, es la parte de la ficha que
+ * no paga el club destino; en un fichaje, es la ficha completa propuesta.
+ */
+function playerSalaryCommitmentForDeal(deal: UserDeal): number {
+  const player = getPlayer(deal.playerId);
+  if (!player) return Number.POSITIVE_INFINITY;
+  if (!isLoanOffer(deal.offer.type)) {
+    return Math.max(0, Math.round(deal.offer.wageOffer));
+  }
+  const destinationShare = clamp(deal.offer.clauses.wageShare ?? 0, 0, 1);
+  return Math.max(0, Math.round(player.contract.wage * (1 - destinationShare)));
+}
+
+/** Presupuesto salarial que queda disponible para ESTA operación. */
+function playerAvailableWageBudgetForDeal(deal: UserDeal): number {
+  const finances = getFinances(deal.userClubId);
+  const totalBudget = Math.max(0, Math.round(finances.budget));
+  const wageBudget = Math.max(0, Math.round(finances.wageBudget));
+  if (deal.direction === "in" && !isLoanOffer(deal.offer.type)) {
+    const agreedFee = Math.max(0, Math.round(deal.offer.amount));
+    return Math.min(wageBudget, Math.max(0, totalBudget - agreedFee));
+  }
+  if (isLoanOffer(deal.offer.type)) return wageBudget;
+  return Number.POSITIVE_INFINITY;
+}
+
+function playerFinanciallyBlockedNow(deal: UserDeal): boolean {
+  return playerAvailableWageBudgetForDeal(deal) < playerSalaryCommitmentForDeal(deal);
+}
+
+function normalPlayerMessageAfterFinancialBlock(deal: UserDeal, date: string): string {
+  const player = getPlayer(deal.playerId);
+  if (!player) return `Ya podemos retomar la negociación. Estoy listo para valorar vuestra propuesta.`;
+  if (isLoanOffer(deal.offer.type)) {
+    return `Ya hay margen para retomar la operación. Quiero seguir valorando las condiciones de la cesión antes de tomar una decisión.`;
+  }
+  const requiredRole = minimumSquadRole(player.id, deal.userClubId, cacheKeyFor(date));
+  const requiredYears = preferredContractYears(player.id);
+  return playerNegotiationMessage({
+    role: deal.offer.clauses.squadRole ?? requiredRole,
+    requiredRole,
+    wageOffer: deal.offer.wageOffer,
+    wageRequested: wageDemand(player.id, deal.userClubId),
+    years: deal.offer.clauses.contractYears ?? requiredYears,
+    requiredYears,
+    dealId: deal.id,
+    round: Math.max(1, deal.playerNegotiationRounds ?? 1),
+    date,
+    forceRequest: true,
+  });
+}
+
+function isFinancialBlockMessage(message: string): boolean {
+  return message.startsWith("Ahora mismo no dispongo de dinero suficiente para realizar la operación.")
+    || message.startsWith("Ahora mismo no dispongo del margen salarial necesario para cerrar esta operación.");
+}
+
+function startPlayerFinancialBlock(deal: UserDeal, date: string): void {
+  if (deal.playerFinancialBlockStartedOn && deal.playerFinancialBlockUntil) return;
+  deal.playerFinancialBlockStartedOn = date;
+  deal.playerFinancialBlockUntil = addDays(date, 5);
+}
+
+function clearPlayerFinancialBlock(deal: UserDeal): void {
+  deal.playerFinancialBlockStartedOn = undefined;
+  deal.playerFinancialBlockUntil = undefined;
+  // Al recuperar presupuesto, el mensaje de bloqueo no puede sobrevivir en
+  // la tarjeta como si la operación siguiera precintada. La siguiente oferta
+  // generará la respuesta normal del jugador.
+  if (isFinancialBlockMessage(deal.playerMessage)) {
+    deal.playerMessage = "";
+  }
+}
+
+function failPlayerResponseTimeout(deal: UserDeal, date: string): UserDealEvent[] {
+  const events: UserDealEvent[] = [];
+  deal.stage = "failed";
+  deal.finishedOn = date;
+  deal.blockedForWindow = marketWindowKey(date);
+  deal.offer.status = "final-rejection";
+  deal.playerMessage = seededPick(
+    [
+      `He esperado varios días por tu propuesta y necesito una decisión. Como no hemos avanzado, prefiero terminar la negociación.`,
+      `Llevo unos días esperando tus condiciones y no quiero mantener la negociación abierta indefinidamente. Por mi parte, lo dejamos aquí.`,
+      `Necesito que la negociación avance. Han pasado tres días sin una nueva oferta y prefiero cerrar esta operación.`,
+      `He dado tiempo para que me hagáis una propuesta, pero no ha llegado. Para mí, la negociación termina aquí.`,
+    ],
+    deal.id,
+    "player-response-timeout",
+    date,
+  ) ?? `He esperado varios días por una nueva propuesta y prefiero terminar la negociación.`;
+  deal.playerResponseDeadline = undefined;
+  clearPlayerFinancialBlock(deal);
+  dropInterest(deal.playerId, deal.userClubId);
+  log(deal, date, deal.playerMessage);
+  pushEvent(events, deal, deal.playerMessage, "bad");
+  return events;
+}
+
+function failPlayerFinancialBlock(deal: UserDeal, date: string): UserDealEvent[] {
+  const events: UserDealEvent[] = [];
+  deal.stage = "failed";
+  deal.finishedOn = date;
+  deal.blockedForWindow = marketWindowKey(date);
+  deal.offer.status = "final-rejection";
+  deal.playerMessage = seededPick(
+    [
+      "He esperado estos días, pero no habéis podido recuperar el margen necesario para cerrar mi contrato. Prefiero dar por terminada la negociación.",
+      "Entiendo la situación del presupuesto, pero después de esperar varios días sigo sin ver margen suficiente para hacer el fichaje. Por mi parte, lo dejamos aquí.",
+      "He dado tiempo para que se desbloquee la situación, pero el presupuesto sigue sin permitir la operación. Prefiero terminar la negociación en este punto.",
+    ],
+    deal.id,
+    "player-financial-timeout",
+    date,
+  ) ?? "El presupuesto sigue sin permitir la operación y prefiero terminar la negociación.";
+  clearPlayerFinancialBlock(deal);
+  dropInterest(deal.playerId, deal.userClubId);
+  log(deal, date, deal.playerMessage);
+  pushEvent(events, deal, deal.playerMessage, "bad");
+  return events;
+}
+
+function playerRoleLabel(role: SquadRole): string {
+  switch (role) {
+    case "star": return "Estrella";
+    case "starter": return "Titular";
+    case "rotation": return "Rotación";
+    case "prospect": return "Futuro del club / Promesa";
+    default: return "Secundario";
+  }
+}
+
+function playerNegotiationMessage(input: {
+  role: SquadRole;
+  requiredRole: SquadRole;
+  wageOffer: number;
+  wageRequested: number;
+  years: number;
+  requiredYears: number;
+  dealId: string;
+  round: number;
+  date: string;
+  forceRequest?: boolean;
+}): string {
+  const {
+    role, requiredRole, wageOffer, wageRequested, years, requiredYears,
+    dealId, round, date, forceRequest = false,
+  } = input;
+
+  const wageRatio = wageRequested > 0 ? wageOffer / wageRequested : 1;
+  const roleGap = roleRank(requiredRole) - roleRank(role);
+  const yearsGap = requiredYears - years;
+
+  const positives: string[] = [];
+  const requests: string[] = [];
+
+  if (roleGap <= 0) {
+    positives.push(`el rol de ${playerRoleLabel(role)} me encaja muy bien`);
+  } else if (roleGap === 1) {
+    requests.push(`me gustaría subir un escalón el rol, hasta ${playerRoleLabel(requiredRole)}`);
+  } else if (roleGap === 2) {
+    requests.push(`necesito un rol algo más importante, idealmente ${playerRoleLabel(requiredRole)}`);
+  } else {
+    requests.push(`para mí es importante que el rol se acerque a ${playerRoleLabel(requiredRole)}`);
+  }
+
+  if (wageRatio >= 1.0) {
+    positives.push(`la ficha de ${fmt(wageOffer)}/año me parece buena`);
+  } else if (wageRatio >= 0.94) {
+    positives.push(`el salario está bastante cerca de lo que esperaba`);
+  } else if (wageRatio >= 0.82) {
+    requests.push(`me gustaría llevar la ficha a unos ${fmt(Math.round(wageRequested * 0.96))}/año`);
+  } else if (wageRatio >= 0.68) {
+    requests.push(`quiero acercar un poco más la ficha a lo que considero justo`);
+  } else {
+    requests.push(`necesito una mejora importante en el salario`);
+  }
+
+  if (yearsGap <= 0) {
+    positives.push(`${years} ${years === 1 ? "año" : "años"} de contrato me encaja perfectamente`);
+  } else if (yearsGap === 1) {
+    positives.push(`${years} ${years === 1 ? "año" : "años"} de contrato me parece una duración bastante buena`);
+  } else if (yearsGap === 2) {
+    requests.push(`preferiría acercar la duración a ${Math.max(1, requiredYears - 1)} años`);
+  } else {
+    requests.push(`me gustaría que el contrato se acercara a ${requiredYears} años`);
+  }
+
+  // Si todas las condiciones ya son buenas pero todavía queremos negociar,
+  // siempre introducimos una petición concreta. Nunca dejamos al usuario con
+  // un mensaje de "no estoy convencido del proyecto" sin saber qué cambiar.
+  if (forceRequest && requests.length === 0) {
+    const candidates = [
+      `me gustaría mejorar ligeramente la ficha hasta ${fmt(Math.round(wageOffer * 1.03))}/año`,
+      years < 6 ? `me daría más seguridad ampliar el contrato a ${years + 1} años` : "me gustaría incluir una pequeña mejora salarial antes de firmar",
+      roleRank(role) < roleRank("star") ? `me gustaría que el rol fuese un poco más importante: ${playerRoleLabel(nextHigherRole(role))}` : `me gustaría mejorar ligeramente la ficha antes de dar el último paso`,
+    ];
+    const index = Math.floor(seededUnit(dealId, "fallback-request", round, date) * candidates.length);
+    requests.push(candidates[Math.max(0, Math.min(candidates.length - 1, index))]);
+  }
+
+  const choices: string[] = [];
+  if (requests.length === 0) {
+    choices.push(
+      `Me gusta la propuesta. ${positives.join(" y ")}. Por mi parte, podemos seguir adelante.`,
+      `Estoy cómodo con las condiciones: ${positives.join(" y ")}. Creo que estamos cerca de cerrar.`,
+      `La propuesta me convence. ${positives.join(" y ")}. Podemos seguir adelante con el acuerdo.`,
+    );
+  } else if (positives.length === 0) {
+    choices.push(
+      `Quiero seguir negociando. Para mí, ${requests.join(" y ")}. Creo que podemos encontrar un punto medio.`,
+      `La propuesta me interesa, pero necesito ajustar ${requests.join(" y ")}. Podemos acercarnos.`,
+      `Estoy abierto a venir. Lo que necesito ahora es ${requests.join(" y ")}.`,
+      `Podemos entendernos. Para terminar de convencerme necesito ${requests.join(" y ")}.`,
+    );
+  } else {
+    const positiveText = positives.join(" y ");
+    const requestText = requests.join(" y ");
+    choices.push(
+      `${positiveText}. Lo único que quiero cambiar es esto: ${requestText}.`,
+      `Hay cosas que me gustan, como ${positiveText}. Para cerrar, necesito ${requestText}.`,
+      `Voy cómodo con ${positiveText}. Aun así, me gustaría que ${requestText}.`,
+      `${positiveText}. Si podemos ajustar ${requestText}, creo que llegaremos a un acuerdo.`,
+    );
+  }
+
+  return seededPick(choices, dealId, "player-negotiation-chat", round, date) ?? choices[0];
+}
+
+function nextHigherRole(role: SquadRole): SquadRole {
+  switch (role) {
+    case "prospect": return "secondary";
+    case "secondary": return "rotation";
+    case "rotation": return "starter";
+    case "starter": return "star";
+    default: return "star";
+  }
+}
+
 /** El jugador queda bloqueado para este mercado después de un rechazo definitivo. */
 export function hasRejectedDealFor(playerId: string, userClubId: string, date: string): boolean {
   const key = marketWindowKey(date);
@@ -260,6 +545,25 @@ export function listUserDeals(direction?: UserDealDirection, currentDate?: strin
 /** Operaciones abiertas (ni cerradas ni fracasadas). */
 export function listOpenUserDeals(direction?: UserDealDirection): UserDeal[] {
   return listUserDeals(direction).filter((d) => d.stage !== "completed" && d.stage !== "failed");
+}
+
+/**
+ * Dinero de traspasos ya comprometido por acuerdos con un club vendedor que
+ * todavía están en la fase contractual con el jugador. Ese importe ya no debe
+ * poder reutilizarse para mover el reparto presupuestario o para cerrar otra
+ * operación.
+ */
+export function getCommittedIncomingTransferFees(
+  userClubId: string,
+  excludeDealId?: string,
+): number {
+  return listOpenUserDeals("in")
+    .filter((deal) =>
+      deal.id !== excludeDealId &&
+      (deal.stage === "player-terms" || deal.stage === "ready") &&
+      !isLoanOffer(deal.offer.type),
+    )
+    .reduce((sum, deal) => sum + Math.max(0, Math.round(deal.offer.amount)), 0);
 }
 
 export function getUserDeal(dealId: string): UserDeal | undefined {
@@ -350,6 +654,9 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   }
   if (hasOpenDealFor(input.playerId)) {
     return { ok: false, reason: "Ya tienes una negociación abierta por este jugador." };
+  }
+  if (hasRejectedDealFor(input.playerId, input.userClubId, input.date)) {
+    return { ok: false, reason: "La negociación con este jugador ya terminó este mercado." };
   }
   if (listOpenUserDeals("in").length >= MARKET_TIMING.maxNegotiationsPerClub) {
     return {
@@ -482,10 +789,26 @@ export function improveUserOffer(
     return { ok: false, reason: "Esta negociación ya está cerrada." };
   }
   if (deal.rounds >= MARKET_TIMING.maxNegotiationRounds) {
-    return { ok: false, reason: "El club no aceptará más rondas de negociación." };
+    // El límite de rondas ya se ha alcanzado: no se inicia otra ronda.
+    // La operación termina aquí y el jugador queda bloqueado durante esta
+    // ventana, sin mostrar el antiguo mensaje de error.
+    deal.stage = "failed";
+    deal.finishedOn = date;
+    deal.blockedForWindow = marketWindowKey(date);
+    deal.offer.status = "final-rejection";
+    deal.clubMessage = "";
+    deal.playerMessage = "";
+    dropInterest(deal.playerId, deal.userClubId);
+    log(deal, date, "La negociación ha terminado definitivamente en esta ventana de fichajes.");
+    return { ok: true, deal, silent: true };
   }
 
   const amount = Math.max(deal.offer.amount, Math.round(patch.amount ?? deal.offer.amount));
+  const userFinances = getFinances(deal.userClubId);
+  const transferRoom = Math.max(0, Math.round(userFinances.budget - userFinances.wageBudget));
+  if (amount > transferRoom) {
+    return { ok: false, silent: true };
+  }
   deal.offer.amount = amount;
   const loanDeal = isLoanOffer(deal.offer.type);
   if (loanDeal) {
@@ -532,7 +855,7 @@ export function improveUserOffer(
     wageOffer: deal.offer.wageOffer,
     date,
   });
-  log(deal, date, `Oferta mejorada a ${fmt(amount)} (ronda ${deal.rounds}).`);
+  log(deal, date, `Nueva oferta al club: ${fmt(amount)} (ronda ${deal.rounds}).`);
   return { ok: true, deal };
 }
 
@@ -561,12 +884,23 @@ export function counterOutgoingDeal(
   if (!deal || deal.direction !== "out" || (deal.stage !== "incoming" && deal.stage !== "club-counter")) {
     return { ok: false, reason: "No hay una oferta del club que puedas contraofertar." };
   }
-  if (deal.rounds >= MARKET_TIMING.maxNegotiationRounds) {
-    return { ok: false, reason: "El club no negociará más rondas." };
+  const outgoingCounterRounds = deal.outgoingCounterRounds ?? 0;
+  const outgoingCounterLimitReached = outgoingCounterRounds >= MARKET_TIMING.maxNegotiationRounds;
+  if (outgoingCounterLimitReached) {
+    deal.stage = "failed";
+    deal.finishedOn = date;
+    deal.blockedForWindow = marketWindowKey(date);
+    deal.offer.status = "final-rejection";
+    deal.clubMessage = "";
+    deal.playerMessage = "";
+    log(deal, date, "La negociación ha terminado definitivamente en esta ventana de fichajes.");
+    return { ok: true, deal, silent: true };
   }
 
   const counterDemand = Math.max(0, Math.round(demand));
+  deal.outgoingCounterRounds = outgoingCounterRounds + 1;
   deal.clubDemand = counterDemand;
+  deal.lastUserCounterAmount = counterDemand;
 
   if (isLoanOffer(deal.offer.type)) {
     const currentShare = clamp(deal.offer.clauses.wageShare ?? 0, 0, 1);
@@ -595,13 +929,21 @@ export function counterOutgoingDeal(
     deal.clubLoanDurationDemand = requestedDuration;
     deal.clubLoanTypeDemand = requestedType;
     deal.clubOptionFeeDemand = requestedOptionFee;
+    deal.clubSquadRoleDemand = clauses?.squadRole ?? deal.offer.clauses.squadRole ?? "rotation";
+    deal.lastUserCounterClauses = {
+      wageShare: requestedShare,
+      loanDurationMonths: requestedDuration,
+      loanType: requestedType,
+      optionFee: requestedOptionFee,
+      squadRole: deal.clubSquadRoleDemand,
+    };
 
     const purchaseText = requestedType === "loan"
       ? "sin opción de compra"
       : `${requestedType === "loan-option" ? "opción" : "compra obligatoria"} de ${fmt(requestedOptionFee)}`;
     deal.clubMessage =
       `Has contraofertado la cesión: ${fmt(counterDemand)} de prima · `
-      + `${Math.round(requestedShare * 100)}% del sueldo al destino · ${requestedDuration} meses · ${purchaseText}.`;
+      + `${Math.round(requestedShare * 100)}% del sueldo al destino · ${requestedDuration} meses · ${purchaseText} · rol ${playerRoleLabel(deal.clubSquadRoleDemand ?? "rotation")}.`;
     log(deal, date, deal.clubMessage);
   } else {
     const sellOn = clamp(
@@ -609,6 +951,7 @@ export function counterOutgoingDeal(
       0,
       0.5,
     );
+    deal.lastUserCounterClauses = { sellOnPercent: sellOn };
     deal.offer.clauses.sellOnPercent = sellOn;
     deal.clubMessage = `Has contraofertado ${fmt(counterDemand)}`
       + (sellOn > 0 ? ` con un ${Math.round(sellOn * 100)}% de futura venta.` : ".");
@@ -656,6 +999,13 @@ export function acceptClubDemand(dealId: string, date: string): SubmitOfferResul
   }
 
   const acceptedAmount = Math.max(0, Math.round(deal.clubDemand || deal.offer.amount));
+  if (deal.direction === "in") {
+    const userFinances = getFinances(deal.userClubId);
+    const transferRoom = Math.max(0, Math.round(userFinances.budget - userFinances.wageBudget));
+    if (acceptedAmount > transferRoom) {
+      return { ok: false, silent: true };
+    }
+  }
   deal.offer.amount = acceptedAmount;
   deal.offer.status = "accepted";
 
@@ -694,14 +1044,46 @@ export function improvePlayerTerms(
   if (!player) return { ok: false, reason: "Jugador no encontrado." };
 
   const loanDeal = isLoanOffer(deal.offer.type);
+  if (!loanDeal && playerWageBudgetForDeal(deal) <= 0) {
+    startPlayerFinancialBlock(deal, date);
+    deal.playerMessage = `Ahora mismo no dispongo de dinero suficiente para realizar la operación. La negociación queda en espera por si recuperamos margen salarial.`;
+    log(deal, date, deal.playerMessage);
+    return { ok: false, silent: true, deal };
+  }
+  if (!loanDeal && (deal.playerFinancialBlockStartedOn || deal.playerFinancialBlockUntil)) {
+    clearPlayerFinancialBlock(deal);
+  }
+  deal.playerResponseDeadline = undefined;
   if (!loanDeal && input.wageOffer !== undefined) {
-    deal.offer.wageOffer = Math.max(WAGE_RULES.minimumWage, Math.round(input.wageOffer));
+    const nextWage = Math.max(WAGE_RULES.minimumWage, Math.round(input.wageOffer));
+    const userFinances = getFinances(deal.userClubId);
+    const totalBudget = Math.max(0, Math.round(userFinances.budget));
+    const wageBudget = Math.max(0, Math.round(userFinances.wageBudget));
+    // El presupuesto NO se descuenta hasta que el fichaje se hace oficial.
+    // Para este jugador concreto, sin embargo, la ficha máxima queda limitada
+    // por el coste del traspaso ya acordado: el salario + el traspaso nunca
+    // pueden superar el presupuesto total actual. Ajustar la barra salarial
+    // no puede liberar ese importe reservado para esta operación.
+    const wageRoomAfterTransfer = Math.max(0, totalBudget - Math.max(0, Math.round(deal.offer.amount)));
+    const maxPlayerWage = Math.min(wageBudget, wageRoomAfterTransfer);
+    if (nextWage > maxPlayerWage) {
+      return { ok: false, silent: true };
+    }
+    deal.offer.wageOffer = nextWage;
   }
   if (input.squadRole) deal.offer.clauses.squadRole = input.squadRole;
   if (!loanDeal && input.contractYears !== undefined) {
     deal.offer.clauses.contractYears = Math.max(1, Math.min(6, Math.round(input.contractYears)));
   }
 
+  if (deal.playerNegotiationRounds === undefined) {
+    deal.playerNegotiationRounds = legacyPlayerNegotiationRounds(deal);
+  }
+  if (!deal.playerTermsStartedOn) {
+    const firstPlayerProposal = deal.log.find((entry) => entry.text.startsWith("Nueva propuesta al jugador:"));
+    deal.playerTermsStartedOn = firstPlayerProposal?.date ?? deal.updatedOn;
+  }
+  deal.playerNegotiationRounds += 1;
   deal.offer.round += 1;
   deal.rounds += 1;
   deal.stage = "player-terms";
@@ -713,6 +1095,9 @@ export function improvePlayerTerms(
       : `Nueva propuesta al jugador: ${fmt(deal.offer.wageOffer)}/año · ${deal.offer.clauses.squadRole ?? "rotation"} · ${deal.offer.clauses.contractYears ?? preferredContractYears(deal.playerId)} años.`,
   );
   processPlayerTerms(deal, date);
+  if (deal.stage === "player-terms" && !deal.playerFinancialBlockStartedOn && !deal.playerFinancialBlockUntil) {
+    deal.playerResponseDeadline = addDays(date, 3);
+  }
   return { ok: true, deal };
 }
 
@@ -745,6 +1130,15 @@ export function clearFinishedUserDeals(date?: string): boolean {
     if (!Number.isFinite(finishedAt)) continue;
     const daysSinceFinished = Math.floor((now - finishedAt) / 86_400_000);
     if (daysSinceFinished >= 3) {
+      if (
+        deal.stage === "failed" &&
+        deal.blockedForWindow &&
+        deal.blockedForWindow === marketWindowKey(date)
+      ) {
+        // El registro puede desaparecer de la UI, pero debe seguir existiendo
+        // para mantener el bloqueo del jugador durante toda la ventana.
+        continue;
+      }
       deals.delete(deal.id);
       removed = true;
     }
@@ -786,6 +1180,23 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
   // caja del vendedor y el que debe desaparecer de su masa salarial.
   const sellingPlayerWage =
     deal.direction === "out" ? getPlayer(deal.playerId)?.contract.wage ?? 0 : deal.offer.wageOffer;
+
+  if (deal.direction === "in" && !isLoanOffer(deal.offer.type)) {
+    const finances = getFinances(deal.userClubId);
+    const totalBudget = Math.max(0, Math.round(finances.budget));
+    const wageBudget = Math.max(0, Math.round(finances.wageBudget));
+    const finalFee = Math.max(0, Math.round(deal.offer.amount));
+    const finalWage = Math.max(0, Math.round(deal.offer.wageOffer));
+    const maxPlayerWage = Math.min(wageBudget, Math.max(0, totalBudget - finalFee));
+    // Segunda barrera justo antes de hacer oficial el fichaje. El presupuesto
+    // sigue intacto hasta aquí; solo se comprueba que traspaso + ficha caben.
+    if (finalFee > totalBudget || finalWage > maxPlayerWage) {
+      return {
+        ok: false,
+        reason: "El fichaje supera el presupuesto disponible para esta operación.",
+      };
+    }
+  }
 
   const record = withUserApproval(() => completeTransfer(deal.offer, date));
   if (!record) return { ok: false, reason: "No se pudo cerrar la operación." };
@@ -946,8 +1357,95 @@ export function advanceUserDeals(userClubId: string, date: string): UserDealEven
     }
 
     if (deal.stage === "player-decision") {
+      const financialNeed = playerFinanciallyBlockedNow(deal);
+      const financiallyBlocked = Boolean(
+        deal.playerFinancialBlockStartedOn || deal.playerFinancialBlockUntil,
+      );
+
+      if (financialNeed && !financiallyBlocked) {
+        startPlayerFinancialBlock(deal, date);
+        deal.playerResponseDeadline = undefined;
+        const until = deal.playerFinancialBlockUntil;
+        deal.playerMessage = `Ahora mismo no dispongo de dinero suficiente para realizar la operación. Voy a esperar un poco por si recuperáis margen salarial. Si no se recupera antes del ${until}, tendré que dar la negociación por terminada.`;
+        deal.updatedOn = date;
+        continue;
+      }
+
+      if (financiallyBlocked && deal.playerFinancialBlockUntil && date >= deal.playerFinancialBlockUntil) {
+        events.push(...failPlayerFinancialBlock(deal, date));
+        continue;
+      }
+
+      if (financiallyBlocked && !financialNeed) {
+        clearPlayerFinancialBlock(deal);
+        deal.respondsOn = playerDecisionDate(date);
+        deal.updatedOn = date;
+        deal.playerMessage = isLoanOffer(deal.offer.type)
+          ? `${deal.playerName} está valorando la cesión a ${clubNameSafe(deal.otherClubId)}.`
+            + (deal.respondsOn === date
+              ? " La decisión es inmediata porque quedan pocos días para el cierre del mercado."
+              : " Recibirás su decisión en unos 2 días.")
+          : normalPlayerMessageAfterFinancialBlock(deal, date);
+        log(deal, date, deal.playerMessage);
+        pushEvent(events, deal, deal.playerMessage, "info");
+        continue;
+      }
+
+      if (financiallyBlocked) continue;
+
       if (isOnOrBefore(deal.respondsOn, date)) {
         events.push(...processLoanPlayerDecision(deal, date));
+      }
+      continue;
+    }
+
+    if (deal.stage === "player-terms") {
+      const financialWageLimit = playerWageBudgetForDeal(deal);
+      const financialNeed = playerFinanciallyBlockedNow(deal);
+      const financiallyBlocked =
+        deal.playerFinancialBlockStartedOn !== undefined || deal.playerFinancialBlockUntil !== undefined;
+
+      // Compatibilidad con partidas guardadas antes de existir el plazo de
+      // respuesta del jugador: se toma la última actividad como punto de
+      // partida y se le conceden tres días, salvo que esté en bloqueo financiero.
+      if (!financiallyBlocked && !deal.playerResponseDeadline) {
+        deal.playerResponseDeadline = addDays(deal.updatedOn, 3);
+      }
+
+      if (!isLoanOffer(deal.offer.type) && (financialNeed || financiallyBlocked)) {
+        if (!financiallyBlocked) startPlayerFinancialBlock(deal, date);
+        if (deal.playerFinancialBlockUntil && date >= deal.playerFinancialBlockUntil) {
+          events.push(...failPlayerFinancialBlock(deal, date));
+        } else if (financiallyBlocked && !financialNeed) {
+          clearPlayerFinancialBlock(deal);
+          deal.respondsOn = date;
+          deal.updatedOn = date;
+          deal.playerResponseDeadline = addDays(date, 3);
+          deal.playerMessage = normalPlayerMessageAfterFinancialBlock(deal, date);
+          log(deal, date, deal.playerMessage);
+          pushEvent(events, deal, deal.playerMessage, "info");
+        } else {
+          const until = deal.playerFinancialBlockUntil ?? addDays(date, 5);
+          deal.playerMessage = `Ahora mismo no dispongo de dinero suficiente para realizar la operación. Voy a esperar un poco por si recuperáis margen salarial. Si no se recupera antes del ${until}, tendré que dar la negociación por terminada.`;
+          deal.updatedOn = date;
+        }
+        continue;
+      }
+
+      if (deal.playerResponseDeadline && isOnOrBefore(deal.playerResponseDeadline, date)) {
+        events.push(...failPlayerResponseTimeout(deal, date));
+        continue;
+      }
+
+      if (playerNegotiationExhausted(deal, date)) {
+        deal.stage = "failed";
+        deal.finishedOn = date;
+        deal.blockedForWindow = marketWindowKey(date);
+        deal.offer.status = "final-rejection";
+        deal.playerMessage = `He esperado y negociado bastante. Prefiero cerrar esta negociación y no seguir.`;
+        dropInterest(deal.playerId, deal.userClubId);
+        log(deal, date, deal.playerMessage);
+        pushEvent(events, deal, deal.playerMessage, "bad");
       }
       continue;
     }
@@ -1036,13 +1534,32 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
     return processIncomingLoanResponse(deal, date);
   }
 
+  // Si ya existe una petición previa del club y el usuario vuelve con una
+  // oferta prácticamente equivalente, no tiene sentido reiniciar la escalada.
+  // Ejemplo: 141M pedidos -> 140M ofrecidos. Esa diferencia es lo bastante
+  // pequeña como para aceptar la oferta, especialmente si lleva futura venta.
+  const previousClubDemand = Math.max(0, Math.round(deal.clubDemand));
+  const currentOfferWorth = offerWorth(deal.offer, deal.valuation);
+  const closeEnoughToPreviousDemand =
+    previousClubDemand > 0 && currentOfferWorth >= previousClubDemand * 0.99;
+
+  if (closeEnoughToPreviousDemand) {
+    deal.offer.status = "accepted";
+    deal.stage = "player-terms";
+    deal.clubMessage = `El club acepta tu oferta de ${fmt(deal.offer.amount)}.`;
+    log(deal, date, deal.clubMessage);
+    preparePlayerTerms(deal, date);
+    pushEvent(events, deal, `Acuerdo con el club por ${deal.playerName}: ahora debes ofrecerle sus condiciones.`, "good");
+    return events;
+  }
+
   // Con varios pretendientes y sin urgencia, el vendedor deja correr los días.
   const urgent = needsToSell(deal.otherClubId);
   if (
     sellerShouldWait(
       deal.playerId,
       deal.otherClubId,
-      offerWorth(deal.offer),
+      currentOfferWorth,
       deal.valuation.expectedPrice,
       urgent,
     )
@@ -1055,7 +1572,11 @@ function processIncomingResponse(deal: UserDeal, date: string): UserDealEvent[] 
     return events;
   }
 
-  const response = processCounterOffer(deal.offer, deal.valuation);
+  const response = processCounterOffer(
+    deal.offer,
+    deal.valuation,
+    previousClubDemand > 0 ? previousClubDemand : undefined,
+  );
   deal.clubMessage = response.message;
 
   if (response.status === "accepted") {
@@ -1156,18 +1677,22 @@ function processOutgoingLoanBid(deal: UserDeal, date: string): UserDealEvent[] {
   const clubOfferDuration = deal.offer.clauses.loanDurationMonths || defaultLoanDuration(date);
   const clubOfferType = deal.offer.type as Extract<TransferType, "loan" | "loan-option" | "loan-obligation">;
   const clubOfferOptionFee = clubOfferType === "loan" ? 0 : Math.max(0, Math.round(deal.offer.clauses.optionFee ?? 0));
+  const clubOfferRole = deal.offer.clauses.squadRole ?? "rotation";
 
-  const askedFee = Math.max(0, Math.round(deal.clubDemand ?? clubOfferFee));
-  const askedShare = clamp(deal.clubWageShareDemand ?? clubOfferShare, 0, 1);
-  const askedDuration = [6, 12, 24].includes(Math.round(deal.clubLoanDurationDemand ?? clubOfferDuration))
-    ? Math.round(deal.clubLoanDurationDemand ?? clubOfferDuration)
+  const userCounterClauses = deal.lastUserCounterClauses ?? {};
+  const askedFee = Math.max(0, Math.round(deal.lastUserCounterAmount ?? deal.clubDemand ?? clubOfferFee));
+  const askedShare = clamp((userCounterClauses.wageShare ?? deal.clubWageShareDemand ?? clubOfferShare) as number, 0, 1);
+  const askedDuration = [6, 12, 24].includes(Math.round((userCounterClauses.loanDurationMonths ?? deal.clubLoanDurationDemand ?? clubOfferDuration) as number))
+    ? Math.round((userCounterClauses.loanDurationMonths ?? deal.clubLoanDurationDemand ?? clubOfferDuration) as number)
     : clubOfferDuration;
-  const askedType = deal.clubLoanTypeDemand && isLoanOffer(deal.clubLoanTypeDemand)
-    ? deal.clubLoanTypeDemand
+  const requestedLoanType = userCounterClauses.loanType ?? deal.clubLoanTypeDemand;
+  const askedType = requestedLoanType && isLoanOffer(requestedLoanType)
+    ? requestedLoanType
     : clubOfferType;
   const askedOptionFee = askedType === "loan"
     ? 0
-    : Math.max(0, Math.round(deal.clubOptionFeeDemand ?? clubOfferOptionFee));
+    : Math.max(0, Math.round((userCounterClauses.optionFee ?? deal.clubOptionFeeDemand ?? clubOfferOptionFee) as number));
+  const askedRole = (userCounterClauses.squadRole as SquadRole | undefined) ?? deal.clubSquadRoleDemand ?? clubOfferRole;
 
   const profile = getClubProfile(deal.otherClubId);
   const ceiling = Math.max(0, Math.min(maxSpend(deal.otherClubId), deal.valuation.maximumPrice * profile.buyingWillingness));
@@ -1182,12 +1707,14 @@ function processOutgoingLoanBid(deal: UserDeal, date: string): UserDealEvent[] {
   const durationAcceptable = askedDuration <= clubOfferDuration;
   const typeAcceptable = askedType === clubOfferType || askedType === "loan";
   const optionAcceptable = askedType === "loan" || askedOptionFee <= clubOfferOptionFee;
+  const roleAcceptable = roleRank(askedRole) <= roleRank(clubOfferRole);
 
-  if (feeAcceptable && shareAcceptable && durationAcceptable && typeAcceptable && optionAcceptable) {
+  if (feeAcceptable && shareAcceptable && durationAcceptable && typeAcceptable && optionAcceptable && roleAcceptable) {
     deal.offer.amount = askedFee;
     deal.offer.clauses.wageShare = askedShare;
     deal.offer.clauses.loanDurationMonths = askedDuration;
     deal.offer.clauses.optionFee = askedType === "loan" ? 0 : askedOptionFee;
+    deal.offer.clauses.squadRole = askedRole;
     deal.offer.type = askedType;
     deal.offer.clauses.loanType = askedType;
     deal.offer.status = "accepted";
@@ -1196,7 +1723,10 @@ function processOutgoingLoanBid(deal: UserDeal, date: string): UserDealEvent[] {
     deal.clubLoanDurationDemand = undefined;
     deal.clubLoanTypeDemand = undefined;
     deal.clubOptionFeeDemand = undefined;
-    deal.clubMessage = `${clubNameSafe(deal.otherClubId)} acepta la cesión: ${fmt(askedFee)} de prima, ${Math.round(askedShare * 100)}% de la ficha y ${askedDuration} meses${askedType === "loan" ? " sin opción de compra" : askedType === "loan-option" ? ` con opción de compra de ${fmt(askedOptionFee)}` : ` con compra obligatoria de ${fmt(askedOptionFee)}`}.`;
+    deal.clubSquadRoleDemand = undefined;
+    deal.lastUserCounterAmount = undefined;
+    deal.lastUserCounterClauses = undefined;
+    deal.clubMessage = `${clubNameSafe(deal.otherClubId)} acepta la cesión: ${fmt(askedFee)} de prima, ${Math.round(askedShare * 100)}% de la ficha, ${askedDuration} meses${askedType === "loan" ? " sin opción de compra" : askedType === "loan-option" ? ` con opción de compra de ${fmt(askedOptionFee)}` : ` con compra obligatoria de ${fmt(askedOptionFee)}`} y rol ${playerRoleLabel(askedRole)}.`;
     deal.respondsOn = playerDecisionDate(date);
     deal.playerMessage = `${deal.playerName} está valorando la cesión a ${clubNameSafe(deal.otherClubId)}.`
       + (deal.respondsOn === date
@@ -1205,6 +1735,30 @@ function processOutgoingLoanBid(deal: UserDeal, date: string): UserDealEvent[] {
     log(deal, date, deal.clubMessage);
     log(deal, date, deal.playerMessage);
     pushEvent(events, deal, `El club comprador acepta las condiciones de la cesión de ${deal.playerName}. ${deal.playerMessage}`, "good");
+    return events;
+  }
+
+  // Cuarta contraoferta del usuario: si el club tampoco acepta ni encuentra
+  // un punto de acuerdo en su respuesta, la negociación termina aquí. No
+  // dejamos una tarjeta abierta con el botón bloqueado y sin siguiente paso.
+  if ((deal.outgoingCounterRounds ?? 0) >= MARKET_TIMING.maxNegotiationRounds) {
+    deal.stage = "failed";
+    deal.finishedOn = date;
+    deal.blockedForWindow = marketWindowKey(date);
+    deal.offer.status = "final-rejection";
+    deal.playerMessage = "";
+    deal.clubMessage = seededPick(
+      [
+        `${clubNameSafe(deal.otherClubId)} no puede aceptar tu última propuesta y prefiere cerrar la negociación.`,
+        `${clubNameSafe(deal.otherClubId)} ha valorado todas las propuestas, pero no habéis llegado a un acuerdo. La negociación termina aquí.`,
+        `${clubNameSafe(deal.otherClubId)} no encuentra un punto de acuerdo después de estas rondas y retira la operación.`,
+      ],
+      deal.id,
+      "outgoing-loan-final-counter-rejection",
+      date,
+    ) ?? `${clubNameSafe(deal.otherClubId)} retira la operación al no alcanzarse un acuerdo.`;
+    log(deal, date, deal.clubMessage);
+    pushEvent(events, deal, deal.clubMessage, "bad");
     return events;
   }
 
@@ -1234,6 +1788,14 @@ function processOutgoingLoanBid(deal: UserDeal, date: string): UserDealEvent[] {
   const nextOption = nextType === "loan"
     ? 0
     : Math.round(clubOfferOptionFee + (askedOptionFee - clubOfferOptionFee) * step);
+  const roleSequence: SquadRole[] = ["secondary", "prospect", "rotation", "starter", "star"];
+  const currentRoleIndex = roleSequence.indexOf(clubOfferRole);
+  const askedRoleIndex = roleSequence.indexOf(askedRole);
+  const roleDirection = askedRoleIndex >= currentRoleIndex ? 1 : -1;
+  const roleDistance = Math.abs(askedRoleIndex - currentRoleIndex);
+  const roleStep = Math.max(1, Math.floor(roleDistance * step));
+  const nextRoleIndex = Math.max(0, Math.min(roleSequence.length - 1, currentRoleIndex + roleDirection * roleStep));
+  const nextRole = roleDistance === 0 ? clubOfferRole : roleSequence[nextRoleIndex];
 
   deal.offer.amount = Math.min(ceiling, nextFee);
   deal.offer.clauses.wageShare = clamp(nextShare, 0, 1);
@@ -1241,12 +1803,19 @@ function processOutgoingLoanBid(deal: UserDeal, date: string): UserDealEvent[] {
   deal.offer.type = nextType;
   deal.offer.clauses.loanType = nextType;
   deal.offer.clauses.optionFee = nextType === "loan" ? 0 : Math.max(0, nextOption);
+  deal.offer.clauses.squadRole = nextRole;
+  // La nueva propuesta del club se convierte en la condición visible de la
+  // siguiente ronda. No borramos el dato lógico del rol: la UI debe poder
+  // seguir negociándolo en cualquier ronda posterior.
+  deal.clubSquadRoleDemand = undefined;
+  deal.lastUserCounterAmount = undefined;
+  deal.lastUserCounterClauses = undefined;
   deal.offer.round += 1;
   deal.rounds += 1;
   deal.updatedOn = date;
   deal.stage = "club-counter";
   deal.respondsOn = addDays(date, 30);
-  deal.clubMessage = `${clubNameSafe(deal.otherClubId)} hace una nueva oferta: ${fmt(deal.offer.amount)} de prima · ${Math.round(deal.offer.clauses.wageShare * 100)}% del sueldo · ${deal.offer.clauses.loanDurationMonths} meses${nextType === "loan" ? " · sin opción de compra" : nextType === "loan-option" ? ` · opción de ${fmt(deal.offer.clauses.optionFee)}` : ` · compra obligatoria de ${fmt(deal.offer.clauses.optionFee)}`}.`;
+  deal.clubMessage = `${clubNameSafe(deal.otherClubId)} hace una nueva oferta: ${fmt(deal.offer.amount)} de prima · ${Math.round(deal.offer.clauses.wageShare * 100)}% del sueldo · ${deal.offer.clauses.loanDurationMonths} meses${nextType === "loan" ? " · sin opción de compra" : nextType === "loan-option" ? ` · opción de ${fmt(deal.offer.clauses.optionFee)}` : ` · compra obligatoria de ${fmt(deal.offer.clauses.optionFee)}`} · rol ${playerRoleLabel(nextRole)}.`;
   // La propuesta anterior del usuario ya ha sido contestada; limpiamos sus
   // demandas para que la siguiente interacción parta de la nueva propuesta.
   deal.clubWageShareDemand = undefined;
@@ -1266,6 +1835,8 @@ function preparePlayerTerms(deal: UserDeal, date: string): void {
   deal.playerWageDemand = wageDemand(player.id, deal.userClubId);
   deal.playerRoleDemand = minimumSquadRole(player.id, deal.userClubId, cacheKeyFor(date));
   deal.playerYearsDemand = preferredContractYears(player.id);
+  deal.playerNegotiationRounds = 0;
+  deal.playerTermsStartedOn = date;
 
   if (!deal.offer.clauses.squadRole) {
     deal.offer.clauses.squadRole = deal.playerRoleDemand ?? "rotation";
@@ -1275,10 +1846,22 @@ function preparePlayerTerms(deal: UserDeal, date: string): void {
   }
 
   deal.playerMessage = isLoanOffer(deal.offer.type)
-    ? `${deal.playerName} valorará la cesión con su ficha vigente y el rol acordado.`
-    : `${deal.playerName} quiere conocer tus condiciones de ficha, rol y duración de contrato.`;
+    ? `Quiero valorar bien la cesión, pero mi ficha actual y el rol que tenga con vosotros serán importantes para mí.`
+    : `Quiero conocer bien las condiciones que me ofreces. Para mí son importantes el sueldo, el rol y la duración del contrato.`;
   deal.stage = "player-terms";
-  deal.respondsOn = addDays(date, 30);
+  deal.respondsOn = date;
+  deal.playerResponseDeadline = addDays(date, 3);
+
+  if (!isLoanOffer(deal.offer.type)) {
+    const maxWage = playerWageBudgetForDeal(deal);
+    if (maxWage <= 0) {
+      startPlayerFinancialBlock(deal, date);
+      deal.playerResponseDeadline = undefined;
+      deal.playerMessage = `Ahora mismo no dispongo del margen salarial necesario para cerrar esta operación. Podemos esperar unos días por si recuperáis presupuesto.`;
+    } else {
+      clearPlayerFinancialBlock(deal);
+    }
+  }
 }
 
 /** Negociación de la ficha con el jugador tras el acuerdo entre clubes. */
@@ -1302,89 +1885,155 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
   const loanDeal = isLoanOffer(deal.offer.type);
   const years = deal.offer.clauses.contractYears ?? 4;
   const yearsGap = requiredYears - years;
+  const round = Math.max(1, deal.playerNegotiationRounds ?? 1);
 
   deal.playerWageDemand = wageRequested;
   deal.playerRoleDemand = requiredRole;
   deal.playerYearsDemand = requiredYears;
 
-  const hardRoleMismatch = !loanDeal && roleGap >= 2;
-  const insufficientRole = !loanDeal && roleGap === 1;
-  const insufficientWage = !loanDeal && wageRatio < 0.90;
-  const shortContract = !loanDeal && yearsGap >= 2;
-  const slightYearsIssue = !loanDeal && yearsGap === 1;
+  const hardRoleMismatch = !loanDeal && roleGap >= 4;
+  const veryLowWage = !loanDeal && wageRatio < 0.55;
+  const immediateBreak = hardRoleMismatch || veryLowWage;
 
-  if (!isLoanOffer(deal.offer.type) && hardRoleMismatch) {
-    deal.playerMessage = `${deal.playerName} rechaza ese rol. Considera que debería ser ${requiredRole === "star" ? "Estrella" : requiredRole === "starter" ? "Titular" : "Rotación"}. Está dispuesto a negociar otras condiciones, pero no ese papel.`;
-  } else if (insufficientRole || insufficientWage || shortContract || slightYearsIssue) {
-    const reasons: string[] = [];
-    if (insufficientRole) reasons.push(`un rol de ${requiredRole === "star" ? "Estrella" : requiredRole === "starter" ? "Titular" : "Rotación"}`);
-    if (insufficientWage) reasons.push(`una ficha de al menos ${fmt(wageRequested)}/año`);
-    if (shortContract) reasons.push(`${requiredYears} años de contrato`);
-    else if (slightYearsIssue) reasons.push(`más duración contractual`);
-    deal.playerMessage = `${deal.playerName} quiere seguir negociando: pide ${reasons.join(" y ")}.`;
-  } else {
-    deal.playerMessage = `${deal.playerName} acepta el rol, la ficha y la duración propuestas.`;
-  }
+  // El jugador es flexible: solo rompe de inmediato ante una propuesta extrema.
+  // En cualquier otro caso intenta encontrar un punto medio antes del límite de
+  // cuatro rondas.
+  const wageAcceptable = loanDeal || wageRatio >= 0.90;
+  const roleAcceptable = loanDeal || roleGap <= 1 || (roleGap === 2 && wageRatio >= 1.00) || (roleGap === 3 && wageRatio >= 1.08);
+  const yearsAcceptable = loanDeal || yearsGap <= 2 || (yearsGap === 3 && wageRatio >= 1.02) || yearsGap < 0;
+  const conditionsAcceptable = wageAcceptable && roleAcceptable && yearsAcceptable;
 
-  // El jugador no va a negociar indefinidamente: tras varias rondas, un
-  // desacuerdo grave rompe definitivamente la operación en esta ventana.
-  if ((hardRoleMismatch || insufficientWage || shortContract) && deal.rounds >= MARKET_TIMING.maxNegotiationRounds - 1) {
+  deal.playerWageDemand = wageRequested;
+  deal.playerRoleDemand = requiredRole;
+  deal.playerYearsDemand = requiredYears;
+
+  deal.playerMessage = playerNegotiationMessage({
+    role,
+    requiredRole,
+    wageOffer: deal.offer.wageOffer,
+    wageRequested,
+    years,
+    requiredYears,
+    dealId: deal.id,
+    round,
+    date,
+  });
+
+  if (immediateBreak) {
     deal.stage = "failed";
     deal.finishedOn = date;
     deal.blockedForWindow = marketWindowKey(date);
     deal.offer.status = "final-rejection";
+    deal.playerResponseDeadline = undefined;
+    deal.playerMessage = veryLowWage
+      ? seededPick(
+          [
+            `Te soy sincero: con una ficha tan baja no puedo aceptar la propuesta. No me parece una oferta seria para mi situación.`,
+            `Entiendo que tengáis vuestro presupuesto, pero el salario está demasiado lejos de lo que puedo aceptar. Prefiero no seguir.`,
+            `Con esta ficha no puedo dar el paso. El sueldo está demasiado por debajo de mis expectativas y no creo que tenga sentido continuar.`,
+          ],
+          deal.id,
+          "player-hard-wage-rejection",
+          round,
+          date,
+        ) ?? `Con estas condiciones económicas no puedo aceptar la propuesta.`
+      : seededPick(
+          [
+            `El rol que me ofreces está demasiado lejos de lo que necesito. Para mí es importante tener un papel acorde a mi nivel y prefiero no seguir así.`,
+            `Puedo ser flexible en otras cosas, pero este rol se queda demasiado lejos de lo que busco. En estas condiciones prefiero cerrar aquí.`,
+            `No puedo aceptar un papel tan por debajo de mis expectativas. Prefiero no continuar con la negociación.`,
+          ],
+          deal.id,
+          "player-hard-role-rejection",
+          round,
+          date,
+        ) ?? `El rol que me ofreces está demasiado lejos de lo que necesito.`;
     dropInterest(deal.playerId, deal.userClubId);
-    log(deal, date, `${deal.playerName} se ha cansado de negociar y rechaza la operación.`);
-    pushEvent(events, deal, `${deal.playerName} se ha cansado de negociar y rechaza la operación.`, "bad");
+    log(deal, date, deal.playerMessage);
+    pushEvent(events, deal, deal.playerMessage, "bad");
     return events;
   }
 
-  const acceptable = !hardRoleMismatch && !insufficientRole && !insufficientWage && !shortContract && !slightYearsIssue;
-  if (acceptable) {
-    const decision = decideOnMove({
-      playerId: player.id,
-      toClubId: deal.userClubId,
-      wageOffer: deal.offer.wageOffer,
-      squadRole: deal.offer.clauses.squadRole,
-      cacheKey,
-      deadlineDay: deadlineToday(date),
-    });
-
-    if (decision.verdict === "rejected-project") {
-      deal.stage = "failed";
-      deal.finishedOn = date;
-      deal.blockedForWindow = marketWindowKey(date);
-      deal.offer.status = "final-rejection";
-      deal.playerMessage = decision.message;
-      dropInterest(deal.playerId, deal.userClubId);
-      log(deal, date, deal.playerMessage);
-      pushEvent(events, deal, deal.playerMessage, "bad");
-      return events;
-    }
-
-    if (decision.verdict === "negotiating" || decision.verdict === "rejected-wage") {
-      deal.stage = "player-terms";
-      deal.respondsOn = addDays(date, 1);
-      deal.playerWageDemand = decision.wageRequested;
-      deal.playerMessage = decision.message;
-      log(deal, date, deal.playerMessage);
-      pushEvent(events, deal, deal.playerMessage, "info");
-      return events;
-    }
-
+  // Si el contrato encaja, el jugador acepta directamente. El proyecto ya no
+  // puede tumbar una propuesta contractual que sea razonable: el usuario debe
+  // tener una salida clara y negociable en cada ronda.
+  if (conditionsAcceptable) {
     deal.stage = "ready";
+    deal.playerResponseDeadline = undefined;
     deal.offer.status = "accepted";
     deal.respondsOn = date;
-    deal.playerMessage = decision.message;
+    deal.playerMessage = seededPick(
+      [
+        `Me parecen buenas condiciones. El salario, el rol y la duración me encajan y estoy dispuesto a firmar.`,
+        `Estoy satisfecho con el contrato. Creo que hemos encontrado un punto razonable para los dos y quiero seguir adelante.`,
+        `La propuesta me convence. Las condiciones están dentro de lo que buscaba y por mi parte podemos cerrar.`,
+        `Me gusta cómo ha quedado el contrato. El sueldo, el rol y los años me parecen adecuados y estoy preparado para firmar.`,
+      ],
+      deal.id,
+      "player-final-acceptance-chat",
+      round,
+      date,
+    ) ?? `Me convencen las condiciones y estoy dispuesto a firmar.`;
     log(deal, date, deal.playerMessage);
     pushEvent(events, deal, `${deal.playerName} ha aceptado las condiciones. Puedes cerrar el fichaje.`, "good");
     return events;
   }
 
-  deal.stage = "player-terms";
-  deal.respondsOn = addDays(date, 30);
+  if (round < MARKET_TIMING.maxPlayerNegotiationRounds) {
+    deal.stage = "player-terms";
+    deal.respondsOn = date;
+    deal.playerResponseDeadline = addDays(date, 3);
+    deal.playerMessage = playerNegotiationMessage({
+      role,
+      requiredRole,
+      wageOffer: deal.offer.wageOffer,
+      wageRequested,
+      years,
+      requiredYears,
+      dealId: deal.id,
+      round,
+      date,
+      forceRequest: true,
+    });
+    log(deal, date, deal.playerMessage);
+    pushEvent(events, deal, deal.playerMessage, "info");
+    return events;
+  }
+
+  // Cuarta ronda: si la propuesta sigue fuera de los márgenes flexibles,
+  // rechazo definitivo y bloqueo durante el mercado.
+  deal.stage = "failed";
+  deal.finishedOn = date;
+  deal.blockedForWindow = marketWindowKey(date);
+  deal.offer.status = "final-rejection";
+  deal.playerResponseDeadline = undefined;
+
+  const finalReasons: string[] = [];
+  if (!wageAcceptable) finalReasons.push("la ficha todavía se queda algo corta");
+  if (!roleAcceptable) finalReasons.push("el rol que tendría sigue siendo menor del que busco");
+  if (!yearsAcceptable) finalReasons.push("la duración sigue siendo demasiado corta");
+  if (finalReasons.length === 0) finalReasons.push("necesito una pequeña mejora en alguna de las condiciones del contrato");
+
+  deal.playerMessage = seededPick(
+    finalReasons.length === 1
+      ? [
+          `He intentado encontrar un punto medio, pero ${finalReasons[0]}. Prefiero dejarlo aquí.`,
+          `Gracias por la negociación. He valorado la propuesta, pero ${finalReasons[0]} y no voy a firmar.`,
+          `Hemos negociado bastante y ${finalReasons[0]}. Creo que lo mejor es cerrar aquí.`,
+        ]
+      : [
+          `He intentado acercar posturas, pero ${finalReasons.join(" y ")}. Prefiero terminar aquí la negociación.`,
+          `Hemos hablado bastante y todavía ${finalReasons.join(" y ")}. En estas condiciones no voy a firmar.`,
+          `Agradezco el esfuerzo, pero después de estas rondas sigo necesitando ${finalReasons.join(" y ")}. Creo que lo mejor es cerrar la negociación.`,
+        ],
+    deal.id,
+    "player-final-rejection-chat",
+    round,
+    date,
+  ) ?? `Hemos negociado varias veces y prefiero no seguir con la operación.`;
+  dropInterest(deal.playerId, deal.userClubId);
   log(deal, date, deal.playerMessage);
-  pushEvent(events, deal, deal.playerMessage, "info");
+  pushEvent(events, deal, deal.playerMessage, "bad");
   return events;
 }
 
@@ -1534,11 +2183,13 @@ function finalizeOutgoingPlayerDecision(deal: UserDeal, date: string, events: Us
   }
 
   deal.playerWageDemand = decision.wageRequested;
-  // El rol real se resolverá con el club comprador. No lo exponemos como una
-  // condición de la oferta del usuario.
+  // En una venta en firme el rol del nuevo contrato se resuelve entre el
+  // jugador y el club comprador. En una cesión, en cambio, el rol sí forma
+  // parte de las condiciones negociadas por el club propietario y debe
+  // conservarse hasta que la cesión se haga oficial.
   deal.playerRoleDemand = undefined;
-  deal.offer.clauses.squadRole = undefined;
   if (!isLoanOffer(deal.offer.type)) {
+    deal.offer.clauses.squadRole = undefined;
     deal.offer.clauses.contractYears = preferredContractYears(player.id);
   }
   deal.playerMessage = `${player.name} acepta marcharse al ${clubNameSafe(targetClub)}. La venta queda acordada.`;
@@ -1556,11 +2207,25 @@ function processOutgoingBid(deal: UserDeal, date: string): UserDealEvent[] {
   const asked = Math.max(0, Math.round(deal.clubDemand));
   const offered = Math.max(0, Math.round(deal.offer.amount));
   const profile = getClubProfile(deal.otherClubId);
-  const ceiling = Math.max(0, Math.min(maxSpend(deal.otherClubId), deal.valuation.maximumPrice * profile.buyingWillingness));
+  const ceiling = Math.max(
+    0,
+    Math.min(
+      maxSpend(deal.otherClubId),
+      deal.valuation.maximumPrice * profile.buyingWillingness,
+    ),
+  );
+  const offeredWorth = offerWorth(deal.offer, deal.valuation);
+  const requestedFutureValue = expectedSellOnValue(
+    deal.playerId,
+    deal.offer.clauses.sellOnPercent,
+    deal.valuation,
+  );
+  const requestedEconomicCost = asked + requestedFutureValue;
 
   // Cuando el comprador iguala una contraoferta razonable del vendedor, la
-  // negociación entre clubes termina. No se muestra otra acción de "igualar".
-  if (asked <= ceiling && asked <= offered * 1.05) {
+  // negociación termina. La comparación usa el valor económico total de la
+  // oferta, no solo el fijo, así que 55M + 30% puede superar a 60M + 0%.
+  if (requestedEconomicCost <= ceiling && asked <= offeredWorth * 1.05) {
     deal.offer.amount = asked;
     deal.offer.status = "accepted";
     deal.stage = "player-decision";
@@ -1581,18 +2246,24 @@ function processOutgoingBid(deal: UserDeal, date: string): UserDealEvent[] {
     return events;
   }
 
-  if (asked > ceiling) {
+  if (requestedEconomicCost > ceiling) {
     deal.stage = "failed";
     deal.finishedOn = date;
     deal.blockedForWindow = marketWindowKey(date);
     deal.offer.status = "withdrawn";
-    log(deal, date, `${clubNameSafe(deal.otherClubId)} retira su oferta: el precio pedido está fuera de su alcance.`);
+    log(deal, date, `${clubNameSafe(deal.otherClubId)} retira su oferta: el coste total, incluida la futura venta, está fuera de su alcance.`);
     pushEvent(events, deal, `${clubNameSafe(deal.otherClubId)} retira su oferta por ${deal.playerName}.`, "bad");
     return events;
   }
 
   const step = clamp(0.35 + profile.aggression * 0.5 - profile.patience * 0.25, 0.2, 0.95);
-  const next = roundFee(Math.min(ceiling, Math.max(offered, offered + (asked - offered) * step)));
+  const economicGap = Math.max(0, requestedEconomicCost - offeredWorth);
+  const next = roundFee(
+    Math.min(
+      ceiling,
+      Math.max(offered, offered + economicGap * step),
+    ),
+  );
   if (next <= offered) {
     deal.stage = "club-counter";
     deal.respondsOn = date;
@@ -1606,7 +2277,12 @@ function processOutgoingBid(deal: UserDeal, date: string): UserDealEvent[] {
   deal.offer.round += 1;
   deal.rounds += 1;
   deal.stage = "incoming";
-  deal.clubMessage = `${clubNameSafe(deal.otherClubId)} mejora su oferta a ${fmt(next)}.`;
+  deal.clubMessage =
+    `${clubNameSafe(deal.otherClubId)} mejora su oferta a ${fmt(next)}.`
+    + (deal.offer.clauses.sellOnPercent > 0
+      ? ` Mantiene un ${Math.round(deal.offer.clauses.sellOnPercent * 100)}% de futura venta.`
+      : "");
+
   deal.respondsOn = addDays(date, 30);
   log(deal, date, deal.clubMessage);
   pushEvent(events, deal, deal.clubMessage, "info");
@@ -1802,6 +2478,16 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
   const amount = Math.min(maxSpend(buyerId), Math.round(base / 100_000) * 100_000);
   if (amount <= 0) return events;
 
+  const openingClauses = {
+    ...emptyClauses(),
+    ...proposeClauses(
+      buyerId,
+      valuation,
+      Math.max(0, valuation.idealPrice - amount),
+      `${date}-${target.id}-${buyerId}-opening`,
+    ),
+  };
+
   const offer = createTransferOffer({
     playerId: target.id,
     playerName: target.name,
@@ -1809,7 +2495,7 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
     sellerClubId: userClubId,
     amount,
     wageOffer: Math.min(maxWageOffer(buyerId), wageDemand(target.id, buyerId)),
-    clauses: emptyClauses(),
+    clauses: openingClauses,
     date,
   });
 
@@ -1833,14 +2519,27 @@ function generateOffersForUserPlayers(userClubId: string, date: string): UserDea
     stage: "incoming",
     respondsOn: addDays(date, 3),
     clubDemand: 0,
-    clubMessage: `El ${buyerId} ofrece ${fmt(amount)} por ${target.name}.`,
+    clubMessage:
+      `El ${buyerId} ofrece ${fmt(amount)} por ${target.name}`
+      + (offer.clauses.sellOnPercent > 0
+        ? ` y ${Math.round(offer.clauses.sellOnPercent * 100)}% de futura venta.`
+        : "."),
+
     playerWageDemand: 0,
     playerMessage: "",
     competition: competitionFor(target.id, userClubId),
     rounds: 1,
     createdOn: date,
     updatedOn: date,
-    log: [{ date, text: `Oferta recibida: ${fmt(amount)} desde ${buyerId}.` }],
+    log: [{
+      date,
+      text:
+        `Oferta recibida: ${fmt(amount)} desde ${buyerId}`
+        + (offer.clauses.sellOnPercent > 0
+          ? ` con ${Math.round(offer.clauses.sellOnPercent * 100)}% de futura venta.`
+          : "."),
+    }],
+
   };
   deals.set(deal.id, deal);
   pushEvent(events, deal, deal.clubMessage, "info");
@@ -1896,7 +2595,10 @@ function generateLoanOffersForUserPlayers(userClubId: string, date: string): Use
     const typeRoll = seededUnit("loan-type", player.id, date);
     const type: Extract<TransferType, "loan" | "loan-option" | "loan-obligation"> =
       typeRoll < 0.72 ? "loan" : typeRoll < 0.93 ? "loan-option" : "loan-obligation";
-    const clauses = buildLoanTerms(player.id, type, `${player.id}-${date}`);
+    const clauses = {
+      ...buildLoanTerms(player.id, type, `${player.id}-${date}`),
+      squadRole: minimumSquadRole(player.id, borrowerId, cacheKey),
+    };
     const fee = seededUnit("loan-fee", player.id, borrowerId, date) < 0.65
       ? 0
       : Math.max(0, Math.round(player.value * (0.005 + seededUnit("loan-fee-rate", player.id, borrowerId, date) * 0.02) / 100_000) * 100_000);
@@ -1925,16 +2627,17 @@ function generateLoanOffersForUserPlayers(userClubId: string, date: string): Use
       stage: "incoming",
       respondsOn: addDays(date, 3),
       clubDemand: fee,
-      clubMessage: `${teamById(borrowerId).name} ofrece hacerse cargo de parte de la ficha de ${player.name}.`,
+      clubMessage: `${teamById(borrowerId).name} ofrece hacerse cargo de parte de la ficha de ${player.name} y le reserva un rol de ${playerRoleLabel(clauses.squadRole ?? "rotation")}.`,
       playerWageDemand: 0,
       playerMessage: "",
       competition: 0,
       rounds: 1,
+      outgoingCounterRounds: 0,
       createdOn: date,
       updatedOn: date,
       log: [{
         date,
-        text: `Oferta de cesión desde ${teamById(borrowerId).name}: ${fmt(fee)} de prima y ${Math.round(clauses.wageShare * 100)}% de la ficha.`,
+        text: `Oferta de cesión desde ${teamById(borrowerId).name}: ${fmt(fee)} de prima, ${Math.round(clauses.wageShare * 100)}% de la ficha y rol ${playerRoleLabel(clauses.squadRole ?? "rotation")}.`,
       }],
     };
     deals.set(deal.id, deal);
@@ -1960,13 +2663,23 @@ export interface IncomingResponseResult extends FinalizeResult {
  * un 20% de quedarse en el club. Si se queda, la operación se cancela y no se
  * modifica la plantilla, el presupuesto ni el historial de traspasos.
  */
-export function acceptIncomingOffer(dealId: string, date: string): IncomingResponseResult {
+export function acceptIncomingOffer(
+  dealId: string,
+  date: string,
+  clauses?: Partial<OfferClauses>,
+): IncomingResponseResult {
   if (windowForDate(date) === "closed") {
     return { ok: false, reason: "El mercado de fichajes está cerrado." };
   }
   const deal = deals.get(dealId);
   if (!deal || deal.direction !== "out" || deal.stage !== "incoming") {
     return { ok: true, silent: true };
+  }
+
+  if (isLoanOffer(deal.offer.type) && clauses?.squadRole) {
+    deal.offer.clauses.squadRole = clauses.squadRole;
+    deal.clubSquadRoleDemand = undefined;
+    log(deal, date, `Has aceptado también el rol de ${playerRoleLabel(clauses.squadRole)} para ${deal.playerName}.`);
   }
 
   // El club ya ha aceptado la oferta, pero la decisión del jugador nunca debe
@@ -1998,7 +2711,14 @@ export function counterIncomingOffer(
     return { ok: false, reason: "No hay oferta que contraofertar." };
   }
   if (deal.rounds >= MARKET_TIMING.maxNegotiationRounds) {
-    return { ok: false, reason: "El club no negociará más rondas." };
+    deal.stage = "failed";
+    deal.finishedOn = date;
+    deal.blockedForWindow = marketWindowKey(date);
+    deal.offer.status = "final-rejection";
+    deal.clubMessage = "";
+    deal.playerMessage = "";
+    log(deal, date, "La negociación ha terminado definitivamente en esta ventana de fichajes.");
+    return { ok: true, deal, silent: true };
   }
   // En una cesión se negocian todas las condiciones económicas/deportivas:
   // prima, porcentaje del salario asumido por el destino, duración y, cuando
@@ -2025,13 +2745,19 @@ export function counterIncomingOffer(
     const requestedOptionFee = clauses?.optionFee !== undefined
       ? Math.max(0, Math.round(clauses.optionFee))
       : deal.offer.clauses.optionFee;
+    const requestedRole = clauses?.squadRole ?? deal.offer.clauses.squadRole ?? "rotation";
 
+    // La condición de rol pertenece a TODA la negociación de la cesión.
+    // Se guarda como demanda del usuario hasta que el club responda, y nunca
+    // se elimina al cambiar de ronda.
+    deal.clubSquadRoleDemand = requestedRole;
     deal.clubWageShareDemand = requestedShare;
     deal.clubLoanDurationDemand = validDuration;
     deal.clubLoanTypeDemand = clauses?.loanType && isLoanOffer(clauses.loanType)
       ? clauses.loanType
       : (deal.clubLoanTypeDemand ?? deal.offer.type as Extract<TransferType, "loan" | "loan-option" | "loan-obligation">);
     deal.clubOptionFeeDemand = deal.clubLoanTypeDemand === "loan" ? 0 : requestedOptionFee;
+    deal.clubSquadRoleDemand = requestedRole;
     deal.offer.clauses.loanType = deal.clubLoanTypeDemand;
 
     const destinationShare = Math.round(requestedShare * 100);
@@ -2040,8 +2766,8 @@ export function counterIncomingOffer(
     const purchaseText = requestedType === "loan"
       ? "sin opción de compra"
       : `${requestedType === "loan-option" ? "opción" : "compra obligatoria"} de ${fmt(deal.clubOptionFeeDemand)}`;
-    deal.clubMessage = `Contraoferta de cesión: ${fmt(deal.clubDemand)} de prima · ${destinationShare}% del sueldo el destino / ${ownerShare}% tu club · ${deal.clubLoanDurationDemand} meses · ${purchaseText}.`;
-    log(deal, date, `Has contraofertado la cesión: ${fmt(deal.clubDemand)}, ${destinationShare}% del sueldo al destino, ${deal.clubLoanDurationDemand} meses y ${purchaseText}.`);
+    deal.clubMessage = `Contraoferta de cesión: ${fmt(deal.clubDemand)} de prima · ${destinationShare}% del sueldo el destino / ${ownerShare}% tu club · ${deal.clubLoanDurationDemand} meses · ${purchaseText} · rol ${playerRoleLabel(requestedRole)}.`;
+    log(deal, date, `Has contraofertado la cesión: ${fmt(deal.clubDemand)}, ${destinationShare}% del sueldo al destino, ${deal.clubLoanDurationDemand} meses, ${purchaseText} y rol ${playerRoleLabel(requestedRole)}.`);
   } else {
     // En una venta también puedes negociar el porcentaje de futura venta.
     // Esta cláusula forma parte de la contraoferta y debe quedar guardada para

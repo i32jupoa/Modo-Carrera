@@ -74,7 +74,7 @@ export function NegotiationModal({
   const transferBudget = Math.max(0, budget - wageBudget);
   const wageCommitmentEuros = type === "permanent" ? 0 : Math.round(wageEuros * (wageShare / 100));
   const overBudget = amountEuros > transferBudget;
-  const overWageBudget = wageCommitmentEuros > wageBudget;
+  const overWageBudget = wageCommitmentEuros > Math.max(0, wageBudget);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-auto">
@@ -280,10 +280,10 @@ export function NegotiationModal({
 
         <div className="space-y-1 text-xs text-muted-foreground">
           <p>Presupuesto total: <span className="text-foreground font-bold">{formatEuro(budget)}</span></p>
-          <p>Dinero para fichajes: <span className="text-foreground font-bold">{formatEuro(transferBudget)}</span>{overBudget && <span className="text-destructive"> · oferta por encima del dinero disponible</span>}</p>
+          <p>Dinero para fichajes: <span className="text-foreground font-bold">{formatEuro(transferBudget)}</span></p>
           {type !== "permanent" && (
             <>
-              <p>Presupuesto salarial: <span className="text-foreground font-bold">{formatEuro(wageBudget)} al año</span>{overWageBudget && <span className="text-destructive"> · el porcentaje asumido supera la asignación salarial</span>}</p>
+              <p>Presupuesto salarial: <span className="text-foreground font-bold">{formatEuro(wageBudget)} al año</span></p>
               <p>El destino paga el <span className="text-foreground font-bold">{wageShare}%</span> del sueldo actual y tu club el <span className="text-foreground font-bold">{100 - wageShare}%</span>.</p>
             </>
           )}

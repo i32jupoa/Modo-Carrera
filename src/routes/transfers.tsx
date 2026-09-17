@@ -308,9 +308,10 @@ function TransfersPage() {
   const wageBill = usePlayersStore((s) => s.wageBill);
   const setWageBudget = usePlayersStore((s) => s.setWageBudget);
   const totalEconomicBudget = budget;
+  const myTeamId = usePlayersStore((s) => s.myTeamId);
+  const effectiveEconomicBudget = totalEconomicBudget;
   const transferBudget = Math.max(0, totalEconomicBudget - wageBudget);
   const rawPlayers = usePlayersStore((s) => s.getRawPlayers?.() || []);
-  const myTeamId = usePlayersStore((s) => s.myTeamId);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const rosterIds = usePlayersStore((s) => s.rosterIds);
   const { isMarketOpen } = useTransferMarket();
@@ -536,14 +537,14 @@ function TransfersPage() {
         </div>
         <div className="flex items-center justify-between gap-3 text-xs font-bold">
           <span>Distribución económica</span>
-          <span className="text-primary">{totalEconomicBudget > 0 ? ((wageBudget / totalEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · entre 5% y 30%</span>
+          <span className="text-primary">{effectiveEconomicBudget > 0 ? ((Math.min(wageBudget, effectiveEconomicBudget) / effectiveEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · del presupuesto total</span>
         </div>
         <Slider
-          value={[Math.min(Math.max(Math.ceil(totalEconomicBudget * 0.05), wageBudget), Math.floor(totalEconomicBudget * 0.30))]}
-          min={Math.ceil(totalEconomicBudget * 0.05)}
-          max={Math.floor(totalEconomicBudget * 0.30)}
+          value={[Math.min(Math.max(Math.min(Math.ceil(totalEconomicBudget * 0.05), effectiveEconomicBudget), wageBudget), Math.min(Math.floor(totalEconomicBudget * 0.30), effectiveEconomicBudget))]}
+          min={Math.min(Math.ceil(totalEconomicBudget * 0.05), effectiveEconomicBudget)}
+          max={Math.min(Math.floor(totalEconomicBudget * 0.30), effectiveEconomicBudget)}
           step={250_000}
-          onValueChange={(values) => setWageBudget(values[0] ?? wageBudget)}
+          onValueChange={(values) => setWageBudget(Math.min(values[0] ?? wageBudget, effectiveEconomicBudget))}
           aria-label="Distribución del presupuesto entre salarios y fichajes, entre 5% y 30% para salarios"
           className="mt-3"
         />
@@ -794,11 +795,12 @@ function TransfersPage() {
                 // una cesión hasta la siguiente. Se avisa en la propia tarjeta
                 // para no descubrirlo al enviar la oferta y que rebote.
                 const justSettled = isPlayerSettled(id);
+                const blockedThisWindow = !!myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate);
 
                 return (
                   <article
                     key={id}
-                    className="panel overflow-hidden flex flex-col hover:border-primary/40 transition"
+                    className="relative panel overflow-hidden flex flex-col transition hover:border-primary/40"
                   >
                     <div className="flex gap-3 p-3 border-b border-border/40">
                       <div className="w-14 h-[4.5rem] shrink-0 rounded overflow-hidden bg-secondary/60 grid place-items-center">
@@ -881,12 +883,12 @@ function TransfersPage() {
                         })()}
                         <button
                           type="button"
-                          disabled={!isMarketOpen || negotiating || !market.ready || (!!myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate))}
+                          disabled={!isMarketOpen || negotiating || !market.ready || blockedThisWindow}
                           onClick={() => openNegotiation(p)}
                           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
                         >
                           <UserPlus className="h-3.5 w-3.5" />
-                          {!!myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate) ? "Rechazado" : negotiating ? "Negociando" : "Negociar"}
+                          {blockedThisWindow ? "Bloqueado" : negotiating ? "Negociando" : "Negociar"}
                         </button>
                       </div>
                     </div>

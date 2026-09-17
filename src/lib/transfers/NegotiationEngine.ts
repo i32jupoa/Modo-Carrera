@@ -11,7 +11,7 @@
  * motor de fichajes y la simulación diaria trabajen sobre el mismo estado.
  */
 
-import { INSULTING_OFFER_RATIO, LOAN_RULES, MARKET_TIMING, WAGE_RULES } from "./constants";
+import { INSULTING_OFFER_RATIO, LOAN_RULES, MARKET_TIMING, SELL_ON_RULES, WAGE_RULES } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
 import { minimumSquadRole, preferredContractYears } from "./PlayerDecision";
 import { needsToSell } from "./BudgetManager";
@@ -119,9 +119,13 @@ export function proposeClauses(
   const clauses = emptyClauses();
   if (gap <= 0) return clauses;
 
-  const wantsSellOn = seededUnit(seed, "sellon") < 0.35 + profile.patience * 0.25;
+  const wantsSellOn =
+    seededUnit(seed, "sellon") <
+    SELL_ON_RULES.openingOfferChance + profile.patience * SELL_ON_RULES.patienceOfferChance;
   if (wantsSellOn) {
-    clauses.sellOnPercent = valuation.isStar ? 0.05 : 0.1;
+    clauses.sellOnPercent = valuation.isStar
+      ? SELL_ON_RULES.starPercent
+      : SELL_ON_RULES.normalPercent;
   }
   return clauses;
 }
@@ -145,17 +149,53 @@ export function buildLoanTerms(
 }
 
 /**
- * Valor real de una oferta para el vendedor: fijo, más una parte de las
- * cláusulas contingentes (que nunca cuentan al 100 %), más el valor de los jugadores incluidos
- * en el intercambio, menos lo que le "cuesta" ceder futura venta.
+ * Valor esperado para el vendedor de una cláusula de futura venta.
+ *
+ * La futura reventa es incierta, pero tampoco es cero: una cláusula del 30 %
+ * puede compensar varios millones menos de fijo en una negociación.
  */
-export function offerWorth(offer: TransferOffer): number {
+export function expectedSellOnValue(
+  playerId: string,
+  sellOnPercent: number,
+  valuation?: MarketValuation | null,
+): number {
+  const percent = clamp(sellOnPercent, 0, 0.5);
+  if (percent <= 0) return 0;
+
+  const player = getPlayer(playerId);
+  const baseValue = Math.max(
+    player?.value ?? 0,
+    valuation?.marketValue ?? 0,
+    valuation?.expectedPrice ?? 0,
+  );
+  if (baseValue <= 0) return 0;
+
+  return (
+    baseValue *
+    SELL_ON_RULES.expectedResaleValueFactor *
+    SELL_ON_RULES.realizationProbability *
+    percent
+  );
+}
+
+/**
+ * Valor real de una oferta para el vendedor: fijo, más una parte de las
+ * cláusulas contingentes y de jugadores incluidos en el intercambio.
+ */
+export function offerWorth(
+  offer: TransferOffer,
+  valuation?: MarketValuation | null,
+): number {
   const swapValue = offer.clauses.playerSwapIds.reduce((sum, id) => {
     const player = getPlayer(id);
     return sum + (player ? player.value * 0.8 : 0);
   }, 0);
-  const sellOnCost = offer.amount * offer.clauses.sellOnPercent * 0.25;
-  return Math.max(0, offer.amount + swapValue + offer.clauses.optionFee - sellOnCost);
+  const sellOnValue = expectedSellOnValue(
+    offer.playerId,
+    offer.clauses.sellOnPercent,
+    valuation,
+  );
+  return Math.max(0, offer.amount + swapValue + offer.clauses.optionFee + sellOnValue);
 }
 
 // ============================================================================
@@ -170,19 +210,33 @@ export function generateCounterOffer(
   amount: number,
   valuation: MarketValuation | null | undefined,
   round = 0,
+  sellOnPercent = 0,
+  maxCounterAmount?: number,
 ): number {
   const val = valuation ?? calculateMarketValuation({ marketValue: amount, age: 26, ovr: 75 });
   const concession = Math.min(0.25, round * 0.07);
-  const target = val.idealPrice * (1 - concession);
-  const counter = Math.max(val.minimumPrice, Math.min(val.maximumPrice, target));
-  // Nunca pedir menos de lo ya ofrecido.
-  return roundFee(Math.max(counter, amount * 1.02));
+  const targetWorth = val.idealPrice * (1 - concession);
+  const futureValue = expectedSellOnValue(val.playerId, sellOnPercent, val);
+  const targetFixed = Math.max(0, targetWorth - futureValue);
+  const counter = Math.min(val.maximumPrice, targetFixed);
+  // En una ronda posterior el club no debe empeorar su propia demanda anterior:
+  // si ya había pedido 141M, no puede responder a 140M pidiendo 142M.
+  const naturalMinimum = Math.max(
+    amount * 1.02,
+    counter,
+    sellOnPercent > 0 ? amount : 0,
+  );
+  const capped = maxCounterAmount !== undefined
+    ? Math.min(naturalMinimum, Math.max(0, maxCounterAmount))
+    : naturalMinimum;
+  return roundFee(capped);
 }
 
 /** Respuesta del club propietario a una oferta. */
 export function processCounterOffer(
   offer: TransferOffer,
   valuation?: MarketValuation,
+  maxCounterAmount?: number,
 ): NegotiationResponse {
   const val =
     valuation ??
@@ -195,7 +249,7 @@ export function processCounterOffer(
           ovr: 75,
         }));
 
-  const worth = offerWorth(offer);
+  const worth = offerWorth(offer, val);
 
   // La cláusula de rescisión se paga y no hay negociación posible.
   const player = getPlayer(offer.playerId);
@@ -240,10 +294,25 @@ export function processCounterOffer(
     };
   }
 
-  const counterAmount = generateCounterOffer(offer.amount, val, offer.round);
+  const gap = Math.max(0, val.idealPrice - worth);
+  const sellerWantsSellOn =
+    gap > 0 &&
+    seededUnit(offer.id, offer.round, "seller-sellon") <
+      0.18 + (val.isStar ? 0.12 : 0.04);
+  const demandedSellOn = sellerWantsSellOn
+    ? (val.isStar ? SELL_ON_RULES.starPercent : SELL_ON_RULES.normalPercent)
+    : offer.clauses.sellOnPercent;
+
+  const counterAmount = generateCounterOffer(
+    offer.amount,
+    val,
+    offer.round,
+    demandedSellOn,
+    maxCounterAmount,
+  );
   const demands: OfferClauses = {
     ...emptyClauses(),
-    sellOnPercent: val.isStar ? 0.1 : 0,
+    sellOnPercent: demandedSellOn,
     wageShare: offer.clauses.wageShare,
     optionFee: offer.clauses.optionFee,
     playerSwapIds: offer.clauses.playerSwapIds,
@@ -252,7 +321,12 @@ export function processCounterOffer(
     status: "counter",
     counterAmount,
     demands,
-    message: `El club pide ${(counterAmount / 1_000_000).toFixed(1)}M € para cerrar el traspaso.`,
+    message:
+      `El club pide ${(counterAmount / 1_000_000).toFixed(1)}M €`
+      + (demandedSellOn > 0
+        ? ` y un ${Math.round(demandedSellOn * 100)}% de futura venta`
+        : "")
+      + " para cerrar el traspaso.",
   };
 }
 
@@ -281,9 +355,19 @@ export function decideImprovement(
 ): ImprovementDecision {
   const profile = getClubProfile(offer.buyerClubId);
   const asked = response.counterAmount;
+  const demandedSellOn = Math.max(
+    offer.clauses.sellOnPercent,
+    response.demands?.sellOnPercent ?? 0,
+  );
+  const demandedFutureValue = expectedSellOnValue(
+    offer.playerId,
+    demandedSellOn,
+    valuation,
+  );
+  const effectiveAskedCost = asked + demandedFutureValue;
   const ceiling = Math.min(budgetCeiling, valuation.maximumPrice * profile.buyingWillingness);
 
-  if (asked > ceiling) {
+  if (effectiveAskedCost > ceiling) {
     return {
       action: "withdraw",
       amount: offer.amount,
@@ -293,11 +377,22 @@ export function decideImprovement(
   }
 
   // Con mucha paciencia, sube por pasos pequeños; con agresividad, casi iguala.
+  // Si el vendedor exige una futura venta, parte de la mejora económica ya se
+  // cubre con esa cláusula y no hace falta entregar todo en dinero inmediato.
   const step = clamp(0.35 + profile.aggression * 0.5 - profile.patience * 0.25, 0.2, 0.95);
-  const target = offer.amount + (asked - offer.amount) * step;
-  const amount = roundFee(Math.min(ceiling, Math.max(offer.amount, target)));
+  const currentEconomicCost =
+    offer.amount +
+    expectedSellOnValue(offer.playerId, offer.clauses.sellOnPercent, valuation);
+  const targetEconomicCost = Math.min(ceiling, effectiveAskedCost);
+  const economicGap = Math.max(0, targetEconomicCost - currentEconomicCost);
+  const amount = roundFee(
+    Math.min(
+      asked,
+      Math.max(offer.amount, offer.amount + economicGap * step),
+    ),
+  );
 
-  if (amount <= offer.amount) {
+  if (amount <= offer.amount && demandedSellOn <= offer.clauses.sellOnPercent) {
     return {
       action: "hold",
       amount: offer.amount,
@@ -318,7 +413,20 @@ export function decideImprovement(
         response.demands?.sellOnPercent ?? extra.sellOnPercent,
       ),
     },
-    message: `El club mejora su oferta hasta ${(amount / 1_000_000).toFixed(1)}M €.`,
+    message:
+      `El club mejora su oferta hasta ${(amount / 1_000_000).toFixed(1)}M €`
+      + (Math.max(
+          offer.clauses.sellOnPercent,
+          response.demands?.sellOnPercent ?? extra.sellOnPercent,
+        ) > offer.clauses.sellOnPercent
+        ? ` e incluye un ${Math.round(
+            Math.max(
+              offer.clauses.sellOnPercent,
+              response.demands?.sellOnPercent ?? extra.sellOnPercent,
+            ) * 100,
+          )}% de futura venta`
+        : "")
+      + ".",
   };
 }
 

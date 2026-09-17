@@ -24,6 +24,8 @@ export const MARKET_TIMING = {
   maxNegotiationRounds: 4,
   /** Días que una negociación puede quedarse parada antes de expirar. */
   negotiationExpiryDays: 7,
+  /** Máximo de propuestas del usuario durante la negociación directa con el jugador. */
+  maxPlayerNegotiationRounds: 4,
   /**
    * Máximo de fichajes por club y ventana. Antes no tenía tope real (99), lo
    * que permitía a un club encadenar decenas de fichajes en una sola ventana
@@ -400,6 +402,31 @@ export const WORLD_CLASS_THRESHOLD = 84;
 
 /** Ofertas por debajo de este ratio sobre el mínimo son insultantes. */
 export const INSULTING_OFFER_RATIO = 0.6;
+
+/**
+ * Valor económico de una cláusula de futura venta.
+ *
+ * Es un ingreso contingente, por lo que el club vendedor nunca la valora al
+ * 100 % de una futura venta hipotética. Se reconoce una fracción prudente del
+ * valor actual del jugador y una probabilidad de que esa futura venta llegue a
+ * producirse. De esta forma, por ejemplo, una oferta menor con un 30 % puede
+ * ser mejor que una oferta algo mayor sin cláusula, pero no convierte la
+ * cláusula en dinero seguro.
+ */
+export const SELL_ON_RULES = {
+  /** Parte del valor actual que representa una futura venta razonable. */
+  expectedResaleValueFactor: 0.85,
+  /** Probabilidad económica reconocida de que exista una futura reventa. */
+  realizationProbability: 0.6,
+  /** Probabilidad base de que un comprador IA use sell-on en una oferta inicial. */
+  openingOfferChance: 0.22,
+  /** Incremento máximo de esa probabilidad por paciencia del comprador. */
+  patienceOfferChance: 0.18,
+  /** Porcentaje prudente para ofertas IA normales. */
+  normalPercent: 0.05,
+  /** Porcentaje habitual máximo para una estrella. */
+  starPercent: 0.10,
+} as const;
 
 // ============================================================================
 // SALARIOS Y PRESUPUESTOS

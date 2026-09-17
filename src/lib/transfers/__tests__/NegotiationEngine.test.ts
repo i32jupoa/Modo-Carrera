@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createTransferOffer, emptyClauses } from "../NegotiationEngine";
+import {
+  createTransferOffer,
+  emptyClauses,
+  generateCounterOffer,
+  offerWorth,
+} from "../NegotiationEngine";
 
 /**
  * Regresión del fallo de nombres `fromClubId`/`toClubId`: antes el campo
@@ -52,5 +57,96 @@ describe("createTransferOffer", () => {
     });
 
     expect(offer.amount).toBe(0);
+  });
+});
+
+
+describe("valor de futura venta", () => {
+  const valuation = {
+    playerId: "p1",
+    marketValue: 50_000_000,
+    minimumPrice: 50_000_000,
+    expectedPrice: 55_000_000,
+    idealPrice: 60_000_000,
+    maximumPrice: 70_000_000,
+    listPrice: 55_000_000,
+    isStar: false,
+    competition: 0,
+  };
+
+  it("puede hacer mejor una oferta menor con sell-on que una mayor sin sell-on", () => {
+    const noSellOn = createTransferOffer({
+      playerId: "p1",
+      playerName: "Jugador de Prueba",
+      buyerClubId: "club-comprador",
+      sellerClubId: "club-vendedor",
+      amount: 60_000_000,
+      wageOffer: 1_000_000,
+    });
+    const withSellOn = createTransferOffer({
+      playerId: "p1",
+      playerName: "Jugador de Prueba",
+      buyerClubId: "club-comprador",
+      sellerClubId: "club-vendedor",
+      amount: 55_000_000,
+      wageOffer: 1_000_000,
+      clauses: { sellOnPercent: 0.30 },
+    });
+
+    expect(offerWorth(withSellOn, valuation)).toBeGreaterThan(
+      offerWorth(noSellOn, valuation),
+    );
+  });
+
+  it("no inventa valor cuando el porcentaje es 0%", () => {
+    const offer = createTransferOffer({
+      playerId: "p1",
+      playerName: "Jugador de Prueba",
+      buyerClubId: "club-comprador",
+      sellerClubId: "club-vendedor",
+      amount: 60_000_000,
+      wageOffer: 1_000_000,
+      clauses: { sellOnPercent: 0 },
+    });
+
+    expect(offerWorth(offer, valuation)).toBe(60_000_000);
+  });
+});
+
+
+describe("contraofertas del vendedor", () => {
+  const valuation = {
+    playerId: "p1",
+    marketValue: 50_000_000,
+    minimumPrice: 50_000_000,
+    expectedPrice: 55_000_000,
+    idealPrice: 60_000_000,
+    maximumPrice: 70_000_000,
+    listPrice: 55_000_000,
+    isStar: false,
+    competition: 0,
+  };
+
+  it("no sube por encima de la demanda previa del club", () => {
+    const counter = generateCounterOffer(
+      140_000_000,
+      valuation,
+      2,
+      0,
+      141_000_000,
+    );
+
+    expect(counter).toBeLessThanOrEqual(141_000_000);
+  });
+
+  it("sin una demanda previa mantiene el comportamiento normal", () => {
+    const counter = generateCounterOffer(
+      40_000_000,
+      valuation,
+      1,
+      0,
+    );
+
+    expect(counter).toBeGreaterThanOrEqual(40_000_000);
   });
 });
