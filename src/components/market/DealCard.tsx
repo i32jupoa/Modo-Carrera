@@ -3,6 +3,7 @@ import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { formatEuro, fcPlayerById, usePlayersStore } from "@/store/playersStore";
 import { stageLabel, MARKET_TIMING, type UserDeal, type SquadRole } from "@/lib/transfers";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { getPlayer } from "@/lib/transfers/PlayerIndex";
 import { TeamLogo } from "@/components/TeamLogo";
 
 interface Props {
@@ -129,6 +130,7 @@ export function DealCard({
   }, [deal.id, deal.stage, deal.offer.clauses.sellOnPercent, isLoan]);
   const closed = deal.stage === "completed" || deal.stage === "failed";
   const rawPlayer = fcPlayerById(deal.playerId);
+  const marketPlayer = getPlayer(String(deal.playerId));
   const totalEconomicBudget = usePlayersStore((s) => s.budget);
   const wageBudget = usePlayersStore((s) => s.wageBudget);
   const transferBudget = Math.max(0, totalEconomicBudget - wageBudget);
@@ -161,8 +163,8 @@ export function DealCard({
   const myClubLoanShare = isLoan
     ? (deal.direction === "out" ? 1 - loanDestinationShare : loanDestinationShare)
     : 1;
-  const loanPlayerSalaryCommitment = isLoan && rawPlayer?.contract?.wage
-    ? Math.max(0, Math.round(rawPlayer.contract.wage * (1 - loanDestinationShare)))
+  const loanPlayerSalaryCommitment = isLoan && marketPlayer?.contract.wage
+    ? Math.max(0, Math.round(marketPlayer.contract.wage * (1 - loanDestinationShare)))
     : 0;
   const playerFinancialNeed = playerPhase && (
     (!isLoan && deal.direction === "in" && effectivePlayerWageBudget <= 0) ||
@@ -403,7 +405,7 @@ export function DealCard({
                       Math.round(amount * 1_000_000),
                       isLoan
                         ? {
-                            wageShare: deal.direction === "out" ? (100 - loanWageShare) / 100 : loanWageShare / 100,
+                            wageShare: (100 - loanWageShare) / 100,
                             loanDurationMonths,
                             optionFee: loanTypeDemand === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
                             loanType: loanTypeDemand,
@@ -417,7 +419,7 @@ export function DealCard({
                       isLoan ? deal.offer.wageOffer : Math.round(wage * 1_000_000),
                       isLoan
                         ? {
-                            wageShare: deal.direction === "out" ? (100 - loanWageShare) / 100 : loanWageShare / 100,
+                            wageShare: loanWageShare / 100,
                             loanDurationMonths,
                             squadRole: playerRole,
                             sellOnPercent: deal.offer.type === "loan" ? 0 : sellOn / 100,
@@ -637,7 +639,7 @@ export function DealCard({
                 Math.round(demand * 1_000_000),
                 isLoan
                   ? {
-                      wageShare: deal.direction === "out" ? (100 - loanWageShare) / 100 : loanWageShare / 100,
+                      wageShare: loanWageShare / 100,
                       loanDurationMonths,
                       optionFee: loanTypeDemand === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
                       loanType: loanTypeDemand,

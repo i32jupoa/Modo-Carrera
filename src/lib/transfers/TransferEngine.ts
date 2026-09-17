@@ -51,7 +51,7 @@ import {
   reassignPlayerClub,
   updatePlayer,
 } from "./PlayerIndex";
-import { getSquadReport, playerImprovesSquad, priorityNeeds, weakestGroupNeed } from "./SquadAnalyzer";
+import { getSquadReport, playerImprovesSquad } from "./SquadAnalyzer";
 import {
   coreDeparturesFor,
   departuresFor,

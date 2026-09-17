@@ -653,8 +653,9 @@ function SquadPage() {
               const morale = selectedStats?.morale ?? 70;
               const mood = moodLabel(morale);
               const injured = (selectedStats?.injuredUntil ?? 0) > 0;
-              const marketContract = getPlayer(String(selected.ID))?.contract;
-              const isListed = marketContract?.transferListed ?? listed.has(String(selected.ID));
+              const marketPlayer = getPlayer(String(selected.ID));
+              const marketContract = marketPlayer?.contract;
+              const isListed = marketPlayer?.transferListed ?? listed.has(String(selected.ID));
               const value = marketValueEuros(selected);
               const wage = marketContract?.wage ?? getPlayerAnnualWage(String(selected.ID));
               return (

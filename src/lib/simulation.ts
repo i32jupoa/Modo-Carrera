@@ -558,7 +558,7 @@ function addSub(
           : context?.style === "defensive" && isDefensive(p.positions)
             ? 1.5
             : 0;
-      const underdogBoost = context?.strengthDiff < -6 && isAttacking(p.positions) ? 1.5 : 0;
+      const underdogBoost = (context?.strengthDiff ?? 0) < -6 && isAttacking(p.positions) ? 1.5 : 0;
       return p.rating + noise + roleBoost + underdogBoost;
     };
     return score(b) - score(a);

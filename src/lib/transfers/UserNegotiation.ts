@@ -140,8 +140,13 @@ export interface UserDeal {
   /** Condiciones definitivas de una cesión saliente aceptada por el club.
    * Se conserva como fuente canónica para que ninguna respuesta posterior
    * pueda reintroducir valores de una oferta anterior del club. */
-  agreedLoanClauses?: Pick<OfferClauses,
-    "wageShare" | "loanDurationMonths" | "loanType" | "optionFee" | "squadRole">;
+  agreedLoanClauses?: {
+    wageShare: number;
+    loanDurationMonths: number;
+    loanType: Extract<TransferType, "loan" | "loan-option" | "loan-obligation">;
+    optionFee: number;
+    squadRole?: import("./types").SquadRole;
+  };
   /** Rol que el usuario pide al club comprador para una cesión saliente. */
   clubSquadRoleDemand?: import("./types").SquadRole;
   playerMessage: string;

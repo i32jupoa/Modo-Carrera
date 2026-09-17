@@ -606,8 +606,8 @@ function TeamsPage() {
                       const goalContributions = stats.goals + stats.assists;
                       const dynamicStats = stats.dynamicStats;
                       const averageRating =
-                        dynamicStats?.seasonAppearances > 0
-                          ? dynamicStats.seasonAverageRating
+                        (dynamicStats?.seasonAppearances ?? 0) > 0
+                          ? (dynamicStats?.seasonAverageRating ?? null)
                           : stats.formHistory?.length
                             ? stats.formHistory.reduce((sum, value) => sum + value, 0) / stats.formHistory.length
                             : null;
