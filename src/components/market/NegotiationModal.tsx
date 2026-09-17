@@ -34,6 +34,7 @@ interface Props {
 
 const SELL_ON_OPTIONS = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50];
 const LOAN_DURATION_OPTIONS = [6, 12, 24] as const;
+const LOAN_WAGE_SHARE_OPTIONS = Array.from({ length: 21 }, (_, index) => index * 5);
 
 /** Formulario de oferta para traspasos y cesiones. */
 export function NegotiationModal({
@@ -213,14 +214,14 @@ export function NegotiationModal({
 
             <div className="space-y-1.5">
                 <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                  % del sueldo que paga el destino
+                  % del sueldo que paga mi club
                 </label>
                 <select
                   value={wageShare}
                   onChange={(e) => setWageShare(Number(e.target.value))}
                   className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
                 >
-                  {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((share) => (
+                  {LOAN_WAGE_SHARE_OPTIONS.map((share) => (
                     <option key={share} value={share}>{share}%</option>
                   ))}
                 </select>
@@ -284,7 +285,7 @@ export function NegotiationModal({
           {type !== "permanent" && (
             <>
               <p>Presupuesto salarial: <span className="text-foreground font-bold">{formatEuro(wageBudget)} al año</span></p>
-              <p>El destino paga el <span className="text-foreground font-bold">{wageShare}%</span> del sueldo actual y tu club el <span className="text-foreground font-bold">{100 - wageShare}%</span>.</p>
+              <p>Mi club pagará el <span className="text-foreground font-bold">{wageShare}%</span> del sueldo actual y {clubName} pagará el <span className="text-foreground font-bold">{100 - wageShare}%</span>.</p>
             </>
           )}
           {type === "permanent" && (

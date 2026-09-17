@@ -51,7 +51,9 @@ export function LoanOutModal({
     onSubmit({
       borrowerClubId,
       loanFee: Math.round(Math.max(0, fee) * 1_000_000),
-      wageShare: wageShare / 100,
+      // El motor guarda el porcentaje del club receptor; la interfaz siempre
+      // trabaja con el porcentaje que paga mi club.
+      wageShare: (100 - wageShare) / 100,
       durationMonths,
       squadRole,
     });
@@ -79,7 +81,7 @@ export function LoanOutModal({
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Club receptor</label>
+          <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Club con el que quieres negociar</label>
           <select
             value={borrowerClubId}
             onChange={(e) => setBorrowerClubId(e.target.value)}
@@ -104,21 +106,21 @@ export function LoanOutModal({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">% de ficha que paga el club receptor</label>
+            <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">% de ficha que paga mi club</label>
             <select
-              value={100 - wageShare}
-              onChange={(e) => setWageShare(100 - Number(e.target.value))}
+              value={wageShare}
+              onChange={(e) => setWageShare(Number(e.target.value))}
               className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
             >
-              {[0, 10, 20, 30, 40, 50, 60, 70, 80].map((receiverShare) => (
-                <option key={receiverShare} value={receiverShare}>{receiverShare}%</option>
+              {Array.from({ length: 21 }, (_, index) => index * 5).map((share) => (
+                <option key={share} value={share}>{share}%</option>
               ))}
             </select>
           </div>
         </div>
 
         <div className="space-y-2">
-          <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Rol previsto en el club receptor</label>
+          <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">{`Rol previsto en ${destinations.find((team) => team.id === borrowerClubId)?.name ?? "el club seleccionado"}`}</label>
           <select
             value={squadRole}
             onChange={(e) => setSquadRole(e.target.value as SquadRole)}
@@ -133,7 +135,7 @@ export function LoanOutModal({
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Tú asumirías el {wageShare}% de la ficha durante la cesión.
+          Mi club asumirá el {wageShare}% de la ficha durante la cesión.
         </p>
 
         <div className="flex gap-2">

@@ -43,7 +43,7 @@ export function NegotiationDetailsModal({
   const role = record.clauses.squadRole;
   const isLoan = record.type.startsWith("loan");
   const destinationShare = Math.round((record.clauses.wageShare ?? 0) * 100);
-  const ownerShare = 100 - destinationShare;
+  const myClubShare = direction === "in" ? destinationShare : 100 - destinationShare;
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-auto">
@@ -85,8 +85,7 @@ export function NegotiationDetailsModal({
 
         {isLoan && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <Info label="Destino paga" value={`${destinationShare}%`} />
-            <Info label="Tú pagas" value={`${ownerShare}%`} />
+            <Info label="Mi club paga" value={`${myClubShare}%`} />
             <Info label="Duración" value={`${record.clauses.loanDurationMonths || 12} meses`} />
             {record.type !== "loan" && (
               <Info label={record.type === "loan-option" ? "Opción de compra" : "Compra obligatoria"} value={formatEuro(record.clauses.optionFee)} />

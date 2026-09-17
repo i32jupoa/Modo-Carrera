@@ -59,6 +59,11 @@ export function emptyClauses(): OfferClauses {
   };
 }
 
+/** Los clubes solo generan porcentajes salariales en pasos de 5 puntos. */
+export function quantizeLoanWageShare(value: number): number {
+  return clamp(Math.round(clamp(value, 0, 1) * 20) / 20, 0, 1);
+}
+
 // ============================================================================
 // CREACIÓN DE OFERTAS
 // ============================================================================
@@ -139,10 +144,12 @@ export function buildLoanTerms(
   const player = getPlayer(playerId);
   const value = player?.value ?? 0;
   const clauses = emptyClauses();
-  clauses.wageShare = clamp(
-    LOAN_RULES.defaultWageShare + (seededUnit(seed, "wageshare") - 0.5) * 0.3,
-    0.3,
-    1,
+  clauses.wageShare = quantizeLoanWageShare(
+    clamp(
+      LOAN_RULES.defaultWageShare + (seededUnit(seed, "wageshare") - 0.5) * 0.3,
+      0.3,
+      1,
+    ),
   );
   if (type !== "loan") clauses.optionFee = roundFee(value * LOAN_RULES.optionFactor);
   return clauses;

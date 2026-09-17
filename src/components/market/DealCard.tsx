@@ -61,31 +61,39 @@ export function DealCard({
   onCounterOutgoing,
   onRejectIncoming,
 }: Props) {
-  const [amount, setAmount] = useState(Math.round(deal.offer.amount / 100_000) / 10);
-  const [wage, setWage] = useState(Math.round(deal.offer.wageOffer / 100_000) / 10);
-  const [playerRole, setPlayerRole] = useState<SquadRole>(deal.offer.clauses.squadRole ?? "rotation");
-  const [contractYears, setContractYears] = useState(deal.offer.clauses.contractYears ?? deal.playerYearsDemand ?? 4);
-  const [demand, setDemand] = useState(
-    Math.round((deal.valuation.idealPrice || deal.offer.amount) / 100_000) / 10,
-  );
-  const [incomingLoanRole, setIncomingLoanRole] = useState<SquadRole>(deal.offer.clauses.squadRole ?? "rotation");
-  const [loanWageShare, setLoanWageShare] = useState(
-    Math.round((deal.offer.clauses.wageShare ?? 0) * 100),
-  );
-  const [loanDurationMonths, setLoanDurationMonths] = useState(
-    deal.offer.clauses.loanDurationMonths || 12,
-  );
   const isLoan =
     deal.offer.type === "loan" ||
     deal.offer.type === "loan-option" ||
     deal.offer.type === "loan-obligation";
+  const initialLoanClauses = isLoan && deal.agreedLoanClauses
+    ? deal.agreedLoanClauses
+    : deal.offer.clauses;
+
+  const [amount, setAmount] = useState(Math.round(deal.offer.amount / 100_000) / 10);
+  const [wage, setWage] = useState(Math.round(deal.offer.wageOffer / 100_000) / 10);
+  const [playerRole, setPlayerRole] = useState<SquadRole>(initialLoanClauses.squadRole ?? "rotation");
+  const [contractYears, setContractYears] = useState(deal.offer.clauses.contractYears ?? deal.playerYearsDemand ?? 4);
+  const [demand, setDemand] = useState(
+    (deal.offer.type === "loan" || deal.offer.type === "loan-option" || deal.offer.type === "loan-obligation")
+      ? Math.round(deal.offer.amount / 100_000) / 10
+      : Math.round((deal.valuation.idealPrice || deal.offer.amount) / 100_000) / 10,
+  );
+  const [incomingLoanRole, setIncomingLoanRole] = useState<SquadRole>(initialLoanClauses.squadRole ?? "rotation");
+  const [loanWageShare, setLoanWageShare] = useState(() => {
+    const storedDestinationShare = Math.round(Math.round((deal.offer.clauses.wageShare ?? 0) * 20) / 20 * 100);
+    return deal.direction === "out" ? 100 - storedDestinationShare : storedDestinationShare;
+  });
+  const [loanDurationMonths, setLoanDurationMonths] = useState(
+    deal.offer.clauses.loanDurationMonths || 12,
+  );
   useEffect(() => {
     if (!isLoan) return;
     setLoanTypeDemand(deal.clubLoanTypeDemand ?? (deal.offer.type as "loan" | "loan-option" | "loan-obligation"));
-    setLoanWageShare(Math.round((deal.offer.clauses.wageShare ?? 0) * 100));
+    const storedDestinationShare = Math.round(Math.round((deal.offer.clauses.wageShare ?? 0) * 20) / 20 * 100);
+    setLoanWageShare(deal.direction === "out" ? 100 - storedDestinationShare : storedDestinationShare);
     setLoanDurationMonths(deal.offer.clauses.loanDurationMonths || 12);
     setLoanOptionFee(Math.round((deal.offer.clauses.optionFee ?? 0) / 100_000) / 10);
-    setIncomingLoanRole(deal.offer.clauses.squadRole ?? "rotation");
+    setIncomingLoanRole(displayedLoanClauses.squadRole ?? "rotation");
   }, [deal.id, deal.stage, deal.offer.type, deal.offer.amount, deal.offer.clauses.wageShare, deal.offer.clauses.loanDurationMonths, deal.offer.clauses.optionFee, deal.offer.clauses.squadRole, deal.clubLoanTypeDemand, deal.clubSquadRoleDemand, isLoan]);
 
   // Sincroniza los campos visibles cuando el club hace una nueva propuesta.
@@ -94,8 +102,13 @@ export function DealCard({
   useEffect(() => {
     const nextAmount = Math.round(deal.offer.amount / 100_000) / 10;
     setAmount(nextAmount);
-    if (deal.stage === "club-counter" && deal.clubDemand > 0) {
-      setDemand(Math.round(deal.clubDemand / 100_000) / 10);
+    const dealIsLoan = deal.offer.type === "loan" || deal.offer.type === "loan-option" || deal.offer.type === "loan-obligation";
+    if (dealIsLoan) {
+      // En cesiones, la prima inicial de la contraoferta debe partir siempre
+      // de la prima que acaba de ofrecer el club, también cuando es 0 €.
+      setDemand(Math.round(deal.offer.amount / 100_000) / 10);
+    } else if (deal.stage === "club-counter") {
+      setDemand(Math.round((deal.clubDemand || deal.offer.amount) / 100_000) / 10);
     }
   }, [deal.id, deal.stage, deal.offer.amount, deal.clubDemand]);
   const [loanOptionFee, setLoanOptionFee] = useState(
@@ -136,8 +149,14 @@ export function DealCard({
     wageBudget,
     Math.max(0, totalEconomicBudget - agreedTransferFee),
   );
+  const displayedLoanClauses = isLoan && deal.agreedLoanClauses
+    ? deal.agreedLoanClauses
+    : deal.offer.clauses;
   const loanDestinationShare = isLoan
-    ? Math.max(0, Math.min(1, deal.offer.clauses.wageShare ?? 0))
+    ? Math.round(Math.max(0, Math.min(1, displayedLoanClauses.wageShare ?? 0)) * 20) / 20
+    : 1;
+  const myClubLoanShare = isLoan
+    ? (deal.direction === "out" ? 1 - loanDestinationShare : loanDestinationShare)
     : 1;
   const loanPlayerSalaryCommitment = isLoan && rawPlayer?.contract?.wage
     ? Math.max(0, Math.round(rawPlayer.contract.wage * (1 - loanDestinationShare)))
@@ -175,6 +194,9 @@ export function DealCard({
   const duration = deal.offer.clauses.loanDurationMonths || 0;
   const otherClub = teamById(deal.otherClubId);
   const otherClubLeague = otherClub ? leagueName(deal.otherClubId) : "";
+  const roleClubName = deal.direction === "out"
+    ? (otherClub?.name ?? deal.otherClubId)
+    : clubName(deal.userClubId);
 
   return (
     <article
@@ -223,17 +245,13 @@ export function DealCard({
         {isLoan && (
           <>
             <Cell
-              label="Sueldo que paga el club destino"
-              value={`${Math.round((deal.offer.clauses.wageShare ?? 0) * 100)}%`}
-            />
-            <Cell
-              label="Sueldo que pagas tú"
-              value={`${100 - Math.round((deal.offer.clauses.wageShare ?? 0) * 100)}%`}
+              label="Sueldo que paga mi club"
+              value={`${Math.round(myClubLoanShare * 100)}%`}
             />
             <Cell label="Duración" value={`${duration} meses`} />
             <Cell
-              label="Rol en el destino"
-              value={ROLE_OPTIONS.find((option) => option.value === (deal.offer.clauses.squadRole ?? "rotation"))?.label ?? "Rotación"}
+              label={`Rol en ${roleClubName}`}
+              value={ROLE_OPTIONS.find((option) => option.value === (displayedLoanClauses.squadRole ?? "rotation"))?.label ?? "Rotación"}
             />
             {deal.offer.type !== "loan" && (
               <Cell
@@ -291,13 +309,13 @@ export function DealCard({
                   value={amount}
                   onChange={setAmount}
                 />
-                <SelectNumber label="Sueldo que paga el destino" value={loanWageShare} onChange={setLoanWageShare} options={[0,10,20,30,40,50,60,70,80,90,100]} />
+                <SelectNumber label="Sueldo que paga mi club" value={loanWageShare} onChange={setLoanWageShare} options={Array.from({ length: 21 }, (_, index) => index * 5)} />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <SelectNumber label="Duración" value={loanDurationMonths} onChange={setLoanDurationMonths} options={[6,12,24]} formatter={(v) => v === 6 ? "6 meses" : v === 12 ? "1 año" : "2 años"} />
               </div>
               <label className="block text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                Rol en el destino
+                {`Rol en ${roleClubName}`}
                 <select
                   value={incomingLoanRole}
                   onChange={(e) => setIncomingLoanRole(e.target.value as SquadRole)}
@@ -337,7 +355,7 @@ export function DealCard({
                 <SelectNumber label="% para tu club en futura reventa" value={sellOn} onChange={setSellOn} options={[0,5,10,15,20,25,30,35,40,45,50]} />
               )}
               <div className="rounded-xl border border-border/40 bg-secondary/30 px-3 py-2 text-[0.7rem] text-muted-foreground">
-                Tu club paga el <span className="font-black text-foreground">{100 - loanWageShare}%</span> de la ficha. El destino paga el <span className="font-black text-foreground">{loanWageShare}%</span>. El jugador irá como <span className="font-black text-foreground">{ROLE_OPTIONS.find((option) => option.value === incomingLoanRole)?.label ?? "Rotación"}</span>.
+                Mi club pagará el <span className="font-black text-foreground">{loanWageShare}%</span> de la ficha y {otherClub?.name ?? deal.otherClubId} pagará el <span className="font-black text-foreground">{100 - loanWageShare}%</span>. El jugador irá como <span className="font-black text-foreground">{ROLE_OPTIONS.find((option) => option.value === incomingLoanRole)?.label ?? "Rotación"}</span>.
               </div>
             </div>
           )}
@@ -362,7 +380,7 @@ export function DealCard({
                       Math.round(amount * 1_000_000),
                       isLoan
                         ? {
-                            wageShare: loanWageShare / 100,
+                            wageShare: deal.direction === "out" ? (100 - loanWageShare) / 100 : loanWageShare / 100,
                             loanDurationMonths,
                             optionFee: loanTypeDemand === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
                             loanType: loanTypeDemand,
@@ -376,7 +394,7 @@ export function DealCard({
                       isLoan ? deal.offer.wageOffer : Math.round(wage * 1_000_000),
                       isLoan
                         ? {
-                            wageShare: loanWageShare / 100,
+                            wageShare: deal.direction === "out" ? (100 - loanWageShare) / 100 : loanWageShare / 100,
                             loanDurationMonths,
                             squadRole: playerRole,
                             sellOnPercent: deal.offer.type === "loan" ? 0 : sellOn / 100,
@@ -403,9 +421,9 @@ export function DealCard({
           {isLoan && (deal.lastUserCounterClauses || deal.lastUserCounterAmount !== undefined) && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <Cell label="Prima de cesión" value={formatEuro(deal.lastUserCounterAmount ?? deal.offer.amount)} />
-              <Cell label="Sueldo que paga el destino" value={`${Math.round(((deal.lastUserCounterClauses?.wageShare as number | undefined) ?? deal.offer.clauses.wageShare ?? 0) * 100)}%`} />
+              <Cell label="Sueldo que paga mi club" value={`${deal.direction === "out" ? 100 - Math.round(((deal.lastUserCounterClauses?.wageShare as number | undefined) ?? deal.offer.clauses.wageShare ?? 0) * 100) : Math.round(((deal.lastUserCounterClauses?.wageShare as number | undefined) ?? deal.offer.clauses.wageShare ?? 0) * 100)}%`} />
               <Cell label="Duración" value={`${deal.lastUserCounterClauses?.loanDurationMonths ?? deal.offer.clauses.loanDurationMonths ?? 12} meses`} />
-              <Cell label="Rol en el destino" value={(ROLE_OPTIONS.find((option) => option.value === ((deal.lastUserCounterClauses?.squadRole as SquadRole | undefined) ?? deal.offer.clauses.squadRole ?? "rotation"))?.label ?? "Rotación")} />
+              <Cell label={`Rol en ${roleClubName}`} value={(ROLE_OPTIONS.find((option) => option.value === ((deal.lastUserCounterClauses?.squadRole as SquadRole | undefined) ?? displayedLoanClauses.squadRole ?? "rotation"))?.label ?? "Rotación")} />
             </div>
           )}
           <Action label="Retirarse" onClick={() => onAbandon(deal.id)} />
@@ -554,10 +572,10 @@ export function DealCard({
                   </select>
                 </div>
                 <SelectNumber
-                  label="% del sueldo que paga el destino"
+                  label="% del sueldo que paga mi club"
                   value={loanWageShare}
                   onChange={setLoanWageShare}
-                  options={[0,10,20,30,40,50,60,70,80,90,100]}
+                  options={Array.from({ length: 21 }, (_, index) => index * 5)}
                 />
                 <SelectNumber
                   label="Duración"
@@ -567,7 +585,7 @@ export function DealCard({
                   formatter={(v) => v === 6 ? "6 meses" : v === 12 ? "1 año" : "2 años"}
                 />
                 <label className="col-span-2 text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                  Rol previsto en el club destino
+                  {`Rol previsto en ${roleClubName}`}
                   <select
                     value={incomingLoanRole}
                     onChange={(e) => setIncomingLoanRole(e.target.value as SquadRole)}
@@ -584,7 +602,7 @@ export function DealCard({
           </div>
           {isLoan && (
             <p className="text-xs text-muted-foreground">
-              La ficha anual no se modifica: {formatEuro(deal.offer.wageOffer)}/año. Si el destino paga el {loanWageShare}%, tu club seguirá pagando el {100 - loanWageShare}%. El rol previsto en el destino será <span className="font-bold text-foreground">{ROLE_OPTIONS.find((option) => option.value === incomingLoanRole)?.label ?? "Rotación"}</span>.
+              La ficha anual no se modifica: {formatEuro(deal.offer.wageOffer)}/año. Mi club pagará el <span className="font-bold text-foreground">{loanWageShare}%</span> de la ficha y {otherClub?.name ?? deal.otherClubId} pagará el <span className="font-bold text-foreground">{100 - loanWageShare}%</span>. El rol previsto en {roleClubName} será <span className="font-bold text-foreground">{ROLE_OPTIONS.find((option) => option.value === incomingLoanRole)?.label ?? "Rotación"}</span>.
             </p>
           )}
           <Action
@@ -596,7 +614,7 @@ export function DealCard({
                 Math.round(demand * 1_000_000),
                 isLoan
                   ? {
-                      wageShare: loanWageShare / 100,
+                      wageShare: deal.direction === "out" ? (100 - loanWageShare) / 100 : loanWageShare / 100,
                       loanDurationMonths,
                       optionFee: loanTypeDemand === "loan" ? 0 : Math.round(loanOptionFee * 1_000_000),
                       loanType: loanTypeDemand,

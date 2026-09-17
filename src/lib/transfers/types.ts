@@ -243,7 +243,7 @@ export type SquadRole = "star" | "starter" | "rotation" | "secondary" | "prospec
 export interface OfferClauses {
   /** Porcentaje de futura venta (0..1). */
   sellOnPercent: number;
-  /** Porcentaje del salario que asume el club receptor en cesiones (0..1). */
+  /** Porcentaje del salario que asume el club destino en almacenamiento interno (0..1). La UI lo presenta como porcentaje que paga el club del usuario. */
   wageShare: number;
   /** Coste de la opción/obligación de compra en cesiones. */
   optionFee: number;
