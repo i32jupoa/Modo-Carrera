@@ -2370,7 +2370,7 @@ export async function simulateCupMatchdayLayered(
 
         const aXI = selectMatchPlayers(store.getSimSquad(away.id));
 
-        recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league]);
+        recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league], "cup");
       }
 
       // Apply result to cup fixtures
@@ -3546,6 +3546,7 @@ function recordFakeMatchStats(
   awayPlayers: Player[],
   result: SimResult,
   currentMatchday: number,
+  competition: "league" | "cup" | "ucl" = "league",
 ) {
   // Fast-simulated matches already contain the same authoritative events as
   // detailed matches. Never generate a second, random set of scorers/cards:
@@ -3599,6 +3600,36 @@ function recordFakeMatchStats(
     store.recordGoal(event.scorerId);
     if (event.assistId) store.recordAssist(event.assistId);
   }
+
+  // Guardar también porterías a cero y MVP de los partidos simulados fuera
+  // de la liga del usuario. No cambia la simulación ni crea candidatos: solo
+  // registra las dos estadísticas que ya produce el resultado del partido.
+  const finalHomeGoals =
+    (result.homeGoals ?? 0) + (result.extraTime?.homeGoals ?? 0);
+  const finalAwayGoals =
+    (result.awayGoals ?? 0) + (result.extraTime?.awayGoals ?? 0);
+
+  const findGoalkeeper = (team: "home" | "away", fallback: Player[]) => {
+    const lineup = team === "home"
+      ? (result.homeLineup ?? fallback)
+      : (result.awayLineup ?? fallback);
+    return lineup.find((p) => isGoalkeeper(p.positions));
+  };
+
+  if (finalAwayGoals === 0) {
+    const gk = findGoalkeeper("home", homePlayers);
+    if (gk) store.recordCleanSheet(gk.id, competition);
+  }
+  if (finalHomeGoals === 0) {
+    const gk = findGoalkeeper("away", awayPlayers);
+    if (gk) store.recordCleanSheet(gk.id, competition);
+  }
+
+  const motmId = result.mvp?.playerId ??
+    (result.ratings?.length
+      ? result.ratings.reduce((best, cur) => (cur.rating > best.rating ? cur : best)).playerId
+      : undefined);
+  if (motmId) store.recordMotm(motmId, competition);
 }
 
 // Shared helper: select 11 match players from a squad
