@@ -175,7 +175,7 @@ function buildCatalog(month: string): ScoutCandidate[] {
       country: person.country,
       rating,
       cost,
-      photoUrl: `/scout-avatars/scout-${(index % 5) + 1}.svg`,
+      photoUrl: `/scout-avatars/generated-${(index % 5) + 1}.png`,
       catalogMonth: month,
     });
   }
@@ -264,7 +264,7 @@ export function ensureScoutingState(currentDate: string): ScoutingState {
     // retratos externos por avatares locales para que el sistema sea estable
     // y no dependa de una URL remota.
     const migratedCatalog = state.catalog.map((candidate, index) => {
-      const photoUrl = `/scout-avatars/scout-${(index % 5) + 1}.svg`;
+      const photoUrl = `/scout-avatars/generated-${(index % 5) + 1}.png`;
       return candidate.photoUrl === photoUrl ? candidate : { ...candidate, photoUrl };
     });
     const changed = migratedCatalog.some((candidate, index) => candidate !== state.catalog[index]);

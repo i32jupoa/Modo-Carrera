@@ -118,26 +118,16 @@ function ScoutCard({
     <article className="panel overflow-hidden flex min-w-[255px] max-w-[280px] shrink-0 snap-start flex-col">
       <div className="relative bg-gradient-to-br from-primary/15 via-card to-card p-4 border-b border-border/50">
         <div className="flex items-start gap-3">
-          <div className="w-20 h-20 overflow-hidden rounded-2xl border border-primary/20 bg-secondary/70 shadow-lg shadow-primary/5 shrink-0">
-            <div className="relative h-full w-full">
-              <div className="absolute inset-0 grid place-items-center text-2xl font-black text-primary/80" aria-hidden="true">
-                {scout.name
-                  .split(" ")
-                  .map((part) => part[0])
-                  .slice(0, 2)
-                  .join("")}
-              </div>
-              <img
-                src={scout.photoUrl}
-                alt={`Retrato de ${scout.name}`}
-                className="relative z-10 w-full h-full object-cover"
-                loading="lazy"
-                referrerPolicy="no-referrer"
-                onError={(event) => {
-                  event.currentTarget.remove();
-                }}
-              />
-            </div>
+          <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-primary/25 bg-secondary/70 shadow-lg shadow-primary/10">
+            <img
+              src={scout.photoUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+            <span className="pointer-events-none absolute inset-x-1 bottom-1 rounded-full bg-black/45 px-1.5 py-0.5 text-center text-[0.48rem] font-black tracking-wider text-white/80 backdrop-blur-sm">
+              {scout.rating.toLocaleString("es-ES")}★
+            </span>
           </div>
           <div className="min-w-0 flex-1">
             <p className="font-black leading-tight break-words">{scout.name}</p>

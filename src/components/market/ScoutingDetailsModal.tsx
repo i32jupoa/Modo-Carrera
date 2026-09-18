@@ -4,6 +4,7 @@ import { formatEuro, marketValueEuros, type FcPlayer } from "@/store/playersStor
 import { getPlayerAnnualWage } from "@/lib/transfers";
 import { buildPositions, formatShortPositions } from "@/lib/positions";
 import type { ScoutingReport, ScoutingEntry } from "@/lib/transfers";
+import { estimateScoutingMoney, estimateScoutingPotential } from "@/lib/transfers/ScoutingReport";
 import type { ComponentType } from "react";
 import { Target, TrendingUp, Shield, Zap, Crosshair, Dumbbell, SearchCheck } from "lucide-react";
 
@@ -19,95 +20,7 @@ function Stat({ label, value, icon: Icon }: { label: string; value: string | num
   );
 }
 
-type Estimate =
-  | { kind: "exact"; value: number }
-  | { kind: "range"; min: number; max: number }
-  | { kind: "unknown" };
-
-type ReportQuality = {
-  potentialSpreadMin: number;
-  potentialSpreadMax: number;
-  salarySpread: number;
-  valueSpread: number;
-  unknownChance: number;
-};
-
-const QUALITY: Record<number, ReportQuality> = {
-  0.5: { potentialSpreadMin: 5, potentialSpreadMax: 9, salarySpread: 0.30, valueSpread: 0.28, unknownChance: 0.30 },
-  1: { potentialSpreadMin: 5, potentialSpreadMax: 8, salarySpread: 0.24, valueSpread: 0.23, unknownChance: 0.22 },
-  1.5: { potentialSpreadMin: 4, potentialSpreadMax: 7, salarySpread: 0.20, valueSpread: 0.19, unknownChance: 0.18 },
-  2: { potentialSpreadMin: 4, potentialSpreadMax: 6, salarySpread: 0.17, valueSpread: 0.16, unknownChance: 0.14 },
-  2.5: { potentialSpreadMin: 3, potentialSpreadMax: 6, salarySpread: 0.14, valueSpread: 0.13, unknownChance: 0.11 },
-  3: { potentialSpreadMin: 3, potentialSpreadMax: 5, salarySpread: 0.11, valueSpread: 0.10, unknownChance: 0.08 },
-  3.5: { potentialSpreadMin: 2, potentialSpreadMax: 4, salarySpread: 0.09, valueSpread: 0.08, unknownChance: 0.06 },
-  4: { potentialSpreadMin: 2, potentialSpreadMax: 3, salarySpread: 0.07, valueSpread: 0.06, unknownChance: 0.04 },
-  4.5: { potentialSpreadMin: 1, potentialSpreadMax: 2, salarySpread: 0.05, valueSpread: 0.045, unknownChance: 0.02 },
-  5: { potentialSpreadMin: 0, potentialSpreadMax: 1, salarySpread: 0.025, valueSpread: 0.02, unknownChance: 0.005 },
-};
-
-function hashString(value: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function seededUnit(seed: string): number {
-  let value = hashString(seed) || 1;
-  value ^= value << 13;
-  value ^= value >>> 17;
-  value ^= value << 5;
-  return ((value >>> 0) % 1_000_000) / 1_000_000;
-}
-
-function seededInt(seed: string, min: number, max: number): number {
-  return Math.floor(min + seededUnit(seed) * (max - min + 1));
-}
-
-function estimatePotential(player: FcPlayer, entry?: ScoutingEntry): Estimate {
-  if (!entry) return { kind: "exact", value: Number(player.potential ?? player.OVR) };
-  const quality = QUALITY[entry.scoutRating] ?? QUALITY[0.5];
-  if (seededUnit(`${entry.playerId}:${entry.startedAt}:potential:unknown`) < quality.unknownChance) {
-    return { kind: "unknown" };
-  }
-  const actual = Math.max(player.OVR, Number(player.potential ?? player.OVR));
-  const spread = seededInt(
-    `${entry.playerId}:${entry.startedAt}:potential:spread`,
-    quality.potentialSpreadMin,
-    quality.potentialSpreadMax,
-  );
-  if (spread === 0) return { kind: "exact", value: actual };
-  return { kind: "range", min: Math.max(1, actual - spread), max: Math.min(99, actual + spread) };
-}
-
-function estimateMoney(value: number, entry: ScoutingEntry | undefined, field: string): Estimate {
-  if (!entry) return { kind: "exact", value };
-  const quality = QUALITY[entry.scoutRating] ?? QUALITY[0.5];
-  if (seededUnit(`${entry.playerId}:${entry.startedAt}:${field}:unknown`) < quality.unknownChance * 0.9) {
-    return { kind: "unknown" };
-  }
-  const spread = field === "salary" ? quality.salarySpread : quality.valueSpread;
-  if (spread <= 0.03) {
-    const rounded = Math.round(value / 50_000) * 50_000;
-    if (seededUnit(`${entry.playerId}:${entry.startedAt}:${field}:exact`) > 0.18) {
-      return { kind: "exact", value: rounded };
-    }
-    return { kind: "range", min: Math.max(0, rounded - 100_000), max: rounded + 100_000 };
-  }
-  const jitter = seededUnit(`${entry.playerId}:${entry.startedAt}:${field}:jitter`);
-  const lowFactor = Math.max(0.05, 1 - spread * (0.75 + jitter * 0.5));
-  const highFactor = 1 + spread * (0.75 + (1 - jitter) * 0.5);
-  const unit = value >= 10_000_000 ? 100_000 : 50_000;
-  return {
-    kind: "range",
-    min: Math.max(0, Math.round((value * lowFactor) / unit) * unit),
-    max: Math.round((value * highFactor) / unit) * unit,
-  };
-}
-
-function formatEstimate(estimate: Estimate): string {
+function formatEstimate(estimate: ReturnType<typeof estimateScoutingMoney>): string {
   if (estimate.kind === "unknown") return "No encontrado";
   if (estimate.kind === "exact") return formatEuro(estimate.value);
   return `${formatEuro(estimate.min)} – ${formatEuro(estimate.max)}`;
@@ -131,13 +44,27 @@ export function ScoutingDetailsModal({
   const positions = buildPositions(player.Position, player["Alternative positions"]);
   const alternatives = positions.slice(1);
   const marketValue = report?.valuation?.marketValue ?? marketValueEuros(player, "", "", 75);
-  const potential = estimatePotential(player, scoutingEntry);
-  const salary = estimateMoney(getPlayerAnnualWage(String(player.ID)), scoutingEntry, "salary");
-  const value = estimateMoney(marketValue, scoutingEntry, "value");
+  const rawOvr = Number(player.OVR);
+  const safeOvr = Number.isFinite(rawOvr) ? Math.round(rawOvr) : 0;
+  const rawPotential = Number(player.potential);
+  const safePotential = Number.isFinite(rawPotential)
+    ? Math.max(safeOvr, Math.round(rawPotential))
+    : safeOvr;
+  const potential = scoutingEntry
+    ? estimateScoutingPotential(safePotential, scoutingEntry)
+    : { kind: "exact", value: safePotential } as const;
+  const salary = scoutingEntry
+    ? estimateScoutingMoney(getPlayerAnnualWage(String(player.ID)), scoutingEntry, "salary")
+    : { kind: "exact", value: getPlayerAnnualWage(String(player.ID)) } as const;
+  const value = scoutingEntry
+    ? estimateScoutingMoney(marketValue, scoutingEntry, "value")
+    : { kind: "exact", value: marketValue } as const;
   const releaseClause = report?.releaseClause ?? 0;
-  const release = releaseClause > 0 ? estimateMoney(releaseClause, scoutingEntry, "release") : { kind: "unknown" } as const;
-  const askingPrice = report ? estimateMoney(report.askingPrice, scoutingEntry, "asking") : null;
-  const wageDemand = report ? estimateMoney(report.wageDemand, scoutingEntry, "wage-demand") : null;
+  const release = releaseClause > 0 && scoutingEntry
+    ? estimateScoutingMoney(releaseClause, scoutingEntry, "release")
+    : { kind: "unknown" } as const;
+  const askingPrice = report && scoutingEntry ? estimateScoutingMoney(report.askingPrice, scoutingEntry, "asking") : null;
+  const wageDemand = report && scoutingEntry ? estimateScoutingMoney(report.wageDemand, scoutingEntry, "wage-demand") : null;
   const ratingLabel = scoutingEntry ? `${scoutingEntry.scoutRating.toLocaleString("es-ES")}★` : "—";
 
   return (

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { formatEuro } from "@/store/playersStore";
 import { windowForDate } from "@/lib/transferWindows";
-import type { OfferClauses, ScoutingReport, SquadRole } from "@/lib/transfers";
+import type { OfferClauses, ScoutingEntry, ScoutingReport, SquadRole } from "@/lib/transfers";
+import { scoutingNegotiationDisplay } from "@/lib/transfers/ScoutingReport";
 
 interface Props {
   playerName: string;
@@ -11,6 +12,7 @@ interface Props {
   age: number;
   clubName: string;
   report: ScoutingReport | null;
+  scoutingEntry?: ScoutingEntry | null;
   budget: number;
   wageBudget?: number;
   wageBill?: number;
@@ -44,6 +46,7 @@ export function NegotiationModal({
   age,
   clubName,
   report,
+  scoutingEntry,
   budget,
   wageBudget = 0,
   wageBill = 0,
@@ -53,17 +56,17 @@ export function NegotiationModal({
   onSubmit,
   onClose,
 }: Props) {
-  const asking = report?.askingPrice ?? 0;
+  const scoutingData = report && scoutingEntry ? scoutingNegotiationDisplay(report, scoutingEntry, formatEuro) : null;
   const [operation, setOperation] = useState<"transfer" | "loan">(
     transferLocked ? "loan" : "transfer",
   );
   const [loanType, setLoanType] = useState<"loan" | "loan-option" | "loan-obligation">("loan");
   const type = operation === "transfer" ? "permanent" : loanType;
-  const [amount, setAmount] = useState(Math.round(asking / 100_000) / 10);
+  const [amount, setAmount] = useState(0);
   const [sellOn, setSellOn] = useState(0);
   const [wageShare, setWageShare] = useState(50);
   const [loanSellOn, setLoanSellOn] = useState(0);
-  const [loanOptionFee, setLoanOptionFee] = useState(Math.round((asking * 1.1) / 100_000) / 10);
+  const [loanOptionFee, setLoanOptionFee] = useState(0);
   const [loanDurationMonths, setLoanDurationMonths] = useState<number>(
     windowForDate(currentDate) === "winter" ? 6 : 12,
   );
@@ -99,24 +102,25 @@ export function NegotiationModal({
           </button>
         </div>
 
-        {report && (
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <Info label="Valor de mercado" value={formatEuro(report.valuation.marketValue)} />
-            <Info label="Precio de salida" value={formatEuro(report.askingPrice)} />
-            <Info
-              label="Horquilla del club"
-              value={`${formatEuro(report.valuation.minimumPrice)} – ${formatEuro(report.valuation.idealPrice)}`}
-            />
-            <Info label="Techo estimado" value={formatEuro(report.valuation.maximumPrice)} />
-            <Info label="Contrato" value={`${report.contractYearsLeft} temporada(s)`} />
-            <Info
-              label="Competencia"
-              value={report.competition > 0 ? `${report.competition} club(es)` : "Sin rivales"}
-            />
+        {!scoutingData && (
+          <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 text-center">
+            <p className="text-[0.68rem] font-black text-primary">Se necesita un ojeador para acceder a esta información.</p>
           </div>
         )}
 
-        {report && !report.available && (
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <Info label="Valor de mercado" value={scoutingData?.marketValue ?? "-"} />
+          <Info label="Precio de salida" value={scoutingData?.askingPrice ?? "-"} />
+          <Info
+            label="Horquilla del club"
+            value={scoutingData?.clubRange ?? "-"}
+          />
+          <Info label="Techo estimado" value={scoutingData?.maximumPrice ?? "-"} />
+          <Info label="Contrato" value={scoutingData?.contractYearsLeft ?? "-"} />
+          <Info label="Competencia" value={scoutingData?.competition ?? "-"} />
+        </div>
+
+        {report && scoutingEntry && !report.available && (
           <p className="text-xs text-yellow-400">
             El club lo considera intransferible: hará falta una oferta muy por encima de su valor.
           </p>

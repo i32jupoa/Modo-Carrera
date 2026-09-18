@@ -1,0 +1,8 @@
+Ojeador: Davide Romano
+Pais: Italia
+
+Coloca aqui una de estas dos imagenes:
+  avatar.png
+  avatar.svg
+
+El juego prueba primero avatar.png y, si no existe, avatar.svg.

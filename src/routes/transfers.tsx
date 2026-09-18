@@ -291,10 +291,11 @@ function ovrBadgeClass(ovr: number): string {
   return "bg-muted text-muted-foreground border-border/40";
 }
 
-type MarketTab = "market" | "deals" | "offers" | "entries" | "exits" | "feed";
+type MarketTab = "market" | "scouted" | "deals" | "offers" | "entries" | "exits" | "feed";
 
 const TABS: { value: MarketTab; label: string }[] = [
   { value: "market", label: "Buscar jugadores" },
+  { value: "scouted", label: "Jugadores ojeados" },
   { value: "deals", label: "Mis negociaciones" },
   { value: "offers", label: "Ofertas recibidas" },
   { value: "entries", label: "Entradas" },
@@ -423,7 +424,8 @@ function TransfersPage() {
     autoOpened.current = true;
     setTab("market");
     setTarget(found);
-    setReport(market.scout(String(found.ID)));
+    const scoutingEntry = scoutingMap.get(String(found.ID));
+    setReport(scoutingEntry?.status === "completed" ? market.scout(String(found.ID)) : null);
   }, [ready, initialPlayerId, rawPlayers, market]);
 
   const players = useMemo(() => {
@@ -461,6 +463,13 @@ function TransfersPage() {
     for (const entry of market.scouting) map.set(entry.playerId, entry);
     return map;
   }, [market.scouting]);
+
+  const scoutedPlayers = useMemo(() => {
+    const playersById = new Map((rawPlayers as FcPlayer[]).map((player) => [String(player.ID), player]));
+    return market.scouting
+      .map((entry) => ({ entry, player: playersById.get(entry.playerId) }))
+      .filter((item): item is { entry: import("@/lib/transfers").ScoutingEntry; player: FcPlayer } => Boolean(item.player));
+  }, [market.scouting, rawPlayers]);
 
   const hiredScout = market.ready ? getClubScout(market.currentDate) : null;
 
@@ -507,7 +516,8 @@ function TransfersPage() {
     const id = String(player.ID);
     if (myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate)) return;
     setTarget(player);
-    setReport(market.scout(id));
+    const scoutingEntry = scoutingMap.get(id);
+    setReport(scoutingEntry?.status === "completed" ? market.scout(id) : null);
   }
 
   function openScoutingDetails(player: FcPlayer) {
@@ -633,7 +643,9 @@ function TransfersPage() {
                 ? openDeals.length
                 : option.value === "offers"
                   ? openOffers.length
-                  : 0;
+                  : option.value === "scouted"
+                    ? market.scouting.length
+                    : 0;
           return (
             <button
               key={option.value}
@@ -833,8 +845,6 @@ function TransfersPage() {
                 const id = String(p.ID);
                 const positions = buildPositions(p.Position, p["Alternative positions"]);
                 const primaryPosition = positions[0];
-                const teamAvg = teamAverages[p.Team] || 75;
-                const cost = marketValueEuros(p, "", "", teamAvg);
                 const clubId = clubOfPlayer(id) ?? TEAM_NAME_TO_ID[p.Team];
                 const club = clubId ? teamById(clubId) : null;
                 const negotiating = market.deals.some(
@@ -898,11 +908,7 @@ function TransfersPage() {
                         {p.OVR}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between gap-2 p-3 mt-auto">
-                      <div>
-                        <p className="text-[0.6rem] uppercase text-muted-foreground">Valor de mercado</p>
-                        <p className="font-black scoreline text-primary">{formatMarketEuro(cost)}</p>
-                      </div>
+                    <div className="flex items-center justify-end gap-2 p-3 mt-auto">
                       <div className="flex items-center gap-2">
                         {(() => {
                           const scout = scoutingMap.get(id);
@@ -954,6 +960,139 @@ function TransfersPage() {
             </div>
           )}
         </>
+      )}
+
+      {tab === "scouted" && (
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 via-card to-card p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary/15 text-primary">
+                <Radar className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-black text-lg">Jugadores ojeados</h3>
+                  <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-black text-primary">
+                    {scoutedPlayers.length}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">Todos los jugadores que están siendo ojeados o cuyo informe ya está listo. Puedes negociar directamente desde aquí.</p>
+              </div>
+            </div>
+          </div>
+
+          {scoutedPlayers.length === 0 ? (
+            <div className="panel p-12 text-center">
+              <Radar className="mx-auto h-9 w-9 text-muted-foreground/40" />
+              <p className="mt-3 font-bold">Todavía no tienes jugadores ojeados.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Añade jugadores desde Buscar jugadores para encontrarlos aquí.</p>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {scoutedPlayers.map(({ player: p, entry: scout }) => {
+                const id = String(p.ID);
+                const positions = buildPositions(p.Position, p["Alternative positions"]);
+                const primaryPosition = positions[0];
+                const clubId = clubOfPlayer(id) ?? TEAM_NAME_TO_ID[p.Team];
+                const club = clubId ? teamById(clubId) : null;
+                const negotiating = market.deals.some(
+                  (d) => d.playerId === id && d.stage !== "completed" && d.stage !== "failed",
+                );
+                const justSettled = isPlayerSettled(id);
+                const blockedThisWindow = !!myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate);
+                const pending = scout.status === "pending";
+                const completed = scout.status === "completed";
+
+                return (
+                  <article
+                    key={id}
+                    className="relative panel overflow-hidden flex flex-col transition hover:border-primary/40"
+                  >
+                    <div className="flex gap-3 p-3 border-b border-border/40">
+                      <div className="w-14 h-[4.5rem] shrink-0 rounded overflow-hidden bg-secondary/60 grid place-items-center">
+                        {p.card ? (
+                          <img
+                            src={p.card}
+                            alt=""
+                            className="w-full h-full object-cover object-top"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-white/5 opacity-80" />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold truncate text-sm leading-tight">{p.Name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          <span>{formatShortPositions([primaryPosition].filter(Boolean) as any)} · {p.Age}a</span>
+                          {positions.length > 1 && (
+                            <span className="ml-1 text-[0.58rem] text-muted-foreground/70">
+                              · {formatShortPositions(positions.slice(1))}
+                            </span>
+                          )}
+                        </p>
+                        {club && (
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <TeamLogo
+                              teamName={club.name}
+                              leagueName={getLeagueName(club.league)}
+                              size={18}
+                            />
+                            <span className="text-[0.65rem] text-muted-foreground truncate">
+                              {club.name}
+                            </span>
+                          </div>
+                        )}
+                        {justSettled && (
+                          <p className="text-[0.6rem] text-amber-400 mt-1">
+                            Recién fichado: solo cesión esta ventana
+                          </p>
+                        )}
+                      </div>
+                      <span
+                        className={`scoreline text-sm font-black px-2 py-1 rounded border h-fit ${ovrBadgeClass(p.OVR)}`}
+                      >
+                        {p.OVR}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 p-3 mt-auto">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={pending}
+                          title={pending ? "El informe aún está en preparación" : "Abrir informe de ojeador"}
+                          onClick={() => startOrOpenScouting(p)}
+                          className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition disabled:opacity-45 disabled:cursor-not-allowed ${completed ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15" : "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"}`}
+                        >
+                          {pending ? <Clock3 className="h-3.5 w-3.5 animate-pulse" /> : <Eye className="h-3.5 w-3.5" />}
+                          {pending ? "Ojeando..." : "Ver informe"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRemoveScoutingId(id)}
+                          className="inline-flex items-center justify-center rounded-lg border border-border bg-card px-2.5 py-2 text-muted-foreground hover:border-destructive/40 hover:text-destructive transition"
+                          aria-label={`Eliminar a ${p.Name} del ojeo`}
+                          title="Eliminar de la lista de ojeo"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!isMarketOpen || negotiating || !market.ready || blockedThisWindow}
+                          onClick={() => openNegotiation(p)}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
+                        >
+                          <UserPlus className="h-3.5 w-3.5" />
+                          {blockedThisWindow ? "Bloqueado" : negotiating ? "Negociando" : "Negociar"}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
       {tab === "deals" && (
@@ -1275,6 +1414,7 @@ function TransfersPage() {
           age={target.Age}
           clubName={target ? (teamById(clubOfPlayer(String(target.ID)) ?? TEAM_NAME_TO_ID[target.Team])?.name ?? target.Team) : ""}
           report={report}
+          scoutingEntry={target ? scoutingMap.get(String(target.ID)) ?? null : null}
           budget={budget}
           wageBudget={wageBudget}
           wageBill={wageBill}
