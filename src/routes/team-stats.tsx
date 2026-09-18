@@ -9,6 +9,7 @@ import { usePlayersStore, mapEaPosition, POS_LABEL_ES, type FcPlayer, type Playe
 import type { Position } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { getPlayerForm } from "@/lib/playerForm";
+import { formatPositionLabel } from "@/lib/positions";
 
 export const Route = createFileRoute("/team-stats")({ component: TeamStatsPage });
 
@@ -266,7 +267,7 @@ function TeamStatsPage() {
                           <td className="px-2 py-2">
                             <div className="flex items-center gap-2.5">
                               <PlayerFace name={p.Name} image={p.card} role={roleFromPosition(p.Position)} size={34} />
-                              <span className={`w-9 shrink-0 text-[0.65rem] font-black uppercase ${ROLE_TEXT[roleFromPosition(p.Position)]}`}>{p.Position}</span>
+                              <span className={`w-9 shrink-0 text-[0.65rem] font-black uppercase ${ROLE_TEXT[roleFromPosition(p.Position)]}`}>{formatPositionLabel(p.Position)}</span>
                               <span className="truncate font-medium">{p.Name}</span>
                             </div>
                           </td>

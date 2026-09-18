@@ -302,8 +302,8 @@ const SLOT_DEFS: Record<string, Slot> = {
   cb: { label: "DFC", natural: ["CB"], adaptable: ["RB", "LB", "CDM"], group: "DEF" },
   lb: { label: "LI", natural: ["LB", "LWB"], adaptable: ["CB"], group: "DEF" },
   rb: { label: "LD", natural: ["RB", "RWB"], adaptable: ["CB"], group: "DEF" },
-  lwb: { label: "CAI", natural: ["LWB", "LB"], adaptable: ["LM"], group: "DEF" },
-  rwb: { label: "CAD", natural: ["RWB", "RB"], adaptable: ["RM"], group: "DEF" },
+  lwb: { label: "LI", natural: ["LWB", "LB"], adaptable: ["LM"], group: "DEF" },
+  rwb: { label: "LD", natural: ["RWB", "RB"], adaptable: ["RM"], group: "DEF" },
   cdm: { label: "MCD", natural: ["CDM"], adaptable: ["CM", "CB"], group: "MED" },
   cm: { label: "MC", natural: ["CM"], adaptable: ["CDM", "CAM"], group: "MED" },
   cam: { label: "MCO", natural: ["CAM"], adaptable: ["CM", "CF"], group: "MED" },
@@ -312,7 +312,7 @@ const SLOT_DEFS: Record<string, Slot> = {
   lw: { label: "EI", natural: ["LW"], adaptable: ["LM", "CF", "ST"], group: "DEL" },
   rw: { label: "ED", natural: ["RW"], adaptable: ["RM", "CF", "ST"], group: "DEL" },
   st: { label: "DC", natural: ["ST"], adaptable: ["CF"], group: "DEL" },
-  cf: { label: "SD", natural: ["CF"], adaptable: ["ST", "CAM"], group: "DEL" },
+  cf: { label: "MCO", natural: ["CF"], adaptable: ["ST", "CAM"], group: "DEL" },
 };
 
 /** Quita el sufijo numérico de la clave (cb1 → cb). */
@@ -353,8 +353,6 @@ export function estimatedEleven(formation: string, squad: FcPlayer[]): ElevenSlo
     DFC: "DFC",
     LI: "LI",
     LD: "LD",
-    CAI: "CAI",
-    CAD: "CAD",
     MCD: "MCD",
     MC: "MC",
     MCO: "MCO",
@@ -363,7 +361,6 @@ export function estimatedEleven(formation: string, squad: FcPlayer[]): ElevenSlo
     EI: "EI",
     ED: "ED",
     DC: "DC",
-    SD: "SD",
   };
 
   return slots.map((slot) => {

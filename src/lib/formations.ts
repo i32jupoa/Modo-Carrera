@@ -380,8 +380,8 @@ export function slotPosCode(posKey: string): PosCode {
     cb: "DFC",
     lb: "LI",
     rb: "LD",
-    lwb: "CAI",
-    rwb: "CAD",
+    lwb: "LI",
+    rwb: "LD",
     cdm: "MCD",
     cm: "MC",
     cam: "MCO",
@@ -390,7 +390,7 @@ export function slotPosCode(posKey: string): PosCode {
     lw: "EI",
     rw: "ED",
     st: "DC",
-    cf: "SD",
+    cf: "MCO",
   };
   return MAP[base] ?? "MC";
 }

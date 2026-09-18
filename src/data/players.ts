@@ -59,8 +59,6 @@ const POSITION_VALUE_CAP: Record<PosCode, number> = {
   DFC: 120,
   LD: 110,
   LI: 110,
-  CAD: 105,
-  CAI: 105,
   MCD: 140,
   MC: 150,
   MCO: 165,
@@ -68,7 +66,6 @@ const POSITION_VALUE_CAP: Record<PosCode, number> = {
   MI: 155,
   ED: 180,
   EI: 180,
-  SD: 190,
   DC: 200,
 };
 
@@ -242,8 +239,8 @@ export function marketValueFor(
   else reasons.push("veterano");
 
   // Determinar tipo de posición basado en PosCode
-  const isDefensive = ["GK", "DFC", "LD", "LI", "CAD", "CAI", "MCD"].includes(posCode);
-  const isAttacking = ["ED", "EI", "DC", "SD", "MCO", "MD", "MI"].includes(posCode);
+  const isDefensive = ["GK", "DFC", "LD", "LI", "MCD"].includes(posCode);
+  const isAttacking = ["ED", "EI", "DC", "MCO", "MD", "MI"].includes(posCode);
 
   if (isAttacking) reasons.push("posición ofensiva");
   else if (isDefensive) reasons.push("posición defensiva");
@@ -427,24 +424,21 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
     DFC: 1,
     LD: 2,
     LI: 3,
-    CAD: 4,
-    CAI: 5,
-    MCD: 6,
-    MC: 7,
-    MCO: 8,
-    MD: 9,
-    MI: 10,
-    ED: 11,
-    EI: 12,
-    SD: 13,
-    DC: 14,
+    MCD: 4,
+    MC: 5,
+    MCO: 6,
+    MD: 7,
+    MI: 8,
+    ED: 9,
+    EI: 10,
+    DC: 11,
   };
   TEAMS.forEach((t) => {
     if (map[t.id]) {
       map[t.id].sort((a, b) => {
         const aPos = a.positions[0] || "MC";
         const bPos = b.positions[0] || "MC";
-        return (positionOrder[aPos] || 99) - (positionOrder[bPos] || 99) || b.rating - a.rating;
+        return (positionOrder[aPos] ?? 99) - (positionOrder[bPos] ?? 99) || b.rating - a.rating;
       });
     }
   });
@@ -494,7 +488,7 @@ export function defaultLineup(squad: Player[], unavailable: Set<string> = new Se
     }
   });
 
-  // 2ª pasada: demarcaciones casi idénticas (LD↔CAD, DC↔SD, MC↔MCD/MCO...).
+  // 2ª pasada: demarcaciones casi idénticas (LD, LI y MCO normalizados; compatibilidad MC↔MCD/MCO...).
   DEFAULT_LINEUP_SLOTS.forEach((slot, i) => {
     if (lineup[i]) return;
     const pick = byRating.find((p) => !used.has(p.id) && canPlayPosition(playerPosCodes(p), slot));

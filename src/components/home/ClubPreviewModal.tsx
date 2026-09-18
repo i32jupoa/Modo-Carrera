@@ -15,6 +15,7 @@ import {
 import { getRivals, getRecentHistory } from "@/data/teamExtras";
 import { getClubExtra } from "@/data/clubExtras";
 import playersData from "@/data/playersData";
+import { formatPositionLabel } from "@/lib/positions";
 import { Trophy, Users, Building2, Target, Wallet, Swords, History, Sparkles } from "lucide-react";
 
 export default function ClubPreviewModal({
@@ -533,7 +534,7 @@ function SquadView({
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-bold text-white truncate">{p.Name ?? "—"}</div>
                       <div className="text-[11px] text-white/55 flex items-center gap-2">
-                        <span className="font-mono">{p.Position ?? "—"}</span>
+                        <span className="font-mono">{formatPositionLabel(p.Position)}</span>
                         {p.Nation && <span className="truncate">· {p.Nation}</span>}
                         {typeof p.Age === "number" && <span>· {p.Age}a</span>}
                       </div>

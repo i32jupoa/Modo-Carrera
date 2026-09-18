@@ -29,6 +29,9 @@ export type ScoutingEntry = {
   status: ScoutingStatus;
   scoutId: string;
   scoutRating: ScoutRating;
+  /** Campos concretos que este ojeo consiguió detectar. Son aleatorios por asignación. */
+  detectedFields: ScoutField[];
+  detectedFieldsVersion?: 2;
 };
 
 type StoredScoutingEntry = Omit<ScoutingEntry, "status">;
@@ -41,43 +44,72 @@ export type ScoutingState = {
   dismissedScoutIds: string[];
 };
 
+export type ScoutField =
+  | "potential"
+  | "marketValue"
+  | "salary"
+  | "askingPrice"
+  | "wageDemand";
+
 export type ScoutCapabilities = {
+  /** Rango de jugadores que este nivel puede investigar simultáneamente. */
+  minSlots: number;
+  maxSlots: number;
+  /** Compatibilidad con consumidores antiguos; devuelve el máximo del rango. */
   slots: number;
   minDays: number;
   maxDays: number;
-  potentialSpreadMin: number;
-  potentialSpreadMax: number;
-  salarySpread: number;
-  valueSpread: number;
-  unknownChance: number;
+  precision: number;
+  fieldsDetected: number;
+};
+
+const CAPABILITIES: Record<ScoutRating, ScoutCapabilities> = {
+  0.5: { minSlots: 2, maxSlots: 2, slots: 2, minDays: 11, maxDays: 12, precision: 2, fieldsDetected: 2 },
+  1:   { minSlots: 2, maxSlots: 2, slots: 2, minDays: 10, maxDays: 11, precision: 2.5, fieldsDetected: 2 },
+  1.5: { minSlots: 2, maxSlots: 3, slots: 3, minDays: 9, maxDays: 10, precision: 2.5, fieldsDetected: 3 },
+  2:   { minSlots: 3, maxSlots: 4, slots: 4, minDays: 8, maxDays: 9, precision: 3, fieldsDetected: 3 },
+  2.5: { minSlots: 4, maxSlots: 4, slots: 4, minDays: 7, maxDays: 8, precision: 3.5, fieldsDetected: 3 },
+  3:   { minSlots: 4, maxSlots: 5, slots: 5, minDays: 6, maxDays: 7, precision: 3.5, fieldsDetected: 4 },
+  3.5: { minSlots: 5, maxSlots: 6, slots: 6, minDays: 5, maxDays: 6, precision: 4, fieldsDetected: 4 },
+  4:   { minSlots: 7, maxSlots: 8, slots: 8, minDays: 4, maxDays: 5, precision: 4, fieldsDetected: 5 },
+  4.5: { minSlots: 8, maxSlots: 9, slots: 9, minDays: 3, maxDays: 4, precision: 4.5, fieldsDetected: 5 },
+  5:   { minSlots: 10, maxSlots: 10, slots: 10, minDays: 2, maxDays: 3, precision: 5, fieldsDetected: 5 },
+};
+
+/**
+ * Campos que puede llegar a revelar un informe. La progresión desbloquea
+ * campos de forma acumulativa a medida que aumenta la calidad del ojeador:
+ * potencial, valor de mercado, salario, precio que pide el club y salario que
+ * pide el jugador.
+ */
+const ALL_SCOUT_FIELDS: readonly ScoutField[] = [
+  "potential",
+  "marketValue",
+  "salary",
+  "askingPrice",
+  "wageDemand",
+];
+
+const DETECTED_FIELD_COUNT: Record<number, number> = {
+  2: 2,
+  3: 3,
+  4: 4,
+  5: 5,
 };
 
 const STORAGE_PREFIX = "fcsim:scouting:v2:";
 
-const CAPABILITIES: Record<ScoutRating, ScoutCapabilities> = {
-  0.5: { slots: 1, minDays: 12, maxDays: 15, potentialSpreadMin: 5, potentialSpreadMax: 9, salarySpread: 0.30, valueSpread: 0.28, unknownChance: 0.30 },
-  1: { slots: 2, minDays: 11, maxDays: 14, potentialSpreadMin: 5, potentialSpreadMax: 8, salarySpread: 0.24, valueSpread: 0.23, unknownChance: 0.22 },
-  1.5: { slots: 2, minDays: 9, maxDays: 12, potentialSpreadMin: 4, potentialSpreadMax: 7, salarySpread: 0.20, valueSpread: 0.19, unknownChance: 0.18 },
-  2: { slots: 3, minDays: 8, maxDays: 11, potentialSpreadMin: 4, potentialSpreadMax: 6, salarySpread: 0.17, valueSpread: 0.16, unknownChance: 0.14 },
-  2.5: { slots: 4, minDays: 7, maxDays: 10, potentialSpreadMin: 3, potentialSpreadMax: 6, salarySpread: 0.14, valueSpread: 0.13, unknownChance: 0.11 },
-  3: { slots: 5, minDays: 6, maxDays: 9, potentialSpreadMin: 3, potentialSpreadMax: 5, salarySpread: 0.11, valueSpread: 0.10, unknownChance: 0.08 },
-  3.5: { slots: 6, minDays: 5, maxDays: 8, potentialSpreadMin: 2, potentialSpreadMax: 4, salarySpread: 0.09, valueSpread: 0.08, unknownChance: 0.06 },
-  4: { slots: 7, minDays: 4, maxDays: 7, potentialSpreadMin: 2, potentialSpreadMax: 3, salarySpread: 0.07, valueSpread: 0.06, unknownChance: 0.04 },
-  4.5: { slots: 8, minDays: 3, maxDays: 5, potentialSpreadMin: 1, potentialSpreadMax: 2, salarySpread: 0.05, valueSpread: 0.045, unknownChance: 0.025 },
-  5: { slots: 10, minDays: 2, maxDays: 4, potentialSpreadMin: 0, potentialSpreadMax: 0, salarySpread: 0, valueSpread: 0, unknownChance: 0 },
-};
-
 const PRICE_BANDS: Record<ScoutRating, readonly [number, number]> = {
-  0.5: [450_000, 650_000],
-  1: [850_000, 1_200_000],
-  1.5: [1_700_000, 2_300_000],
-  2: [3_100_000, 3_900_000],
-  2.5: [5_000_000, 6_000_000],
-  3: [6_500_000, 7_600_000],
-  3.5: [9_000_000, 10_000_000],
-  4: [11_800_000, 13_200_000],
-  4.5: [15_200_000, 16_800_000],
-  5: [19_000_000, 21_000_000],
+  0.5: [350_000, 700_000],
+  1: [800_000, 1_000_000],
+  1.5: [1_500_000, 3_000_000],
+  2: [3_500_000, 4_500_000],
+  2.5: [5_000_000, 6_500_000],
+  3: [7_500_000, 9_000_000],
+  3.5: [9_500_000, 12_000_000],
+  4: [12_500_000, 15_000_000],
+  4.5: [16_500_000, 18_500_000],
+  5: [20_000_000, 22_500_000],
 };
 
 const NAME_POOL: Array<{ name: string; country: string }> = [
@@ -147,9 +179,63 @@ function seededPick<T>(items: T[], seed: string): T {
   return items[seededInt(seed, 0, items.length - 1)];
 }
 
+function detectedFieldsForAssignment(rating: ScoutRating, _seed: string): ScoutField[] {
+  const count = DETECTED_FIELD_COUNT[CAPABILITIES[rating].fieldsDetected] ?? CAPABILITIES[rating].fieldsDetected;
+  const pool = [...ALL_SCOUT_FIELDS];
+
+  // Fisher-Yates no determinista: cada nuevo ojeo obtiene una combinación
+  // independiente de campos. El resultado se guarda en la asignación.
+  for (let index = pool.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [pool[index], pool[swapIndex]] = [pool[swapIndex], pool[index]];
+  }
+
+  return pool.slice(0, count);
+}
+
+function sanitizeDetectedFields(
+  rating: ScoutRating,
+  raw: unknown,
+  seed: string,
+): ScoutField[] {
+  const allowed = new Set<ScoutField>(ALL_SCOUT_FIELDS);
+  const clean = Array.isArray(raw)
+    ? raw.filter((field): field is ScoutField => typeof field === "string" && allowed.has(field as ScoutField))
+    : [];
+  const required = DETECTED_FIELD_COUNT[CAPABILITIES[rating].fieldsDetected] ?? CAPABILITIES[rating].fieldsDetected;
+  const unique = Array.from(new Set(clean));
+
+  if (unique.length === required) return unique;
+  return detectedFieldsForAssignment(rating, seed);
+}
+
+const SCOUT_RATING_WEIGHTS: ReadonlyArray<readonly [ScoutRating, number]> = [
+  [0.5, 17],
+  [1, 14],
+  [1.5, 12],
+  [2, 11],
+  [2.5, 10],
+  [3, 9],
+  [3.5, 8],
+  [4, 7],
+  [4.5, 6.5],
+  [5, 5.5],
+];
+
 function ratingFromIndex(index: number, month: string, saveId: string): ScoutRating {
-  const ratings: ScoutRating[] = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
-  return seededPick(ratings, `${saveId}:${month}:rating:${index}`);
+  const roll = seededUnit(`${saveId}:${month}:rating:${index}`) * 100;
+  let cursor = 0;
+  for (const [rating, weight] of SCOUT_RATING_WEIGHTS) {
+    cursor += weight;
+    if (roll < cursor) return rating;
+  }
+  return 0.5;
+}
+
+function costForScoutSeed(seed: string, rating: ScoutRating): number {
+  const [minCost, maxCost] = PRICE_BANDS[rating];
+  const rawCost = minCost + Math.round(seededUnit(seed) * (maxCost - minCost));
+  return Math.round(rawCost / 50_000) * 50_000;
 }
 
 function buildCatalog(month: string): ScoutCandidate[] {
@@ -164,9 +250,7 @@ function buildCatalog(month: string): ScoutCandidate[] {
     usedNames.add(person.name);
 
     const rating = ratingFromIndex(index, month, saveId);
-    const [minCost, maxCost] = PRICE_BANDS[rating];
-    const rawCost = minCost + Math.round(seededUnit(`${saveId}:${month}:cost:${index}`) * (maxCost - minCost));
-    const cost = Math.round(rawCost / 50_000) * 50_000;
+    const cost = costForScoutSeed(`${saveId}:${month}:cost:${index}`, rating);
     const id = `scout-${month}-${index}-${hashString(`${saveId}:${month}:${person.name}`).toString(36)}`;
 
     catalog.push({
@@ -209,15 +293,34 @@ function sanitizeState(raw: unknown): ScoutingState {
     ? source.hiredScout as HiredScout
     : null;
   const assignments = Array.isArray(source.assignments)
-    ? source.assignments.filter(
-        (entry): entry is StoredScoutingEntry =>
-          !!entry &&
-          typeof entry.playerId === "string" &&
-          typeof entry.startedAt === "string" &&
-          typeof entry.readyAt === "string" &&
-          typeof entry.scoutId === "string" &&
-          isValidRating(entry.scoutRating),
-      )
+    ? source.assignments.reduce<StoredScoutingEntry[]>((result, entry) => {
+        if (
+          !entry ||
+          typeof entry.playerId !== "string" ||
+          typeof entry.startedAt !== "string" ||
+          typeof entry.readyAt !== "string" ||
+          typeof entry.scoutId !== "string" ||
+          !isValidRating(entry.scoutRating)
+        ) {
+          return result;
+        }
+
+        const scoutRating = entry.scoutRating;
+        result.push({
+          playerId: entry.playerId,
+          startedAt: entry.startedAt,
+          readyAt: entry.readyAt,
+          scoutId: entry.scoutId,
+          scoutRating,
+          detectedFields: sanitizeDetectedFields(
+            scoutRating,
+            (entry as Partial<StoredScoutingEntry>).detectedFields,
+            `${entry.playerId}:${entry.startedAt}:${entry.scoutId}`,
+          ),
+          detectedFieldsVersion: 2,
+        });
+        return result;
+      }, [])
     : [];
   const dismissedScoutIds = Array.isArray(source.dismissedScoutIds)
     ? source.dismissedScoutIds.filter((id): id is string => typeof id === "string")
@@ -265,7 +368,10 @@ export function ensureScoutingState(currentDate: string): ScoutingState {
     // y no dependa de una URL remota.
     const migratedCatalog = state.catalog.map((candidate, index) => {
       const photoUrl = `/scout-avatars/generated-${(index % 5) + 1}.png`;
-      return candidate.photoUrl === photoUrl ? candidate : { ...candidate, photoUrl };
+      const cost = costForScoutSeed(candidate.id, candidate.rating);
+      return candidate.photoUrl === photoUrl && candidate.cost === cost
+        ? candidate
+        : { ...candidate, photoUrl, cost };
     });
     const changed = migratedCatalog.some((candidate, index) => candidate !== state.catalog[index]);
     if (changed) {
@@ -293,13 +399,27 @@ export function getScoutCapabilities(rating: ScoutRating): ScoutCapabilities {
   return CAPABILITIES[rating];
 }
 
+export function getScoutSlots(scoutId: string, rating: ScoutRating): number {
+  const capabilities = CAPABILITIES[rating];
+  if (capabilities.minSlots === capabilities.maxSlots) return capabilities.minSlots;
+  return seededInt(`${scoutId}:capacity`, capabilities.minSlots, capabilities.maxSlots);
+}
+
+export function getDetectedScoutFields(rating: ScoutRating, seed = `rating:${rating}`): readonly ScoutField[] {
+  return detectedFieldsForAssignment(rating, seed);
+}
+
+export function scoutFieldIsDetected(rating: ScoutRating, field: ScoutField, seed = `rating:${rating}`): boolean {
+  return getDetectedScoutFields(rating, seed).includes(field);
+}
+
 export function getClubScout(currentDate: string): HiredScout | null {
   return ensureScoutingState(currentDate).hiredScout;
 }
 
 export function getScoutCapacity(currentDate: string): number {
   const scout = getClubScout(currentDate);
-  return scout ? CAPABILITIES[scout.rating].slots : 0;
+  return scout ? getScoutSlots(scout.id, scout.rating) : 0;
 }
 
 export type HireScoutResult =
@@ -389,7 +509,7 @@ export function startScoutingBatch(playerIds: string[], currentDate: string): St
     return { ok: false, reason: "Selecciona al menos un jugador para iniciar el ojeo." };
   }
 
-  const capacity = CAPABILITIES[scout.rating].slots;
+  const capacity = getScoutSlots(scout.id, scout.rating);
   const activeCount = state.assignments.filter((record) => statusOf(record, currentDate) === "pending").length;
   const availableSlots = Math.max(0, capacity - activeCount);
   if (requestedIds.length > availableSlots) {
@@ -414,6 +534,11 @@ export function startScoutingBatch(playerIds: string[], currentDate: string): St
     ),
     scoutId: scout.id,
     scoutRating: scout.rating,
+    detectedFields: detectedFieldsForAssignment(
+      scout.rating,
+      `${playerId}:${currentDate}:${scout.id}:${Math.random()}`,
+    ),
+    detectedFieldsVersion: 2,
   }));
 
   writeState({ ...state, assignments: [...state.assignments, ...records] });

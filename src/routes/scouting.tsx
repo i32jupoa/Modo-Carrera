@@ -1,14 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from "react";
 import {
   Check,
   ChevronDown,
+  Search,
   Clock3,
   Eye,
   Filter,
   ShieldCheck,
   Sparkles,
-  UserRoundPlus,
   UserRoundX,
   X,
 } from "lucide-react";
@@ -16,25 +16,29 @@ import { toast } from "sonner";
 import { loadSave } from "@/lib/store";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { CountryFlag } from "@/components/CountryFlag";
+import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { faceUrl } from "@/lib/playerFaces";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { LEAGUES } from "@/data/teams";
-import { formatEuro, marketValueEuros, usePlayersStore, type FcPlayer } from "@/store/playersStore";
+import { formatEuro, usePlayersStore, type FcPlayer } from "@/store/playersStore";
 import {
   ensureScoutingState,
   dismissHiredScout,
   getScoutCapabilities,
+  getScoutSlots,
   getScoutingState,
   hireScout,
   listScouting,
   releaseHiredScout,
   removeScouting,
-  startScoutingBatch,
+  startScouting,
   type ScoutCandidate,
   type ScoutRating,
   type ScoutingEntry,
 } from "@/lib/transfers/Scouting";
 import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
-import { scoutPlayer } from "@/lib/transfers/UserNegotiation";
+import { scoutPlayer, type ScoutingReport } from "@/lib/transfers/UserNegotiation";
 import { ALL_POS_CODES, POS_NAME, buildPositions, formatShortPositions, type PosCode } from "@/lib/positions";
 import {
   AlertDialog,
@@ -46,8 +50,72 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/scouting")({ component: ScoutingPage });
+
+
+class ScoutingReportBoundary extends Component<{ children: ReactNode; player: FcPlayer; reportEntry: ScoutingEntry }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    console.error("Error al renderizar el informe de ojeador", error);
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <Dialog open onOpenChange={() => undefined}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-black">Informe de ojeador</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="flex items-center gap-4 rounded-xl border border-border/60 bg-card/50 p-4">
+                <PlayerFace
+                  name={this.props.player.Name}
+                  image={typeof this.props.player.card === "string" ? this.props.player.card : undefined}
+                  role={roleFromPosition(this.props.player.Position)}
+                  size={76}
+                  showRing={false}
+                  className="rounded-xl border border-border/60"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xl font-black">{this.props.player.Name}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{this.props.player.Team} · {this.props.player.Age} años</p>
+                  <p className="mt-1 text-sm font-bold">Media {this.props.player.OVR}</p>
+                </div>
+                <TeamLogo teamName={this.props.player.Team} leagueName={this.props.player.League} size={46} />
+              </div>
+              <div className="rounded-xl border border-border/60 bg-card/40 p-4">
+                <p className="text-[0.65rem] font-black uppercase tracking-wider text-primary">Datos del informe</p>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div><span className="text-xs text-muted-foreground">Ojeador</span><p className="font-black">{this.props.reportEntry.scoutRating.toLocaleString("es-ES")}★</p></div>
+                  <div><span className="text-xs text-muted-foreground">Potencial</span><p className="font-black">—</p></div>
+                  <div><span className="text-xs text-muted-foreground">Valor de mercado</span><p className="font-black">—</p></div>
+                  <div><span className="text-xs text-muted-foreground">Salario</span><p className="font-black">—</p></div>
+                  <div><span className="text-xs text-muted-foreground">Precio que pide el club</span><p className="font-black">—</p></div>
+                  <div><span className="text-xs text-muted-foreground">Salario que pide el jugador</span><p className="font-black">—</p></div>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function starsLabel(rating: ScoutRating): string {
   return `${rating.toLocaleString("es-ES")} / 5`;
@@ -124,6 +192,7 @@ function ScoutCard({
   onHire: (scout: ScoutCandidate) => void;
 }) {
   const capabilities = getScoutCapabilities(scout.rating);
+  const actualSlots = getScoutSlots(scout.id, scout.rating);
   return (
     <article className="panel overflow-hidden flex min-w-[255px] max-w-[280px] shrink-0 snap-start flex-col">
       <div className="relative bg-gradient-to-br from-primary/15 via-card to-card p-4 border-b border-border/50">
@@ -161,18 +230,22 @@ function ScoutCard({
           </div>
           <div className="text-right">
             <p className="text-[0.58rem] uppercase tracking-wider text-muted-foreground">Capacidad</p>
-            <p className="font-black">{capabilities.slots} simultáneo{capabilities.slots === 1 ? "" : "s"}</p>
+            <p className="font-black">{actualSlots} simultáneo{actualSlots === 1 ? "" : "s"}</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="grid grid-cols-3 gap-2 text-xs">
           <div className="rounded-xl border border-border/50 bg-secondary/30 p-2.5">
-            <p className="text-muted-foreground">Informe</p>
-            <p className="mt-1 font-black">{capabilities.minDays}–{capabilities.maxDays} días</p>
+            <p className="text-muted-foreground">Campos</p>
+            <p className="mt-1 font-black">{capabilities.fieldsDetected}/5</p>
           </div>
           <div className="rounded-xl border border-border/50 bg-secondary/30 p-2.5">
             <p className="text-muted-foreground">Precisión</p>
-            <p className="mt-1 font-black">{scout.rating >= 4.5 ? "Muy alta" : scout.rating >= 3 ? "Alta" : scout.rating >= 2 ? "Media" : "Básica"}</p>
+            <p className="mt-1 font-black">{capabilities.precision.toLocaleString("es-ES")}/5</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-secondary/30 p-2.5">
+            <p className="text-muted-foreground">Informe</p>
+            <p className="mt-1 font-black">{capabilities.minDays}–{capabilities.maxDays} días</p>
           </div>
         </div>
 
@@ -270,14 +343,19 @@ function ScoutingPage() {
   const spendBudget = usePlayersStore((state) => state.spendBudget);
   const [positionFilter, setPositionFilter] = useState<PosCode | "">("");
   const [minOvr, setMinOvr] = useState("");
+  const [maxOvr, setMaxOvr] = useState("");
+  const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
-  const [minPotential, setMinPotential] = useState("");
-  const [maxValueM, setMaxValueM] = useState("");
   const [nationFilter, setNationFilter] = useState("");
   const [leagueFilter, setLeagueFilter] = useState("");
-  const [scanQuantity, setScanQuantity] = useState("1");
+  const [sortBy, setSortBy] = useState<"ovr" | "age">("ovr");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
+  const RESULTS_PER_PAGE = 20;
   const [reportEntry, setReportEntry] = useState<ScoutingEntry | null>(null);
+  const [reportData, setReportData] = useState<ScoutingReport | null>(null);
   const [dismissScoutOpen, setDismissScoutOpen] = useState(false);
 
   useEffect(() => {
@@ -291,8 +369,9 @@ function ScoutingPage() {
   const catalog = state?.catalog ?? [];
 
   const pendingCount = assignments.filter((item) => item.status === "pending").length;
-  const scoutCapabilities = hiredScout ? getScoutCapabilities(hiredScout.rating) : null;
-  const remainingCapacity = Math.max(0, (scoutCapabilities?.slots ?? 0) - pendingCount);
+  const scoutCapacity = hiredScout ? getScoutSlots(hiredScout.id, hiredScout.rating) : 0;
+  const availableScoutSlots = Math.max(0, scoutCapacity - pendingCount);
+  const hasAvailableScoutSlot = availableScoutSlots > 0;
 
   const nationOptions = useMemo(
     () => Array.from(new Set((rawPlayers as FcPlayer[]).map((player) => player.Nation).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, "es")),
@@ -322,77 +401,54 @@ function ScoutingPage() {
   const hasSearchCriteria = Boolean(
     positionFilter ||
       minOvr.trim() ||
+      maxOvr.trim() ||
+      minAge.trim() ||
       maxAge.trim() ||
-      minPotential.trim() ||
-      maxValueM.trim() ||
       nationFilter ||
       leagueFilter,
   );
 
-  const candidateSearch = useMemo(() => {
-    if (!ready || !hiredScout || !hasSearchCriteria) {
-      return { total: 0, ids: [] as string[] };
-    }
+  const hasSearched = Boolean(hiredScout && hasSearchCriteria);
+
+  const availableSearchPlayers = useMemo(() => {
+    if (!hasSearched) return [];
 
     const minOvrValue = optionalNumber(minOvr);
+    const maxOvrValue = optionalNumber(maxOvr);
+    const minAgeValue = optionalNumber(minAge);
     const maxAgeValue = optionalNumber(maxAge);
-    const minPotentialValue = optionalNumber(minPotential);
-    const maxValueValue = optionalNumber(maxValueM);
     const roster = new Set(usePlayersStore.getState().rosterIds);
     const assigned = new Set(assignments.map((entry) => entry.playerId));
+    const multiplier = sortDirection === "asc" ? 1 : -1;
 
-    const ids = (rawPlayers as FcPlayer[])
+    return (rawPlayers as FcPlayer[])
       .filter((player) => !roster.has(String(player.ID)) && !assigned.has(String(player.ID)))
       .filter((player) => {
         const positions = buildPositions(player.Position, player["Alternative positions"]);
         if (positionFilter && !positions.includes(positionFilter)) return false;
-
-        const safePotential = Number(player.potential ?? player.OVR);
-        if (minOvrValue !== null && player.OVR < minOvrValue) return false;
-        if (maxAgeValue !== null && player.Age > maxAgeValue) return false;
-        if (minPotentialValue !== null && safePotential < minPotentialValue) return false;
+        if (minOvrValue !== null && Number(player.OVR) < minOvrValue) return false;
+        if (maxOvrValue !== null && Number(player.OVR) > maxOvrValue) return false;
+        if (minAgeValue !== null && Number(player.Age) < minAgeValue) return false;
+        if (maxAgeValue !== null && Number(player.Age) > maxAgeValue) return false;
         if (nationFilter && (player.Nation ?? "") !== nationFilter) return false;
         if (leagueFilter && player.League !== leagueFilter) return false;
-
-        const marketValue = marketValueEuros(player);
-        if (maxValueValue !== null && marketValue > maxValueValue * 1_000_000) return false;
         return true;
       })
-      .map((player) => String(player.ID));
+      .sort((a, b) => {
+        const aValue = sortBy === "ovr" ? Number(a.OVR) : Number(a.Age);
+        const bValue = sortBy === "ovr" ? Number(b.OVR) : Number(b.Age);
+        const valueDifference = (Number.isFinite(aValue) ? aValue : 0) - (Number.isFinite(bValue) ? bValue : 0);
+        if (valueDifference !== 0) return valueDifference * multiplier;
+        return a.Name.localeCompare(b.Name, "es");
+      });
+  }, [assignments, hasSearched, leagueFilter, maxAge, maxOvr, minAge, minOvr, nationFilter, positionFilter, rawPlayers, sortBy, sortDirection]);
 
-    return { total: ids.length, ids };
-  }, [
-    assignments,
-    hasSearchCriteria,
-    hiredScout,
-    leagueFilter,
-    maxAge,
-    maxValueM,
-    minOvr,
-    minPotential,
-    nationFilter,
-    positionFilter,
-    rawPlayers,
-    ready,
-  ]);
-
-  const activeCapacity = scoutCapabilities?.slots ?? 0;
-  const requestedQuantity = optionalNumber(scanQuantity);
-  const normalizedRequestedQuantity = requestedQuantity === null ? 0 : Math.floor(requestedQuantity);
-  const quantityIsValid = normalizedRequestedQuantity >= 1;
-  const quantityExceedsScoutCapacity = normalizedRequestedQuantity > activeCapacity;
-  const quantityExceedsRemainingCapacity = normalizedRequestedQuantity > remainingCapacity;
-  const quantityExceedsMatches = normalizedRequestedQuantity > candidateSearch.total;
-  const requestedQuantityBlocked = !quantityIsValid || quantityExceedsScoutCapacity || quantityExceedsRemainingCapacity || quantityExceedsMatches;
-
-  function pickRandomPlayerIds(ids: string[], quantity: number): string[] {
-    const shuffled = [...ids];
-    for (let index = shuffled.length - 1; index > 0; index -= 1) {
-      const swapIndex = Math.floor(Math.random() * (index + 1));
-      [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
-    }
-    return shuffled.slice(0, quantity);
-  }
+  const totalSearchPages = Math.max(1, Math.ceil(availableSearchPlayers.length / RESULTS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalSearchPages);
+  const paginatedSearchPlayers = availableSearchPlayers.slice(
+    (safeCurrentPage - 1) * RESULTS_PER_PAGE,
+    safeCurrentPage * RESULTS_PER_PAGE,
+  );
 
   const selectedReportPlayer = reportEntry
     ? ((rawPlayers as FcPlayer[]).find((player) => String(player.ID) === reportEntry.playerId) ?? null)
@@ -421,14 +477,12 @@ function ScoutingPage() {
       return;
     }
     if (!spendBudget(scout.cost)) {
-      // Rollback para no perder dinero si otra pestaña cambió el presupuesto
-      // entre la comprobación y el descuento real.
       releaseHiredScout();
       toast.error("No se pudo descontar el coste de contratación.");
       return;
     }
     toast.success(`${scout.name} se ha incorporado al club`, {
-      description: `${scout.rating.toLocaleString("es-ES")} estrellas · ${getScoutCapabilities(scout.rating).slots} ojeos simultáneos.`,
+      description: `${scout.rating.toLocaleString("es-ES")} estrellas · ${getScoutSlots(scout.id, scout.rating)} ojeos simultáneos.`,
     });
     refreshPage();
   }
@@ -438,7 +492,7 @@ function ScoutingPage() {
     if (!scout) return;
     setDismissScoutOpen(false);
     toast.success(`${scout.name} ha sido despedido`, {
-      description: "Este ojeador ya no podrá volver a contratarse."
+      description: "Este ojeador ya no podrá volver a contratarse.",
     });
     refreshPage();
   }
@@ -446,48 +500,117 @@ function ScoutingPage() {
   function resetSearch() {
     setPositionFilter("");
     setMinOvr("");
+    setMaxOvr("");
+    setMinAge("");
     setMaxAge("");
-    setMinPotential("");
-    setMaxValueM("");
     setNationFilter("");
     setLeagueFilter("");
-    setScanQuantity("1");
+    setSortBy("ovr");
+    setSortDirection("desc");
+    setCurrentPage(1);
+    setSearchDialogOpen(false);
   }
 
-  function handleStartBatch() {
-    if (!hiredScout || !hasSearchCriteria) return;
+  function renderSearchResultPlayer(player: FcPlayer) {
+    const positions = buildPositions(player.Position, player["Alternative positions"]);
+    const entry = assignments.find((item) => item.playerId === String(player.ID));
+    const playerFace = faceUrl(String(player.ID), player.card);
+    const scoutBlocked = !entry && !hasAvailableScoutSlot;
 
-    const requested = normalizedRequestedQuantity;
-    if (requested < 1) {
-      toast.error("Indica cuántos jugadores quieres ojear.");
-      return;
-    }
-    if (requested > activeCapacity) {
-      toast.error(`Este ojeador solo admite ${activeCapacity} ojeo${activeCapacity === 1 ? "" : "s"} simultáneo${activeCapacity === 1 ? "" : "s"}.`);
-      return;
-    }
-    if (requested > remainingCapacity) {
-      toast.error(`Solo quedan ${remainingCapacity} hueco${remainingCapacity === 1 ? "" : "s"} disponible${remainingCapacity === 1 ? "" : "s"}.`);
-      return;
-    }
-    if (candidateSearch.total === 0) {
-      toast.error("No hay jugadores que cumplan esos criterios.");
+    return (
+      <div
+        key={player.ID}
+        className="rounded-2xl border border-border/60 bg-card/60 p-3.5 shadow-sm"
+      >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="h-16 w-12 shrink-0 overflow-hidden rounded-xl border border-border/50 bg-secondary/50">
+              {playerFace ? (
+                <img
+                  src={playerFace}
+                  alt={player.Name}
+                  className="h-full w-full object-cover object-top"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="grid h-full w-full place-items-center text-[0.55rem] font-black text-muted-foreground">
+                  SIN FOTO
+                </div>
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <p className="truncate text-sm font-black">{player.Name}</p>
+                <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[0.62rem] font-black text-primary">
+                  {player.OVR}
+                </span>
+              </div>
+              <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <TeamLogo teamName={player.Team} leagueName={player.League} size={28} />
+                <span className="truncate font-semibold text-foreground">{player.Team}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.62rem] text-muted-foreground">
+                <span>{formatShortPositions(positions.slice(0, 2))}</span>
+                <span>·</span>
+                <LeagueBadge league={player.League} />
+                <span className="truncate">{player.League || "Liga desconocida"}</span>
+                <span>·</span>
+                <CountryFlag country={player.Nation || ""} size="sm" />
+                <span>{player.Nation || "Nacionalidad desconocida"}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            <div className="min-w-[64px] rounded-xl border border-border/40 bg-secondary/30 px-2.5 py-2 text-center">
+              <p className="text-[0.5rem] font-black uppercase tracking-wider text-muted-foreground">Media</p>
+              <p className="mt-0.5 scoreline font-black">{player.OVR}</p>
+            </div>
+            <div className="min-w-[64px] rounded-xl border border-border/40 bg-secondary/30 px-2.5 py-2 text-center">
+              <p className="text-[0.5rem] font-black uppercase tracking-wider text-muted-foreground">Edad</p>
+              <p className="mt-0.5 scoreline font-black">{player.Age}</p>
+            </div>
+            <div className="flex min-w-[118px] flex-col items-stretch gap-1">
+              <button
+                type="button"
+                disabled={!!entry || scoutBlocked}
+                onClick={() => handleScoutPlayer(String(player.ID), player.Name)}
+                title={scoutBlocked ? "No hay huecos de ojeo disponibles" : undefined}
+                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-primary px-3.5 py-2 text-xs font-black text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <Eye className="mr-1.5 h-3.5 w-3.5" />
+                {entry ? "En ojeo" : scoutBlocked ? "Sin huecos" : "Ojear"}
+              </button>
+              {scoutBlocked && (
+                <span className="text-center text-[0.55rem] font-semibold leading-tight text-amber-300">
+                  No quedan huecos de ojeo.
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function handleScoutPlayer(playerId: string, playerName: string) {
+    if (!hiredScout) {
+      toast.error("Contrata un ojeador antes de enviar jugadores.");
       return;
     }
 
-    const playerIds = pickRandomPlayerIds(candidateSearch.ids, requested);
-    const result = startScoutingBatch(playerIds, currentDate);
+    const result = startScouting(playerId, currentDate);
     if (!result.ok) {
       toast.error(result.reason);
       refreshPage();
       return;
     }
 
-    const days = getScoutCapabilities(result.entries[0].scoutRating);
-    toast.success(`${result.entries.length} jugador${result.entries.length === 1 ? "" : "es"} añadido${result.entries.length === 1 ? "" : "s"} al plan de ojeo`, {
+    const days = getScoutCapabilities(result.entry.scoutRating);
+    toast.success(`${playerName} añadido al plan de ojeo`, {
       description: `El informe estará listo en ${days.minDays}–${days.maxDays} días.`,
     });
-    setScanQuantity("1");
     refreshPage();
   }
 
@@ -495,6 +618,28 @@ function ScoutingPage() {
     removeScouting(playerId);
     toast.success("Jugador retirado de la lista de ojeo.");
     refreshPage();
+  }
+
+  function handleViewReport(entry: ScoutingEntry) {
+    const player = (rawPlayers as FcPlayer[]).find((candidate) => String(candidate.ID) === entry.playerId);
+    if (!player) {
+      toast.error("No se ha podido encontrar al jugador para generar el informe.");
+      return;
+    }
+
+    try {
+      const generatedReport = scoutPlayer(entry.playerId, myTeamId, currentDate);
+      if (!generatedReport) {
+        toast.error("No se ha podido generar el informe de ojeador.");
+        return;
+      }
+      setReportData(generatedReport);
+      setReportEntry(entry);
+    } catch {
+      toast.error("No se ha podido generar el informe de ojeador.", {
+        description: "El informe ha encontrado un dato no disponible. Puedes volver a intentarlo.",
+      });
+    }
   }
 
   if (!myTeamId) return null;
@@ -520,7 +665,7 @@ function ScoutingPage() {
             </div>
             <div className="rounded-xl border border-border/60 bg-card/60 px-3 py-2.5">
               <p className="text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">Ojeos activos</p>
-              <p className="mt-1 scoreline text-base font-black">{assignments.filter((item) => item.status === "pending").length} / {hiredScout ? getScoutCapabilities(hiredScout.rating).slots : 0}</p>
+              <p className="mt-1 scoreline text-base font-black">{assignments.filter((item) => item.status === "pending").length} / {hiredScout ? getScoutSlots(hiredScout.id, hiredScout.rating) : 0}</p>
             </div>
             <div className="rounded-xl border border-border/60 bg-card/60 px-3 py-2.5 col-span-2 sm:col-span-1">
               <p className="text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">Nuevo catálogo</p>
@@ -565,7 +710,7 @@ function ScoutingPage() {
             <div className="flex flex-wrap items-center gap-2">
               <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-xs">
                 <p className="text-muted-foreground">Beneficios</p>
-                <p className="mt-1 font-black">{getScoutCapabilities(hiredScout.rating).slots} simultáneos · {getScoutCapabilities(hiredScout.rating).minDays}–{getScoutCapabilities(hiredScout.rating).maxDays} días</p>
+                <p className="mt-1 font-black">{getScoutSlots(hiredScout.id, hiredScout.rating)} simultáneos · {getScoutCapabilities(hiredScout.rating).minDays}–{getScoutCapabilities(hiredScout.rating).maxDays} días · {getScoutCapabilities(hiredScout.rating).fieldsDetected}/5 campos · precisión {getScoutCapabilities(hiredScout.rating).precision.toLocaleString("es-ES")}/5</p>
               </div>
               <button
                 type="button"
@@ -610,151 +755,143 @@ function ScoutingPage() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-black">Buscar por criterios</h2>
-              <p className="mt-1 text-xs text-muted-foreground">No necesitas decirle un nombre: define el perfil que buscas y el ojeador rastreará toda la base de jugadores.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Define el perfil que buscas y los resultados se actualizan automáticamente sobre toda la base de jugadores disponible.</p>
             </div>
             <Filter className="h-5 w-5 shrink-0 text-primary" />
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label>
-              <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Posición</span>
-              <select
-                value={positionFilter}
-                onChange={(event) => setPositionFilter(event.target.value as PosCode | "")}
-                disabled={!hiredScout}
-                className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <option value="">Cualquier posición</option>
-                {ALL_POS_CODES.map((code) => (
-                  <option key={code} value={code}>{POS_NAME[code]} ({code})</option>
-                ))}
-              </select>
-            </label>
-
-            <LeaguePicker
-              value={leagueFilter}
-              leagues={leagueOptions}
-              disabled={!hiredScout}
-              onChange={setLeagueFilter}
-            />
-
-            <label>
-              <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Nacionalidad</span>
-              <select
-                value={nationFilter}
-                onChange={(event) => setNationFilter(event.target.value)}
-                disabled={!hiredScout}
-                className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <option value="">Cualquier nacionalidad</option>
-                {nationOptions.map((nation) => <option key={nation} value={nation}>{nation}</option>)}
-              </select>
-            </label>
-
-            <label>
-              <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Media mínima</span>
-              <input
-                type="number" min="1" max="99" value={minOvr} onChange={(event) => setMinOvr(event.target.value)}
-                disabled={!hiredScout} placeholder="Ej. 75"
-                className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </label>
-
-            <label>
-              <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Edad máxima</span>
-              <input
-                type="number" min="15" max="50" value={maxAge} onChange={(event) => setMaxAge(event.target.value)}
-                disabled={!hiredScout} placeholder="Ej. 23"
-                className="w-full rounded-xl border border-border bg-secondary py-3 px-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </label>
-
-            <label>
-              <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Potencial mínimo</span>
-              <input
-                type="number" min="1" max="99" value={minPotential} onChange={(event) => setMinPotential(event.target.value)}
-                disabled={!hiredScout} placeholder="Ej. 85"
-                className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </label>
-
-            <label>
-              <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Valor máx. de mercado (M€)</span>
-              <input
-                type="number" min="0" step="0.1" value={maxValueM} onChange={(event) => setMaxValueM(event.target.value)}
-                disabled={!hiredScout} placeholder="Ej. 4"
-                className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </label>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
-            <div className="min-w-0">
-              <p className="text-sm font-black">Capacidad del ojeador</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{remainingCapacity} hueco{remainingCapacity === 1 ? "" : "s"} disponible{remainingCapacity === 1 ? "" : "s"} ahora · selección aleatoria entre todos los jugadores que cumplen los criterios.</p>
-            </div>
-            <div className="flex items-end gap-2">
+          <div className="mt-4 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <label>
-                <span className="mb-1.5 block text-[0.58rem] font-black uppercase tracking-wider text-muted-foreground">Jugadores a ojear</span>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Posición</span>
+                <select
+                  value={positionFilter}
+                  onChange={(event) => setPositionFilter(event.target.value as PosCode | "")}
+                  disabled={!hiredScout}
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="">Cualquier posición</option>
+                  {ALL_POS_CODES.map((code) => (
+                    <option key={code} value={code}>{POS_NAME[code]} ({code})</option>
+                  ))}
+                </select>
+              </label>
+
+              <LeaguePicker
+                value={leagueFilter}
+                leagues={leagueOptions}
+                disabled={!hiredScout}
+                onChange={setLeagueFilter}
+              />
+
+              <label>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Nacionalidad</span>
+                <select
+                  value={nationFilter}
+                  onChange={(event) => setNationFilter(event.target.value)}
+                  disabled={!hiredScout}
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="">Cualquier nacionalidad</option>
+                  {nationOptions.map((nation) => <option key={nation} value={nation}>{nation}</option>)}
+                </select>
+              </label>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Media mínima</span>
                 <input
-                  type="number" min="1" max={Math.max(1, activeCapacity)} value={scanQuantity}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    if (!raw) {
-                      setScanQuantity("");
-                      return;
-                    }
-                    const parsed = Math.floor(Number(raw));
-                    if (!Number.isFinite(parsed)) return;
-                    setScanQuantity(String(Math.min(activeCapacity || 1, Math.max(1, parsed))));
-                  }}
-                  disabled={!hiredScout || activeCapacity === 0}
-                  className="w-24 rounded-xl border border-border bg-secondary px-3 py-2.5 text-sm font-black outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  type="number" min="1" max="99" value={minOvr} onChange={(event) => setMinOvr(event.target.value)}
+                  disabled={!hiredScout} placeholder="Ej. 75"
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </label>
-              <button
-                type="button"
-                onClick={handleStartBatch}
-                disabled={!hiredScout || !hasSearchCriteria || candidateSearch.total === 0 || requestedQuantityBlocked}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                <UserRoundPlus className="h-3.5 w-3.5" /> Ojear
-              </button>
+              <label>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Media máxima</span>
+                <input
+                  type="number" min="1" max="99" value={maxOvr} onChange={(event) => setMaxOvr(event.target.value)}
+                  disabled={!hiredScout} placeholder="Ej. 85"
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Edad mínima</span>
+                <input
+                  type="number" min="15" max="50" value={minAge} onChange={(event) => setMinAge(event.target.value)}
+                  disabled={!hiredScout} placeholder="Ej. 18"
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Edad máxima</span>
+                <input
+                  type="number" min="15" max="50" value={maxAge} onChange={(event) => setMaxAge(event.target.value)}
+                  disabled={!hiredScout} placeholder="Ej. 23"
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Ordenar por</span>
+                <select
+                  value={sortBy}
+                  onChange={(event) => setSortBy(event.target.value as "ovr" | "age")}
+                  disabled={!hiredScout}
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="ovr">Media</option>
+                  <option value="age">Edad</option>
+                </select>
+              </label>
+              <label>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Orden</span>
+                <select
+                  value={sortDirection}
+                  onChange={(event) => setSortDirection(event.target.value as "asc" | "desc")}
+                  disabled={!hiredScout}
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="asc">Ascendente</option>
+                  <option value="desc">Descendente</option>
+                </select>
+              </label>
             </div>
           </div>
 
-          <div className="mt-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[0.7rem] font-black">{hasSearchCriteria ? `${candidateSearch.total.toLocaleString("es-ES")} jugadores cumplen los criterios` : "Define al menos un criterio para buscar."}</p>
-              {hiredScout && hasSearchCriteria && candidateSearch.total > 0 && (
-                <p className="mt-1 text-[0.63rem] text-muted-foreground">No se muestran los candidatos: el ojeador elige jugadores al azar entre las coincidencias.</p>
-              )}
-            </div>
+          <div className="mt-4 flex items-center justify-end">
             <button
               type="button"
               onClick={resetSearch}
-              disabled={!hasSearchCriteria}
-              className="rounded-lg border border-border bg-card px-3 py-2 text-[0.65rem] font-black text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!hasSearchCriteria && !hasSearched}
+              className="rounded-xl border border-border bg-card px-3 py-2.5 text-xs font-black text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
             >
               Limpiar filtros
             </button>
           </div>
 
-          {hiredScout && hasSearchCriteria && requestedQuantityBlocked && (
-            <p className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-[0.65rem] font-bold text-amber-200">
-              {quantityExceedsScoutCapacity
-                ? `Has pedido ${normalizedRequestedQuantity} jugadores, pero este ojeador admite como máximo ${activeCapacity} simultáneos. Reduce la cantidad para desbloquear «Ojear».`
-                : quantityExceedsRemainingCapacity
-                  ? `Has pedido ${normalizedRequestedQuantity} jugadores, pero solo quedan ${remainingCapacity} huecos libres. Reduce la cantidad para desbloquear «Ojear».`
-                  : quantityExceedsMatches
-                    ? `Has pedido ${normalizedRequestedQuantity} jugadores, pero solo hay ${candidateSearch.total} jugadores que cumplen los criterios. Reduce la cantidad para desbloquear «Ojear».`
-                    : "Indica una cantidad válida de jugadores para desbloquear «Ojear»."}
-            </p>
-          )}
-
-          {!hasSearchCriteria && (
-            <div className="mt-3 rounded-xl border border-dashed border-border/70 bg-secondary/20 p-5 text-center text-xs text-muted-foreground">Por ejemplo: <span className="font-bold text-foreground">ED/RW · menos de 4 M€ · 21 años o menos</span>.</div>
-          )}
+          <div className="mt-4 rounded-xl border border-border/60 bg-secondary/15 px-4 py-4">
+            {hasSearched ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm font-black">{availableSearchPlayers.length.toLocaleString("es-ES")} jugadores cumplen los criterios.</p>
+                <button
+                  type="button"
+                  onClick={() => setSearchDialogOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-2.5 text-xs font-black text-primary hover:bg-primary/15"
+                >
+                  <Search className="h-3.5 w-3.5" />
+                  Ver resultados
+                </button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Define al menos un criterio para buscar jugadores.</p>
+            )}
+          </div>
         </div>
 
         <div className="panel p-5">
@@ -779,7 +916,6 @@ function ScoutingPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-black">{player.Name}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">Ojeador: {entry.scoutRating.toLocaleString("es-ES")} estrellas</p>
                       </div>
                       <button type="button" onClick={() => handleRemove(entry.playerId)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-destructive" aria-label={`Quitar a ${player.Name}`}>
                         <X className="h-4 w-4" />
@@ -791,7 +927,7 @@ function ScoutingPage() {
                       ) : (
                         <span className="inline-flex items-center gap-1.5 text-emerald-300 font-bold"><Eye className="h-3.5 w-3.5" /> Informe listo</span>
                       )}
-                      {!pending && <button type="button" onClick={() => setReportEntry(entry)} className="rounded-lg bg-primary px-3 py-2 text-xs font-black text-primary-foreground hover:brightness-110">Ver informe</button>}
+                      {!pending && <button type="button" onClick={() => handleViewReport(entry)} className="rounded-lg bg-primary px-3 py-2 text-xs font-black text-primary-foreground hover:brightness-110">Ver informe</button>}
                     </div>
                   </div>
                 );
@@ -801,10 +937,54 @@ function ScoutingPage() {
         </div>
       </section>
 
-      <div className="rounded-xl border border-border/50 bg-card/40 p-4 text-xs text-muted-foreground">
-        <p className="font-bold text-foreground">Progresión de calidad</p>
-        <p className="mt-1">Un ojeador de 0,5 estrellas permite 1 jugador simultáneo y tarda 12–15 días. Un ojeador de 5 estrellas permite 10 simultáneos y tarda 2–4 días; entre ambos puntos la capacidad, la velocidad y la precisión aumentan gradualmente.</p>
-      </div>
+      <Dialog open={searchDialogOpen} onOpenChange={setSearchDialogOpen}>
+        <DialogContent className="max-w-4xl overflow-hidden p-0">
+          <div className="flex max-h-[74vh] flex-col">
+            <DialogHeader className="border-b border-border/60 px-5 py-5 pr-14">
+              <DialogTitle className="text-xl font-black">Resultados de la búsqueda</DialogTitle>
+              <DialogDescription>
+                {availableSearchPlayers.length.toLocaleString("es-ES")} jugadores cumplen los criterios.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex-1 overflow-y-auto px-4 py-3">
+              {paginatedSearchPlayers.length === 0 ? (
+                <div className="rounded-xl border border-border/50 bg-secondary/20 p-10 text-center text-sm text-muted-foreground">
+                  No hay jugadores que cumplan los criterios de búsqueda.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {paginatedSearchPlayers.map(renderSearchResultPlayer)}
+                </div>
+              )}
+            </div>
+
+            {availableSearchPlayers.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 px-5 py-4">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  disabled={safeCurrentPage <= 1}
+                  className="inline-flex min-h-11 items-center rounded-xl border border-border bg-card px-4 py-2.5 text-xs font-black hover:border-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Anterior
+                </button>
+                <p className="text-xs font-bold text-muted-foreground">
+                  Página {safeCurrentPage} de {totalSearchPages}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.min(totalSearchPages, page + 1))}
+                  disabled={safeCurrentPage >= totalSearchPages}
+                  className="inline-flex min-h-11 items-center rounded-xl border border-border bg-card px-4 py-2.5 text-xs font-black hover:border-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Siguiente
+                </button>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={dismissScoutOpen} onOpenChange={setDismissScoutOpen}>
         <AlertDialogContent>
@@ -824,13 +1004,15 @@ function ScoutingPage() {
       </AlertDialog>
 
       {selectedReportPlayer && reportEntry && (
-        <ScoutingDetailsModal
-          player={selectedReportPlayer}
-          report={scoutPlayer(reportEntry.playerId, myTeamId, currentDate)}
-          scoutingEntry={reportEntry}
-          open={!!reportEntry}
-          onClose={() => setReportEntry(null)}
-        />
+        <ScoutingReportBoundary player={selectedReportPlayer} reportEntry={reportEntry}>
+          <ScoutingDetailsModal
+            player={selectedReportPlayer}
+            report={reportData}
+            scoutingEntry={reportEntry}
+            open={!!reportEntry}
+            onClose={() => { setReportEntry(null); setReportData(null); }}
+          />
+        </ScoutingReportBoundary>
       )}
     </div>
   );

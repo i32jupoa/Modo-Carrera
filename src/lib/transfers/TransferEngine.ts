@@ -511,14 +511,14 @@ export function buildShortlist(
     // Un lateral izquierdo no puede cubrir un hueco de lateral derecho a menos que tenga posiciones alternativas
     if (need.group === "FB") {
       const playerPositions = playerPosCodes(player);
-      // Si el jugador es lateral izquierdo (LI o CAI) y no puede jugar de lateral derecho (LD o CAD), descartar
+      // Si el jugador es lateral izquierdo (LI) y no puede jugar de lateral derecho (LD), descartar
       const isLeftBackOnly =
-        playerPositions.some((p) => p === "LI" || p === "CAI") &&
-        !playerPositions.some((p) => p === "LD" || p === "CAD");
-      // Si el jugador es lateral derecho (LD o CAD) y no puede jugar de lateral izquierdo (LI o CAI), descartar
+        playerPositions.some((p) => p === "LI") &&
+        !playerPositions.some((p) => p === "LD");
+      // Si el jugador es lateral derecho (LD) y no puede jugar de lateral izquierdo (LI), descartar
       const isRightBackOnly =
-        playerPositions.some((p) => p === "LD" || p === "CAD") &&
-        !playerPositions.some((p) => p === "LI" || p === "CAI");
+        playerPositions.some((p) => p === "LD") &&
+        !playerPositions.some((p) => p === "LI");
 
       // Si el club necesita específicamente un lateral derecho y el jugador solo juega de izquierdo, descartar
       // (y viceversa). Esta es una simplificación; en una implementación completa se necesitaría
@@ -527,10 +527,10 @@ export function buildShortlist(
         // Solo descartar si el club ya tiene el otro lateral cubierto
         const squad = getClubPlayers(clubId);
         const hasLeftBack = squad.some((p) =>
-          playerPosCodes(p).some((pos) => pos === "LI" || pos === "CAI"),
+          playerPosCodes(p).some((pos) => pos === "LI"),
         );
         const hasRightBack = squad.some((p) =>
-          playerPosCodes(p).some((pos) => pos === "LD" || pos === "CAD"),
+          playerPosCodes(p).some((pos) => pos === "LD"),
         );
 
         // Si el jugador es solo lateral izquierdo y el club ya tiene laterales izquierdos, descartar

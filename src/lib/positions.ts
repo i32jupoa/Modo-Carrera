@@ -13,8 +13,6 @@ export type PosCode =
   | "DFC"
   | "LD"
   | "LI"
-  | "CAD"
-  | "CAI"
   | "MCD"
   | "MC"
   | "MCO"
@@ -22,16 +20,13 @@ export type PosCode =
   | "MI"
   | "ED"
   | "EI"
-  | "DC"
-  | "SD";
+  | "DC";
 
 export const ALL_POS_CODES: PosCode[] = [
   "GK",
   "DFC",
   "LD",
   "LI",
-  "CAD",
-  "CAI",
   "MCD",
   "MC",
   "MCO",
@@ -39,7 +34,6 @@ export const ALL_POS_CODES: PosCode[] = [
   "MI",
   "ED",
   "EI",
-  "SD",
   "DC",
 ];
 
@@ -49,8 +43,6 @@ export const POS_NAME: Record<PosCode, string> = {
   DFC: "defensa central",
   LD: "lateral derecho",
   LI: "lateral izquierdo",
-  CAD: "carrilero derecho",
-  CAI: "carrilero izquierdo",
   MCD: "mediocentro defensivo",
   MC: "mediocentro",
   MCO: "mediocentro ofensivo",
@@ -58,7 +50,6 @@ export const POS_NAME: Record<PosCode, string> = {
   MI: "medio izquierdo",
   ED: "extremo derecho",
   EI: "extremo izquierdo",
-  SD: "segundo delantero",
   DC: "delantero centro",
 };
 
@@ -78,10 +69,11 @@ const ALIASES: Record<string, PosCode> = {
   LB: "LI",
   LFB: "LI",
   LI: "LI",
-  RWB: "CAD",
-  CAD: "CAD",
-  LWB: "CAI",
-  CAI: "CAI",
+  // Demarcaciones antiguas se normalizan a los códigos actuales.
+  RWB: "LD",
+  CAD: "LD",
+  LWB: "LI",
+  CAI: "LI",
   CDM: "MCD",
   MCD: "MCD",
   DM: "MCD",
@@ -105,8 +97,8 @@ const ALIASES: Record<string, PosCode> = {
   LS: "DC",
   RS: "DC",
   DC: "DC",
-  CF: "SD",
-  SD: "SD",
+  CF: "MCO",
+  SD: "MCO",
 };
 
 export function toPosCode(raw: string): PosCode | null {
@@ -122,15 +114,10 @@ export function toPosCode(raw: string): PosCode | null {
  * huecos serían imposibles de cubrir), pero no cuentan como encaje perfecto.
  */
 const COMPATIBLE: Partial<Record<PosCode, PosCode[]>> = {
-  DC: ["SD"],
-  SD: ["DC"],
-  LD: ["CAD"],
-  CAD: ["LD"],
-  LI: ["CAI"],
-  CAI: ["LI"],
   MC: ["MCD", "MCO"],
   MCD: ["MC"],
-  MCO: ["MC"],
+  MCO: ["MC", "DC"],
+  DC: ["MCO"],
 };
 
 /** Parsea el campo "Alternative positions" del dataset: "['RW', 'ST']". */
@@ -185,8 +172,6 @@ export const POS_SHORT: Record<PosCode, string> = {
   DFC: "DFC",
   LD: "LD",
   LI: "LI",
-  CAD: "CAD",
-  CAI: "CAI",
   MCD: "MCD",
   MC: "MC",
   MCO: "MCO",
@@ -194,12 +179,19 @@ export const POS_SHORT: Record<PosCode, string> = {
   MI: "MI",
   ED: "RW",
   EI: "LW",
-  SD: "SD",
   DC: "DC",
 };
 
 export function formatShortPositions(codes: PosCode[]): string {
   return codes.length ? codes.map((code) => POS_SHORT[code] ?? code).join(" · ") : "—";
+}
+
+/** Etiqueta de una posición cruda del dataset, normalizada a los códigos actuales. */
+export function formatPositionLabel(raw: unknown): string {
+  const text = String(raw ?? "").trim();
+  if (!text) return "—";
+  const code = toPosCode(text);
+  return code ? (POS_SHORT[code] ?? code) : text;
 }
 
 /** ¿Encaja exactamente el jugador en la demarcación pedida? */
@@ -220,20 +212,17 @@ export function canPlayPosition(codes: PosCode[], slot: PosCode): boolean {
  */
 const POSITION_SIMILARITY: Record<PosCode, Partial<Record<PosCode, number>>> = {
   GK: { GK: 1.0 },
-  DFC: { DFC: 1.0, LD: 0.7, LI: 0.7, CAD: 0.6, CAI: 0.6, MCD: 0.4 },
-  LD: { LD: 1.0, DFC: 0.7, CAD: 0.95, LI: 0.3, CAI: 0.2 },
-  LI: { LI: 1.0, DFC: 0.7, CAI: 0.95, LD: 0.3, CAD: 0.2 },
-  CAD: { CAD: 1.0, LD: 0.95, MCD: 0.6, DFC: 0.5, LI: 0.2 },
-  CAI: { CAI: 1.0, LI: 0.95, MCD: 0.6, DFC: 0.5, LD: 0.2 },
-  MCD: { MCD: 1.0, MC: 0.8, DFC: 0.4, CAD: 0.6, CAI: 0.6 },
+  DFC: { DFC: 1.0, LD: 0.7, LI: 0.7, MCD: 0.4 },
+  LD: { LD: 1.0, DFC: 0.7, LI: 0.3 },
+  LI: { LI: 1.0, DFC: 0.7, LD: 0.3 },
+  MCD: { MCD: 1.0, MC: 0.8, DFC: 0.4 },
   MC: { MC: 1.0, MCD: 0.8, MCO: 0.8, MD: 0.7, MI: 0.7 },
-  MCO: { MCO: 1.0, MC: 0.8, MD: 0.6, MI: 0.6, DC: 0.5, SD: 0.4 },
+  MCO: { MCO: 1.0, MC: 0.8, MD: 0.6, MI: 0.6, DC: 0.5 },
   MD: { MD: 1.0, MC: 0.7, ED: 0.85, MCO: 0.6, MI: 0.5 },
   MI: { MI: 1.0, MC: 0.7, EI: 0.85, MCO: 0.6, MD: 0.5 },
   ED: { ED: 1.0, MD: 0.85, DC: 0.6, EI: 0.4 },
   EI: { EI: 1.0, MI: 0.85, DC: 0.6, ED: 0.4 },
-  SD: { SD: 1.0, DC: 0.85, MCO: 0.4, EI: 0.3, ED: 0.3 },
-  DC: { DC: 1.0, SD: 0.85, MCO: 0.5, ED: 0.6, EI: 0.6 },
+  DC: { DC: 1.0, MCO: 0.5, ED: 0.6, EI: 0.6 },
 };
 
 /**
@@ -247,7 +236,7 @@ export function calculatePositionSimilarity(pos1: PosCode, pos2: PosCode): numbe
 /**
  * Calcula el bonus de versatilidad de un jugador basado en sus posiciones alternativas.
  * Un jugador con posiciones muy diferentes (ej: MI que puede jugar EI y DC) tiene más bonus
- * que uno con posiciones similares (ej: LD que puede jugar CAD).
+ * que uno con posiciones similares (ej: LD que también llega como RWB en los datos).
  * @returns Multiplicador de valor (1.0 = sin bonus, hasta 1.15 máximo)
  */
 export function calculateVersatilityBonus(positions: PosCode[]): number {

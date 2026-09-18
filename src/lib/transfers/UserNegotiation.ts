@@ -23,7 +23,7 @@ import {
 } from "./BudgetManager";
 import { getClubPlayers, getPlayer, updatePlayer } from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
-import { askingPrice, isAvailable, isKeyPlayer, valuePlayer } from "./MarketValuation";
+import { askingPrice, calculateMarketValuation, isAvailable, isKeyPlayer, valuePlayer } from "./MarketValuation";
 import { decideOnMove, minimumSquadRole, preferredContractYears, roleRank, wageDemand, wantsOut } from "./PlayerDecision";
 import { competitionFor, dropInterest, registerInterest, sellerShouldWait } from "./BidWar";
 import {
@@ -645,6 +645,8 @@ export interface ScoutingReport {
   available: boolean;
   competition: number;
   wageDemand: number;
+  /** Ficha salarial anual real del jugador, para el informe de ojeador. */
+  salary: number;
   releaseClause: number;
   contractYearsLeft: number;
   transferListed: boolean;
@@ -657,27 +659,63 @@ export function scoutPlayer(
   userClubId: string,
   date: string,
 ): ScoutingReport | null {
-  const player = getPlayer(playerId);
-  if (!player) return null;
-  const cacheKey = cacheKeyFor(date);
-  const competition = competitionFor(playerId, userClubId);
-  const valuation = valuePlayer(playerId, {
-    competition,
-    cacheKey,
-    deadlineDay: deadlineToday(date),
-  });
-  return {
-    playerId,
-    valuation,
-    askingPrice: askingPrice(playerId, { competition, cacheKey }),
-    available: isAvailable(playerId, cacheKey),
-    competition,
-    wageDemand: wageDemand(playerId, userClubId),
-    releaseClause: player.contract.releaseClause,
-    contractYearsLeft: player.contract.yearsLeft,
-    transferListed: player.transferListed,
-    wantsOut: wantsOut(playerId, cacheKey),
-  };
+  let player: MarketPlayer | undefined;
+  try {
+    player = getPlayer(playerId);
+    if (!player) return null;
+
+    const cacheKey = cacheKeyFor(date);
+    const competition = competitionFor(playerId, userClubId);
+    const valuation = valuePlayer(playerId, {
+      competition,
+      cacheKey,
+      deadlineDay: deadlineToday(date),
+    });
+    return {
+      playerId,
+      valuation,
+      askingPrice: askingPrice(playerId, { competition, cacheKey }),
+      available: isAvailable(playerId, cacheKey),
+      competition,
+      wageDemand: wageDemand(playerId, userClubId),
+      salary: player.contract.wage,
+      releaseClause: player.contract.releaseClause,
+      contractYearsLeft: player.contract.yearsLeft,
+      transferListed: player.transferListed,
+      wantsOut: wantsOut(playerId, cacheKey),
+    };
+  } catch {
+    // El informe nunca debe hacer caer la ruta por un dato contextual del motor
+    // de mercado. El fallback no vuelve a llamar al motor de valoración:
+    // utiliza únicamente los datos canónicos que ya están disponibles en el
+    // jugador para garantizar que la ventana del informe siempre puede abrirse.
+    const fallbackMarketValue = Math.max(50_000, Math.round(Number(player.value) || 50_000));
+    const fallbackValuation: MarketValuation = {
+      playerId,
+      marketValue: fallbackMarketValue,
+      minimumPrice: fallbackMarketValue,
+      expectedPrice: fallbackMarketValue,
+      idealPrice: fallbackMarketValue,
+      maximumPrice: fallbackMarketValue,
+      listPrice: fallbackMarketValue,
+      isStar: player.ovr >= 82,
+      competition: 0,
+    };
+
+    return {
+      playerId,
+      valuation: fallbackValuation,
+      askingPrice: fallbackMarketValue,
+      available: true,
+      competition: 0,
+      wageDemand: player.contract.wage,
+      salary: player.contract.wage,
+      releaseClause: player.contract.releaseClause,
+      contractYearsLeft: player.contract.yearsLeft,
+      transferListed: player.transferListed,
+      wantsOut: false,
+    };
+  }
 }
 
 // ============================================================================

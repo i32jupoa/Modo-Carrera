@@ -35,6 +35,7 @@ import {
   levelLabel,
 } from "@/lib/teamProfile";
 import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace";
+import { formatPositionLabel } from "@/lib/positions";
 import { TypicalElevenPitch } from "@/components/TypicalElevenPitch";
 import { getPlayerForm } from "@/lib/playerForm";
 import { Search, X, Trophy, CalendarDays, ArrowUp, ArrowDown, Minus } from "lucide-react";
@@ -100,7 +101,11 @@ function TeamsPage() {
   // Generate stats on-demand when league changes
   useEffect(() => {
     if (selectedLeague) {
-      ensureStatsForLeague(selectedLeague);
+      try {
+        ensureStatsForLeague(selectedLeague);
+      } catch (error) {
+        console.error("No se pudieron preparar las estadísticas de la liga; se muestran los datos disponibles.", error);
+      }
     }
   }, [selectedLeague]);
 
@@ -167,50 +172,78 @@ function TeamsPage() {
   // equipo aunque ya se hubiera marchado.
   const teamSquad = useMemo(() => {
     if (!selectedTeam) return [];
-    // Para tu propio club manda siempre el roster real de la partida.
-    if (myTeamId && selectedTeam.id === myTeamId && myRosterIds?.length) {
-      return syncSquadFromRoster(myRosterIds);
+    try {
+      // Para tu propio club manda siempre el roster real de la partida.
+      if (myTeamId && selectedTeam.id === myTeamId && myRosterIds?.length) {
+        return syncSquadFromRoster(myRosterIds);
+      }
+      return squadForTeam(selectedTeam.id);
+    } catch (error) {
+      console.error("No se pudo cargar la plantilla del equipo; usando una plantilla vacía.", error);
+      return [];
     }
-    return squadForTeam(selectedTeam.id);
   }, [selectedTeam, clubOverrides, myTeamId, myRosterIds]);
 
   const isUserTeam = !!save && selectedTeam?.id === save.myTeamId;
 
   // Dibujo que mejor encaja con la plantilla, entre las formaciones típicas del estilo del equipo.
-  const bestFormation = useMemo(
-    () =>
-      selectedTeam && teamSquad.length ? bestFormationForSquad(teamSquad, selectedTeam) : null,
-    [teamSquad, selectedTeam],
-  );
+  const bestFormation = useMemo(() => {
+    if (!selectedTeam || !teamSquad.length) return null;
+    try {
+      return bestFormationForSquad(teamSquad, selectedTeam);
+    } catch (error) {
+      console.error("No se pudo calcular la mejor formación; usando una formación segura.", error);
+      return "Táctica 4-2-3-1 (2)" as const;
+    }
+  }, [teamSquad, selectedTeam]);
 
   // Táctica: la real si es tu equipo, la estimada si la lleva la IA.
   const tactics = useMemo(() => {
     if (!selectedTeam) return null;
-    const est = estimateTactics(selectedTeam);
-    const teamStyle = getTeamStyle(selectedTeam);
-    const formation = bestFormation ?? est.formation;
-    if (isUserTeam) {
-      const real = loadTactics(selectedTeam.id);
+    try {
+      const est = estimateTactics(selectedTeam);
+      const teamStyle = getTeamStyle(selectedTeam);
+      const formation = bestFormation ?? est.formation;
+      if (isUserTeam) {
+        try {
+          const real = loadTactics(selectedTeam.id);
+          return {
+            ...est,
+            formation,
+            style: real.style,
+            pressure: real.pressure,
+            defenseLine: real.defenseLine,
+          };
+        } catch {
+          return { ...est, formation };
+        }
+      }
       return {
         ...est,
         formation,
-        style: real.style,
-        pressure: real.pressure,
-        defenseLine: real.defenseLine,
+        style: teamStyle.style,
+        pressure: teamStyle.pressure,
+        defenseLine: teamStyle.defenseLine,
+      };
+    } catch (error) {
+      console.error("No se pudo calcular la táctica del equipo; usando valores seguros.", error);
+      return {
+        style: "balanced" as const,
+        pressure: "medium" as const,
+        defenseLine: "medium" as const,
+        formation: bestFormation ?? "Táctica 4-2-3-1 (2)",
       };
     }
-    return {
-      ...est,
-      formation,
-      style: teamStyle.style,
-      pressure: teamStyle.pressure,
-      defenseLine: teamStyle.defenseLine,
-    };
   }, [selectedTeam, isUserTeam, bestFormation]);
 
   const eleven = useMemo(() => {
     if (!tactics || !teamSquad.length) return [];
-    return estimatedEleven(tactics.formation, teamSquad);
+    try {
+      return estimatedEleven(tactics.formation, teamSquad);
+    } catch (error) {
+      console.error("No se pudo calcular el 11 tipo; ocultando esa sección.", error);
+      return [];
+    }
   }, [tactics, teamSquad]);
 
   const sortedSquad = useMemo(() => sortByPosition(teamSquad), [teamSquad]);
@@ -309,7 +342,7 @@ function TeamsPage() {
                       className="w-full flex items-center gap-3 px-3 py-2 hover:bg-secondary/40 transition text-left"
                     >
                       <span className="text-[0.6rem] uppercase text-muted-foreground w-8">
-                        {p.Position}
+                        {formatPositionLabel(p.Position)}
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold truncate">{p.Name}</div>
@@ -631,7 +664,7 @@ function TeamsPage() {
                                   ROLE_TEXT[roleFromPosition(p.Position)]
                                 }`}
                               >
-                                {p.Position}
+                                {formatPositionLabel(p.Position)}
                               </span>
                               <span className="font-medium truncate">{p.Name}</span>
                             </div>

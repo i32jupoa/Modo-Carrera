@@ -10,7 +10,7 @@ function isGoalkeeper(positions: PosCode[]): boolean {
 }
 
 function isDefensive(positions: PosCode[]): boolean {
-  return positions.some((p) => ["DFC", "LD", "LI", "CAD", "CAI"].includes(p));
+  return positions.some((p) => ["DFC", "LD", "LI"].includes(p));
 }
 
 function isMidfield(positions: PosCode[]): boolean {
@@ -18,7 +18,7 @@ function isMidfield(positions: PosCode[]): boolean {
 }
 
 function isAttacking(positions: PosCode[]): boolean {
-  return positions.some((p) => ["ED", "EI", "DC", "SD"].includes(p));
+  return positions.some((p) => ["ED", "EI", "DC", "MCO"].includes(p));
 }
 
 export type TeamStats = {

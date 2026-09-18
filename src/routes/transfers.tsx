@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
 import { TEAMS, teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
-import type { Position } from "@/data/players";
 import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { LeagueLogo } from "@/components/LeagueLogo";
@@ -17,8 +16,6 @@ import {
 import {
   usePlayersStore,
   formatEuro,
-  marketValueEuros,
-  mapEaPosition,
   FcPlayer,
   clubOfPlayer,
   fcPlayerById,
@@ -30,7 +27,7 @@ import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { useUserMarket } from "@/hooks/useUserMarket";
 import { NegotiationModal } from "@/components/market/NegotiationModal";
-import { buildPositions, POS_NAME, formatShortPositions } from "@/lib/positions";
+import { ALL_POS_CODES, buildPositions, POS_SHORT, formatShortPositions, type PosCode } from "@/lib/positions";
 import { DealCard } from "@/components/market/DealCard";
 import { MarketFeed } from "@/components/market/MarketFeed";
 import { TransferHistoryCard } from "@/components/market/TransferHistoryCard";
@@ -55,27 +52,21 @@ function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
 
-function formatMarketEuro(amount: number): string {
-  const safe = Number.isFinite(amount) ? amount : 0;
-  if (Math.abs(safe) >= 1_000_000) return `€${Math.round(safe / 1_000_000)}M`;
-  if (Math.abs(safe) >= 1_000) return `€${Math.round(safe / 1_000)}K`;
-  return `€${Math.round(safe)}`;
-}
 
-// Filter option types
-type PriceBracket = "all" | "0-1" | "1-5" | "5-15" | "15-40" | "40-80" | "80-150" | "150+";
-type AgeBracket = "all" | "16-20" | "21-25" | "26-30" | "31-35" | "36+";
-type RatingBracket = "all" | "<70" | "70-75" | "75-80" | "80-85" | "85-90" | "90+";
-type SortField = "ovr" | "age" | "price";
+// Filter state: age/media are free numeric ranges and positions are multi-select.
+type SortField = "ovr" | "age";
 type SortOrder = "asc" | "desc";
 
+type NumericFilterValue = number | "";
+
 interface FilterState {
-  position: Position | "all";
-  price: PriceBracket;
+  positions: PosCode[];
   league: LeagueId | "all";
   team: string;
-  age: AgeBracket;
-  rating: RatingBracket;
+  ageMin: NumericFilterValue;
+  ageMax: NumericFilterValue;
+  ratingMin: NumericFilterValue;
+  ratingMax: NumericFilterValue;
   sortField: SortField;
   sortOrder: SortOrder;
 }
@@ -85,54 +76,16 @@ interface FilterOption<T> {
   label: string;
 }
 
-// Filter definitions with explicit category labels
-const POSITION_OPTIONS: FilterOption<Position | "all">[] = [
-  { value: "all", label: "Posición: Todas" },
-  { value: "GK", label: "Portero" },
-  { value: "DEF", label: "Defensa" },
-  { value: "MID", label: "Mediocentro" },
-  { value: "FWD", label: "Delantero" },
-];
-
-const PRICE_OPTIONS: FilterOption<PriceBracket>[] = [
-  { value: "all", label: "Precio: Todos" },
-  { value: "0-1", label: "Menos de 1M" },
-  { value: "1-5", label: "1M - 5M" },
-  { value: "5-15", label: "5M - 15M" },
-  { value: "15-40", label: "15M - 40M" },
-  { value: "40-80", label: "40M - 80M" },
-  { value: "80-150", label: "80M - 150M" },
-  { value: "150+", label: "150M+" },
-];
-
-const AGE_OPTIONS: FilterOption<AgeBracket>[] = [
-  { value: "all", label: "Edad: Todas" },
-  { value: "16-20", label: "16 - 20 años" },
-  { value: "21-25", label: "21 - 25 años" },
-  { value: "26-30", label: "26 - 30 años" },
-  { value: "31-35", label: "31 - 35 años" },
-  { value: "36+", label: "36+ años" },
-];
-
-const RATING_OPTIONS: FilterOption<RatingBracket>[] = [
-  { value: "all", label: "Media: Todas" },
-  { value: "<70", label: "Menos de 70" },
-  { value: "70-75", label: "70 - 75" },
-  { value: "75-80", label: "75 - 80" },
-  { value: "80-85", label: "80 - 85" },
-  { value: "85-90", label: "85 - 90" },
-  { value: "90+", label: "90+" },
-];
+const POSITION_OPTIONS: PosCode[] = ALL_POS_CODES;
 
 const SORT_FIELD_OPTIONS: FilterOption<SortField>[] = [
-  { value: "ovr", label: "Ordenar por: Valoración" },
-  { value: "age", label: "Ordenar por: Edad" },
-  { value: "price", label: "Ordenar por: Precio" },
+  { value: "ovr", label: "Media" },
+  { value: "age", label: "Edad" },
 ];
 
 const SORT_ORDER_OPTIONS: FilterOption<SortOrder>[] = [
-  { value: "desc", label: "↓ Descendente" },
-  { value: "asc", label: "↑ Ascendente" },
+  { value: "desc", label: "Descendente" },
+  { value: "asc", label: "Ascendente" },
 ];
 
 // Helper to get all leagues with proper names and flags
@@ -163,7 +116,6 @@ function applyFilters(
   filters: FilterState,
   inRoster: Set<string>,
   searchQuery: string,
-  teamAverages: Record<string, number>,
 ): FcPlayer[] {
   return players.filter((p) => {
     const id = String(p.ID);
@@ -174,37 +126,10 @@ function applyFilters(
     // Search query filter
     if (searchQuery && !p.Name.toLowerCase().includes(searchQuery)) return false;
 
-    // Position filter
-    if (filters.position !== "all" && mapEaPosition(p.Position) !== filters.position) return false;
-
-    // Price filter
-    if (filters.price !== "all") {
-      const teamAvg = teamAverages[p.Team] || 75;
-      const cost = marketValueEuros(p, "", "", teamAvg);
-      const costM = cost / 1_000_000;
-      switch (filters.price) {
-        case "0-1":
-          if (costM > 1) return false;
-          break;
-        case "1-5":
-          if (costM < 1 || costM > 5) return false;
-          break;
-        case "5-15":
-          if (costM < 5 || costM > 15) return false;
-          break;
-        case "15-40":
-          if (costM < 15 || costM > 40) return false;
-          break;
-        case "40-80":
-          if (costM < 40 || costM > 80) return false;
-          break;
-        case "80-150":
-          if (costM < 80 || costM > 150) return false;
-          break;
-        case "150+":
-          if (costM < 150) return false;
-          break;
-      }
+    // Position filter: match any of the player's detailed positions or alternatives.
+    if (filters.positions.length > 0) {
+      const playerPositions = buildPositions(p.Position, p["Alternative positions"]);
+      if (!playerPositions.some((position) => filters.positions.includes(position))) return false;
     }
 
     // League filter - use player's League field converted to ID
@@ -216,50 +141,13 @@ function applyFilters(
     // Team filter
     if (filters.team !== "all" && p.Team !== filters.team) return false;
 
-    // Age filter
-    if (filters.age !== "all") {
-      switch (filters.age) {
-        case "16-20":
-          if (p.Age < 16 || p.Age > 20) return false;
-          break;
-        case "21-25":
-          if (p.Age < 21 || p.Age > 25) return false;
-          break;
-        case "26-30":
-          if (p.Age < 26 || p.Age > 30) return false;
-          break;
-        case "31-35":
-          if (p.Age < 31 || p.Age > 35) return false;
-          break;
-        case "36+":
-          if (p.Age < 36) return false;
-          break;
-      }
-    }
+    // Age range filter
+    if (filters.ageMin !== "" && p.Age < filters.ageMin) return false;
+    if (filters.ageMax !== "" && p.Age > filters.ageMax) return false;
 
-    // Rating filter
-    if (filters.rating !== "all") {
-      switch (filters.rating) {
-        case "<70":
-          if (p.OVR >= 70) return false;
-          break;
-        case "70-75":
-          if (p.OVR < 70 || p.OVR > 75) return false;
-          break;
-        case "75-80":
-          if (p.OVR < 75 || p.OVR > 80) return false;
-          break;
-        case "80-85":
-          if (p.OVR < 80 || p.OVR > 85) return false;
-          break;
-        case "85-90":
-          if (p.OVR < 85 || p.OVR > 90) return false;
-          break;
-        case "90+":
-          if (p.OVR < 90) return false;
-          break;
-      }
-    }
+    // Rating range filter
+    if (filters.ratingMin !== "" && p.OVR < filters.ratingMin) return false;
+    if (filters.ratingMax !== "" && p.OVR > filters.ratingMax) return false;
 
     return true;
   });
@@ -354,6 +242,7 @@ function TransfersPage() {
   const [save, setSave] = useState<SaveGame | null>(null);
   const [search, setSearch] = useState(initialQuery);
   const [showFilters, setShowFilters] = useState(false);
+  const [positionPickerOpen, setPositionPickerOpen] = useState(false);
   const [tab, setTab] = useState<MarketTab>("market");
   const markSectionRead = useNotificationsStore((s) => s.markSectionRead);
 
@@ -371,30 +260,14 @@ function TransfersPage() {
   const [detailsRecord, setDetailsRecord] = useState<import("@/lib/transfers").TransferRecord | null>(null);
   const [detailsDirection, setDetailsDirection] = useState<"in" | "out">("in");
 
-  // Calculate team averages for proper discount application
-  const teamAverages = useMemo(() => {
-    const ratings: Record<string, number[]> = {};
-    for (const p of rawPlayers) {
-      if (!ratings[p.Team]) ratings[p.Team] = [];
-      ratings[p.Team].push(p.OVR);
-    }
-    const averages: Record<string, number> = {};
-    for (const [team, teamRatings] of Object.entries(ratings)) {
-      averages[team] =
-        teamRatings.length > 0
-          ? Math.round(teamRatings.reduce((a, b) => a + b, 0) / teamRatings.length)
-          : 75;
-    }
-    return averages;
-  }, [rawPlayers]);
-
   const [filters, setFilters] = useState<FilterState>({
-    position: "all",
-    price: "all",
+    positions: [],
     league: "all",
     team: "all",
-    age: "all",
-    rating: "all",
+    ageMin: "",
+    ageMax: "",
+    ratingMin: "",
+    ratingMax: "",
     sortField: "ovr",
     sortOrder: "desc",
   });
@@ -430,33 +303,13 @@ function TransfersPage() {
 
   const players = useMemo(() => {
     if (!ready) return [];
-    const filtered = applyFilters(
-      rawPlayers,
-      filters,
-      inRoster,
-      search.trim().toLowerCase(),
-      teamAverages,
-    );
-    const sorted = filtered.sort((a, b) => {
-      let comparison = 0;
-      switch (filters.sortField) {
-        case "ovr":
-          comparison = a.OVR - b.OVR;
-          break;
-        case "age":
-          comparison = a.Age - b.Age;
-          break;
-        case "price": {
-          const avgA = teamAverages[a.Team] || 75;
-          const avgB = teamAverages[b.Team] || 75;
-          comparison = marketValueEuros(a, "", "", avgA) - marketValueEuros(b, "", "", avgB);
-          break;
-        }
-      }
+    const filtered = applyFilters(rawPlayers, filters, inRoster, search.trim().toLowerCase());
+    const sorted = [...filtered].sort((a, b) => {
+      const comparison = filters.sortField === "age" ? a.Age - b.Age : a.OVR - b.OVR;
       return filters.sortOrder === "asc" ? comparison : -comparison;
     });
     return sorted.slice(0, 250);
-  }, [ready, filters, inRoster, search, rawPlayers, teamAverages]);
+  }, [ready, filters, inRoster, search, rawPlayers]);
 
   const scoutingMap = useMemo(() => {
     const map = new Map<string, import("@/lib/transfers").ScoutingEntry>();
@@ -474,13 +327,15 @@ function TransfersPage() {
   const hiredScout = market.ready ? getClubScout(market.currentDate) : null;
 
 
-  const activeFiltersCount = useMemo(
-    () =>
-      (["position", "price", "league", "team", "age", "rating"] as const).filter(
-        (key) => filters[key] !== "all",
-      ).length,
-    [filters],
-  );
+  const activeFiltersCount = useMemo(() => {
+    return (
+      (filters.positions.length > 0 ? 1 : 0) +
+      (filters.league !== "all" ? 1 : 0) +
+      (filters.team !== "all" ? 1 : 0) +
+      (filters.ageMin !== "" || filters.ageMax !== "" ? 1 : 0) +
+      (filters.ratingMin !== "" || filters.ratingMax !== "" ? 1 : 0)
+    );
+  }, [filters]);
 
   const leagueOptions = useMemo(() => getLeaguesFromTeams(), []);
   const teamOptions = useMemo(() => getTeamsForLeague(filters.league), [filters.league]);
@@ -499,16 +354,18 @@ function TransfersPage() {
 
   const resetFilters = () => {
     setFilters({
-      position: "all",
-      price: "all",
+      positions: [],
       league: "all",
       team: "all",
-      age: "all",
-      rating: "all",
+      ageMin: "",
+      ageMax: "",
+      ratingMin: "",
+      ratingMax: "",
       sortField: "ovr",
       sortOrder: "desc",
     });
     setSearch("");
+    setPositionPickerOpen(false);
   };
 
   /** Abre la negociación con el informe real del motor de mercado. */
@@ -524,8 +381,13 @@ function TransfersPage() {
     const id = String(player.ID);
     const entry = scoutingMap.get(id);
     if (!entry || entry.status !== "completed" || !myTeamId) return;
-    setScoutingDetailsPlayer(player);
-    setScoutingDetailsReport(market.scout(id));
+    try {
+      setScoutingDetailsPlayer(player);
+      setScoutingDetailsReport(market.scout(id));
+    } catch {
+      setScoutingDetailsReport(null);
+      toast.error("No se ha podido generar el informe de ojeador.");
+    }
   }
 
   function startOrOpenScouting(player: FcPlayer) {
@@ -716,38 +578,46 @@ function TransfersPage() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <SelectField
-                  label="Posición"
-                  value={filters.position}
-                  options={POSITION_OPTIONS}
-                  onChange={(value) =>
-                    setFilters((prev) => ({ ...prev, position: value as Position | "all" }))
-                  }
+                <MultiPositionField
+                  positions={filters.positions}
+                  open={positionPickerOpen}
+                  onOpenChange={setPositionPickerOpen}
+                  onChange={(positions) => setFilters((prev) => ({ ...prev, positions }))}
                 />
-                <SelectField
-                  label="Precio"
-                  value={filters.price}
-                  options={PRICE_OPTIONS}
-                  onChange={(value) =>
-                    setFilters((prev) => ({ ...prev, price: value as PriceBracket }))
-                  }
-                />
-                <SelectField
-                  label="Edad"
-                  value={filters.age}
-                  options={AGE_OPTIONS}
-                  onChange={(value) =>
-                    setFilters((prev) => ({ ...prev, age: value as AgeBracket }))
-                  }
-                />
-                <SelectField
-                  label="Media"
-                  value={filters.rating}
-                  options={RATING_OPTIONS}
-                  onChange={(value) =>
-                    setFilters((prev) => ({ ...prev, rating: value as RatingBracket }))
-                  }
-                />
+
+                <div className="grid grid-cols-2 gap-2">
+                  <NumberFilterField
+                    label="Edad mínima"
+                    value={filters.ageMin}
+                    min={0}
+                    max={100}
+                    onChange={(value) => setFilters((prev) => ({ ...prev, ageMin: value }))}
+                  />
+                  <NumberFilterField
+                    label="Edad máxima"
+                    value={filters.ageMax}
+                    min={0}
+                    max={100}
+                    onChange={(value) => setFilters((prev) => ({ ...prev, ageMax: value }))}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <NumberFilterField
+                    label="Media mínima"
+                    value={filters.ratingMin}
+                    min={0}
+                    max={99}
+                    onChange={(value) => setFilters((prev) => ({ ...prev, ratingMin: value }))}
+                  />
+                  <NumberFilterField
+                    label="Media máxima"
+                    value={filters.ratingMax}
+                    min={0}
+                    max={99}
+                    onChange={(value) => setFilters((prev) => ({ ...prev, ratingMax: value }))}
+                  />
+                </div>
 
                 <div className="space-y-1.5">
                   <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
@@ -815,22 +685,24 @@ function TransfersPage() {
                   </Select>
                 </div>
 
-                <SelectField
-                  label="Ordenar por"
-                  value={filters.sortField}
-                  options={SORT_FIELD_OPTIONS}
-                  onChange={(value) =>
-                    setFilters((prev) => ({ ...prev, sortField: value as SortField }))
-                  }
-                />
-                <SelectField
-                  label="Dirección"
-                  value={filters.sortOrder}
-                  options={SORT_ORDER_OPTIONS}
-                  onChange={(value) =>
-                    setFilters((prev) => ({ ...prev, sortOrder: value as SortOrder }))
-                  }
-                />
+                <div className="grid grid-cols-2 gap-2">
+                  <SelectField
+                    label="Ordenar por"
+                    value={filters.sortField}
+                    options={SORT_FIELD_OPTIONS}
+                    onChange={(value) =>
+                      setFilters((prev) => ({ ...prev, sortField: value as SortField }))
+                    }
+                  />
+                  <SelectField
+                    label="Orden"
+                    value={filters.sortOrder}
+                    options={SORT_ORDER_OPTIONS}
+                    onChange={(value) =>
+                      setFilters((prev) => ({ ...prev, sortOrder: value as SortOrder }))
+                    }
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -1429,6 +1301,144 @@ function TransfersPage() {
         />
       )}
 
+    </div>
+  );
+}
+
+function NumberFilterField({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: NumericFilterValue;
+  min: number;
+  max: number;
+  onChange: (value: NumericFilterValue) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </label>
+      <input
+        type="number"
+        inputMode="numeric"
+        value={value}
+        min={min}
+        max={max}
+        placeholder="—"
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") {
+            onChange("");
+            return;
+          }
+          const next = Number(raw);
+          if (!Number.isFinite(next)) return;
+          onChange(Math.min(max, Math.max(min, next)));
+        }}
+        className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm"
+      />
+    </div>
+  );
+}
+
+function MultiPositionField({
+  positions,
+  open,
+  onOpenChange,
+  onChange,
+}: {
+  positions: PosCode[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (positions: PosCode[]) => void;
+}) {
+  const togglePosition = (position: PosCode) => {
+    onChange(
+      positions.includes(position)
+        ? positions.filter((item) => item !== position)
+        : [...positions, position],
+    );
+  };
+
+  const summary = positions.length === 0
+    ? "Todas"
+    : positions.length === 1
+      ? POS_SHORT[positions[0]]
+      : `${positions.length} posiciones`;
+
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+        Posición
+      </label>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => onOpenChange(!open)}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-left"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+        >
+          <span className="truncate">Posición: {summary}</span>
+          <span className="text-muted-foreground">⌄</span>
+        </button>
+
+        {open && (
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-xl border border-border bg-card p-2 shadow-xl">
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold transition ${positions.length === 0 ? "bg-primary/10 text-primary" : "hover:bg-secondary"}`}
+            >
+              <span className={`grid h-4 w-4 place-items-center rounded border text-[10px] ${positions.length === 0 ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>
+                {positions.length === 0 ? "✓" : ""}
+              </span>
+              Todas
+            </button>
+
+            <div className="grid grid-cols-3 gap-1.5" role="listbox" aria-label="Posiciones específicas">
+              {POSITION_OPTIONS.map((position) => {
+                const checked = positions.includes(position);
+                return (
+                  <button
+                    key={position}
+                    type="button"
+                    onClick={() => togglePosition(position)}
+                    className={`flex items-center gap-2 rounded-lg px-2 py-2 text-xs font-bold transition ${checked ? "bg-primary/10 text-primary" : "hover:bg-secondary"}`}
+                    role="option"
+                    aria-selected={checked}
+                  >
+                    <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border text-[10px] ${checked ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>
+                      {checked ? "✓" : ""}
+                    </span>
+                    <span>{position}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {positions.length > 0 && (
+              <div className="mt-2 flex items-center justify-between border-t border-border/60 pt-2">
+                <span className="text-[0.65rem] text-muted-foreground">
+                  {positions.length} seleccionadas
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onChange([])}
+                  className="text-[0.65rem] font-bold text-primary hover:underline"
+                >
+                  Quitar selección
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { ScoutingEntry } from "./Scouting";
+import { scoutFieldIsDetected, type ScoutField } from "./Scouting";
 import type { ScoutingReport } from "./UserNegotiation";
 
 export type ScoutingEstimate =
@@ -15,16 +16,19 @@ type ReportQuality = {
 };
 
 const QUALITY: Record<number, ReportQuality> = {
-  0.5: { salarySpread: 0.30, valueSpread: 0.28, potentialSpreadMin: 5, potentialSpreadMax: 9, unknownChance: 0.30 },
-  1: { salarySpread: 0.24, valueSpread: 0.23, potentialSpreadMin: 5, potentialSpreadMax: 8, unknownChance: 0.22 },
-  1.5: { salarySpread: 0.20, valueSpread: 0.19, potentialSpreadMin: 4, potentialSpreadMax: 7, unknownChance: 0.18 },
-  2: { salarySpread: 0.17, valueSpread: 0.16, potentialSpreadMin: 4, potentialSpreadMax: 6, unknownChance: 0.14 },
-  2.5: { salarySpread: 0.14, valueSpread: 0.13, potentialSpreadMin: 3, potentialSpreadMax: 6, unknownChance: 0.11 },
-  3: { salarySpread: 0.11, valueSpread: 0.10, potentialSpreadMin: 3, potentialSpreadMax: 5, unknownChance: 0.08 },
-  3.5: { salarySpread: 0.09, valueSpread: 0.08, potentialSpreadMin: 2, potentialSpreadMax: 4, unknownChance: 0.06 },
-  4: { salarySpread: 0.07, valueSpread: 0.06, potentialSpreadMin: 2, potentialSpreadMax: 3, unknownChance: 0.04 },
-  4.5: { salarySpread: 0.05, valueSpread: 0.045, potentialSpreadMin: 1, potentialSpreadMax: 2, unknownChance: 0.02 },
-  5: { salarySpread: 0, valueSpread: 0, potentialSpreadMin: 0, potentialSpreadMax: 0, unknownChance: 0 },
+  // El potencial se muestra con una incertidumbre mucho mayor en los ojeadores
+  // de baja calidad. El intervalo se interpreta como ANCHO TOTAL, no como
+  // distancia a cada lado del potencial real.
+  0.5: { salarySpread: 0.30, valueSpread: 0.28, potentialSpreadMin: 10, potentialSpreadMax: 16, unknownChance: 0 },
+  1:   { salarySpread: 0.25, valueSpread: 0.22, potentialSpreadMin: 9, potentialSpreadMax: 14, unknownChance: 0 },
+  1.5: { salarySpread: 0.22, valueSpread: 0.19, potentialSpreadMin: 8, potentialSpreadMax: 12, unknownChance: 0 },
+  2:   { salarySpread: 0.17, valueSpread: 0.15, potentialSpreadMin: 6, potentialSpreadMax: 10, unknownChance: 0 },
+  2.5: { salarySpread: 0.14, valueSpread: 0.12, potentialSpreadMin: 5, potentialSpreadMax: 8, unknownChance: 0 },
+  3:   { salarySpread: 0.11, valueSpread: 0.09, potentialSpreadMin: 4, potentialSpreadMax: 7, unknownChance: 0 },
+  3.5: { salarySpread: 0.085, valueSpread: 0.07, potentialSpreadMin: 3, potentialSpreadMax: 5, unknownChance: 0 },
+  4:   { salarySpread: 0.065, valueSpread: 0.055, potentialSpreadMin: 2, potentialSpreadMax: 4, unknownChance: 0 },
+  4.5: { salarySpread: 0.045, valueSpread: 0.035, potentialSpreadMin: 1, potentialSpreadMax: 2, unknownChance: 0 },
+  5:   { salarySpread: 0, valueSpread: 0, potentialSpreadMin: 0, potentialSpreadMax: 0, unknownChance: 0 },
 };
 
 function hashString(value: string): number {
@@ -49,6 +53,12 @@ function seededInt(seed: string, min: number, max: number): number {
   return Math.floor(min + seededUnit(seed) * (max - min + 1));
 }
 
+export function isScoutingFieldDetected(entry: ScoutingEntry, field: ScoutField): boolean {
+  if (Array.isArray(entry.detectedFields) && entry.detectedFields.includes(field)) return true;
+  if (Array.isArray(entry.detectedFields) && entry.detectedFields.length > 0) return false;
+  return scoutFieldIsDetected(entry.scoutRating, field, `${entry.playerId}:${entry.startedAt}:${entry.scoutId}`);
+}
+
 export function estimateScoutingMoney(
   value: number,
   entry: ScoutingEntry,
@@ -67,7 +77,8 @@ export function estimateScoutingMoney(
     return { kind: "unknown" };
   }
 
-  const spread = field === "salary" ? quality.salarySpread : quality.valueSpread;
+  const salaryField = field === "salary" || field === "wage-demand";
+  const spread = salaryField ? quality.salarySpread : quality.valueSpread;
   if (spread <= 0.03) {
     const rounded = Math.round(safeValue / 50_000) * 50_000;
     if (seededUnit(`${entry.playerId}:${entry.startedAt}:${field}:exact`) > 0.18) {
@@ -93,44 +104,55 @@ export function estimateScoutingMoney(
 export function estimateScoutingPotential(
   actualPotential: number,
   entry: ScoutingEntry,
+  minimumOverall = actualPotential,
 ): ScoutingEstimate {
-  const safePotential = Number.isFinite(actualPotential) ? Math.max(1, Math.round(actualPotential)) : 1;
+  const safeActualPotential = Number.isFinite(actualPotential)
+    ? Math.max(1, Math.round(actualPotential))
+    : Math.max(1, Math.round(minimumOverall));
+  const safeOvr = Number.isFinite(minimumOverall)
+    ? Math.max(1, Math.round(minimumOverall))
+    : safeActualPotential;
   const quality = QUALITY[entry.scoutRating] ?? QUALITY[0.5];
 
-  // 5★: potencial exacto, siempre.
   if (entry.scoutRating === 5 || (quality.potentialSpreadMin === 0 && quality.potentialSpreadMax === 0)) {
-    return { kind: "exact", value: safePotential };
+    return { kind: "exact", value: safeActualPotential };
   }
 
   if (seededUnit(`${entry.playerId}:${entry.startedAt}:potential:unknown`) < quality.unknownChance) {
     return { kind: "unknown" };
   }
 
-  const potentialMin = Number.isFinite(quality.potentialSpreadMin)
-    ? Math.max(0, Math.floor(quality.potentialSpreadMin))
-    : 0;
-  const potentialMax = Number.isFinite(quality.potentialSpreadMax)
-    ? Math.max(potentialMin, Math.floor(quality.potentialSpreadMax))
-    : potentialMin;
-  const spread = seededInt(
-    `${entry.playerId}:${entry.startedAt}:potential:spread`,
-    potentialMin,
-    potentialMax,
+  const requestedSpan = seededInt(
+    `${entry.playerId}:${entry.startedAt}:potential:span`,
+    quality.potentialSpreadMin,
+    quality.potentialSpreadMax,
   );
-  if (!Number.isFinite(spread) || spread <= 0) return { kind: "exact", value: safePotential };
 
-  // Igual que con el dinero, el potencial real puede quedar en cualquier
-  // punto razonable del intervalo, no necesariamente en el centro.
-  const totalSpan = Math.max(1, spread * 2);
-  const actualPosition = 0.1 + seededUnit(`${entry.playerId}:${entry.startedAt}:potential:position`) * 0.8;
-  const lowPad = Math.round(totalSpan * actualPosition);
-  const highPad = Math.max(1, totalSpan - lowPad);
+  // El intervalo debe contener al potencial real, pero el potencial real NO
+  // debe quedar en el centro de forma sistemática. Elegimos aleatoriamente
+  // cuánto espacio queda a la izquierda y a la derecha, respetando que el
+  // extremo inferior nunca baje del OVR y el superior no pase de 99.
+  const lowerRoom = Math.max(0, safeActualPotential - safeOvr);
+  const upperRoom = Math.max(0, 99 - safeActualPotential);
+  const feasibleSpan = Math.min(requestedSpan, lowerRoom + upperRoom);
 
-  return {
-    kind: "range",
-    min: Math.max(1, safePotential - lowPad),
-    max: Math.min(99, safePotential + highPad),
-  };
+  if (feasibleSpan <= 0) {
+    return { kind: "range", min: safeOvr, max: safeActualPotential };
+  }
+
+  const minLeftPad = Math.max(0, feasibleSpan - upperRoom);
+  const maxLeftPad = Math.min(feasibleSpan, lowerRoom);
+  const leftPad = seededInt(
+    `${entry.playerId}:${entry.startedAt}:potential:left-pad`,
+    minLeftPad,
+    maxLeftPad,
+  );
+  const rightPad = feasibleSpan - leftPad;
+
+  const min = Math.max(safeOvr, safeActualPotential - leftPad);
+  const max = Math.min(99, safeActualPotential + rightPad);
+
+  return { kind: "range", min, max };
 }
 
 export function formatScoutingEstimate(
@@ -158,11 +180,16 @@ export function scoutingNegotiationDisplay(
       " – " +
       formatMoney(ideal.kind === "range" ? ideal.max : ideal.value);
 
+  const marketDetected = isScoutingFieldDetected(entry, "marketValue");
+  const askingDetected = isScoutingFieldDetected(entry, "askingPrice");
+
   return {
-    marketValue: formatScoutingEstimate(report.valuation.marketValue, entry, "value", formatMoney),
-    askingPrice: formatScoutingEstimate(report.askingPrice, entry, "asking", formatMoney),
+    marketValue: marketDetected ? formatScoutingEstimate(report.valuation.marketValue, entry, "value", formatMoney) : "—",
+    askingPrice: askingDetected ? formatScoutingEstimate(report.askingPrice, entry, "asking", formatMoney) : "—",
     clubRange,
-    maximumPrice: formatScoutingEstimate(report.valuation.maximumPrice, entry, "maximum-price", formatMoney),
+    maximumPrice: askingDetected
+      ? formatScoutingEstimate(report.valuation.maximumPrice, entry, "maximum-price", formatMoney)
+      : "—",
     contractYearsLeft: `${report.contractYearsLeft} temporada(s)`,
     competition: report.competition > 0 ? `${report.competition} club(es)` : "Sin rivales",
   };
