@@ -271,6 +271,7 @@ export type FcPlayer = {
 
   Position: string;
   "Alternative positions"?: string;
+  Nation?: string;
 
   Age: number;
 

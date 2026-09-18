@@ -181,7 +181,7 @@ export default function MainMenuWizard({
                         : "border-white/10 bg-white/[0.04] hover:border-white/30"
                     }`}
                   >
-                    <LeagueLogo league={lg.name} size="sm" />
+                    <LeagueLogo league={lg.name} size="md" />
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-white truncate">{lg.name}</div>
                       <div className="text-xs text-white/50">{lgTeams.length} equipos</div>

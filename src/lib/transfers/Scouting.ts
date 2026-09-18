@@ -63,8 +63,8 @@ const CAPABILITIES: Record<ScoutRating, ScoutCapabilities> = {
   3: { slots: 5, minDays: 6, maxDays: 9, potentialSpreadMin: 3, potentialSpreadMax: 5, salarySpread: 0.11, valueSpread: 0.10, unknownChance: 0.08 },
   3.5: { slots: 6, minDays: 5, maxDays: 8, potentialSpreadMin: 2, potentialSpreadMax: 4, salarySpread: 0.09, valueSpread: 0.08, unknownChance: 0.06 },
   4: { slots: 7, minDays: 4, maxDays: 7, potentialSpreadMin: 2, potentialSpreadMax: 3, salarySpread: 0.07, valueSpread: 0.06, unknownChance: 0.04 },
-  4.5: { slots: 8, minDays: 3, maxDays: 5, potentialSpreadMin: 1, potentialSpreadMax: 2, salarySpread: 0.05, valueSpread: 0.045, unknownChance: 0.02 },
-  5: { slots: 10, minDays: 2, maxDays: 4, potentialSpreadMin: 0, potentialSpreadMax: 1, salarySpread: 0.025, valueSpread: 0.02, unknownChance: 0.005 },
+  4.5: { slots: 8, minDays: 3, maxDays: 5, potentialSpreadMin: 1, potentialSpreadMax: 2, salarySpread: 0.05, valueSpread: 0.045, unknownChance: 0.025 },
+  5: { slots: 10, minDays: 2, maxDays: 4, potentialSpreadMin: 0, potentialSpreadMax: 0, salarySpread: 0, valueSpread: 0, unknownChance: 0 },
 };
 
 const PRICE_BANDS: Record<ScoutRating, readonly [number, number]> = {
@@ -373,44 +373,60 @@ export type StartScoutingResult =
   | { ok: true; entry: ScoutingEntry }
   | { ok: false; reason: string };
 
-export function startScouting(playerId: string, currentDate: string): StartScoutingResult {
+export type StartScoutingBatchResult =
+  | { ok: true; entries: ScoutingEntry[] }
+  | { ok: false; reason: string };
+
+export function startScoutingBatch(playerIds: string[], currentDate: string): StartScoutingBatchResult {
   const state = ensureScoutingState(currentDate);
   const scout = state.hiredScout;
   if (!scout) {
     return { ok: false, reason: "Tu club no dispone de ningún ojeador. Contrata uno antes de enviar jugadores." };
   }
 
-  const existing = state.assignments.find((item) => item.playerId === playerId);
-  if (existing) {
-    const entry = { ...existing, status: statusOf(existing, currentDate) };
-    if (entry.status === "completed") {
-      return { ok: false, reason: "Este jugador ya ha sido ojeado. Puedes consultar su informe." };
-    }
-    return { ok: false, reason: "Ya estás ojeando a este jugador." };
+  const requestedIds = Array.from(new Set(playerIds.map((id) => String(id)).filter(Boolean)));
+  if (requestedIds.length === 0) {
+    return { ok: false, reason: "Selecciona al menos un jugador para iniciar el ojeo." };
   }
 
   const capacity = CAPABILITIES[scout.rating].slots;
   const activeCount = state.assignments.filter((record) => statusOf(record, currentDate) === "pending").length;
-  if (activeCount >= capacity) {
+  const availableSlots = Math.max(0, capacity - activeCount);
+  if (requestedIds.length > availableSlots) {
     return {
       ok: false,
-      reason: `Tu ojeador permite ${capacity} ojeo${capacity === 1 ? "" : "s"} simultáneo${capacity === 1 ? "" : "s"}. Espera a que termine uno.`,
+      reason: `Tu ojeador tiene ${availableSlots} hueco${availableSlots === 1 ? "" : "s"} disponible${availableSlots === 1 ? "" : "s"} de ${capacity}.`,
     };
   }
 
-  const readyAt = addDaysToIso(
-    currentDate,
-    daysForScout(playerId, currentDate, scout.id, scout.rating),
-  );
-  const record: StoredScoutingEntry = {
+  const existingIds = new Set(state.assignments.map((record) => record.playerId));
+  const alreadyScouted = requestedIds.filter((id) => existingIds.has(id));
+  if (alreadyScouted.length > 0) {
+    return { ok: false, reason: "Uno o varios jugadores ya están ojeados o en proceso de ojeo." };
+  }
+
+  const records: StoredScoutingEntry[] = requestedIds.map((playerId) => ({
     playerId,
     startedAt: currentDate,
-    readyAt,
+    readyAt: addDaysToIso(
+      currentDate,
+      daysForScout(playerId, currentDate, scout.id, scout.rating),
+    ),
     scoutId: scout.id,
     scoutRating: scout.rating,
+  }));
+
+  writeState({ ...state, assignments: [...state.assignments, ...records] });
+  return {
+    ok: true,
+    entries: records.map((record) => ({ ...record, status: "pending" })),
   };
-  writeState({ ...state, assignments: [...state.assignments, record] });
-  return { ok: true, entry: { ...record, status: "pending" } };
+}
+
+export function startScouting(playerId: string, currentDate: string): StartScoutingResult {
+  const result = startScoutingBatch([playerId], currentDate);
+  if (!result.ok) return result;
+  return { ok: true, entry: result.entries[0] };
 }
 
 export function removeScouting(playerId: string): void {

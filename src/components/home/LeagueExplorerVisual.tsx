@@ -48,9 +48,9 @@ export default function LeagueExplorerVisual({
                     <button
                       key={lg.id}
                       onClick={() => setSelectedLeague(lg.id as any)}
-                      className="league-button-aaa flex items-center gap-3 text-sm font-semibold hover-glow"
+                      className="league-button-aaa flex items-center gap-4 text-sm font-semibold hover-glow"
                     >
-                      <LeagueLogo league={lg.name} size="sm" />
+                      <LeagueLogo league={lg.name} size="md" />
                       <div className="flex-1 text-left">
                         <div className="font-bold">{lg.name}</div>
                         <div className="text-xs text-white/50">
