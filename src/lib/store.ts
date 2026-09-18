@@ -197,7 +197,7 @@ import { FIVE_DEFENDER_TEAMS, getTeamStyle, formationsForStyle } from "@/lib/tea
 
 /**
  * Coloca 11 jugadores disponibles en los huecos de una formación concreta,
- * respetando su demarcación real (natural o adaptable), igual que el 11
+ * respetando su demarcación real (declarada por el jugador), igual que el 11
  * ideal de /equipos (ver `estimatedEleven` en teamProfile.ts). Devuelve los
  * ids en el mismo orden que los huecos de la formación (Object.keys), que es
  * el orden que espera <MiniPitch> para pintar cada jugador en su sitio.
@@ -232,7 +232,7 @@ function pickXIForFormation(
       slotIds[idx] = pick.p.id;
       score += pick.p.rating - (pick.natural ? 0 : 5);
     } else {
-      // Hueco sin candidato natural/adaptable disponible (p.ej. plantilla muy
+      // Hueco sin candidato declarada disponible (p.ej. plantilla muy
       // corta de una demarcación por lesiones). Se rellenará después con el
       // mejor jugador libre que quede, para no salir a jugar con menos de 11.
       score -= 40;

@@ -109,17 +109,6 @@ export function toPosCode(raw: string): PosCode | null {
   return ALIASES[key] ?? null;
 }
 
-/**
- * Demarcaciones "casi idénticas": se permiten al alinear (sin ellas muchos
- * huecos serían imposibles de cubrir), pero no cuentan como encaje perfecto.
- */
-const COMPATIBLE: Partial<Record<PosCode, PosCode[]>> = {
-  MC: ["MCD", "MCO"],
-  MCD: ["MC"],
-  MCO: ["MC", "DC"],
-  DC: ["MCO"],
-};
-
 /** Parsea el campo "Alternative positions" del dataset: "['RW', 'ST']". */
 export function parseAlternativePositions(raw: unknown): PosCode[] {
   if (!raw) return [];
@@ -199,11 +188,16 @@ export function isNaturalFor(codes: PosCode[], slot: PosCode): boolean {
   return codes.includes(slot);
 }
 
-/** ¿Puede el jugador ocupar el hueco (exacto o demarcación casi idéntica)? */
+/**
+ * ¿Puede el jugador ocupar el hueco?
+ *
+ * En Dirección de equipo la regla es estricta: un jugador solo puede ocupar
+ * una demarcación que figure realmente entre su posición principal o sus
+ * posiciones alternativas. No se permiten conversiones automáticas como
+ * MC → MCD, DC → MCO, etc.
+ */
 export function canPlayPosition(codes: PosCode[], slot: PosCode): boolean {
-  if (codes.includes(slot)) return true;
-  const compat = COMPATIBLE[slot] ?? [];
-  return codes.some((c) => compat.includes(c));
+  return codes.includes(slot);
 }
 
 /**

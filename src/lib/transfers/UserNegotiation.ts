@@ -899,7 +899,19 @@ export function improveUserOffer(
     return { ok: true, deal, silent: true };
   }
 
-  const amount = Math.max(deal.offer.amount, Math.round(patch.amount ?? deal.offer.amount));
+  // En una contraoferta a una petición del club, el usuario puede ofrecer
+  // un importe inferior a la cantidad que el club acaba de pedir (por ejemplo,
+  // el club pide 210 M€ y el usuario contraoferta 207 M€). La validación de
+  // presupuesto debe hacerse sobre esa nueva cantidad, no sobre la demanda
+  // anterior del club. En el resto de fases conservamos la cantidad vigente
+  // cuando no se proporciona un nuevo importe.
+  const isIncomingClubCounter = deal.stage === "club-counter";
+  const requestedAmount = patch.amount !== undefined
+    ? Math.round(patch.amount)
+    : deal.offer.amount;
+  const amount = isIncomingClubCounter
+    ? Math.max(0, requestedAmount)
+    : Math.max(deal.offer.amount, Math.max(0, requestedAmount));
   const userFinances = getFinances(deal.userClubId);
   const transferRoom = Math.max(0, Math.round(userFinances.budget - userFinances.wageBudget));
   if (amount > transferRoom) {

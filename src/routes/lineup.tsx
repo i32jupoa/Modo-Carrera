@@ -780,10 +780,9 @@ function LineupPage() {
 
     const newFormationPositions = getFormationPositions(newFormation);
 
-    // Reasignamos el 11 hueco a hueco por DEMARCACIÓN concreta: primero
-    // quien juegue ahí de forma natural (posición principal o alternativa,
-    // sin privilegios) y después quien pueda hacerlo en una demarcación
-    // casi idéntica. Ya no se agrupa por bloques (DEF/MED/DEL).
+    // Reasignamos el 11 hueco a hueco por DEMARCACIÓN concreta.
+    // Solo se permiten las posiciones que el jugador tenga realmente
+    // declaradas (principal o alternativa); no se hacen conversiones.
     const availableIds = startingXI.filter((id) => !!id);
     const newStartingXI: string[] = [];
 
@@ -795,8 +794,7 @@ function LineupPage() {
           return player ? predicate(posCodesOf(player)) : false;
         });
 
-      const chosen =
-        pick((codes) => isNaturalFor(codes, slot)) ?? pick((codes) => canPlayPosition(codes, slot));
+      const chosen = pick((codes) => isNaturalFor(codes, slot));
 
       if (chosen) {
         availableIds.splice(availableIds.indexOf(chosen), 1);

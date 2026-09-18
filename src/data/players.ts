@@ -488,26 +488,8 @@ export function defaultLineup(squad: Player[], unavailable: Set<string> = new Se
     }
   });
 
-  // 2ª pasada: demarcaciones casi idénticas (LD, LI y MCO normalizados; compatibilidad MC↔MCD/MCO...).
-  DEFAULT_LINEUP_SLOTS.forEach((slot, i) => {
-    if (lineup[i]) return;
-    const pick = byRating.find((p) => !used.has(p.id) && canPlayPosition(playerPosCodes(p), slot));
-    if (pick) {
-      used.add(pick.id);
-      lineup[i] = pick.id;
-    }
-  });
-
-  // 3ª pasada: si aún queda algún hueco sin nadie válido, se rellena con el
-  // mejor disponible para no dejar el 11 incompleto.
-  const rest = byRating.filter((p) => !used.has(p.id));
-  for (let i = 0; i < lineup.length; i++) {
-    if (lineup[i]) continue;
-    const pick = rest.shift();
-    if (!pick) break;
-    used.add(pick.id);
-    lineup[i] = pick.id;
-  }
+  // No hay segunda/tercera pasada: nunca se coloca a un jugador en una
+  // demarcación que no tenga declarada. Los huecos incompatibles quedan vacíos.
 
   return lineup.filter((id) => id !== "");
 }

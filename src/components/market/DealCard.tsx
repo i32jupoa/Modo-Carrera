@@ -135,14 +135,28 @@ export function DealCard({
   const wageBudget = usePlayersStore((s) => s.wageBudget);
   const transferBudget = Math.max(0, totalEconomicBudget - wageBudget);
   const currentCounterAmount = Math.max(0, Math.round(amount * 1_000_000));
+  const clubDemandAmount = Math.max(0, Math.round(deal.clubDemand || deal.offer.amount));
   const clubDemandOverBudget =
     deal.direction === "in" &&
     deal.stage === "club-counter" &&
-    Math.round(deal.clubDemand || deal.offer.amount) > transferBudget;
+    clubDemandAmount > transferBudget;
+  // La falta de presupuesto para igualar la petición del club NO debe
+  // bloquear la posibilidad de contraofertar. Solo se bloquea la contraoferta
+  // si el importe que el usuario ha escrito supera su propio presupuesto.
   const userCounterOverBudget =
     deal.direction === "in" &&
     deal.stage === "club-counter" &&
     currentCounterAmount > transferBudget;
+
+  // Si la contraoferta guardada anteriormente supera el presupuesto actual,
+  // la ajustamos automáticamente al máximo disponible. Esto permite editar
+  // la oferta (por ejemplo, 207M con 209M disponibles) aunque la petición del
+  // club sea superior al presupuesto y el botón de aceptar permanezca bloqueado.
+  useEffect(() => {
+    if (deal.direction !== "in" || deal.stage !== "club-counter" || isLoan) return;
+    const maxCounterAmount = Math.max(0, transferBudget) / 1_000_000;
+    setAmount((current) => Math.min(current, maxCounterAmount));
+  }, [deal.id, deal.direction, deal.stage, isLoan, transferBudget]);
   // El traspaso acordado no se resta del presupuesto general todavía. Para
   // ESTE jugador, sí limita el salario máximo: total disponible - precio del
   // traspaso ya acordado, además del presupuesto salarial elegido en la barra.
@@ -309,6 +323,7 @@ export function DealCard({
               <NumberInput
                 label="Nueva oferta (M €)"
                 value={amount}
+                max={deal.direction === "in" ? transferBudget / 1_000_000 : undefined}
                 onChange={setAmount}
               />
               <SelectNumber
@@ -391,6 +406,11 @@ export function DealCard({
               primary
               disabled={clubDemandOverBudget}
             />
+            {clubDemandOverBudget && deal.direction === "in" && !isLoan && (
+              <p className="basis-full text-xs text-amber-400">
+                No puedes igualar la petición del club porque supera tu presupuesto de fichajes. Puedes contraofertar cualquier importe que tengas disponible.
+              </p>
+            )}
             <Action
               label="Contraofertar"
               disabled={
