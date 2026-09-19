@@ -33,6 +33,8 @@ import { loadSave } from "@/lib/store";
 import { loadAllSaves, loadSaveById } from "@/lib/savedGames";
 import { teamById } from "@/data/teams";
 import { useNotificationsStore } from "@/store/notificationsStore";
+import { usePlayersStore } from "@/store/playersStore";
+import { markScoutingNotificationsSeen, hasScoutingNotifications } from "@/lib/transfers/Scouting";
 import { useEffect, useState } from "react";
 
 type Item = { title: string; url: string; icon: React.ComponentType<{ className?: string }> };
@@ -99,7 +101,26 @@ export function AppSidebar() {
     }
   }, [pathname]); // Ejecutar cuando cambia el pathname
 
-  const counts = useNotificationsStore((s) => s.counts);
+  const marketNotificationTotal = useNotificationsStore((s) => s.counts.deals + s.counts.offers);
+  const markAllMarketNotificationsRead = useNotificationsStore((s) => s.markAllRead);
+  const currentDate = usePlayersStore((s) => s.currentDate);
+  const scoutingHasNotifications = hasScoutingNotifications(currentDate);
+
+  // Mientras estás dentro del mercado, cualquier novedad se considera vista.
+  // Así no aparece ningún punto al pasar días dentro de la propia sección.
+  useEffect(() => {
+    if (pathname === "/transfers" && marketNotificationTotal > 0) {
+      markAllMarketNotificationsRead();
+    }
+  }, [pathname, marketNotificationTotal, markAllMarketNotificationsRead]);
+
+  // Entrar o permanecer en Ojeador consume las novedades visibles hasta ese
+  // momento (cambio de catálogo o informes que ya estén listos).
+  useEffect(() => {
+    if (pathname === "/scouting") {
+      markScoutingNotificationsSeen(currentDate);
+    }
+  }, [pathname, currentDate]);
 
   const isActive = (url: string) => pathname === url;
 
@@ -139,6 +160,9 @@ export function AppSidebar() {
               items={MI_EQUIPO}
               collapsed={collapsed}
               isActive={isActive}
+              badges={{
+                "/scouting": pathname !== "/scouting" && scoutingHasNotifications,
+              }}
             />
             <NavGroup
               label="Competiciones"
@@ -151,7 +175,9 @@ export function AppSidebar() {
               items={MUNDO}
               collapsed={collapsed}
               isActive={isActive}
-              badges={{ "/transfers": counts }}
+              badges={{
+                "/transfers": pathname !== "/transfers" && marketNotificationTotal > 0,
+              }}
             />
           </>
         ) : (
@@ -173,29 +199,27 @@ export function AppSidebar() {
   );
 }
 
-/** Contador único de novedades sin leer del mercado. */
+/** Punto amarillo de novedades. No muestra cantidades. */
 function NotificationDots({
-  counts,
+  hasNotification,
   compact = false,
+  label = "Nueva notificación",
 }: {
-  counts: { deals: number; offers: number };
+  hasNotification: boolean;
   compact?: boolean;
+  label?: string;
 }) {
-  const total = counts.deals + counts.offers;
-  if (total <= 0) return null;
-  const displayCount = total > 99 ? "99+" : total;
+  if (!hasNotification) return null;
   return (
     <span
-      title={`Novedades del mercado: ${displayCount}`}
-      aria-label={`Novedades del mercado: ${displayCount}`}
-      className={`inline-flex items-center justify-center rounded-full bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/25 font-black tabular-nums ${
+      title={label}
+      aria-label={label}
+      className={
         compact
-          ? "h-4 min-w-4 px-1 text-[0.48rem]"
-          : "h-5 min-w-6 px-1.5 text-[0.62rem]"
-      }`}
-    >
-      {displayCount}
-    </span>
+          ? "inline-block h-2 w-2 rounded-full bg-yellow-400 ring-2 ring-yellow-400/20"
+          : "inline-block h-2.5 w-2.5 rounded-full bg-yellow-400 ring-2 ring-yellow-400/20"
+      }
+    />
   );
 }
 
@@ -210,7 +234,7 @@ function NavGroup({
   items: Item[];
   collapsed: boolean;
   isActive: (url: string) => boolean;
-  badges?: Record<string, { deals: number; offers: number }>;
+  badges?: Record<string, boolean>;
 }) {
   return (
     <SidebarGroup>
@@ -225,13 +249,13 @@ function NavGroup({
                   {collapsed ? (
                     badges?.[item.url] && (
                       <span className="absolute -top-1 right-0">
-                        <NotificationDots counts={badges[item.url]} compact />
+                        <NotificationDots hasNotification compact label={`Novedades en ${item.title}`} />
                       </span>
                     )
                   ) : (
                     <>
                       <span className="flex-1">{item.title}</span>
-                      {badges?.[item.url] && <NotificationDots counts={badges[item.url]} />}
+                      {badges?.[item.url] && <NotificationDots hasNotification label={`Novedades en ${item.title}`} />}
                       <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-50 transition" />
                     </>
                   )}

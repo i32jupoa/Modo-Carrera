@@ -382,11 +382,20 @@ export function ensureScoutingState(currentDate: string): ScoutingState {
     return state;
   }
 
+  const catalogActuallyChanged = Boolean(state.catalogMonth && state.catalogMonth !== month);
   const next = {
     ...state,
     catalogMonth: month,
     catalog: buildCatalog(month),
   };
+
+  // Solo generamos una notificación cuando realmente se ha producido un
+  // cambio de catálogo. Así, un guardado antiguo al estrenar esta función no
+  // genera una falsa notificación en su primera apertura.
+  if (catalogActuallyChanged) {
+    markScoutingCatalogChanged(month);
+  }
+
   writeState(next);
   return next;
 }
@@ -561,6 +570,133 @@ export function removeScouting(playerId: string): void {
 
 export function activeScoutingCount(currentDate: string): number {
   return listScouting(currentDate).filter((entry) => entry.status === "pending").length;
+}
+
+
+const SCOUTING_NOTIFICATIONS_STORAGE_PREFIX = "fcsim:scouting-notifications:v2:";
+const SCOUTING_CATALOG_EVENT_STORAGE_PREFIX = "fcsim:scouting-catalog-event:v1:";
+
+type ScoutingNotificationSeen = {
+  catalogMonth: string;
+  completedAssignmentIds: string[];
+};
+
+function scoutingNotificationStorageKey(): string | null {
+  const saveId = getCurrentSaveId();
+  return saveId ? `${SCOUTING_NOTIFICATIONS_STORAGE_PREFIX}${saveId}` : null;
+}
+
+function scoutingCatalogEventStorageKey(): string | null {
+  const saveId = getCurrentSaveId();
+  return saveId ? `${SCOUTING_CATALOG_EVENT_STORAGE_PREFIX}${saveId}` : null;
+}
+
+function readScoutingCatalogEvent(): string {
+  if (typeof window === "undefined") return "";
+  const key = scoutingCatalogEventStorageKey();
+  if (!key) return "";
+  try {
+    return window.localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function markScoutingCatalogChanged(catalogMonth: string): void {
+  if (typeof window === "undefined") return;
+  const key = scoutingCatalogEventStorageKey();
+  if (!key) return;
+  try {
+    window.localStorage.setItem(key, catalogMonth);
+  } catch {
+    // No bloqueamos la partida si el almacenamiento no está disponible.
+  }
+}
+
+function clearScoutingCatalogChanged(): void {
+  if (typeof window === "undefined") return;
+  const key = scoutingCatalogEventStorageKey();
+  if (!key) return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // No bloqueamos la partida si el almacenamiento no está disponible.
+  }
+}
+
+function readScoutingNotificationSeen(): ScoutingNotificationSeen | null {
+  if (typeof window === "undefined") return null;
+  const key = scoutingNotificationStorageKey();
+  if (!key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ScoutingNotificationSeen>;
+    return {
+      catalogMonth: typeof parsed.catalogMonth === "string" ? parsed.catalogMonth : "",
+      completedAssignmentIds: Array.isArray(parsed.completedAssignmentIds)
+        ? parsed.completedAssignmentIds.filter((id): id is string => typeof id === "string")
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeScoutingNotificationSeen(value: ScoutingNotificationSeen): void {
+  if (typeof window === "undefined") return;
+  const key = scoutingNotificationStorageKey();
+  if (!key) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // No bloqueamos la partida si el almacenamiento no está disponible.
+  }
+}
+
+/**
+ * Devuelve si hay novedades del ojeador que todavía no se han visto:
+ * un cambio de catálogo o al menos un informe que haya pasado a listo.
+ * La primera lectura inicializa el estado como ya visto para no crear una
+ * falsa notificación al cargar una partida antigua.
+ */
+export function hasScoutingNotifications(currentDate: string): boolean {
+  const state = ensureScoutingState(currentDate);
+  const completedIds = state.assignments
+    .filter((entry) => statusOf(entry, currentDate) === "completed")
+    .map((entry) => `${entry.playerId}:${entry.readyAt}`);
+
+  const seen = readScoutingNotificationSeen();
+  const catalogEvent = readScoutingCatalogEvent();
+
+  // En una partida que ya existía antes de esta funcionalidad, no debemos
+  // inventarnos una notificación de catálogo. Sin embargo, un informe que ya
+  // esté listo sí debe poder avisar al usuario.
+  if (!seen) {
+    return Boolean(catalogEvent) || completedIds.length > 0;
+  }
+
+  const catalogChanged =
+    seen.catalogMonth !== state.catalogMonth || catalogEvent === state.catalogMonth;
+  const readyReportAvailable = completedIds.some(
+    (id) => !seen.completedAssignmentIds.includes(id),
+  );
+
+  return catalogChanged || readyReportAvailable;
+}
+
+/** Marca como vistas las novedades actuales del ojeador. */
+export function markScoutingNotificationsSeen(currentDate: string): void {
+  const state = ensureScoutingState(currentDate);
+  const completedIds = state.assignments
+    .filter((entry) => statusOf(entry, currentDate) === "completed")
+    .map((entry) => `${entry.playerId}:${entry.readyAt}`);
+
+  writeScoutingNotificationSeen({
+    catalogMonth: state.catalogMonth,
+    completedAssignmentIds: completedIds,
+  });
+  clearScoutingCatalogChanged();
 }
 
 export function clearScoutingForCurrentSave(): void {

@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
+import { getCurrentSaveId } from "@/lib/savedGames";
 import { TEAMS, teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
@@ -77,6 +78,55 @@ interface FilterOption<T> {
 }
 
 const POSITION_OPTIONS: PosCode[] = ALL_POS_CODES;
+
+
+type MarketBadgeSection = "scouted" | "deals" | "offers";
+
+const MARKET_BADGE_SEEN_PREFIX = "fcsim:market-badges:v1:";
+
+function marketBadgeSeenKey(section: MarketBadgeSection): string | null {
+  const saveId = getCurrentSaveId();
+  return saveId ? `${MARKET_BADGE_SEEN_PREFIX}${saveId}:${section}` : null;
+}
+
+function readMarketBadgeSeen(section: MarketBadgeSection): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  const key = marketBadgeSeenKey(section);
+  if (!key) return new Set();
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((id): id is string => typeof id === "string")
+        : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function writeMarketBadgeSeen(section: MarketBadgeSection, ids: string[]): void {
+  if (typeof window === "undefined") return;
+  const key = marketBadgeSeenKey(section);
+  if (!key) return;
+  try {
+    const previous = readMarketBadgeSeen(section);
+    for (const id of ids) previous.add(id);
+    // Avoid unbounded growth while keeping enough history to distinguish
+    // persistent operations from genuinely new ones.
+    const compact = Array.from(previous).slice(-2000);
+    window.localStorage.setItem(key, JSON.stringify(compact));
+  } catch {
+    // Las insignias son informativas; nunca deben bloquear el mercado.
+  }
+}
+
+function unseenMarketBadgeCount(section: MarketBadgeSection, ids: string[]): number {
+  const seen = readMarketBadgeSeen(section);
+  return ids.reduce((count, id) => count + (seen.has(id) ? 0 : 1), 0);
+}
 
 const SORT_FIELD_OPTIONS: FilterOption<SortField>[] = [
   { value: "ovr", label: "Media" },
@@ -409,6 +459,21 @@ function TransfersPage() {
     market.startScouting(id);
   }
 
+  const myTeam = myTeamId ? teamById(myTeamId) : null;
+  const openDeals = market.outgoing.filter((d) => d.stage !== "completed" && d.stage !== "failed");
+  const openOffers = market.incoming.filter((d) => d.stage !== "completed" && d.stage !== "failed");
+
+  const marketBadgeIds: Record<MarketBadgeSection, string[]> = {
+    scouted: scoutedPlayers.map(({ entry }) => `${entry.playerId}:${entry.startedAt}`),
+    deals: openDeals.map((deal) => deal.id),
+    offers: openOffers.map((offer) => offer.id),
+  };
+
+  useEffect(() => {
+    if (tab !== "scouted" && tab !== "deals" && tab !== "offers") return;
+    writeMarketBadgeSeen(tab, marketBadgeIds[tab]);
+  }, [tab, marketBadgeIds.scouted.join("|"), marketBadgeIds.deals.join("|"), marketBadgeIds.offers.join("|")]);
+
   if (!save) return null;
   if (loading) {
     return (
@@ -417,10 +482,6 @@ function TransfersPage() {
       </div>
     );
   }
-
-  const myTeam = myTeamId ? teamById(myTeamId) : null;
-  const openDeals = market.outgoing.filter((d) => d.stage !== "completed" && d.stage !== "failed");
-  const openOffers = market.incoming.filter((d) => d.stage !== "completed" && d.stage !== "failed");
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
@@ -500,14 +561,17 @@ function TransfersPage() {
       {/* Pestañas del mercado */}
       <div className="flex flex-wrap gap-2 mb-4">
         {TABS.map((option) => {
-          const count =
-            option.value === "deals"
-                ? openDeals.length
-                : option.value === "offers"
-                  ? openOffers.length
-                  : option.value === "scouted"
-                    ? market.scouting.length
-                    : 0;
+          const badgeIds: Record<MarketBadgeSection, string[]> = {
+            scouted: scoutedPlayers.map(({ entry }) => `${entry.playerId}:${entry.startedAt}`),
+            deals: openDeals.map((deal) => deal.id),
+            offers: openOffers.map((offer) => offer.id),
+          };
+          const section = option.value === "deals" || option.value === "offers" || option.value === "scouted"
+            ? option.value
+            : null;
+          const count = section && tab !== section
+            ? unseenMarketBadgeCount(section, badgeIds[section])
+            : 0;
           return (
             <button
               key={option.value}
@@ -521,7 +585,13 @@ function TransfersPage() {
             >
               {option.label}
               {count > 0 && (
-                <span className="ml-2 rounded-full bg-secondary text-foreground px-2 py-0.5 text-xs">
+                <span
+                  className={`ml-2 rounded-full px-2 py-0.5 text-xs font-black ${
+                    option.value === "scouted" || option.value === "deals" || option.value === "offers"
+                      ? "bg-yellow-400 text-black"
+                      : "bg-secondary text-foreground"
+                  }`}
+                >
                   {count}
                 </span>
               )}
