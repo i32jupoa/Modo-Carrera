@@ -10,6 +10,8 @@ import {
 } from "@/lib/transfers";
 import type { UserDeal } from "@/lib/transfers";
 import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { fcPlayerById } from "@/store/playersStore";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import {
   Select,
@@ -207,18 +209,43 @@ export function MarketFeed({
     // "frescos" son sólo de los últimos días).
     const source = windowRumors && windowRumors.length > 0 ? windowRumors : rumors;
     return source.filter(
-      (rumor) => clubInScope(rumor.clubId) || clubInScope(playerClubOf(rumor.playerId)),
+      (rumor) =>
+        clubInScope(rumor.clubId) ||
+        clubInScope(rumor.targetClubId ?? playerClubOf(rumor.playerId)),
     );
   }, [rumors, windowRumors, clubInScope, noFilter]);
 
-  // Cuando el filtro apunta a tu club, tus negociaciones abiertas se leen
-  // como rumores: las ofertas que haces y las que recibes.
-  const myDeals = useMemo(() => {
-    if (!myTeamId) return [];
-    const targeted = teamId === myTeamId || (teamId === "all" && clubInScope(myTeamId));
-    if (!targeted) return [];
-    return userDeals.filter((deal) => deal.stage !== "failed");
-  }, [userDeals, myTeamId, teamId, clubInScope]);
+  /**
+   * Las negociaciones activas del usuario se muestran como noticias normales
+   * dentro del mismo feed, no como un bloque fijado arriba. Así conservan la
+   * misma jerarquía visual y respetan los filtros de club/liga.
+   */
+  const feedItems = useMemo(() => {
+    const rumorItems = filteredRumors.map((rumor) => ({
+      kind: "rumor" as const,
+      date: rumor.date,
+      rumor,
+    }));
+
+    const dealItems = userDeals
+      .filter((deal) => deal.stage !== "failed")
+      .filter((deal) => {
+        if (teamId !== "all") {
+          return deal.userClubId === teamId || deal.otherClubId === teamId;
+        }
+        if (scope === "all") return true;
+        return clubInScope(deal.userClubId) || clubInScope(deal.otherClubId);
+      })
+      .map((deal) => ({
+        kind: "deal" as const,
+        date: deal.updatedOn,
+        deal,
+      }));
+
+    return [...rumorItems, ...dealItems].sort((a, b) =>
+      a.date === b.date ? 0 : a.date < b.date ? 1 : -1,
+    );
+  }, [filteredRumors, userDeals, teamId, scope, clubInScope]);
 
   const filteredSummary = useMemo(() => {
     if (noFilter || !summary) return summary;
@@ -295,49 +322,83 @@ export function MarketFeed({
         <section className="panel p-4">
           <h2 className="font-bold mb-3">Rumores del mercado</h2>
 
-          {myDeals.length > 0 && (
-            <ul className="space-y-2 mb-3">
-              {myDeals.map((deal) => (
-                <li
-                  key={deal.id}
-                  className="flex items-start gap-2 text-sm rounded-lg bg-secondary/40 p-2"
-                >
-                  <ClubBadge clubId={deal.otherClubId} />
-                  <div className="min-w-0">
-                    <p>
-                      {deal.direction === "in"
-                        ? `Tu club negocia el fichaje de ${deal.playerName} con el ${clubName(deal.otherClubId)}.`
-                        : `El ${clubName(deal.otherClubId)} ha ofertado por ${deal.playerName}.`}
-                    </p>
-                    <p className="text-[0.65rem] text-muted-foreground">
-                      {deal.updatedOn} · {formatEuro(deal.offer?.amount ?? 0)} · negociación propia
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {filteredRumors.length === 0 && myDeals.length === 0 ? (
+          {feedItems.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No hay rumores para este filtro. Prueba con otra liga u otro equipo.
             </p>
           ) : (
             <ul className="space-y-2 max-h-[26rem] overflow-auto pr-1">
-              {filteredRumors.map((rumor) => (
-                <li
-                  key={rumor.id}
-                  className="flex items-start gap-2 text-sm border-b border-border/40 pb-2 last:border-0"
-                >
-                  <ClubBadge clubId={rumor.clubId} />
-                  <div>
-                    <p>{rumor.text}</p>
-                    <p className="text-[0.65rem] text-muted-foreground">
-                      {rumor.date} · fiabilidad {Math.round(rumor.reliability * 100)}%
-                    </p>
-                  </div>
-                </li>
-              ))}
+              {feedItems.map((item) => {
+                if (item.kind === "deal") {
+                  const deal = item.deal;
+                  const marketPlayer = getPlayer(deal.playerId);
+                  const rawPlayer = fcPlayerById(deal.playerId);
+                  const playerPosition = rawPlayer?.Position ?? marketPlayer?.position ?? "MID";
+                  const sellerClubId = deal.direction === "in" ? deal.otherClubId : deal.userClubId;
+                  const buyerClubId = deal.direction === "in" ? deal.userClubId : deal.otherClubId;
+                  return (
+                    <li
+                      key={`deal:${deal.id}`}
+                      className="flex items-center gap-3 text-sm border-b border-border/40 pb-3 last:border-0"
+                    >
+                      <PlayerFace
+                        name={deal.playerName}
+                        image={rawPlayer?.card}
+                        role={roleFromPosition(playerPosition)}
+                        size={48}
+                        showRing={false}
+                      />
+                      <div className="flex items-center gap-1 shrink-0">
+                        <ClubBadge clubId={sellerClubId} size={20} />
+                        <span className="text-muted-foreground text-xs">→</span>
+                        <ClubBadge clubId={buyerClubId} size={20} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold leading-snug">
+                          {deal.direction === "in"
+                            ? `Tu club negocia el fichaje de ${deal.playerName} con el ${clubName(deal.otherClubId)}.`
+                            : `El ${clubName(deal.otherClubId)} negocia el fichaje de ${deal.playerName}.`}
+                        </p>
+                        <p className="mt-1 text-[0.65rem] text-muted-foreground">
+                          {clubName(sellerClubId)} → {clubName(buyerClubId)} · {deal.updatedOn} · fiabilidad 100%
+                        </p>
+                      </div>
+                    </li>
+                  );
+                }
+
+                const rumor = item.rumor;
+                const marketPlayer = rumor.playerId ? getPlayer(rumor.playerId) : null;
+                const rawPlayer = rumor.playerId ? fcPlayerById(rumor.playerId) : undefined;
+                const sellerClubId = rumor.targetClubId ?? marketPlayer?.clubId ?? null;
+                const playerPosition = rawPlayer?.Position ?? marketPlayer?.position ?? "MID";
+
+                return (
+                  <li
+                    key={rumor.id}
+                    className="flex items-center gap-3 text-sm border-b border-border/40 pb-3 last:border-0"
+                  >
+                    <PlayerFace
+                      name={marketPlayer?.name ?? "Jugador"}
+                      image={rawPlayer?.card}
+                      role={roleFromPosition(playerPosition)}
+                      size={48}
+                      showRing={false}
+                    />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <ClubBadge clubId={sellerClubId} size={20} />
+                      <span className="text-muted-foreground text-xs">→</span>
+                      <ClubBadge clubId={rumor.clubId} size={20} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold leading-snug">{rumor.text}</p>
+                      <p className="mt-1 text-[0.65rem] text-muted-foreground">
+                        {sellerClubId ? `${clubName(sellerClubId)} → ${clubName(rumor.clubId)}` : clubName(rumor.clubId)} · {rumor.date} · fiabilidad {Math.round(rumor.reliability * 100)}%
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
@@ -396,26 +457,38 @@ export function MarketFeed({
             </p>
           ) : (
             <ul className="space-y-2 max-h-[26rem] overflow-auto pr-1">
-              {filteredHistory.map((record) => (
-                <li
-                  key={record.id}
-                  className="flex items-start gap-2 text-sm border-b border-border/40 pb-2 last:border-0"
-                >
-                  <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                    <ClubBadge clubId={record.fromClubId} size={18} />
-                    <span className="text-muted-foreground text-xs">→</span>
-                    <ClubBadge clubId={record.toClubId} size={18} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-bold truncate">{record.playerName}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {clubName(record.fromClubId)} → {clubName(record.toClubId)} ·{" "}
-                      {record.fee > 0 ? formatEuro(record.fee) : describeTransfer(record)} ·{" "}
-                      {record.date}
-                    </p>
-                  </div>
-                </li>
-              ))}
+              {filteredHistory.map((record) => {
+                const rawPlayer = fcPlayerById(record.playerId);
+                const marketPlayer = getPlayer(record.playerId);
+                const playerPosition = rawPlayer?.Position ?? marketPlayer?.position ?? "MID";
+                return (
+                  <li
+                    key={record.id}
+                    className="flex items-center gap-3 text-sm border-b border-border/40 pb-2 last:border-0"
+                  >
+                    <PlayerFace
+                      name={record.playerName}
+                      image={rawPlayer?.card}
+                      role={roleFromPosition(playerPosition)}
+                      size={42}
+                      showRing={false}
+                    />
+                    <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                      <ClubBadge clubId={record.fromClubId} size={20} />
+                      <span className="text-muted-foreground text-xs">→</span>
+                      <ClubBadge clubId={record.toClubId} size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold truncate">{record.playerName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {clubName(record.fromClubId)} → {clubName(record.toClubId)} ·{" "}
+                        {record.fee > 0 ? formatEuro(record.fee) : describeTransfer(record)} ·{" "}
+                        {record.date}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

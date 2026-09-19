@@ -348,8 +348,11 @@ export interface Rumor {
   id: string;
   date: string;
   kind: RumorKind;
+  /** Club que persigue al jugador / protagonista principal del rumor. */
   clubId: string;
   playerId: string | null;
+  /** Club actual del jugador, cuando el rumor es sobre un fichaje. */
+  targetClubId?: string | null;
   text: string;
   /** Fiabilidad 0..1. */
   reliability: number;

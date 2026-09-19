@@ -39,7 +39,7 @@ import {
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
 import { runClubLoanCycle, resolveLoansDue, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
-import { rumorBidWar, rumorInterest, rumorRenewal, rumorSearching } from "./RumorEngine";
+import { rumorBidWar, rumorInterest } from "./RumorEngine";
 import {
   setLockWindow,
   windowDeficit,
@@ -373,7 +373,6 @@ function runClubDay(
     const contracts = runClubContractCycle(clubId, { date });
     for (const renewal of contracts.renewals) {
       if (renewal.renewed) result.renewals += 1;
-      rumors.push(rumorRenewal(clubId, renewal.playerId, renewal.renewed, date));
     }
   }
 
@@ -446,11 +445,6 @@ function runClubDay(
       (rollsToShop &&
         (belowMinimum || (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)))));
   if (canBuy) {
-    // Una sola nota de "busca refuerzos" al día: el resto de necesidades se
-    // trabajan igual, pero sin inundar el feed.
-    const [firstNeed] = priorityNeeds(clubId, date, state.deadlineDay ? 3 : 2);
-    if (firstNeed) rumors.push(rumorSearching(clubId, firstNeed.group, date));
-
     // Reponer siempre pesa más que esperar: un club que ha vendido sale a
     // fichar a varios jugadores el mismo día, como en la vida real. En
     // verano, además, se multiplica: es la ventana donde de verdad se mueve
@@ -486,6 +480,7 @@ function runClubDay(
     });
     result.offersMade += cycle.attempts.length;
     for (const attempt of cycle.attempts) {
+      if (attempt.outcome !== "waiting") continue;
       const playerId = attempt.playerId;
       rumors.push(rumorInterest(clubId, playerId, date));
       rumors.push(rumorBidWar(playerId, date));
@@ -527,6 +522,7 @@ function runClubDay(
       const oppCycle = runClubOpportunisticCycle(clubId, { date, deadlineDay: false });
       result.offersMade += oppCycle.attempts.length;
       for (const attempt of oppCycle.attempts) {
+        if (attempt.outcome !== "waiting") continue;
         rumors.push(rumorInterest(clubId, attempt.playerId, date));
       }
       if (oppCycle.transfers.length > 0) {
@@ -557,7 +553,6 @@ function runClubDay(
       result.transfers.push(departure);
       window.sales += 1;
       clubWindowState(departure.toClubId).signings += 1;
-      rumors.push(rumorInterest(departure.toClubId, departure.playerId, date));
     }
   }
 

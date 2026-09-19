@@ -57,23 +57,30 @@ function publish(rumor: Rumor): Rumor | null {
 // ============================================================================
 
 /**
- * Rumor de interés de un club por un jugador. Sólo se publica parte de las
- * veces: la prensa no se entera de todo.
+ * Rumor de fichaje serio.
+ *
+ * Sólo se publica cuando el intento ha quedado en "waiting": ya existe una
+ * negociación real abierta y el vendedor/jornada está retrasando el cierre.
+ * Así un rumor que aparece en el feed representa una operación bastante más
+ * avanzada que una simple lista de candidatos.
  */
 export function rumorInterest(clubId: string, playerId: string, date: string): Rumor | null {
   const player = getPlayer(playerId);
-  if (!player) return null;
-  if (seededUnit(clubId, playerId, date, "rumor") > RUMOR_RULES.publishChance) return null;
+  if (!player || !player.clubId || player.clubId === clubId) return null;
+  if (seededUnit(clubId, playerId, date, "strong-rumor") > RUMOR_RULES.strongInterestPublishChance) {
+    return null;
+  }
 
   const rivals = competitionFor(playerId, clubId);
-  const reliability = Math.min(0.9, 0.35 + rivals * 0.12);
+  const reliability = Math.min(0.97, 0.82 + rivals * 0.04);
   return publish({
     id: makeId("interest", clubId, playerId, date),
     date,
     kind: "interest",
     clubId,
     playerId,
-    text: `El ${clubName(clubId)} sigue de cerca a ${player.name} (${player.position}, ${player.age} años).`,
+    targetClubId: player.clubId,
+    text: `El ${clubName(clubId)} negocia con el ${clubName(player.clubId)} el fichaje de ${player.name}. La operación está avanzada.`,
     reliability,
   });
 }
@@ -83,7 +90,7 @@ export function rumorBidWar(playerId: string, date: string): Rumor | null {
   const bids = bidsFor(playerId);
   if (bids.length < 2) return null;
   const player = getPlayer(playerId);
-  if (!player) return null;
+  if (!player || !player.clubId) return null;
 
   const names = bids
     .slice(0, 3)
@@ -95,8 +102,9 @@ export function rumorBidWar(playerId: string, date: string): Rumor | null {
     kind: "bid-war",
     clubId: bids[0]!.clubId,
     playerId,
+    targetClubId: player.clubId,
     text: `Subasta por ${player.name}: ${names} se disputan su fichaje.`,
-    reliability: Math.min(0.95, 0.5 + bids.length * 0.15),
+    reliability: Math.min(0.97, 0.84 + bids.length * 0.04),
   });
 }
 
@@ -124,6 +132,7 @@ export function rumorSearching(clubId: string, group: PositionGroup, date: strin
     kind: "searching",
     clubId,
     playerId: null,
+    targetClubId: null,
     text: `El ${clubName(clubId)} busca refuerzos para la demarcación de ${GROUP_LABEL[group]}.`,
     reliability: 0.55,
   });
@@ -144,6 +153,7 @@ export function rumorRenewal(
     kind: "renewal",
     clubId,
     playerId,
+    targetClubId: clubId,
     text: agreed
       ? `${player.name} renueva con el ${clubName(clubId)}.`
       : `El ${clubName(clubId)} negocia la renovación de ${player.name}, sin acuerdo por ahora.`,

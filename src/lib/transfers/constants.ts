@@ -531,8 +531,14 @@ export const RUMOR_RULES = {
    * días, así que el histórico tiene que sobrevivir a toda la ventana.
    */
   maxStored: 4000,
-  /** Probabilidad de publicar un rumor cuando nace un interés. */
+  /** Probabilidad base de publicar rumores secundarios. */
   publishChance: 0.16,
+  /**
+   * Probabilidad de publicar un rumor de fichaje cuando la negociación ya
+   * está abierta y ha llegado a un estado de espera/acuerdo. Estos rumores
+   * son deliberadamente mucho más fiables que el ruido general del mercado.
+   */
+  strongInterestPublishChance: 0.55,
   /**
    * Máximo de rumores que puede protagonizar un mismo club el mismo día.
    * Evita que el feed se llene de diez noticias seguidas del mismo equipo.
