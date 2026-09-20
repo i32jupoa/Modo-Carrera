@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssistsRouteImport } from './routes/assists'
+import { Route as AwardsRouteImport } from './routes/awards'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as CupRouteImport } from './routes/cup'
 import { Route as FixturesRouteImport } from './routes/fixtures'
@@ -35,6 +36,11 @@ const IndexRoute = IndexRouteImport.update({
 const AssistsRoute = AssistsRouteImport.update({
   id: '/assists',
   path: '/assists',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AwardsRoute = AwardsRouteImport.update({
+  id: '/awards',
+  path: '/awards',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CalendarRoute = CalendarRouteImport.update({
@@ -116,6 +122,7 @@ const UclRoute = UclRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/assists': typeof AssistsRoute
+  '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
   '/cup': typeof CupRoute
   '/fixtures': typeof FixturesRoute
@@ -135,6 +142,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/assists': typeof AssistsRoute
+  '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
   '/cup': typeof CupRoute
   '/fixtures': typeof FixturesRoute
@@ -155,6 +163,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/assists': typeof AssistsRoute
+  '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
   '/cup': typeof CupRoute
   '/fixtures': typeof FixturesRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/assists'
+    | '/awards'
     | '/calendar'
     | '/cup'
     | '/fixtures'
@@ -195,6 +205,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/assists'
+    | '/awards'
     | '/calendar'
     | '/cup'
     | '/fixtures'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/assists'
+    | '/awards'
     | '/calendar'
     | '/cup'
     | '/fixtures'
@@ -234,6 +246,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AssistsRoute: typeof AssistsRoute
+  AwardsRoute: typeof AwardsRoute
   CalendarRoute: typeof CalendarRoute
   CupRoute: typeof CupRoute
   FixturesRoute: typeof FixturesRoute
@@ -265,6 +278,13 @@ declare module '@tanstack/react-router' {
       path: '/assists'
       fullPath: '/assists'
       preLoaderRoute: typeof AssistsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/awards': {
+      id: '/awards'
+      path: '/awards'
+      fullPath: '/awards'
+      preLoaderRoute: typeof AwardsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/calendar': {
@@ -378,6 +398,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AssistsRoute: AssistsRoute,
+  AwardsRoute: AwardsRoute,
   CalendarRoute: CalendarRoute,
   CupRoute: CupRoute,
   FixturesRoute: FixturesRoute,

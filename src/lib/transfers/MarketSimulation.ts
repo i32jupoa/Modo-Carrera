@@ -21,6 +21,7 @@ import {
   parseDateOnly,
 } from "../transferWindows";
 import { getMarketIndex } from "./PlayerIndex";
+import { listAllBids } from "./BidWar";
 import { getClubProfile } from "./ClubStrategy";
 import { shoppingRamp } from "./MarketPacing";
 import { getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
@@ -39,7 +40,7 @@ import {
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
 import { runClubLoanCycle, resolveLoansDue, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
-import { rumorBidWar, rumorInterest } from "./RumorEngine";
+import { rumorActiveBid, rumorBidWar, rumorConfirmedTransfer, rumorInterest } from "./RumorEngine";
 import {
   setLockWindow,
   windowDeficit,
@@ -50,7 +51,7 @@ import {
 } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import { POSITION_GROUPS } from "./types";
-import type { MarketDayResult, MarketSimulationState, MarketWindow, Rumor } from "./types";
+import type { MarketDayResult, MarketSimulationState, MarketWindow } from "./types";
 
 // ============================================================================
 // CALENDARIO
@@ -352,6 +353,77 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
 // DÍA DE MERCADO
 // ============================================================================
 
+/**
+ * Publica la noticia de un intento real de la IA.
+ *
+ * A diferencia del sistema anterior, un rumor no depende únicamente de que
+ * la oferta quede en "waiting": también se cuenta el tanteo formal y el
+ * acuerdo que termina en fichaje. Esto hace que haya muchos más rumores que
+ * operaciones oficiales y que una parte importante de ellos termine en un
+ * fichaje visible en el historial.
+ */
+function publishPursuitRumors(
+  result: MarketDayResult,
+  clubId: string,
+  date: string,
+  attempt: ReturnType<typeof runClubTransferCycle>["attempts"][number],
+): void {
+  if (attempt.outcome === "unavailable") return;
+
+  // Un fichaje cerrado lleva siempre una huella previa: al menos el tanteo del
+  // mismo día. Si la negociación venía viva de antes, además conserva todas
+  // las actualizaciones de días anteriores.
+  if (attempt.outcome === "signed" && attempt.record) {
+    const exploratory = rumorInterest(clubId, attempt.playerId, date, "exploratory");
+    if (exploratory) result.rumors.push(exploratory);
+    const confirmed = rumorConfirmedTransfer(
+      clubId,
+      attempt.playerId,
+      attempt.record.fromClubId,
+      date,
+    );
+    if (confirmed) result.rumors.push(confirmed);
+    return;
+  }
+
+  const exploratory = rumorInterest(clubId, attempt.playerId, date, "exploratory");
+  if (exploratory) result.rumors.push(exploratory);
+
+  if (attempt.outcome === "waiting") {
+    const advanced = rumorInterest(clubId, attempt.playerId, date, "advanced");
+    if (advanced) result.rumors.push(advanced);
+  }
+
+  const bidWarRumor = rumorBidWar(attempt.playerId, date);
+  if (bidWarRumor) result.rumors.push(bidWarRumor);
+}
+
+function publishLiveBidRumors(result: MarketDayResult, date: string): void {
+  // Las pujas vivas son operaciones reales ya abiertas. Darles una
+  // actualización diaria convierte la negociación de varios días en una
+  // secuencia de rumores en lugar de una sola noticia al principio.
+  for (const bid of listAllBids()) {
+    const rumor = rumorActiveBid(bid.clubId, bid.playerId, date);
+    if (rumor) result.rumors.push(rumor);
+  }
+}
+
+/** Añade el rumor de una incorporación cerrada fuera del ciclo normal. */
+function publishConfirmedTransferRumor(
+  result: MarketDayResult,
+  clubId: string,
+  playerId: string,
+  sellerClubId: string | null,
+  date: string,
+): void {
+  if (sellerClubId) {
+    const exploratory = rumorInterest(clubId, playerId, date, "exploratory");
+    if (exploratory) result.rumors.push(exploratory);
+  }
+  const confirmed = rumorConfirmedTransfer(clubId, playerId, sellerClubId, date);
+  if (confirmed) result.rumors.push(confirmed);
+}
+
 /** Acciones que puede tomar un club en su turno diario. */
 function runClubDay(
   clubId: string,
@@ -366,7 +438,6 @@ function runClubDay(
 
   const window = clubWindowState(clubId);
   const profile = getClubProfile(clubId);
-  const rumors: Array<Rumor | null> = [];
 
   // 1. Contratos: renovaciones y revisión de la lista de transferibles.
   if (seededUnit(clubId, date, "contracts") < 0.5) {
@@ -377,7 +448,6 @@ function runClubDay(
   }
 
   if (state.window === "closed") {
-    pushRumors(result, rumors);
     return;
   }
 
@@ -480,10 +550,7 @@ function runClubDay(
     });
     result.offersMade += cycle.attempts.length;
     for (const attempt of cycle.attempts) {
-      if (attempt.outcome !== "waiting") continue;
-      const playerId = attempt.playerId;
-      rumors.push(rumorInterest(clubId, playerId, date));
-      rumors.push(rumorBidWar(playerId, date));
+      publishPursuitRumors(result, clubId, date, attempt);
     }
     if (cycle.transfers.length > 0) {
       window.signings += cycle.transfers.length;
@@ -522,8 +589,7 @@ function runClubDay(
       const oppCycle = runClubOpportunisticCycle(clubId, { date, deadlineDay: false });
       result.offersMade += oppCycle.attempts.length;
       for (const attempt of oppCycle.attempts) {
-        if (attempt.outcome !== "waiting") continue;
-        rumors.push(rumorInterest(clubId, attempt.playerId, date));
+        publishPursuitRumors(result, clubId, date, attempt);
       }
       if (oppCycle.transfers.length > 0) {
         window.signings += oppCycle.transfers.length;
@@ -594,6 +660,7 @@ function runClubDay(
       window.signings += 1;
       recordTransfers([record]);
       result.transfers.push(record);
+      publishConfirmedTransferRumor(result, record.toClubId, record.playerId, record.fromClubId, date);
     }
   }
 
@@ -621,11 +688,6 @@ function runClubDay(
     }
   }
 
-  pushRumors(result, rumors);
-}
-
-function pushRumors(result: MarketDayResult, rumors: Array<Rumor | null>): void {
-  for (const rumor of rumors) if (rumor) result.rumors.push(rumor);
 }
 
 /** Simula un único día de mercado. */
@@ -674,15 +736,30 @@ export function simulateDay(date: string): MarketDayResult {
   // Las obligaciones de compra ejecutadas hoy son traspasos como cualquier
   // otro: que aparezcan en el resumen del día es lo que antes faltaba.
   for (const loanReturn of seasonLoanReturns) {
-    if (loanReturn.purchase) result.transfers.push(loanReturn.purchase);
+    if (loanReturn.purchase) {
+      result.transfers.push(loanReturn.purchase);
+      publishConfirmedTransferRumor(
+        result,
+        loanReturn.purchase.toClubId,
+        loanReturn.purchase.playerId,
+        loanReturn.purchase.fromClubId,
+        date,
+      );
+    }
   }
 
   // Las negociaciones paradas caducan antes de que nadie abra otras nuevas.
   expireStaleNegotiations(date);
 
+  // Primero contamos las negociaciones heredadas de días anteriores.
+  publishLiveBidRumors(result, date);
+
   for (const clubId of activeClubsForDate(date, state)) {
     runClubDay(clubId, date, state, result);
   }
+
+  // Incluye también las pujas abiertas hoy, que no existían en el primer pase.
+  publishLiveBidRumors(result, date);
 
   result.negotiationsOpen = listNegotiations().length;
   return result;

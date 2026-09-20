@@ -71,6 +71,16 @@ export function bidsFor(playerId: string): Bid[] {
   return Array.from(interest.get(playerId)?.values() ?? []);
 }
 
+/** Todas las pujas vivas del mercado. Se usa para generar actualizaciones
+ * de rumores de negociaciones que siguen abiertas entre varios días. */
+export function listAllBids(): Bid[] {
+  const all: Bid[] = [];
+  for (const byClub of interest.values()) {
+    all.push(...byClub.values());
+  }
+  return all;
+}
+
 /** Número de clubes que compiten por el jugador, sin contar al indicado. */
 export function competitionFor(playerId: string, excludeClubId?: string): number {
   const byClub = interest.get(playerId);

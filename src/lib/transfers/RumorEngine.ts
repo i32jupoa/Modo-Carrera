@@ -11,6 +11,7 @@ import { teamById } from "@/data/teams";
 import { RUMOR_RULES } from "./constants";
 import { bidsFor, competitionFor } from "./BidWar";
 import { getPlayer } from "./PlayerIndex";
+import { getUserClubId } from "./BudgetManager";
 import { seededUnit } from "./random";
 import type { PositionGroup, Rumor, RumorKind } from "./types";
 
@@ -21,8 +22,14 @@ function clubName(clubId: string): string {
   return teamById(clubId)?.name ?? clubId;
 }
 
-function makeId(kind: RumorKind, clubId: string, playerId: string | null, date: string): string {
-  return `rumor:${kind}:${clubId}:${playerId ?? "-"}:${date}`;
+function makeId(
+  kind: RumorKind,
+  clubId: string,
+  playerId: string | null,
+  date: string,
+  stage = "base",
+): string {
+  return `rumor:${kind}:${stage}:${clubId}:${playerId ?? "-"}:${date}`;
 }
 
 /** ¿Ya existe este rumor? Evita repetir la misma noticia cada día. */
@@ -43,8 +50,17 @@ function publishedTodayBy(clubId: string, date: string): number {
 
 function publish(rumor: Rumor): Rumor | null {
   if (alreadyPublished(rumor.id)) return null;
-  // Un mismo club no puede acaparar el feed: como mucho, un par de noticias
-  // suyas al día. El resto simplemente no se publica.
+
+  // El mercado de la IA no puede generar ni "resolver" noticias que
+  // involucren al club del usuario. Esas operaciones las gestiona él y el
+  // feed automático no debe adelantarse a ninguna de sus decisiones.
+  const userClubId = getUserClubId();
+  if (userClubId && (rumor.clubId === userClubId || rumor.targetClubId === userClubId)) return null;
+
+  // Un mismo club puede protagonizar varias historias reales en un día. El
+  // límite es alto a propósito: queremos un ecosistema de rumores claramente
+  // más amplio que el de fichajes, sin permitir que un solo equipo monopolice
+  // el feed.
   if (publishedTodayBy(rumor.clubId, rumor.date) >= RUMOR_RULES.maxPerClubPerDay) return null;
   rumors.push(rumor);
   if (rumors.length > RUMOR_RULES.maxStored)
@@ -56,39 +72,96 @@ function publish(rumor: Rumor): Rumor | null {
 // GENERADORES
 // ============================================================================
 
+export type InterestRumorStage = "exploratory" | "advanced" | "agreed";
+
 /**
- * Rumor de fichaje serio.
+ * Rumor derivado de una persecución real del motor de fichajes.
  *
- * Sólo se publica cuando el intento ha quedado en "waiting": ya existe una
- * negociación real abierta y el vendedor/jornada está retrasando el cierre.
- * Así un rumor que aparece en el feed representa una operación bastante más
- * avanzada que una simple lista de candidatos.
+ * Una misma operación puede pasar por tres noticias distintas: tanteo inicial,
+ * negociación avanzada y principio de acuerdo. Los objetos anteriores se
+ * conservan; la confirmación final se publica como una noticia nueva.
  */
-export function rumorInterest(clubId: string, playerId: string, date: string): Rumor | null {
+export function rumorInterest(
+  clubId: string,
+  playerId: string,
+  date: string,
+  stage: InterestRumorStage = "advanced",
+): Rumor | null {
   const player = getPlayer(playerId);
+  const userClubId = getUserClubId();
   if (!player || !player.clubId || player.clubId === clubId) return null;
-  if (seededUnit(clubId, playerId, date, "strong-rumor") > RUMOR_RULES.strongInterestPublishChance) {
-    return null;
-  }
+  if (userClubId && (player.clubId === userClubId || clubId === userClubId)) return null;
+
+  const publishChance =
+    stage === "exploratory"
+      ? RUMOR_RULES.exploratoryInterestPublishChance
+      : RUMOR_RULES.strongInterestPublishChance;
+  if (seededUnit(clubId, playerId, date, `rumor-${stage}`) > publishChance) return null;
 
   const rivals = competitionFor(playerId, clubId);
-  const reliability = Math.min(0.97, 0.82 + rivals * 0.04);
+  const reliability =
+    stage === "exploratory"
+      ? Math.min(0.84, 0.62 + rivals * 0.04)
+      : stage === "agreed"
+        ? Math.min(0.995, 0.94 + rivals * 0.02)
+        : Math.min(0.97, 0.86 + rivals * 0.035);
+
+  const text =
+    stage === "exploratory"
+      ? `El ${clubName(clubId)} ha sondeado al ${clubName(player.clubId)} por ${player.name}. Empiezan los contactos y la operación está en una fase inicial.`
+      : stage === "agreed"
+        ? `Las negociaciones entre el ${clubName(clubId)} y el ${clubName(player.clubId)} por ${player.name} están muy avanzadas. El acuerdo se acerca.`
+        : `El ${clubName(clubId)} y el ${clubName(player.clubId)} negocian el fichaje de ${player.name}. Las conversaciones están avanzadas.`;
+
   return publish({
-    id: makeId("interest", clubId, playerId, date),
+    id: makeId("interest", clubId, playerId, date, stage),
     date,
     kind: "interest",
     clubId,
     playerId,
     targetClubId: player.clubId,
-    text: `El ${clubName(clubId)} negocia con el ${clubName(player.clubId)} el fichaje de ${player.name}. La operación está avanzada.`,
+    text,
     reliability,
+  });
+}
+
+/** Actualización diaria de una puja que sigue viva. */
+export function rumorActiveBid(
+  clubId: string,
+  playerId: string,
+  date: string,
+): Rumor | null {
+  const player = getPlayer(playerId);
+  const userClubId = getUserClubId();
+  if (!player || !player.clubId || !playerId) return null;
+  if (userClubId && (player.clubId === userClubId || clubId === userClubId)) return null;
+  if (seededUnit(clubId, playerId, date, "active-rumor") > RUMOR_RULES.activeInterestPublishChance) return null;
+
+  const rivals = competitionFor(playerId, clubId);
+  return publish({
+    id: makeId("interest", clubId, playerId, date, "active"),
+    date,
+    kind: "interest",
+    clubId,
+    playerId,
+    targetClubId: player.clubId,
+    text:
+      rivals > 0
+        ? `El ${clubName(clubId)} mantiene abiertas las negociaciones por ${player.name}. Otros clubes también siguen pendientes.`
+        : `El ${clubName(clubId)} sigue negociando con el ${clubName(player.clubId)} por ${player.name}.`,
+    reliability: Math.min(0.94, 0.78 + rivals * 0.04),
   });
 }
 
 /** Rumor de guerra de ofertas cuando hay dos o más clubes detrás. */
 export function rumorBidWar(playerId: string, date: string): Rumor | null {
   const bids = bidsFor(playerId);
+  const userClubId = getUserClubId();
+  // Si el usuario está en la puja, esa negociación es suya y no se convierte
+  // en rumor automático del mercado de la IA.
+  if (userClubId && bids.some((bid) => bid.clubId === userClubId)) return null;
   if (bids.length < 2) return null;
+  if (seededUnit(playerId, date, "bid-war-rumor") > RUMOR_RULES.bidWarPublishChance) return null;
   const player = getPlayer(playerId);
   if (!player || !player.clubId) return null;
 
@@ -169,6 +242,43 @@ const GROUP_LABEL: Record<PositionGroup, string> = {
   WING: "extremo",
   ST: "delantero centro",
 };
+
+/** Publica la confirmación de un fichaje cerrado por la IA. */
+export function rumorConfirmedTransfer(
+  clubId: string,
+  playerId: string,
+  sellerClubId: string | null,
+  date: string,
+): Rumor | null {
+  const player = getPlayer(playerId);
+  const userClubId = getUserClubId();
+  if (!player || !sellerClubId) return null;
+  if (userClubId && (clubId === userClubId || sellerClubId === userClubId)) return null;
+
+  return publish({
+    id: makeId("interest", clubId, playerId, date, "confirmed"),
+    date,
+    kind: "interest",
+    clubId,
+    playerId,
+    targetClubId: sellerClubId,
+    text: `Se confirma el fichaje de ${player.name}: el ${clubName(clubId)} llega a un acuerdo con el ${clubName(sellerClubId)}.`,
+    reliability: 1,
+  });
+}
+
+/**
+ * Crea una confirmación nueva sin borrar el rumor anterior.
+ * Así el historial conserva la secuencia "tanteo → negociación → fichaje".
+ */
+export function confirmRumorForTransfer(
+  clubId: string,
+  playerId: string,
+  sellerClubId: string | null,
+  date: string,
+): Rumor | null {
+  return rumorConfirmedTransfer(clubId, playerId, sellerClubId, date);
+}
 
 // ============================================================================
 // CONSULTA

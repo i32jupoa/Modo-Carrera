@@ -12,6 +12,11 @@ export interface MonthlyStats {
   averageRating: number;
   mvpCount: number;
   cleanSheets: number;
+  /** Totales de valoración para evitar perder precisión al mostrar medias. */
+  ratingTotal?: number;
+  ratingCount?: number;
+  /** Club representado durante el mes cuando el dato está disponible. */
+  teamId?: string;
 }
 
 export interface SeasonStats {
@@ -36,6 +41,8 @@ export interface DynamicPlayerStats {
   seasonMVPs: number;
   seasonCleanSheets: number;
   seasonAverageRating: number;
+  seasonRatingTotal?: number;
+  seasonRatingCount?: number;
   seasonTrophies: number; // Trofeos ganados esta temporada
 
   // Estadísticas mensuales para progresión sutil

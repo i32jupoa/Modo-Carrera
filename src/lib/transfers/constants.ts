@@ -525,27 +525,22 @@ export const LOAN_RULES = {
 // ============================================================================
 
 export const RUMOR_RULES = {
-  /**
-   * Máximo de rumores almacenados. Alto a propósito: al filtrar por un club
-   * concreto se muestra su ventana de mercado completa, no sólo los últimos
-   * días, así que el histórico tiene que sobrevivir a toda la ventana.
-   */
-  maxStored: 4000,
-  /** Probabilidad base de publicar rumores secundarios. */
-  publishChance: 0.16,
-  /**
-   * Probabilidad de publicar un rumor de fichaje cuando la negociación ya
-   * está abierta y ha llegado a un estado de espera/acuerdo. Estos rumores
-   * son deliberadamente mucho más fiables que el ruido general del mercado.
-   */
-  strongInterestPublishChance: 0.55,
-  /**
-   * Máximo de rumores que puede protagonizar un mismo club el mismo día.
-   * Evita que el feed se llene de diez noticias seguidas del mismo equipo.
-   */
-  maxPerClubPerDay: 2,
-  /** Días que un rumor se considera reciente. */
-  freshnessDays: 10,
+  /** Histórico amplio: el feed puede mostrar la actividad de toda la ventana. */
+  maxStored: 20000,
+  /** Rumores secundarios que nacen de señales reales del mercado. */
+  publishChance: 0.32,
+  /** Tanteos reales: la mayoría merece aparecer como rumor. */
+  exploratoryInterestPublishChance: 0.84,
+  /** Negociaciones abiertas/avanzadas: alta visibilidad. */
+  strongInterestPublishChance: 0.96,
+  /** Actualizaciones de una puja que sigue viva al día siguiente. */
+  activeInterestPublishChance: 0.76,
+  /** Guerras de ofertas: si existen, suelen aparecer en prensa. */
+  bidWarPublishChance: 0.96,
+  /** Un club puede tener varias historias distintas en una misma jornada. */
+  maxPerClubPerDay: 8,
+  /** Un rumor de una negociación sigue siendo útil durante un mes. */
+  freshnessDays: 30,
 } as const;
 
 // ============================================================================

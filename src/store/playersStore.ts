@@ -873,6 +873,64 @@ function mutatePlayerStat(
   else set({ stats: next });
 }
 
+function currentDateParts(iso: string | undefined): { year: number; month: number } {
+  const fallback = new Date();
+  const [y, m] = String(iso ?? "").split("-").map(Number);
+  return {
+    year: Number.isFinite(y) && y > 0 ? y : fallback.getFullYear(),
+    month: Number.isFinite(m) && m >= 1 && m <= 12 ? m - 1 : fallback.getMonth(),
+  };
+}
+
+type MonthlyDelta = {
+  goals?: number;
+  assists?: number;
+  appearances?: number;
+  mvpCount?: number;
+  cleanSheets?: number;
+  rating?: number;
+};
+
+function withMonthlyDelta(
+  dynamic: DynamicPlayerStats,
+  isoDate: string | undefined,
+  delta: MonthlyDelta,
+): DynamicPlayerStats {
+  const { year, month } = currentDateParts(isoDate);
+  const monthlyStats = [...(dynamic.monthlyStats ?? [])].map((entry) => ({ ...entry }));
+  let entry = monthlyStats.find((m) => m.year === year && m.month === month);
+
+  if (!entry) {
+    entry = {
+      month,
+      year,
+      goals: 0,
+      assists: 0,
+      appearances: 0,
+      averageRating: 6,
+      mvpCount: 0,
+      cleanSheets: 0,
+      ratingTotal: 0,
+      ratingCount: 0,
+    };
+    monthlyStats.push(entry);
+  }
+
+  entry.goals += delta.goals ?? 0;
+  entry.assists += delta.assists ?? 0;
+  entry.appearances += delta.appearances ?? 0;
+  entry.mvpCount += delta.mvpCount ?? 0;
+  entry.cleanSheets += delta.cleanSheets ?? 0;
+
+  if (delta.rating !== undefined && Number.isFinite(delta.rating)) {
+    entry.ratingTotal = (entry.ratingTotal ?? 0) + delta.rating;
+    entry.ratingCount = (entry.ratingCount ?? 0) + 1;
+    entry.averageRating = entry.ratingTotal / entry.ratingCount;
+  }
+
+  return { ...dynamic, monthlyStats };
+}
+
 export function beginPlayerStatsBatch() {
   if (statsBatchDepth++ === 0) {
     batchedStats = { ...usePlayersStore.getState().stats };
@@ -2009,34 +2067,17 @@ export const usePlayersStore = create<PlayersState>()(
           };
         });
 
-        // Update dynamic stats (assuming 90 minutes for appearance)
+        // Update season + historical monthly stats (assuming 90 minutes for an appearance).
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          return {
-            ...s,
-            dynamicStats: {
-              ...s.dynamicStats,
-              seasonAppearances: s.dynamicStats.seasonAppearances + 1,
-              seasonMinutes: s.dynamicStats.seasonMinutes + 90,
-            },
+          const dynamic = {
+            ...s.dynamicStats,
+            seasonAppearances: s.dynamicStats.seasonAppearances + 1,
+            seasonMinutes: s.dynamicStats.seasonMinutes + 90,
           };
+          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { appearances: 1 }) };
         });
         return;
-
-        const next = { ...get().stats };
-
-        const s = next[playerId] ?? defaultStats();
-
-        const isCup = competition === "cup";
-        const isUcl = competition === "ucl";
-        next[playerId] = {
-          ...s,
-          appearances: s.appearances + 1,
-          cupAppearances: (s.cupAppearances ?? 0) + (isCup ? 1 : 0),
-          uclAppearances: (s.uclAppearances ?? 0) + (isUcl ? 1 : 0),
-        };
-
-        set({ stats: next });
       },
 
       recordGoal: (playerId, competition) => {
@@ -2051,33 +2092,13 @@ export const usePlayersStore = create<PlayersState>()(
           };
         });
 
-        // Update dynamic stats
+        // Update season + historical monthly stats.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          return {
-            ...s,
-            dynamicStats: {
-              ...s.dynamicStats,
-              seasonGoals: s.dynamicStats.seasonGoals + 1,
-            },
-          };
+          const dynamic = { ...s.dynamicStats, seasonGoals: s.dynamicStats.seasonGoals + 1 };
+          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { goals: 1 }) };
         });
         return;
-
-        const next = { ...get().stats };
-
-        const s = next[playerId] ?? defaultStats();
-
-        const isCup = competition === "cup";
-        const isUcl = competition === "ucl";
-        next[playerId] = {
-          ...s,
-          goals: s.goals + 1,
-          cupGoals: (s.cupGoals ?? 0) + (isCup ? 1 : 0),
-          uclGoals: (s.uclGoals ?? 0) + (isUcl ? 1 : 0),
-        };
-
-        set({ stats: next });
       },
 
       recordAssist: (playerId, competition) => {
@@ -2092,32 +2113,13 @@ export const usePlayersStore = create<PlayersState>()(
           };
         });
 
-        // Update dynamic stats
+        // Update season + historical monthly stats.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          return {
-            ...s,
-            dynamicStats: {
-              ...s.dynamicStats,
-              seasonAssists: s.dynamicStats.seasonAssists + 1,
-            },
-          };
+          const dynamic = { ...s.dynamicStats, seasonAssists: s.dynamicStats.seasonAssists + 1 };
+          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { assists: 1 }) };
         });
         return;
-
-        const next = { ...get().stats };
-
-        const s = next[playerId] ?? defaultStats();
-
-        const isCup = competition === "cup";
-        const isUcl = competition === "ucl";
-        next[playerId] = {
-          ...s,
-          assists: s.assists + 1,
-          cupAssists: (s.cupAssists ?? 0) + (isCup ? 1 : 0),
-          uclAssists: (s.uclAssists ?? 0) + (isUcl ? 1 : 0),
-        };
-        set({ stats: next });
       },
 
       unrecordGoal: (playerId, competition) => {
@@ -2166,50 +2168,40 @@ export const usePlayersStore = create<PlayersState>()(
           };
         });
 
-        // Update dynamic stats
+        // Update season + historical monthly stats.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          return {
-            ...s,
-            dynamicStats: {
-              ...s.dynamicStats,
-              seasonCleanSheets: s.dynamicStats.seasonCleanSheets + 1,
-            },
-          };
+          const dynamic = { ...s.dynamicStats, seasonCleanSheets: s.dynamicStats.seasonCleanSheets + 1 };
+          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { cleanSheets: 1 }) };
         });
         return;
-        const next = { ...get().stats };
-        const s = next[playerId] ?? defaultStats();
-        const isCup = competition === "cup";
-        const isUcl = competition === "ucl";
-        next[playerId] = {
-          ...s,
-          cleanSheets: (s.cleanSheets ?? 0) + 1,
-          cupCleanSheets: (s.cupCleanSheets ?? 0) + (isCup ? 1 : 0),
-          uclCleanSheets: (s.uclCleanSheets ?? 0) + (isUcl ? 1 : 0),
-        };
-        set({ stats: next });
       },
       recordMatchRating: (playerId, rating) => {
-        // Feeds the 1-10 match rating into the player's form history (last 6).
-        mutatePlayerStat(get, set, playerId, (s) => {
-          const history = [...(s.formHistory ?? []), Math.max(1, Math.min(10, rating))];
-          return { ...s, formHistory: history.slice(-6) };
-        });
+        const safeRating = Math.max(1, Math.min(10, Number(rating) || 6));
 
-        // Update dynamic stats
+        // Feeds the 1-10 match rating into the player's form history and the
+        // season/monthly averages used by awards.
         mutatePlayerStat(get, set, playerId, (s) => {
-          if (!s.dynamicStats) return s;
-          const history = [
-            ...(s.dynamicStats.formHistory ?? []),
-            Math.max(1, Math.min(10, rating)),
-          ];
+          const history = [...(s.formHistory ?? []), safeRating];
+          if (!s.dynamicStats) return { ...s, formHistory: history.slice(-6) };
+
+          const dynamicHistory = [...(s.dynamicStats.formHistory ?? []), safeRating];
+          const previousCount = s.dynamicStats.seasonRatingCount ?? 0;
+          const previousTotal = s.dynamicStats.seasonRatingTotal ?? 0;
+          const seasonRatingCount = previousCount + 1;
+          const seasonRatingTotal = previousTotal + safeRating;
+          const dynamic = {
+            ...s.dynamicStats,
+            formHistory: dynamicHistory.slice(-10),
+            seasonRatingCount,
+            seasonRatingTotal,
+            seasonAverageRating: seasonRatingTotal / seasonRatingCount,
+          };
+
           return {
             ...s,
-            dynamicStats: {
-              ...s.dynamicStats,
-              formHistory: history.slice(-10),
-            },
+            formHistory: history.slice(-6),
+            dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { rating: safeRating }),
           };
         });
       },
@@ -2225,29 +2217,13 @@ export const usePlayersStore = create<PlayersState>()(
           };
         });
 
-        // Update dynamic stats
+        // Update season + historical monthly stats.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          return {
-            ...s,
-            dynamicStats: {
-              ...s.dynamicStats,
-              seasonMVPs: s.dynamicStats.seasonMVPs + 1,
-            },
-          };
+          const dynamic = { ...s.dynamicStats, seasonMVPs: s.dynamicStats.seasonMVPs + 1 };
+          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { mvpCount: 1 }) };
         });
         return;
-        const next = { ...get().stats };
-        const s = next[playerId] ?? defaultStats();
-        const isCup = competition === "cup";
-        const isUcl = competition === "ucl";
-        next[playerId] = {
-          ...s,
-          motm: (s.motm ?? 0) + 1,
-          cupMotm: (s.cupMotm ?? 0) + (isCup ? 1 : 0),
-          uclMotm: (s.uclMotm ?? 0) + (isUcl ? 1 : 0),
-        };
-        set({ stats: next });
       },
 
       recordYellowCard: (playerId) => {

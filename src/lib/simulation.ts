@@ -1587,7 +1587,11 @@ export function simulatePenaltyShootout(
   let homeTakerIndex = 0;
   let awayTakerIndex = 0;
 
-  // First 5 rounds (ABAB format)
+  // First 5 rounds (ABAB format). After every kick, check whether the
+  // trailing side still has enough remaining kicks to catch up. This also
+  // handles the important case where one team misses its fifth kick: the
+  // other team may already be mathematically confirmed as the winner, so its
+  // own fifth kick must NOT be taken.
   for (let round = 0; round < 5; round++) {
     // Home team penalty
     const homeTaker = homeTakers[homeTakerIndex % homeTakers.length];
@@ -1596,9 +1600,18 @@ export function simulatePenaltyShootout(
     if (homeScored) homeGoals++;
     homeTakerIndex++;
 
-    // Check if away team can still catch up
-    const maxAwayPossible = awayGoals + (5 - round);
-    if (homeGoals > maxAwayPossible) break;
+    // Remaining home kicks in the regular five-kick phase.
+    const homeRemaining = 5 - (round + 1);
+    const awayRemaining = 5 - round;
+
+    // If the away side is already ahead by more than home can possibly make
+    // up with its remaining kicks, the shootout ends before the next kick.
+    if (awayGoals > homeGoals + homeRemaining) break;
+
+    // The home side may already be mathematically ahead, but the away side
+    // still has its kick in this pair and can therefore tie. Only stop here
+    // when the away side cannot catch up.
+    if (homeGoals > awayGoals + awayRemaining) break;
 
     // Away team penalty
     const awayTaker = awayTakers[awayTakerIndex % awayTakers.length];
@@ -1607,28 +1620,32 @@ export function simulatePenaltyShootout(
     if (awayScored) awayGoals++;
     awayTakerIndex++;
 
-    // Check if home team can still catch up
-    const maxHomePossible = homeGoals + (5 - round - 1);
-    if (awayGoals > maxHomePossible) break;
+    const awayStillRemaining = 5 - (round + 1);
+    const homeStillRemaining = 5 - (round + 1);
+
+    // After the away kick, check both mathematical clinching conditions before
+    // starting another round.
+    if (homeGoals > awayGoals + awayStillRemaining) break;
+    if (awayGoals > homeGoals + homeStillRemaining) break;
   }
 
-  // Sudden death if still tied after 5 rounds
+  // Sudden death: both teams must take one penalty in each pair. A goal by
+  // the first taker does NOT finish the shootout because the second taker can
+  // still equalise; the winner is decided only after the pair is complete.
   while (homeGoals === awayGoals) {
-    // Home team penalty
     const homeTaker = homeTakers[homeTakerIndex % homeTakers.length];
     const homeScored = getPenaltySuccess();
     shootout.push({ team: "home", scored: homeScored, playerId: homeTaker.id });
     if (homeScored) homeGoals++;
     homeTakerIndex++;
 
-    if (homeGoals !== awayGoals) break;
-
-    // Away team penalty
     const awayTaker = awayTakers[awayTakerIndex % awayTakers.length];
     const awayScored = getPenaltySuccess();
     shootout.push({ team: "away", scored: awayScored, playerId: awayTaker.id });
     if (awayScored) awayGoals++;
     awayTakerIndex++;
+
+    if (homeGoals !== awayGoals) break;
   }
 
   return { homeGoals, awayGoals, shootout };

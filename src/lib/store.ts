@@ -2336,7 +2336,12 @@ export async function simulateCupMatchdayLayered(
             xgAway: 0,
           };
         } else {
+          const homeBench = getBenchForTeam(next, f.homeId, homeXI);
+          const awayBench = getBenchForTeam(next, f.awayId, awayXI);
+
           result = simulateCupMatch(home, away, homeXI, awayXI, {
+            homeBench,
+            awayBench,
             homeTactics: loadTactics(f.homeId),
             awayTactics: loadTactics(f.awayId),
             homeFormation: homeData.formation,

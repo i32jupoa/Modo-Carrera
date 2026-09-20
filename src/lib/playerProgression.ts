@@ -150,6 +150,8 @@ export function initializeDynamicStats(baseOVR: number): DynamicPlayerStats {
     seasonMVPs: 0,
     seasonCleanSheets: 0,
     seasonAverageRating: 6.0,
+    seasonRatingTotal: 0,
+    seasonRatingCount: 0,
     seasonTrophies: 0,
     monthlyStats: [],
     currentOVR: baseOVR,
@@ -209,6 +211,8 @@ export function updatePlayerMatchStats(
       averageRating: 6.0,
       mvpCount: 0,
       cleanSheets: 0,
+      ratingTotal: 0,
+      ratingCount: 0,
     };
     updated.monthlyStats.push(monthStats);
   }
@@ -303,6 +307,8 @@ export function applySeasonEndProgression(
   updated.seasonMVPs = 0;
   updated.seasonCleanSheets = 0;
   updated.seasonAverageRating = 6.0;
+  updated.seasonRatingTotal = 0;
+  updated.seasonRatingCount = 0;
   updated.seasonTrophies = 0;
   updated.monthlyStats = [];
 
