@@ -11,6 +11,7 @@ import {
   saveSaveWithRetry,
   setLineup,
   setFormation,
+  setSubstitutes,
   getMyNextFixtureAny,
   playSpecificFixture,
   simulateCupMatchday,
@@ -19,6 +20,7 @@ import {
   advanceMatchdayLayered,
   simulateCupMatchdayLayered,
   getStartersWithFormation,
+  getBenchForTeam,
   simulateUserPhaseUCLDay,
   processUCLKnockoutProgress,
 } from "@/lib/store";
@@ -172,6 +174,7 @@ function MatchPage() {
   const routerState = location.state as any;
   const matchLineup = routerState?.matchLineup as string[] | undefined;
   const matchFormation = routerState?.matchFormation as string | undefined;
+  const matchSubstitutes = routerState?.matchSubstitutes as string[] | undefined;
   const returningFromLineup = routerState?.returningFromLineupEdit === true;
   const fixtureId = routerState?.fixtureId as string | undefined;
 
@@ -323,6 +326,7 @@ function MatchPage() {
   // Store original lineup BEFORE applying temporary changes
   const originalLineupRef = useRef<string[] | null>(null);
   const originalFormationRef = useRef<string | null>(null);
+  const originalSubstitutesRef = useRef<string[] | null>(null);
 
   async function handleReturnToSeason() {
     if (!save || isSimulating) return;
@@ -1022,6 +1026,7 @@ function MatchPage() {
     if (matchLineup && matchFormation) {
       originalLineupRef.current = s.lineups[s.myTeamId];
       originalFormationRef.current = s.formations[s.myTeamId];
+      originalSubstitutesRef.current = s.substitutes?.[s.myTeamId] ?? null;
     }
 
     // Prioritize router state temporary lineup over global store
@@ -1032,6 +1037,9 @@ function MatchPage() {
       // Apply temporary lineup as absolute source of truth for this match
       saveToUse = setLineup(s, s.myTeamId, matchLineup);
       saveToUse = setFormation(saveToUse, s.myTeamId, matchFormation);
+      if (matchSubstitutes) {
+        saveToUse = setSubstitutes(saveToUse, s.myTeamId, matchSubstitutes);
+      }
     }
 
     setSave(saveToUse);
@@ -1123,7 +1131,7 @@ function MatchPage() {
       navigate({ to: "/season" });
       return;
     }
-  }, [navigate, matchLineup, matchFormation, pendingUserMatch, returningFromLineup]);
+  }, [navigate, matchLineup, matchFormation, matchSubstitutes, pendingUserMatch, returningFromLineup]);
 
   async function startMatch(shouldSkipToEnd = false) {
     if (!save) return;
@@ -1135,6 +1143,7 @@ function MatchPage() {
     // Use the stored original lineup/formation from refs (saved before temporary changes)
     const originalLineup = originalLineupRef.current;
     const originalFormation = originalFormationRef.current;
+    const originalSubstitutes = originalSubstitutesRef.current;
 
     // Simulate the specific fixture that's currently loaded
     const { save: newSave, fixture } = playSpecificFixture(save, fixtureRef.current.id);
@@ -1207,8 +1216,12 @@ function MatchPage() {
           newSave.myTeamId,
           originalFormation,
         );
-        setSave(saveWithOriginalFormation);
-        saveSaveWithRetry(saveWithOriginalFormation);
+        const restoredSave =
+          originalSubstitutes !== null
+            ? setSubstitutes(saveWithOriginalFormation, newSave.myTeamId, originalSubstitutes)
+            : saveWithOriginalFormation;
+        setSave(restoredSave);
+        saveSaveWithRetry(restoredSave);
       } else {
         setSave(newSave);
         saveSaveWithRetry(newSave);
@@ -1286,10 +1299,14 @@ function MatchPage() {
     myTeamIdRef.current = s.myTeamId;
     const squad = getSimSquad(s.myTeamId);
     const ids = (matchLineup || s.lineups[s.myTeamId] || []).filter(Boolean);
-    const benchIds = squad
-      .filter((p) => !ids.includes(p.id))
-      .slice(0, 12)
-      .map((p) => p.id);
+    const xiPlayers = ids
+      .map((id) => squad.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => !!p);
+    const benchIds = matchSubstitutes
+      ? matchSubstitutes
+          .filter((id) => !ids.includes(id))
+          .slice(0, 12)
+      : getBenchForTeam(s, s.myTeamId, xiPlayers).map((p) => p.id);
     const st: Record<string, number> = {};
     squad.forEach((p) => {
       st[p.id] = STAMINA_START;

@@ -660,6 +660,10 @@ export type SaveGame = {
 
   formations: Record<string, string>;
 
+  // convocados para el banquillo: como máximo 12 jugadores por equipo.
+  // Los jugadores del roster que no estén aquí quedan como reservas.
+  substitutes?: Record<string, string[]>;
+
   // player suspensions (red cards)
 
   suspensions: Record<string, Suspension[]>; // teamId -> suspensions
@@ -787,6 +791,8 @@ export function loadSave(): SaveGame | null {
     }
 
     playersStoreInit();
+
+    parsed.substitutes ??= {};
 
     const ps = usePlayersStore.getState();
 
@@ -1068,6 +1074,8 @@ export function newSave(myTeamId: string): SaveGame {
 
   const formations: Record<string, string> = {} as never;
 
+  const substitutes: Record<string, string[]> = {} as never;
+
   const suspensions: Record<string, Suspension[]> = {} as never;
 
   // Generate fixtures for ALL leagues dynamically, not just Big 5
@@ -1150,6 +1158,8 @@ export function newSave(myTeamId: string): SaveGame {
     lineups,
 
     formations,
+
+    substitutes,
 
     suspensions,
 
@@ -1428,11 +1438,24 @@ export function getBenchForTeam(save: SaveGame, teamId: string, xi: Player[]): P
   const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
 
   const xiIds = new Set(xi.map((p) => p.id));
+  const configured = save.substitutes?.[teamId];
 
+  // A configured bench is authoritative, even when it contains fewer than 12
+  // players: the rest of the roster stays in "Reservas" and is not eligible
+  // for in-match substitutions.
+  if (Array.isArray(configured)) {
+    return configured
+      .map((id) => squad.find((p) => p.id === id))
+      .filter((p): p is Player => !!p)
+      .filter((p) => !xiIds.has(p.id) && !unavailable.has(p.id))
+      .slice(0, 12);
+  }
+
+  // Backward-compatible default for old saves and CPU teams.
   return squad
     .filter((p) => !xiIds.has(p.id) && !unavailable.has(p.id))
     .sort((a, b) => b.rating - a.rating)
-    .slice(0, 7);
+    .slice(0, 12);
 }
 
 export function squadOf(_save: SaveGame, teamId: string): Player[] {
@@ -4532,6 +4555,15 @@ export function setFormation(save: SaveGame, teamId: string, formation: string):
   const next: SaveGame = JSON.parse(JSON.stringify(save));
 
   next.formations[teamId] = formation;
+
+  return next;
+}
+
+export function setSubstitutes(save: SaveGame, teamId: string, substitutes: string[]): SaveGame {
+  const next: SaveGame = JSON.parse(JSON.stringify(save));
+
+  next.substitutes ??= {};
+  next.substitutes[teamId] = Array.from(new Set(substitutes.filter(Boolean))).slice(0, 12);
 
   return next;
 }
