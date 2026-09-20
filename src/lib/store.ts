@@ -43,6 +43,7 @@ import {
   usePlayersStore,
   withPlayerStatsBatch,
   withPlayerStatsBatchAsync,
+  isPlayerInjuredAtDate,
 } from "@/store/playersStore";
 
 import {
@@ -148,8 +149,11 @@ import {
   CardEvent,
   simulateExtraTime,
   simulatePenaltyShootout,
+  rollInjuryDurationDays,
+  rollInjuryProfile,
 } from "@/lib/simulation";
 import { loadTactics } from "@/lib/teamTactics";
+import { drainPerMinute, fatigueInjuryRisk } from "@/lib/liveMatch";
 
 import {
   buildNextRound,
@@ -1296,7 +1300,12 @@ export function getStartersWithFormation(
 
   const squad = store.getSimSquad(teamId);
 
-  const injuredIds = new Set(squad.filter((p) => p.injuredUntil > md).map((p) => p.id));
+  const currentDate = store.currentDate;
+  const injuredIds = new Set(
+    squad
+      .filter((p) => isPlayerInjuredAtDate(p, currentDate, md))
+      .map((p) => p.id),
+  );
 
   const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
 
@@ -1384,7 +1393,12 @@ export function getStarters(save: SaveGame, teamId: string, options?: { fixture?
 
   const squad = store.getSimSquad(teamId);
 
-  const injuredIds = new Set(squad.filter((p) => p.injuredUntil > md).map((p) => p.id));
+  const currentDate = store.currentDate;
+  const injuredIds = new Set(
+    squad
+      .filter((p) => isPlayerInjuredAtDate(p, currentDate, md))
+      .map((p) => p.id),
+  );
 
   const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
 
@@ -1434,7 +1448,12 @@ export function getBenchForTeam(save: SaveGame, teamId: string, xi: Player[]): P
   );
 
   const squad = store.getSimSquad(teamId);
-  const injuredIds = new Set(squad.filter((p) => p.injuredUntil > md).map((p) => p.id));
+  const currentDate = store.currentDate;
+  const injuredIds = new Set(
+    squad
+      .filter((p) => isPlayerInjuredAtDate(p, currentDate, md))
+      .map((p) => p.id),
+  );
   const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
 
   const xiIds = new Set(xi.map((p) => p.id));
@@ -1541,11 +1560,13 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
         if (p) {
           const teamLeague = teamById(p.teamId).league;
 
-          store.recordInjury(
-            card.playerId,
-            updatedSave.currentMatchday[teamLeague] + 1,
-            "5 amarillas acumuladas",
-          );
+          const suspension: Suspension = {
+            playerId: card.playerId,
+            playerName: p.name,
+            matchdaysRemaining: 1,
+          };
+          updatedSave.suspensions[teamLeague] ??= [];
+          updatedSave.suspensions[teamLeague].push(suspension);
 
           // Reset accumulated yellow cards after suspension is applied
 
@@ -1572,12 +1593,23 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
     const teamLeague = teamById(p.teamId).league;
 
+    const durationDays = Math.min(180, inj.durationDays ?? Math.max(7, inj.weeks * 7));
+    const startDate = fixture.date || usePlayersStore.getState().currentDate;
+    const untilDate = addDaysToIso(startDate, durationDays);
+
     store.recordInjury(
       inj.playerId,
 
-      updatedSave.currentMatchday[teamLeague] + inj.weeks,
+      updatedSave.currentMatchday[teamLeague] + Math.max(1, inj.weeks),
 
       inj.reason,
+      {
+        startDate,
+        untilDate,
+        durationDays,
+        injuryType: inj.injuryType ?? inj.diagnosis,
+        injuryArea: inj.bodyPart,
+      },
     );
   }
 
@@ -1658,7 +1690,7 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
         const replacement = benchPlayers.find(
           (p) =>
-            p.injuredUntil <= leagueMd &&
+            !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate, leagueMd) &&
             !suspendedPlayerIds.has(p.id) &&
             p.positions.some((pos) => playerToRemove.positions.includes(pos)),
         );
@@ -1685,7 +1717,7 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
 
         const availableBench = benchPlayers.filter(
           (p) =>
-            p.injuredUntil <= leagueMd &&
+            !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate, leagueMd) &&
             !suspendedPlayerIds.has(p.id) &&
             !playersToRemove.has(p.id) &&
             !newLineup.includes(p.id),
@@ -1700,7 +1732,13 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
         // If still not enough players, add ANY available player as last resort
 
         if (newLineup.length < 11) {
-          const anyAvailable = squad.filter((p) => !newLineup.includes(p.id));
+          const anyAvailable = squad.filter(
+            (p) =>
+              !newLineup.includes(p.id) &&
+              !playersToRemove.has(p.id) &&
+              !suspendedPlayerIds.has(p.id) &&
+              !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate, leagueMd),
+          );
 
           console.log("Adding any available players as last resort:", anyAvailable.length);
 
@@ -2398,7 +2436,7 @@ export async function simulateCupMatchdayLayered(
 
         const aXI = selectMatchPlayers(store.getSimSquad(away.id));
 
-        recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league], "cup");
+        recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league], "cup", fixture.date);
       }
 
       // Apply result to cup fixtures
@@ -3231,6 +3269,7 @@ export function generateRealisticStatsForO1Leagues(
       // Batch process all fixtures in this matchday
 
       const allPlayersToRecord = new Map<string, Player[]>(); // teamId -> players
+      const teamMatchDates = new Map<string, string>();
 
       // First pass: collect all players who played
 
@@ -3244,22 +3283,26 @@ export function generateRealisticStatsForO1Leagues(
         const homeSquad = store.getSimSquad(homeTeam.id);
 
         const awaySquad = store.getSimSquad(awayTeam.id);
+        teamMatchDates.set(homeTeam.id, fixture.date || store.currentDate);
+        teamMatchDates.set(awayTeam.id, fixture.date || store.currentDate);
 
-        // Quick selection without detailed formation constraints for speed
-
+        // Quick selection without detailed formation constraints for speed.
+        // An injured player is unavailable for every competition, not only the
+        // league of his current club.
         const selectMatchPlayers = (squad: Player[]): Player[] => {
-          const gks = squad.filter((p) => isGoalkeeper(p.positions)).slice(0, 1);
+          const healthy = squad.filter((p) => !isPlayerInjuredAtDate(p, fixture.date || store.currentDate, md));
+          const gks = healthy.filter((p) => isGoalkeeper(p.positions)).slice(0, 1);
 
-          const defs = squad.filter((p) => isDefensive(p.positions)).slice(0, 4);
+          const defs = healthy.filter((p) => isDefensive(p.positions)).slice(0, 4);
 
-          const mids = squad.filter((p) => isMidfield(p.positions)).slice(0, 4);
+          const mids = healthy.filter((p) => isMidfield(p.positions)).slice(0, 4);
 
-          const fwds = squad.filter((p) => isAttacking(p.positions)).slice(0, 2);
+          const fwds = healthy.filter((p) => isAttacking(p.positions)).slice(0, 2);
 
           let players = [...gks, ...defs, ...mids, ...fwds];
 
           if (players.length < 11) {
-            const remaining = squad.filter((p) => !players.includes(p));
+            const remaining = healthy.filter((p) => !players.includes(p));
 
             players = [...players, ...remaining.slice(0, 11 - players.length)];
           }
@@ -3284,20 +3327,67 @@ export function generateRealisticStatsForO1Leagues(
         }
       }
 
-      // Third pass: generate injuries (6% chance per team)
-
+      // Third pass: generate injuries. They are intentionally uncommon.
+      // Low estimated energy (<40%) substantially increases the risk while it
+      // still remains unusual overall.
       for (const [teamId, players] of allPlayersToRecord) {
-        if (Math.random() > 0.06) continue;
+        if (players.length === 0) continue;
 
-        const victim = players[Math.floor(Math.random() * players.length)];
+        const minute = 10 + Math.floor(Math.random() * 80);
+        const candidates = players.map((player) => {
+          const estimatedStamina = Math.max(
+            0,
+            100 - minute * drainPerMinute(player.positions?.[0] ?? "CM", "medium"),
+          );
+          return {
+            player,
+            estimatedStamina,
+            fatigueRisk: fatigueInjuryRisk(estimatedStamina),
+          };
+        });
 
-        const weeks = 1 + Math.floor(Math.random() * 5);
+        // Lesionarse sigue siendo poco habitual, pero un jugador por debajo
+        // del 40% de energía tiene un riesgo claramente superior.
+        const anyVeryTired = candidates.some((candidate) => candidate.estimatedStamina < 40);
+        const leagueTeamCount = teamsByLeague(teamById(teamId)?.league ?? "").length;
+        const baseChance = injuryChanceForLeague(leagueTeamCount);
+        const chance = Math.min(0.55, baseChance * (anyVeryTired ? 2.2 : 1));
+        if (Math.random() > chance) continue;
 
-        const reasons = ["Muscular", "Rodilla", "Tobillo", "Lesión menor", "Fatiga"];
+        // El jugador con energía baja tiene más posibilidades de ser el
+        // afectado sin convertir las lesiones en algo frecuente.
+        const totalWeight = candidates.reduce(
+          (sum, candidate) => sum + Math.max(0.25, candidate.fatigueRisk),
+          0,
+        );
+        let pick = Math.random() * totalWeight;
+        let victim = candidates[candidates.length - 1].player;
+        for (const candidate of candidates) {
+          pick -= Math.max(0.25, candidate.fatigueRisk);
+          if (pick <= 0) {
+            victim = candidate.player;
+            break;
+          }
+        }
 
-        const reason = reasons[Math.floor(Math.random() * reasons.length)];
+        const durationDays = Math.min(180, rollInjuryDurationDays());
+        const profile = rollInjuryProfile();
+        const reason = `${profile.diagnosis} · ${profile.area}`;
+        const startDate = teamMatchDates.get(teamId) || store.currentDate;
+        const untilDate = addDaysToIso(startDate, durationDays);
 
-        store.recordInjury(victim.id, md + weeks, reason);
+        store.recordInjury(
+          victim.id,
+          md + Math.max(1, Math.ceil(durationDays / 7)),
+          reason,
+          {
+            startDate,
+            untilDate,
+            durationDays,
+            injuryType: profile.type,
+            injuryArea: profile.area,
+          },
+        );
       }
 
       // Fourth pass: assign goals and assists based on fixture results
@@ -3575,6 +3665,7 @@ function recordFakeMatchStats(
   result: SimResult,
   currentMatchday: number,
   competition: "league" | "cup" | "ucl" = "league",
+  matchDate?: string,
 ) {
   // Fast-simulated matches already contain the same authoritative events as
   // detailed matches. Never generate a second, random set of scorers/cards:
@@ -3615,10 +3706,20 @@ function recordFakeMatchStats(
   for (const injury of result.injuries ?? []) {
     const player = allPlayers.get(injury.playerId);
     if (player) {
+      const durationDays = Math.min(180, injury.durationDays ?? Math.max(7, injury.weeks * 7));
+      const startDate = matchDate ?? store.currentDate;
+      const untilDate = addDaysToIso(startDate, durationDays);
       store.recordInjury(
         injury.playerId,
         currentMatchday + Math.max(1, injury.weeks),
         injury.reason,
+        {
+          startDate,
+          untilDate,
+          durationDays,
+          injuryType: injury.injuryType ?? injury.diagnosis,
+          injuryArea: injury.bodyPart,
+        },
       );
     }
   }
@@ -3680,6 +3781,76 @@ function selectMatchPlayers(squad: Player[]): Player[] {
   }
 
   return players.slice(0, 11);
+}
+
+
+const TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY = 5;
+
+function injuryChanceForLeague(teamCount: number): number {
+  // Each team plays once per league matchday. One injury roll per team gives
+  // an expected league average of roughly five injuries, with natural variance.
+  return Math.min(0.45, Math.max(0.12, TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY / Math.max(1, teamCount)));
+}
+
+function generateBackgroundInjury(
+  players: Player[],
+  team: "home" | "away",
+  leagueTeamCount: number,
+): InjuryEvent | null {
+  if (players.length === 0) return null;
+
+  const minute = 10 + Math.floor(Math.random() * 80);
+  const candidates = players.map((player) => {
+    const estimatedStamina = Math.max(
+      0,
+      100 - minute * drainPerMinute(player.positions?.[0] ?? "CM", "medium"),
+    );
+    return {
+      player,
+      estimatedStamina,
+      fatigueRisk: fatigueInjuryRisk(estimatedStamina),
+    };
+  });
+
+  // Las lesiones siguen siendo poco frecuentes, pero aumentan claramente
+  // cuando un jugador llega al partido con menos del 40% de energía.
+  const anyVeryTired = candidates.some((candidate) => candidate.estimatedStamina < 40);
+  const baseChance = injuryChanceForLeague(leagueTeamCount);
+  const chance = Math.min(0.55, baseChance * (anyVeryTired ? 2.2 : 1));
+  if (Math.random() > chance) return null;
+
+  const totalWeight = candidates.reduce(
+    (sum, candidate) => sum + Math.max(0.25, candidate.fatigueRisk),
+    0,
+  );
+  let pick = Math.random() * totalWeight;
+  let victim = candidates[candidates.length - 1].player;
+
+  for (const candidate of candidates) {
+    pick -= Math.max(0.25, candidate.fatigueRisk);
+    if (pick <= 0) {
+      victim = candidate.player;
+      break;
+    }
+  }
+
+  const durationDays = Math.min(180, rollInjuryDurationDays());
+  const profile = rollInjuryProfile();
+  const reason = `${profile.diagnosis} · ${profile.area}`;
+
+  return {
+    team,
+    playerId: victim.id,
+    playerName: victim.name,
+    weeks: Math.max(1, Math.ceil(durationDays / 7)),
+    durationDays,
+    injuryType: profile.type,
+    bodyPart: profile.area,
+    diagnosis: profile.diagnosis,
+    minute,
+    reason,
+    forcedSub: false,
+  };
 }
 
 export function processScheduledBackgroundSims(save: SaveGame, today: string): SaveGame {
@@ -3795,9 +3966,23 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
 
           if (!home || !away) continue;
 
-          allPlayersToRecord.set(home.id, selectMatchPlayers(store.getSimSquad(home.id)));
+          allPlayersToRecord.set(
+            home.id,
+            selectMatchPlayers(
+              store
+                .getSimSquad(home.id)
+                .filter((p) => !isPlayerInjuredAtDate(p, f.date || today, matchday)),
+            ),
+          );
 
-          allPlayersToRecord.set(away.id, selectMatchPlayers(store.getSimSquad(away.id)));
+          allPlayersToRecord.set(
+            away.id,
+            selectMatchPlayers(
+              store
+                .getSimSquad(away.id)
+                .filter((p) => !isPlayerInjuredAtDate(p, f.date || today, matchday)),
+            ),
+          );
         }
 
         // Second pass: record appearances
@@ -3817,6 +4002,22 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
 
           const result = generateFakeMatchResult(home, away);
 
+          // Las ligas simuladas en segundo plano también pueden generar lesiones.
+          // Antes este camino no registraba ninguna, por lo que los jugadores
+          // de muchas ligas nunca aparecían en el parte médico.
+          const homePlayers = allPlayersToRecord.get(f.homeId) || [];
+          const awayPlayers = allPlayersToRecord.get(f.awayId) || [];
+          const leagueTeamCount = teamsByLeague(league).length;
+          const backgroundInjuries = [
+            generateBackgroundInjury(homePlayers, "home", leagueTeamCount),
+            generateBackgroundInjury(awayPlayers, "away", leagueTeamCount),
+          ].filter((injury): injury is InjuryEvent => Boolean(injury));
+
+          result.injuries = [
+            ...(result.injuries ?? []),
+            ...backgroundInjuries,
+          ];
+
           const idx = next.fixtures[league].findIndex((x) => x.id === f.id);
 
           if (idx >= 0) {
@@ -3827,16 +4028,14 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
               next.fixtures[league][idx],
             );
 
-            const homePlayers = allPlayersToRecord.get(f.homeId) || [];
-
-            const awayPlayers = allPlayersToRecord.get(f.awayId) || [];
-
             recordFakeMatchStats(
               store,
               homePlayers,
               awayPlayers,
               result,
               next.currentMatchday[league],
+              "league",
+              f.date,
             );
           }
         }
@@ -3998,7 +4197,7 @@ export async function advanceMatchdayLayered(
             awayFormation: awayData.formation,
           });
 
-          recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league]);
+          recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league], "league", fixture.date);
         }
 
         // Apply result
@@ -4530,17 +4729,20 @@ export function topAssisters(_save: SaveGame, limit = 30, leagueFilter?: LeagueI
 }
 
 export function currentInjuries(save: SaveGame, teamId?: string): Player[] {
-  return selectInjuredPlayers(save.currentMatchday, teamId);
+  const store = usePlayersStore.getState();
+  return selectInjuredPlayers(store.currentDate, teamId, save.currentMatchday);
 }
 
 export function isPlayerInjured(save: SaveGame, playerId: string): boolean {
-  const p = usePlayersStore.getState().getSimPlayer(playerId);
+  const store = usePlayersStore.getState();
+  const p = store.getSimPlayer(playerId);
 
   if (!p) return false;
 
-  const lg = teamById(p.teamId).league;
+  const league = teamById(p.teamId)?.league;
+  const md = league ? save.currentMatchday[league] : undefined;
 
-  return p.injuredUntil > save.currentMatchday[lg];
+  return isPlayerInjuredAtDate(p, store.currentDate, md);
 }
 
 export function setLineup(save: SaveGame, teamId: string, xi: string[]): SaveGame {

@@ -1,4 +1,4 @@
-import { Team } from "@/data/teams";
+import { Team, teamsByLeague } from "@/data/teams";
 import { Player } from "@/data/players";
 import {
   buildMatchStats,
@@ -9,6 +9,7 @@ import {
 import { tacticsModifiers, type TeamTactics } from "@/lib/teamTactics";
 import { type PosCode } from "@/lib/positions";
 import { type FormationName } from "@/lib/formations";
+import { drainPerMinute, fatigueInjuryRisk } from "@/lib/liveMatch";
 
 export type { MatchStats, PlayerRating };
 
@@ -253,6 +254,11 @@ export type InjuryEvent = {
   playerId: string;
   playerName: string;
   weeks: number;
+  /** Exact calendar duration, capped at 180 days. */
+  durationDays?: number;
+  injuryType?: string;
+  bodyPart?: string;
+  diagnosis?: string;
   reason: string;
   /** Exact minute of the injury. */
   minute?: number;
@@ -336,16 +342,59 @@ function weightedPick<T>(items: T[], weights: number[]): T {
   return items[items.length - 1];
 }
 
-const INJURY_REASONS = [
-  "lesión muscular",
-  "esguince de tobillo",
-  "contractura",
-  "lesión de rodilla",
-  "fractura",
-  "rotura fibrilar",
-  "sobrecarga",
-  "golpe en el partido",
+export type InjuryProfile = {
+  type: string;
+  area: string;
+  diagnosis: string;
+  /** Weight used when selecting a common injury profile. */
+  weight: number;
+};
+
+export const INJURY_PROFILES: InjuryProfile[] = [
+  { type: "Lesión muscular", area: "Muslo", diagnosis: "Contractura muscular", weight: 24 },
+  { type: "Lesión muscular", area: "Isquiotibiales", diagnosis: "Sobrecarga muscular", weight: 18 },
+  { type: "Esguince", area: "Tobillo", diagnosis: "Esguince leve de tobillo", weight: 17 },
+  { type: "Contusión", area: "Rodilla", diagnosis: "Golpe durante el partido", weight: 13 },
+  { type: "Lesión muscular", area: "Gemelo", diagnosis: "Rotura fibrilar", weight: 11 },
+  { type: "Tendinitis", area: "Rodilla", diagnosis: "Inflamación tendinosa", weight: 7 },
+  { type: "Lesión articular", area: "Hombro", diagnosis: "Distensión articular", weight: 4 },
+  { type: "Fractura", area: "Pie", diagnosis: "Fractura por traumatismo", weight: 0.9 },
+  { type: "Luxación", area: "Hombro", diagnosis: "Luxación articular", weight: 0.7 },
+  { type: "Fractura", area: "Pierna", diagnosis: "Fractura de larga recuperación", weight: 0.4 },
 ];
+
+export function rollInjuryProfile(): InjuryProfile {
+  const total = INJURY_PROFILES.reduce((sum, p) => sum + p.weight, 0);
+  let r = rand() * total;
+  for (const profile of INJURY_PROFILES) {
+    r -= profile.weight;
+    if (r <= 0) return profile;
+  }
+  return INJURY_PROFILES[0];
+}
+
+/**
+ * Durations are deliberately concentrated around 1-2 weeks and 1-2 months.
+ * Long layoffs exist, but 3-6 months are intentionally extremely rare.
+ */
+export function rollInjuryDurationDays(): number {
+  const roll = rand() * 100;
+  if (roll < 40) return 7;
+  if (roll < 68) return 14;
+  if (roll < 86) return 30;
+  if (roll < 95) return 60;
+  if (roll < 98.5) return 90;
+  if (roll < 99.5) return 120;
+  if (roll < 99.9) return 150;
+  return 180;
+}
+
+
+const TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY = 5;
+
+function injuryChanceForLeague(teamCount: number): number {
+  return Math.min(0.45, Math.max(0.12, TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY / Math.max(1, teamCount)));
+}
 
 function maybeInjury(
   xi: Player[],
@@ -353,40 +402,81 @@ function maybeInjury(
   bench: Player[] = [],
   plannedSubs: SubstitutionEvent[] = [],
   redCards: Map<string, number> = new Map(),
+  tactics: SimTactics | null = null,
+  leagueTeamCount = 20,
 ): InjuryEvent | null {
-  if (rand() > 0.06) return null;
   const minute = 5 + Math.floor(rand() * 80);
   const active = activePlayersAt(xi, bench, plannedSubs, redCards, team, minute);
   if (active.length === 0) return null;
-  const victim = active[Math.floor(rand() * active.length)];
-  const weeks = 1 + Math.floor(rand() * 5);
+
+  const pressure = (tactics?.pressure ?? "medium") as "low" | "medium" | "high";
+  const staminaMult = tacticsModifiers(tactics).stamina;
+  const candidates = active.map((player) => {
+    const estimatedStamina = Math.max(0, 100 - minute * drainPerMinute(player.positions?.[0] ?? "CM", pressure, staminaMult));
+    return {
+      player,
+      estimatedStamina,
+      fatigueRisk: fatigueInjuryRisk(estimatedStamina),
+    };
+  });
+
+  // A typical match injury is still uncommon. Once a player is below 40%
+  // energy, the match-level risk rises sharply, but it remains far from usual.
+  const anyVeryTired = candidates.some((c) => c.estimatedStamina < 40);
+  const baseChance = injuryChanceForLeague(leagueTeamCount);
+  const matchInjuryChance = Math.min(0.55, baseChance * (anyVeryTired ? 2.2 : 1));
+  if (rand() > matchInjuryChance) return null;
+
+  // Fatigue also makes the low-energy players more likely to be the one who
+  // actually suffers the injury.
+  const weighted = candidates.map((c) => ({
+    player: c.player,
+    weight: Math.max(0.25, c.fatigueRisk),
+  }));
+  const totalWeight = weighted.reduce((sum, c) => sum + c.weight, 0);
+  let pick = rand() * totalWeight;
+  let victim = weighted[weighted.length - 1].player;
+  for (const candidate of weighted) {
+    pick -= candidate.weight;
+    if (pick <= 0) {
+      victim = candidate.player;
+      break;
+    }
+  }
+
+  const durationDays = Math.min(180, rollInjuryDurationDays());
+  const profile = rollInjuryProfile();
 
   // A forced substitution happens whenever a bench player of a compatible
   // profile is available and the injury happens before the 88th minute.
   const plannedIncomingIds = new Set(
     plannedSubs.filter((s) => s.team === team).map((s) => s.playerInId),
   );
-  const candidates = bench.filter((p) => p.id !== victim.id && !plannedIncomingIds.has(p.id));
-  // Check if positions overlap (at least one common position)
-  const samePos = candidates.filter((p) =>
+  const replacementCandidates = bench.filter(
+    (p) => p.id !== victim.id && !plannedIncomingIds.has(p.id),
+  );
+  const samePos = replacementCandidates.filter((p) =>
     p.positions.some((pos) => victim.positions.includes(pos)),
   );
-  const replacement = (samePos.length > 0 ? samePos : candidates)
+  const replacement = (samePos.length > 0 ? samePos : replacementCandidates)
     .slice()
     .sort((a, b) => b.rating - a.rating)[0];
 
-  // Los cambios forzados también consumen una de las cinco sustituciones
-  // disponibles en este modelo. Nunca añadimos un sexto cambio al partido.
   const teamSubCount = plannedSubs.filter((s) => s.team === team).length;
   const canForceSub = teamSubCount < 5 && !!replacement && minute < 88;
+  const reason = `${profile.diagnosis} · ${profile.area}`;
 
   return {
     team,
     playerId: victim.id,
     playerName: victim.name,
-    weeks,
+    weeks: Math.max(1, Math.ceil(durationDays / 7)),
+    durationDays,
+    injuryType: profile.type,
+    bodyPart: profile.area,
+    diagnosis: profile.diagnosis,
     minute,
-    reason: INJURY_REASONS[Math.floor(rand() * INJURY_REASONS.length)],
+    reason,
     forcedSub: canForceSub,
     replacementId: canForceSub ? replacement.id : undefined,
     replacementName: canForceSub ? replacement.name : undefined,
@@ -735,6 +825,51 @@ export function simulateMatchFast(
     }),
   ].sort((a, b) => a.minute - b.minute);
 
+  // Fast-simulated matches (used by the Big 5, Portugal, Netherlands, Turkey
+  // and the other non-user leagues) must also generate authoritative injuries.
+  // Previously this path returned `injuries: []`, so those leagues could never
+  // produce a player injury even though the detailed simulation could.
+  const injuries: InjuryEvent[] = [];
+  const homeLeagueTeamCount = teamsByLeague(home.league).length;
+  const awayLeagueTeamCount = teamsByLeague(away.league).length;
+  const homeInjury = maybeInjury(
+    homeXI,
+    "home",
+    homeBench,
+    substitutions,
+    new Map(),
+    homeTactics,
+    homeLeagueTeamCount,
+  );
+  const awayInjury = maybeInjury(
+    awayXI,
+    "away",
+    awayBench,
+    substitutions,
+    new Map(),
+    awayTactics,
+    awayLeagueTeamCount,
+  );
+  if (homeInjury) injuries.push(homeInjury);
+  if (awayInjury) injuries.push(awayInjury);
+
+  // An injury in the fast path can force the same immediate substitution as
+  // the detailed simulation, so the injured player is removed from all later
+  // match events.
+  for (const injury of injuries) {
+    if (injury.forcedSub && injury.replacementId && injury.replacementName && injury.minute !== undefined) {
+      substitutions.push({
+        minute: injury.minute,
+        team: injury.team,
+        playerOutId: injury.playerId,
+        playerOutName: injury.playerName,
+        playerInId: injury.replacementId,
+        playerInName: injury.replacementName,
+      });
+    }
+  }
+  substitutions.sort((a, b) => a.minute - b.minute);
+
   const { lh, la } = expectedGoals(home, away, homeXI, awayXI, opts.homeTactics, opts.awayTactics);
 
   // Poisson keeps the goal distribution realistic and, unlike the previous
@@ -867,13 +1002,35 @@ export function simulateMatchFast(
   };
   addFastWoodwork(homeXI, homeBench, "home");
   addFastWoodwork(awayXI, awayBench, "away");
+
+  for (const injury of injuries) {
+    highlights.push({
+      minute: injury.minute ?? 60,
+      team: injury.team,
+      type: "injury",
+      playerId: injury.playerId,
+      playerName: injury.playerName,
+      detail: injury.reason,
+    });
+    if (injury.forcedSub && injury.replacementId && injury.replacementName && injury.minute !== undefined) {
+      highlights.push({
+        minute: injury.minute,
+        team: injury.team,
+        type: "forced_sub",
+        playerId: injury.replacementId,
+        playerName: injury.replacementName,
+        detail: `Entra por ${injury.playerName} (cambio forzado)`,
+      });
+    }
+  }
+
   highlights.sort((a, b) => a.minute - b.minute);
 
   const homeParticipants = participantsFromSubs(homeXI, homeBench, substitutions, "home");
   const awayParticipants = participantsFromSubs(awayXI, awayBench, substitutions, "away");
   const minutesPlayed = {
-    ...buildMinutesPlayed(homeXI, homeBench, substitutions, cards, [], "home"),
-    ...buildMinutesPlayed(awayXI, awayBench, substitutions, cards, [], "away"),
+    ...buildMinutesPlayed(homeXI, homeBench, substitutions, cards, injuries, "home"),
+    ...buildMinutesPlayed(awayXI, awayBench, substitutions, cards, injuries, "away"),
   };
   const homeSaves = highlights.filter((h) => h.team === "home" && h.type === "save").length;
   const awaySaves = highlights.filter((h) => h.team === "away" && h.type === "save").length;
@@ -904,7 +1061,7 @@ export function simulateMatchFast(
     awayGoals,
     events,
     cards,
-    injuries: [],
+    injuries,
     xgHome: lh,
     xgAway: la,
     highlights,
@@ -1163,9 +1320,27 @@ export function simulateMatch(
 
   // Injuries are generated before goals/highlights so an injured player is
   // immediately removed from the pool of eligible match actions.
-  const homeInj = maybeInjury(homeXI, "home", homeBench, substitutions, homeRedCardedPlayers);
+  const homeLeagueTeamCount = teamsByLeague(home.league).length;
+  const awayLeagueTeamCount = teamsByLeague(away.league).length;
+  const homeInj = maybeInjury(
+    homeXI,
+    "home",
+    homeBench,
+    substitutions,
+    homeRedCardedPlayers,
+    homeTactics,
+    homeLeagueTeamCount,
+  );
   if (homeInj) injuries.push(homeInj);
-  const awayInj = maybeInjury(awayXI, "away", awayBench, substitutions, awayRedCardedPlayers);
+  const awayInj = maybeInjury(
+    awayXI,
+    "away",
+    awayBench,
+    substitutions,
+    awayRedCardedPlayers,
+    awayTactics,
+    awayLeagueTeamCount,
+  );
   if (awayInj) injuries.push(awayInj);
 
   for (const inj of injuries) {

@@ -12,7 +12,7 @@ import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { defaultLineup } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
-import { usePlayersStore } from "@/store/playersStore";
+import { injuryRemainingDays, isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
 import { FootballPitch, PlayerNode } from "@/components/FootballPitch";
 import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
@@ -90,12 +90,22 @@ function invalidPositionMessage(
   return `Posición inválida: ${player.name} juega de ${posLabelOf(player)} y no puede jugar de ${POS_NAME[slot]} (${slot}).`;
 }
 
+function formatInjuryShort(player: any, currentDate: string, leagueMd: number): string {
+  const days = injuryRemainingDays(player, currentDate, leagueMd);
+  if (days <= 0) return "recuperado";
+  if (days < 7) return `${days}d`;
+  if (days < 14) return "1 semana";
+  if (days < 28) return `${Math.round(days / 7)} semanas`;
+  return `${Math.max(1, Math.round(days / 30))} ${Math.round(days / 30) === 1 ? "mes" : "meses"}`;
+}
+
 function LineupPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const search = useSearch({ from: "/lineup" });
   const { ready, loading } = usePlayersReady();
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
+  const currentDate = usePlayersStore((s) => s.currentDate);
   // Suscripciones reactivas: `getSimSquad` es una referencia estable, así que
   // por sí sola nunca vuelve a ejecutar el `useMemo` de abajo. Al vender o
   // ceder a un jugador cambian `rosterIds` y `clubOverrides`, y es eso lo que
@@ -218,6 +228,8 @@ function LineupPage() {
     [save, ready, getSimSquad, rosterIds, clubOverrides],
   );
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
+  const isCurrentlyInjured = (player: any) =>
+    isPlayerInjuredAtDate(player, currentDate, leagueMd);
 
   // Sincronización inmediata de Dirección de equipo con la plantilla real.
   // Una venta/cesión cambia `squad` en el store en el mismo evento que cierra
@@ -232,14 +244,21 @@ function LineupPage() {
     // pizarra: no se rellena solo con otro futbolista. El slot se conserva
     // como cadena vacía para no descolocar el resto del dibujo, y el usuario
     // decide a quién pone ahí.
-    const nextXI = startingXI.map((id) => (id && available.has(id) ? id : ""));
+    const nextXI = startingXI.map((id) => {
+      if (!id || !available.has(id)) return "";
+      const player = squad.find((p) => p.id === id);
+      return player && !isCurrentlyInjured(player) ? id : "";
+    });
 
     const inXI = new Set(nextXI.filter((id) => id));
-    // Only the manually selected maximum of 12 players remain convocados.
-    // New arrivals and the rest of the roster stay in Reservas until the user
-    // explicitly promotes them to the bench.
+    // Only the manually selected maximum of 12 healthy players remain
+    // convocados. Injured players are deliberately moved to Reservas.
     const nextBench = bench
-      .filter((id) => available.has(id) && !inXI.has(id))
+      .filter((id) => {
+        if (!available.has(id) || inXI.has(id)) return false;
+        const player = squad.find((p) => p.id === id);
+        return !!player && !isCurrentlyInjured(player);
+      })
       .slice(0, 12);
 
     const sameArray = (a: string[], b: string[]) =>
@@ -265,7 +284,7 @@ function LineupPage() {
     const hasPlanSelection = !!activePlan && activePlan.substitutes.length > 0;
     if (bench.length === 0 && configured === undefined && !hasPlanSelection) {
       const defaults = squad
-        .filter((player) => !startingXI.includes(player.id))
+        .filter((player) => !startingXI.includes(player.id) && !isCurrentlyInjured(player))
         .sort((a, b) => b.rating - a.rating)
         .slice(0, 12)
         .map((player) => player.id);
@@ -273,62 +292,61 @@ function LineupPage() {
     }
   }, [save, ready, squad, startingXI, bench.length, liveMode, tacticPlanState]);
 
-  // Automated injury detection and handling
+  // Automated injury handling: an injured player is NEVER allowed in the XI
+  // or in the 12 convocados. The player is left in Reservas until recovery.
   useEffect(() => {
-    if (liveMode) return; // during a live match the XI is controlled by the match screen
-    if (!save || startingXI.length === 0) return;
-    if (processedForMdRef.current === leagueMd) return;
+    if (liveMode || !save || !ready || squad.length === 0) return;
 
-    const injuredPlayers = squad.filter(
-      (p) => startingXI.includes(p.id) && p.injuredUntil > leagueMd,
+    const injuredIds = new Set(
+      squad.filter((p) => isCurrentlyInjured(p)).map((p) => p.id),
     );
+    if (injuredIds.size === 0) return;
 
-    if (injuredPlayers.length > 0) {
-      let newStartingXI = [...startingXI];
-      let newBench = [...bench];
+    const nextXI = startingXI.map((id) => (id && injuredIds.has(id) ? "" : id));
+    const nextBench = bench.filter((id) => !injuredIds.has(id)).slice(0, 12);
 
-      // Process each injured player
-      injuredPlayers.forEach((injuredPlayer) => {
-        // Find a healthy replacement from bench with compatible position
-        const healthyBench = squad.filter(
-          (p) =>
-            newBench.includes(p.id) &&
-            p.injuredUntil <= leagueMd &&
-            p.positions.some((pos) => injuredPlayer.positions.includes(pos)),
-        );
+    const cleanedPlans = tacticPlanState
+      ? tacticPlanState.plans.map((plan) => ({
+          ...plan,
+          lineup: plan.lineup.filter((id) => !injuredIds.has(id)),
+          substitutes: plan.substitutes.filter((id) => !injuredIds.has(id)).slice(0, 12),
+        }))
+      : [];
+    const plansChanged = tacticPlanState
+      ? cleanedPlans.some((plan, index) =>
+          plan.lineup.length !== tacticPlanState.plans[index].lineup.length ||
+          plan.lineup.some((id, i) => id !== tacticPlanState.plans[index].lineup[i]) ||
+          plan.substitutes.length !== tacticPlanState.plans[index].substitutes.length ||
+          plan.substitutes.some((id, i) => id !== tacticPlanState.plans[index].substitutes[i])
+        )
+      : false;
 
-        if (healthyBench.length > 0) {
-          const replacement = healthyBench[0];
-          newStartingXI = newStartingXI.map((id) =>
-            id === injuredPlayer.id ? replacement.id : id,
-          );
-          newBench = newBench.map((id) => (id === replacement.id ? injuredPlayer.id : id));
-        } else {
-          newStartingXI = newStartingXI.filter((id) => id !== injuredPlayer.id);
-          newBench = [...newBench, injuredPlayer.id];
-        }
-      });
+    const lineupChanged =
+      nextXI.length !== startingXI.length ||
+      nextXI.some((id, index) => id !== startingXI[index]) ||
+      nextBench.length !== bench.length ||
+      nextBench.some((id, index) => id !== bench[index]);
 
-      setStartingXI(newStartingXI);
-      setBench(newBench);
-      processedForMdRef.current = leagueMd;
+    if (!lineupChanged && !plansChanged) return;
 
-      // Auto-save lineup exactly as if the user clicked Guardar
-      if (save && newStartingXI.filter((id) => id && id.trim() !== "").length === 11) {
-        const suspensions = save.suspensions[save.myTeamId] ?? [];
-        const suspendedPlayerIds = new Set(
-          suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
-        );
-        const filteredXI = newStartingXI.filter((id) => !suspendedPlayerIds.has(id));
-        const next = setLineup(save, save.myTeamId, filteredXI);
-        const nextWithFormation = setFormation(next, save.myTeamId, selectedFormation);
-        saveSave(nextWithFormation);
-        setSave(nextWithFormation);
-      }
-    } else {
-      processedForMdRef.current = leagueMd;
+    setStartingXI(nextXI);
+    setBench(nextBench);
+    setSelectedPlayer((selected) => (selected && injuredIds.has(selected) ? null : selected));
+
+    let nextSave = setLineup(save, save.myTeamId, nextXI.filter(Boolean));
+    nextSave = setSubstitutes(nextSave, save.myTeamId, nextBench);
+    saveSave(nextSave);
+    setSave(nextSave);
+
+    if (tacticPlanState && plansChanged) {
+      const nextPlanState: TacticPlanState = {
+        activeId: tacticPlanState.activeId,
+        plans: cleanedPlans,
+      };
+      setTacticPlanState(nextPlanState);
+      saveTacticPlans(save.myTeamId, nextPlanState);
     }
-  }, [save, squad, startingXI, bench, leagueMd, selectedFormation]);
+  }, [save, squad, startingXI, bench, currentDate, ready, liveMode, tacticPlanState]);
 
   // Automated suspension detection and handling
   useEffect(() => {
@@ -355,7 +373,7 @@ function LineupPage() {
         const healthyBench = squad.filter(
           (p) =>
             newBench.includes(p.id) &&
-            p.injuredUntil <= leagueMd &&
+            !isCurrentlyInjured(p) &&
             !suspendedPlayerIds.has(p.id) &&
             p.positions.some((pos) => suspendedPlayer.positions.includes(pos)),
         );
@@ -461,20 +479,43 @@ function LineupPage() {
     const target = current.state.plans.find((plan) => plan.id === planId);
     if (!target) return;
 
-    const nextState: TacticPlanState = { ...current.state, activeId: target.id };
+    const healthyTargetXI = target.lineup
+      .slice(0, 11)
+      .map((id) => squad.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => !!p && !isCurrentlyInjured(p))
+      .map((p) => p.id);
+    const healthyTargetBench = target.substitutes
+      .slice(0, 12)
+      .map((id) => squad.find((p) => p.id === id))
+      .filter(
+        (p): p is NonNullable<typeof p> =>
+          !!p && !isCurrentlyInjured(p) && !healthyTargetXI.includes(p.id),
+      )
+      .map((p) => p.id);
+
+    // Sanitise the plan itself so an injured player can never reappear by
+    // switching A/B/C while the player is still unavailable.
+    const nextState: TacticPlanState = {
+      activeId: target.id,
+      plans: current.state.plans.map((plan) =>
+        plan.id === target.id
+          ? { ...plan, lineup: healthyTargetXI.slice(0, 11), substitutes: healthyTargetBench.slice(0, 12) }
+          : plan,
+      ),
+    };
     saveTacticPlans(save.myTeamId, nextState);
     setTacticPlanState(nextState);
     setSelectedFormation(target.formation as FormationName);
-    setStartingXI(target.lineup.slice(0, 11));
-    setBench(target.substitutes.slice(0, 12));
+    setStartingXI(healthyTargetXI);
+    setBench(healthyTargetBench);
     setTactics(target.tactics);
 
-    const targetIsComplete = target.lineup.filter(Boolean).length === 11;
+    const targetIsComplete = healthyTargetXI.length === 11;
     if (targetIsComplete) {
       let nextSave = current.committedSave ?? save;
-      nextSave = setLineup(nextSave, save.myTeamId, target.lineup.filter(Boolean));
+      nextSave = setLineup(nextSave, save.myTeamId, healthyTargetXI);
       nextSave = setFormation(nextSave, save.myTeamId, target.formation);
-      nextSave = setSubstitutes(nextSave, save.myTeamId, target.substitutes);
+      nextSave = setSubstitutes(nextSave, save.myTeamId, healthyTargetBench);
       saveSave(nextSave);
       setSave(nextSave);
     }
@@ -496,8 +537,14 @@ function LineupPage() {
       id: `plan-${String.fromCharCode(97 + nextIndex)}`,
       name: `Plan ${String.fromCharCode(65 + nextIndex)}`,
       formation: selectedFormation,
-      lineup: startingXI,
-      substitutes: bench,
+      lineup: startingXI.filter((id) => {
+        const player = squad.find((p) => p.id === id);
+        return !!player && !isCurrentlyInjured(player);
+      }),
+      substitutes: bench.filter((id) => {
+        const player = squad.find((p) => p.id === id);
+        return !!player && !isCurrentlyInjured(player);
+      }),
       tactics,
     });
     const nextState: TacticPlanState = {
@@ -664,7 +711,7 @@ function LineupPage() {
     if (!player) return;
 
     // Check if player is injured
-    if (player.injuredUntil > leagueMd) {
+    if (isCurrentlyInjured(player)) {
       toast.error(`${player.name} está lesionado y no puede jugar.`);
       return;
     }
@@ -758,7 +805,7 @@ function LineupPage() {
     if (liveSubBlocked(benchPlayerId)) return;
 
     // Check if bench player is injured
-    if (benchPlayer.injuredUntil > leagueMd) {
+    if (isCurrentlyInjured(benchPlayer)) {
       toast.error(`${benchPlayer.name} está lesionado y no puede jugar.`);
       setSelectedPlayer(null);
       return;
@@ -812,7 +859,7 @@ function LineupPage() {
     if (!player) return;
 
     // Check if player is injured
-    if (player.injuredUntil > leagueMd) {
+    if (isCurrentlyInjured(player)) {
       toast.error(`${player.name} está lesionado y no puede jugar.`);
       setSelectedPlayer(null);
       return;
@@ -868,7 +915,7 @@ function LineupPage() {
     if (liveSubBlocked(benchPlayerId)) return;
 
     // Check if player is injured
-    if (benchPlayer.injuredUntil > leagueMd) {
+    if (isCurrentlyInjured(benchPlayer)) {
       toast.error(`${benchPlayer.name} está lesionado y no puede jugar.`);
       return;
     }
@@ -939,7 +986,7 @@ function LineupPage() {
     if (!player) return;
     if (bench.includes(playerId) || startingXI.includes(playerId)) return;
 
-    if (player.injuredUntil > leagueMd) {
+    if (isCurrentlyInjured(player)) {
       toast.error(`${player.name} está lesionado y no puede ser convocado.`);
       return;
     }
@@ -968,7 +1015,7 @@ function LineupPage() {
     const player = squad.find((p) => p.id === playerId);
     if (!player) return;
 
-    if (player.injuredUntil > leagueMd) {
+    if (isCurrentlyInjured(player)) {
       toast.error(`${player.name} está lesionado y no puede ser convocado.`);
       return;
     }
@@ -1015,6 +1062,16 @@ function LineupPage() {
       return;
     }
 
+    // Never persist an injured player in the XI or convocados, even if an
+    // injury was registered between renders.
+    if (startingXI.some((id) => {
+      const player = squad.find((p) => p.id === id);
+      return !!player && isCurrentlyInjured(player);
+    })) {
+      toast.error("Hay un jugador lesionado en el 11. Debe quedar en Reservas hasta recuperarse.");
+      return;
+    }
+
     // Filter out suspended players from the lineup before saving.
     const suspensions = save.suspensions[save.myTeamId] ?? [];
     const suspendedPlayerIds = new Set(
@@ -1022,7 +1079,13 @@ function LineupPage() {
     );
     const filteredStartingXI = startingXI.filter((playerId) => !suspendedPlayerIds.has(playerId));
     const selectedSubstitutes = Array.from(
-      new Set(bench.filter((id) => id && !filteredStartingXI.includes(id))),
+      new Set(
+        bench.filter((id) => {
+          if (!id || filteredStartingXI.includes(id)) return false;
+          const player = squad.find((p) => p.id === id);
+          return !!player && !isCurrentlyInjured(player);
+        }),
+      ),
     ).slice(0, 12);
 
     let next = setLineup(save, save.myTeamId, filteredStartingXI);
@@ -1320,7 +1383,7 @@ function LineupPage() {
                       otherPositions: posCodesOf(player).filter(
                         (c) => c !== getSlotCodeForKey(posKey),
                       ),
-                      injured: player.injuredUntil > leagueMd,
+                      injured: isCurrentlyInjured(player),
                       suspended: isSuspended,
                       cardImage: player.cardImage,
                     }}
@@ -1391,7 +1454,7 @@ function LineupPage() {
 
             {benchPlayers.map((player) => {
               if (!player) return null;
-              const isInjured = player.injuredUntil > leagueMd;
+              const isInjured = isCurrentlyInjured(player);
               const suspensions = save?.suspensions[save.myTeamId] ?? [];
               const suspendedPlayerIds = new Set(
                 suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
@@ -1426,7 +1489,7 @@ function LineupPage() {
                     <div className="font-semibold truncate text-sm flex items-center gap-1">
                       {player.name}
                       {isInjured && (
-                        <span className="text-xs text-destructive">({player.injuredUntil - leagueMd}p)</span>
+                        <span className="text-xs font-bold text-destructive">({formatInjuryShort(player, currentDate, leagueMd)})</span>
                       )}
                       {isSuspended && <span className="text-xs text-destructive">(SUS)</span>}
                     </div>
@@ -1459,43 +1522,75 @@ function LineupPage() {
               </div>
 
               {reservePlayers.map((player) => {
+                const isInjured = isCurrentlyInjured(player);
                 return (
                   <div
                     key={player.id}
-                    onClick={() => handleReservePlayerClick(player.id)}
-                    className={`mb-2 flex items-center gap-3 rounded-lg border-2 p-3 transition ${
-                      selectedPlayer === player.id
-                        ? "border-primary bg-primary/10 glow-cyan cursor-pointer"
-                        : "border-border/60 bg-card/50 hover:border-primary/60 cursor-pointer"
+                    onClick={() => {
+                      if (!isInjured) handleReservePlayerClick(player.id);
+                    }}
+                    className={`mb-2 flex items-center gap-3 rounded-xl border-2 p-3 transition ${
+                      isInjured
+                        ? "border-destructive/30 bg-destructive/5 opacity-75 cursor-not-allowed"
+                        : selectedPlayer === player.id
+                          ? "border-primary bg-primary/10 glow-cyan cursor-pointer"
+                          : "border-border/60 bg-card/50 hover:border-primary/60 cursor-pointer"
                     }`}
                   >
-                    <PlayerFace
-                      name={player.name}
-                      image={faceUrl(player.id, player.cardImage)}
-                      size={30}
-                      showRing={false}
-                      className="bg-secondary shadow"
-                    />
+                    <div className="relative shrink-0">
+                      <PlayerFace
+                        name={player.name}
+                        image={faceUrl(player.id, player.cardImage)}
+                        size={30}
+                        showRing={false}
+                        className="bg-secondary shadow"
+                      />
+                      {isInjured && (
+                        <span className="absolute -right-1 -bottom-1 grid h-5 w-5 place-items-center rounded-full border border-destructive/30 bg-background text-[0.65rem] shadow">
+                          🔒
+                        </span>
+                      )}
+                    </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{player.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-semibold">{player.name}</p>
+                        {isInjured && (
+                          <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-destructive">
+                            Lesionado
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">
                         {posLabelOf(player)} · {player.age}a · OVR {player.rating}
                       </p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {bench.length < 12 && (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleCallUpPlayer(player.id);
-                          }}
-                          className="rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.65rem] font-black text-primary transition hover:bg-primary/20"
-                        >
-                          Convocar
-                        </button>
+                      {isInjured && (
+                        <p className="mt-1 text-[0.62rem] font-semibold text-destructive">
+                          {player.injuryReason || "Lesión"} · {formatInjuryShort(player, currentDate, leagueMd)} restantes
+                        </p>
                       )}
-                      {selectedPlayer === player.id && <span className="text-primary text-lg">✓</span>}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {isInjured ? (
+                        <span className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1 text-[0.6rem] font-black text-destructive">
+                          Bloqueado
+                        </span>
+                      ) : (
+                        <>
+                          {bench.length < 12 && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleCallUpPlayer(player.id);
+                              }}
+                              className="rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.65rem] font-black text-primary transition hover:bg-primary/20"
+                            >
+                              Convocar
+                            </button>
+                          )}
+                          {selectedPlayer === player.id && <span className="text-primary text-lg">✓</span>}
+                        </>
+                      )}
                     </div>
                   </div>
                 );

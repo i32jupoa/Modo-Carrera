@@ -11,7 +11,6 @@ import {
   saveSaveWithRetry,
   setLineup,
   setFormation,
-  setSubstitutes,
   getMyNextFixtureAny,
   playSpecificFixture,
   simulateCupMatchday,
@@ -20,7 +19,6 @@ import {
   advanceMatchdayLayered,
   simulateCupMatchdayLayered,
   getStartersWithFormation,
-  getBenchForTeam,
   simulateUserPhaseUCLDay,
   processUCLKnockoutProgress,
 } from "@/lib/store";
@@ -71,7 +69,7 @@ import {
   segmentItem,
 } from "@/components/match/matchUi";
 import { Pause, Play, FastForward, Users, ClipboardList } from "lucide-react";
-import { usePlayersStore } from "@/store/playersStore";
+import { isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
 import { MiniPitch } from "@/components/MiniPitch";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";
@@ -174,7 +172,6 @@ function MatchPage() {
   const routerState = location.state as any;
   const matchLineup = routerState?.matchLineup as string[] | undefined;
   const matchFormation = routerState?.matchFormation as string | undefined;
-  const matchSubstitutes = routerState?.matchSubstitutes as string[] | undefined;
   const returningFromLineup = routerState?.returningFromLineupEdit === true;
   const fixtureId = routerState?.fixtureId as string | undefined;
 
@@ -326,7 +323,6 @@ function MatchPage() {
   // Store original lineup BEFORE applying temporary changes
   const originalLineupRef = useRef<string[] | null>(null);
   const originalFormationRef = useRef<string | null>(null);
-  const originalSubstitutesRef = useRef<string[] | null>(null);
 
   async function handleReturnToSeason() {
     if (!save || isSimulating) return;
@@ -1026,7 +1022,6 @@ function MatchPage() {
     if (matchLineup && matchFormation) {
       originalLineupRef.current = s.lineups[s.myTeamId];
       originalFormationRef.current = s.formations[s.myTeamId];
-      originalSubstitutesRef.current = s.substitutes?.[s.myTeamId] ?? null;
     }
 
     // Prioritize router state temporary lineup over global store
@@ -1037,9 +1032,6 @@ function MatchPage() {
       // Apply temporary lineup as absolute source of truth for this match
       saveToUse = setLineup(s, s.myTeamId, matchLineup);
       saveToUse = setFormation(saveToUse, s.myTeamId, matchFormation);
-      if (matchSubstitutes) {
-        saveToUse = setSubstitutes(saveToUse, s.myTeamId, matchSubstitutes);
-      }
     }
 
     setSave(saveToUse);
@@ -1131,7 +1123,7 @@ function MatchPage() {
       navigate({ to: "/season" });
       return;
     }
-  }, [navigate, matchLineup, matchFormation, matchSubstitutes, pendingUserMatch, returningFromLineup]);
+  }, [navigate, matchLineup, matchFormation, pendingUserMatch, returningFromLineup]);
 
   async function startMatch(shouldSkipToEnd = false) {
     if (!save) return;
@@ -1143,7 +1135,6 @@ function MatchPage() {
     // Use the stored original lineup/formation from refs (saved before temporary changes)
     const originalLineup = originalLineupRef.current;
     const originalFormation = originalFormationRef.current;
-    const originalSubstitutes = originalSubstitutesRef.current;
 
     // Simulate the specific fixture that's currently loaded
     const { save: newSave, fixture } = playSpecificFixture(save, fixtureRef.current.id);
@@ -1181,7 +1172,7 @@ function MatchPage() {
           .filter(
             (p: any) =>
               !onPitch.has(p.id) &&
-              (p.injuredUntil ?? 0) <= 0 &&
+              !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate) &&
               !plannedIn.some((q: any) => q.id === p.id),
           )
           .sort((a: any, b: any) => b.rating - a.rating)
@@ -1216,12 +1207,8 @@ function MatchPage() {
           newSave.myTeamId,
           originalFormation,
         );
-        const restoredSave =
-          originalSubstitutes !== null
-            ? setSubstitutes(saveWithOriginalFormation, newSave.myTeamId, originalSubstitutes)
-            : saveWithOriginalFormation;
-        setSave(restoredSave);
-        saveSaveWithRetry(restoredSave);
+        setSave(saveWithOriginalFormation);
+        saveSaveWithRetry(saveWithOriginalFormation);
       } else {
         setSave(newSave);
         saveSaveWithRetry(newSave);
@@ -1299,14 +1286,10 @@ function MatchPage() {
     myTeamIdRef.current = s.myTeamId;
     const squad = getSimSquad(s.myTeamId);
     const ids = (matchLineup || s.lineups[s.myTeamId] || []).filter(Boolean);
-    const xiPlayers = ids
-      .map((id) => squad.find((p) => p.id === id))
-      .filter((p): p is NonNullable<typeof p> => !!p);
-    const benchIds = matchSubstitutes
-      ? matchSubstitutes
-          .filter((id) => !ids.includes(id))
-          .slice(0, 12)
-      : getBenchForTeam(s, s.myTeamId, xiPlayers).map((p) => p.id);
+    const benchIds = squad
+      .filter((p) => !ids.includes(p.id))
+      .slice(0, 12)
+      .map((p) => p.id);
     const st: Record<string, number> = {};
     squad.forEach((p) => {
       st[p.id] = STAMINA_START;
@@ -2111,7 +2094,7 @@ function MatchPage() {
     const oppSquad = getSimSquad(oppId);
     const onPitchIds = new Set(oppPlayers.map((p: any) => p.id));
     oppBenchRef.current = oppSquad
-      .filter((p: any) => !onPitchIds.has(p.id) && (p.injuredUntil ?? 0) <= 0)
+      .filter((p: any) => !onPitchIds.has(p.id) && !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate))
       .sort((a: any, b: any) => b.rating - a.rating)
       .slice(0, 7);
     oppCacheRef.current = { key: `${fixture.id}:${oppId}`, formation: oppFmt };

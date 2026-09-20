@@ -310,7 +310,19 @@ export type PlayerStats = {
   cupMotm: number;
   uclMotm: number;
 
+  /** Legacy league-matchday marker kept for backwards compatibility. */
   injuredUntil: number;
+
+  /** Exact recovery date (YYYY-MM-DD). Used for ALL competitions. */
+  injuredUntilDate?: string;
+  /** Date on which the injury happened. */
+  injuryStartDate?: string;
+  /** Total duration in calendar days. */
+  injuryDurationDays?: number;
+  /** Broad injury type (e.g. Muscular, Joint, Bone). */
+  injuryType?: string;
+  /** Body area affected. */
+  injuryArea?: string;
 
   injuryReason?: string;
 
@@ -472,6 +484,12 @@ function defaultStats(): PlayerStats {
     uclMotm: 0,
 
     injuredUntil: 0,
+
+    injuredUntilDate: undefined,
+    injuryStartDate: undefined,
+    injuryDurationDays: undefined,
+    injuryType: undefined,
+    injuryArea: undefined,
 
     morale: 70,
 
@@ -695,6 +713,11 @@ function fcToPlayer(
 
     injuredUntil: stats.injuredUntil,
 
+    injuredUntilDate: stats.injuredUntilDate,
+    injuryStartDate: stats.injuryStartDate,
+    injuryDurationDays: stats.injuryDurationDays,
+    injuryType: stats.injuryType,
+    injuryArea: stats.injuryArea,
     injuryReason: stats.injuryReason,
 
     morale: stats.morale,
@@ -854,7 +877,18 @@ type PlayersState = {
 
   resetAccumulatedYellowCards: (playerId: string) => void;
 
-  recordInjury: (playerId: string, injuredUntil: number, reason: string) => void;
+  recordInjury: (
+    playerId: string,
+    injuredUntil: number,
+    reason: string,
+    meta?: {
+      startDate?: string;
+      untilDate?: string;
+      durationDays?: number;
+      injuryType?: string;
+      injuryArea?: string;
+    },
+  ) => void;
 };
 
 let statsBatchDepth = 0;
@@ -2037,12 +2071,11 @@ export const usePlayersStore = create<PlayersState>()(
       },
 
       getSimXI: (teamId, lineupIds, leagueMatchday) => {
+        const currentDate = get().currentDate;
         const unavailable = new Set(
           get()
             .getSimSquad(teamId)
-
-            .filter((p) => p.injuredUntil > leagueMatchday)
-
+            .filter((p) => isPlayerInjuredAtDate(p, currentDate, leagueMatchday))
             .map((p) => p.id),
         );
 
@@ -2281,8 +2314,17 @@ export const usePlayersStore = create<PlayersState>()(
         set({ stats: next });
       },
 
-      recordInjury: (playerId, injuredUntil, reason) => {
-        mutatePlayerStat(get, set, playerId, (s) => ({ ...s, injuredUntil, injuryReason: reason }));
+      recordInjury: (playerId, injuredUntil, reason, meta) => {
+        mutatePlayerStat(get, set, playerId, (s) => ({
+          ...s,
+          injuredUntil,
+          injuryReason: reason,
+          injuredUntilDate: meta?.untilDate ?? s.injuredUntilDate,
+          injuryStartDate: meta?.startDate ?? s.injuryStartDate,
+          injuryDurationDays: meta?.durationDays ?? s.injuryDurationDays,
+          injuryType: meta?.injuryType ?? s.injuryType,
+          injuryArea: meta?.injuryArea ?? s.injuryArea,
+        }));
         return;
 
         const next = { ...get().stats };
@@ -2688,10 +2730,35 @@ export function selectTopMotm(
   return out.sort((a, b) => b.motm - a.motm).slice(0, limit);
 }
 
-export function selectInjuredPlayers(
-  matchdaysByLeague: Record<LeagueId, number>,
+export function isPlayerInjuredAtDate(
+  player: Pick<Player, "injuredUntil" | "injuredUntilDate">,
+  currentDate: string,
+  fallbackMatchday?: number,
+): boolean {
+  if (player.injuredUntilDate) return currentDate < player.injuredUntilDate;
+  return typeof fallbackMatchday === "number" ? player.injuredUntil > fallbackMatchday : player.injuredUntil > 0;
+}
 
+export function injuryRemainingDays(
+  player: Pick<Player, "injuredUntil" | "injuredUntilDate">,
+  currentDate: string,
+  fallbackMatchday?: number,
+): number {
+  if (player.injuredUntilDate) {
+    const start = new Date(`${currentDate}T00:00:00Z`).getTime();
+    const end = new Date(`${player.injuredUntilDate}T00:00:00Z`).getTime();
+    return Math.max(0, Math.ceil((end - start) / 86400000));
+  }
+  if (typeof fallbackMatchday === "number") {
+    return Math.max(0, (player.injuredUntil ?? 0) - fallbackMatchday) * 7;
+  }
+  return 0;
+}
+
+export function selectInjuredPlayers(
+  currentDate: string,
   teamId?: string,
+  matchdaysByLeague?: Record<LeagueId, number>,
 ): Player[] {
   const store = usePlayersStore.getState();
 
@@ -2699,23 +2766,26 @@ export function selectInjuredPlayers(
 
   const out: Player[] = [];
 
-  for (const [id, st] of Object.entries(store.stats)) {
-    if (st.injuredUntil <= 0) continue;
-
+  for (const [id] of Object.entries(store.stats)) {
     const p = store.getSimPlayer(id);
-
     if (!p) continue;
 
-    const md = matchdaysByLeague[teamById(p.teamId).league];
-
-    if (st.injuredUntil <= md) continue;
+    const league = teamById(p.teamId)?.league;
+    const fallbackMatchday = league && matchdaysByLeague ? matchdaysByLeague[league] : undefined;
+    if (!isPlayerInjuredAtDate(p, currentDate, fallbackMatchday)) continue;
 
     if (teamId && String(p.teamId) !== String(teamId)) continue;
 
     out.push(p);
   }
 
-  return out.sort((a, b) => a.injuredUntil - b.injuredUntil);
+  return out.sort((a, b) => {
+    const aLeague = teamById(a.teamId)?.league;
+    const bLeague = teamById(b.teamId)?.league;
+    const aDays = injuryRemainingDays(a, currentDate, aLeague ? matchdaysByLeague?.[aLeague] : undefined);
+    const bDays = injuryRemainingDays(b, currentDate, bLeague ? matchdaysByLeague?.[bLeague] : undefined);
+    return aDays - bDays;
+  });
 }
 
 export function buildDefaultLineups(): Record<string, string[]> {

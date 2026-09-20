@@ -29,6 +29,11 @@ export type Player = {
   assists: number;
   appearances: number;
   injuredUntil: number;
+  injuredUntilDate?: string;
+  injuryStartDate?: string;
+  injuryDurationDays?: number;
+  injuryType?: string;
+  injuryArea?: string;
   injuryReason?: string;
   morale: number;
   formHistory: number[];
@@ -404,6 +409,11 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
       assists: 0,
       appearances: 0,
       injuredUntil: 0,
+      injuredUntilDate: undefined,
+      injuryStartDate: undefined,
+      injuryDurationDays: undefined,
+      injuryType: undefined,
+      injuryArea: undefined,
       morale: 70,
       formHistory: [],
       cardImage: rp.cardImage,
