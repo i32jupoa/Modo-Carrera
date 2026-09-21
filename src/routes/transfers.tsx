@@ -59,11 +59,13 @@ type SortField = "ovr" | "age";
 type SortOrder = "asc" | "desc";
 
 type NumericFilterValue = number | "";
+type ClubStatus = "all" | "free";
 
 interface FilterState {
   positions: PosCode[];
   league: LeagueId | "all";
   team: string;
+  clubStatus: ClubStatus;
   ageMin: NumericFilterValue;
   ageMax: NumericFilterValue;
   ratingMin: NumericFilterValue;
@@ -79,6 +81,10 @@ interface FilterOption<T> {
 
 const POSITION_OPTIONS: PosCode[] = ALL_POS_CODES;
 
+const CLUB_STATUS_OPTIONS: FilterOption<ClubStatus>[] = [
+  { value: "all", label: "Todos los jugadores" },
+  { value: "free", label: "Solo agentes libres" },
+];
 
 type MarketBadgeSection = "scouted" | "deals" | "offers";
 
@@ -182,6 +188,9 @@ function applyFilters(
       if (!playerPositions.some((position) => filters.positions.includes(position))) return false;
     }
 
+    // Situación contractual / club actual
+    if (filters.clubStatus === "free" && clubOfPlayer(id) !== null) return false;
+
     // League filter - use player's League field converted to ID
     if (filters.league !== "all") {
       const playerLeagueId = leagueIdFromName(p.League);
@@ -272,6 +281,7 @@ function TransfersPage() {
   const setWageBudget = usePlayersStore((s) => s.setWageBudget);
   const totalEconomicBudget = budget;
   const myTeamId = usePlayersStore((s) => s.myTeamId);
+  const currentDate = usePlayersStore((s) => s.currentDate);
   const effectiveEconomicBudget = totalEconomicBudget;
   const transferBudget = Math.max(0, totalEconomicBudget - wageBudget);
   const rawPlayers = usePlayersStore((s) => s.getRawPlayers?.() || []);
@@ -314,6 +324,7 @@ function TransfersPage() {
     positions: [],
     league: "all",
     team: "all",
+    clubStatus: "all",
     ageMin: "",
     ageMax: "",
     ratingMin: "",
@@ -325,6 +336,12 @@ function TransfersPage() {
   useEffect(() => {
     setFilters((prev) => ({ ...prev, team: "all" }));
   }, [filters.league]);
+
+  useEffect(() => {
+    if (filters.clubStatus === "free") {
+      setFilters((prev) => ({ ...prev, league: "all", team: "all" }));
+    }
+  }, [filters.clubStatus]);
 
   useEffect(() => {
     const s = loadSave();
@@ -382,6 +399,7 @@ function TransfersPage() {
       (filters.positions.length > 0 ? 1 : 0) +
       (filters.league !== "all" ? 1 : 0) +
       (filters.team !== "all" ? 1 : 0) +
+      (filters.clubStatus !== "all" ? 1 : 0) +
       (filters.ageMin !== "" || filters.ageMax !== "" ? 1 : 0) +
       (filters.ratingMin !== "" || filters.ratingMax !== "" ? 1 : 0)
     );
@@ -407,6 +425,7 @@ function TransfersPage() {
       positions: [],
       league: "all",
       team: "all",
+      clubStatus: "all",
       ageMin: "",
       ageMax: "",
       ratingMin: "",
@@ -689,12 +708,25 @@ function TransfersPage() {
                   />
                 </div>
 
+                <SelectField
+                  label="Situación"
+                  value={filters.clubStatus}
+                  options={CLUB_STATUS_OPTIONS}
+                  onChange={(value) => setFilters((prev) => ({
+                    ...prev,
+                    clubStatus: value as ClubStatus,
+                    league: value === "free" ? "all" : prev.league,
+                    team: value === "free" ? "all" : prev.team,
+                  }))}
+                />
+
                 <div className="space-y-1.5">
                   <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
                     Liga
                   </label>
                   <Select
                     value={filters.league}
+                    disabled={filters.clubStatus === "free"}
                     onValueChange={(value) =>
                       setFilters((prev) => ({ ...prev, league: value as LeagueId | "all" }))
                     }
@@ -728,8 +760,8 @@ function TransfersPage() {
                   </label>
                   <Select
                     value={filters.team}
+                    disabled={filters.league === "all" || filters.clubStatus === "free"}
                     onValueChange={(value) => setFilters((prev) => ({ ...prev, team: value }))}
-                    disabled={filters.league === "all"}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Equipo: Todos" />
@@ -826,7 +858,7 @@ function TransfersPage() {
                             </span>
                           )}
                         </p>
-                        {club && (
+                        {club ? (
                           <div className="flex items-center gap-1.5 mt-1.5">
                             <TeamLogo
                               teamName={club.name}
@@ -836,6 +868,10 @@ function TransfersPage() {
                             <span className="text-[0.65rem] text-muted-foreground truncate">
                               {club.name}
                             </span>
+                          </div>
+                        ) : (
+                          <div className="mt-1.5 inline-flex items-center rounded-md border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 text-[0.58rem] font-bold text-emerald-300">
+                            Agente libre
                           </div>
                         )}
                         {justSettled && (
@@ -973,7 +1009,7 @@ function TransfersPage() {
                             </span>
                           )}
                         </p>
-                        {club && (
+                        {club ? (
                           <div className="flex items-center gap-1.5 mt-1.5">
                             <TeamLogo
                               teamName={club.name}
@@ -983,6 +1019,10 @@ function TransfersPage() {
                             <span className="text-[0.65rem] text-muted-foreground truncate">
                               {club.name}
                             </span>
+                          </div>
+                        ) : (
+                          <div className="mt-1.5 inline-flex items-center rounded-md border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 text-[0.58rem] font-bold text-emerald-300">
+                            Agente libre
                           </div>
                         )}
                         {justSettled && (

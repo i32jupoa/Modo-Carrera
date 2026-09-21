@@ -60,7 +60,7 @@ const COMPETICIONES: Item[] = [
 ];
 
 const MUNDO: Item[] = [
-  { title: "Equipos", url: "/teams", icon: Globe },
+  { title: "Centro de Clubes", url: "/teams", icon: Globe },
   { title: "Rankings", url: "/scorers", icon: Award },
   { title: "Premios", url: "/awards", icon: Trophy },
   { title: "Mercado", url: "/transfers", icon: Repeat },

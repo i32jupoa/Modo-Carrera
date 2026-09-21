@@ -165,6 +165,7 @@ function TeamsPage() {
 
   const clubOverrides = usePlayersStore((s: any) => s.clubOverrides);
   const myTeamId = usePlayersStore((s: any) => s.myTeamId);
+  const currentDate = usePlayersStore((s: any) => s.currentDate);
   const myRosterIds = usePlayersStore((s: any) => s.rosterIds);
   // `clubOverrides` y `rosterIds` DEBEN estar en las dependencias: son los que
   // cambian al cerrar una venta o una cesión. Sin ellos el `useMemo` devolvía
@@ -182,7 +183,7 @@ function TeamsPage() {
       console.error("No se pudo cargar la plantilla del equipo; usando una plantilla vacía.", error);
       return [];
     }
-  }, [selectedTeam, clubOverrides, myTeamId, myRosterIds]);
+  }, [selectedTeam, clubOverrides, myTeamId, myRosterIds, currentDate]);
 
   const isUserTeam = !!save && selectedTeam?.id === save.myTeamId;
 
@@ -263,7 +264,7 @@ function TeamsPage() {
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
         <div>
-          <h1 className="text-2xl font-black">Equipos</h1>
+          <h1 className="text-2xl font-black">Centro de Clubes</h1>
           <p className="text-xs text-muted-foreground">
             {getAllTeams().length} plantillas · busca un club o un jugador de cualquier liga
           </p>

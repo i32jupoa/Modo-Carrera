@@ -105,12 +105,12 @@ function LineupPage() {
   const search = useSearch({ from: "/lineup" });
   const { ready, loading } = usePlayersReady();
   const getSimSquad = usePlayersStore((s) => s.getSimSquad);
-  const currentDate = usePlayersStore((s) => s.currentDate);
   // Suscripciones reactivas: `getSimSquad` es una referencia estable, así que
   // por sí sola nunca vuelve a ejecutar el `useMemo` de abajo. Al vender o
   // ceder a un jugador cambian `rosterIds` y `clubOverrides`, y es eso lo que
   // debe reconstruir la plantilla de Dirección de equipo en el acto.
   const rosterIds = usePlayersStore((s) => s.rosterIds);
+  const currentDate = usePlayersStore((s) => s.currentDate);
   const clubOverrides = usePlayersStore((s) => s.clubOverrides);
   const [save, setSave] = useState<SaveGame | null>(null);
   const [selectedFormation, setSelectedFormation] = useState<FormationName>("Táctica 4-3-3");

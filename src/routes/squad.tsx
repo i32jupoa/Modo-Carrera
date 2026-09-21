@@ -460,6 +460,7 @@ function SquadPage() {
   const navigate = useNavigate();
   const { loading } = usePlayersReady();
   const myTeamId = usePlayersStore((s) => s.myTeamId);
+  const currentDate = usePlayersStore((s) => s.currentDate);
   const squad = usePlayersStore((s) => s.squad);
   const budget = usePlayersStore((s) => s.budget);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);

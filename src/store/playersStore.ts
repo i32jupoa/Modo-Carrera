@@ -275,6 +275,9 @@ export type FcPlayer = {
 
   Age: number;
 
+  /** Fecha de nacimiento ISO (YYYY-MM-DD), cuando está disponible. */
+  birthdate?: string;
+
   Team: string;
 
   League: string;
@@ -340,9 +343,65 @@ export type PlayerStats = {
   dynamicStats?: DynamicPlayerStats;
 };
 
-const RAW_PLAYERS = playersData as FcPlayer[];
+let RAW_PLAYERS = playersData as FcPlayer[];
 
 export const PLAYERS_DB_SIZE = RAW_PLAYERS.length;
+
+/** Calcula la edad real de un jugador para una fecha concreta de la partida.
+ *  Si no existe fecha de nacimiento, conserva la edad del dataset como fallback. */
+export function playerAgeAtDate(
+  birthdate: string | undefined,
+  currentDate: string | undefined,
+  fallbackAge: number,
+): number {
+  if (!birthdate) return Math.max(0, Math.trunc(Number(fallbackAge) || 0));
+
+  const birth = String(birthdate).match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const current = String(currentDate ?? "").match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!birth || !current) return Math.max(0, Math.trunc(Number(fallbackAge) || 0));
+
+  const birthYear = Number(birth[1]);
+  const birthMonth = Number(birth[2]);
+  const birthDay = Number(birth[3]);
+  const currentYear = Number(current[1]);
+  const currentMonth = Number(current[2]);
+  const currentDay = Number(current[3]);
+
+  if (!birthYear || !birthMonth || !birthDay || !currentYear || !currentMonth || !currentDay) {
+    return Math.max(0, Math.trunc(Number(fallbackAge) || 0));
+  }
+
+  let age = currentYear - birthYear;
+
+  // Los nacidos el 29 de febrero cumplen años el 28 de febrero en años no bisiestos.
+  const isLeapYear = (currentYear % 4 === 0 && currentYear % 100 !== 0) || currentYear % 400 === 0;
+  const anniversaryDay = birthMonth === 2 && birthDay === 29 && !isLeapYear ? 28 : birthDay;
+
+  if (currentMonth < birthMonth || (currentMonth === birthMonth && currentDay < anniversaryDay)) {
+    age -= 1;
+  }
+
+  return Math.max(0, age);
+}
+
+let cachedAgeDate: string | null = null;
+
+/** Actualiza las edades de la base central y fuerza una nueva referencia del array. */
+function syncPlayerAgesForDate(currentDate: string): void {
+  if (!currentDate || cachedAgeDate === currentDate) return;
+
+  for (const player of RAW_PLAYERS) {
+    if (!player.birthdate) continue;
+    player.Age = playerAgeAtDate(player.birthdate, currentDate, player.Age);
+  }
+
+  // Una nueva referencia hace que las búsquedas que dependen del listado se
+  // vuelvan a renderizar al cruzar un cumpleaños, sin recrear los objetos.
+  RAW_PLAYERS = RAW_PLAYERS.slice();
+  cachedAgeDate = currentDate;
+  SQUAD_CACHE = new Map();
+}
+
 
 const TEAM_NAME_TO_ID: Record<string, string> = Object.fromEntries(
   TEAMS.map((t) => [t.name, t.id]),
@@ -390,6 +449,9 @@ const FC_BY_ID = new Map<string, FcPlayer>(RAW_PLAYERS.map((p) => [String(p.ID),
 let CLUB_OVERRIDES: Record<string, string> = {};
 /** Caché de plantillas ya calculadas; se invalida al cambiar los overrides. */
 let SQUAD_CACHE = new Map<string, FcPlayer[]>();
+
+// La partida empieza el 1/7/2025: desde aquí toda la edad se calcula por fecha de nacimiento.
+syncPlayerAgesForDate(GAME_START_DATE);
 
 // Calculamos la media real de cada equipo en cuanto tenemos las plantillas
 // base cargadas, para que incluso en el menú principal (antes de empezar o
@@ -1159,7 +1221,9 @@ export const usePlayersStore = create<PlayersState>()(
         const state = get();
 
         if (!state.myTeamId) {
-          set({ currentDate: addDaysToIso(state.currentDate, days) });
+          const nextDate = addDaysToIso(state.currentDate, days);
+          syncPlayerAgesForDate(nextDate);
+          set({ currentDate: nextDate });
 
           return days;
         }
@@ -1292,6 +1356,7 @@ export const usePlayersStore = create<PlayersState>()(
 
                 saveSave(currentSave);
 
+                syncPlayerAgesForDate(nextDate);
                 set({ currentDate: nextDate, pendingCupDraw: true });
 
                 return 1;
@@ -1463,6 +1528,7 @@ export const usePlayersStore = create<PlayersState>()(
 
                 saveSave(rawSave);
 
+                syncPlayerAgesForDate(nextDate);
                 set({ currentDate: nextDate, pendingUclDraw: "league" });
 
                 return 1;
@@ -1485,6 +1551,7 @@ export const usePlayersStore = create<PlayersState>()(
 
                 saveSave(drawn);
 
+                syncPlayerAgesForDate(nextDate);
                 set({ currentDate: nextDate, pendingUclDraw: "playoff" });
 
                 return 1;
@@ -1586,22 +1653,29 @@ export const usePlayersStore = create<PlayersState>()(
           advanced++;
         }
 
+        syncPlayerAgesForDate(date);
+
         set({
           currentDate: date,
 
           fixtures,
 
           pendingUserMatch,
+          squad: state.squad.length ? [...state.squad] : state.squad,
         });
 
         return advanced;
       },
 
-      resetGameDate: () => set({ currentDate: GAME_START_DATE }),
+      resetGameDate: () => {
+        syncPlayerAgesForDate(GAME_START_DATE);
+        set({ currentDate: GAME_START_DATE, squad: [...get().squad] });
+      },
 
       isMarketOpen: () => isMarketOpenForIso(get().currentDate),
 
       init: () => {
+        syncPlayerAgesForDate(get().currentDate);
         if (get().loaded) return;
 
         queueMicrotask(() => {
@@ -1674,7 +1748,8 @@ export const usePlayersStore = create<PlayersState>()(
         });
       },
 
-      clear: () =>
+      clear: () => {
+        syncPlayerAgesForDate(GAME_START_DATE);
         set({
           squad: [],
 
@@ -1697,7 +1772,8 @@ export const usePlayersStore = create<PlayersState>()(
           lastUserMatchResult: null,
 
           dismissedMatchIds: [],
-        }),
+        });
+      },
 
       resetAllStats: () => set({ stats: {} }),
 
@@ -1948,6 +2024,7 @@ export const usePlayersStore = create<PlayersState>()(
       },
 
       searchMarket: ({ search, position, limit = 100 }) => {
+        syncPlayerAgesForDate(get().currentDate);
         const inRoster = new Set(get().rosterIds);
 
         const q = search.trim().toLowerCase();
@@ -1971,7 +2048,10 @@ export const usePlayersStore = create<PlayersState>()(
         return out.slice(0, limit);
       },
 
-      getRawPlayers: () => RAW_PLAYERS,
+      getRawPlayers: () => {
+        syncPlayerAgesForDate(usePlayersStore.getState().currentDate);
+        return RAW_PLAYERS;
+      },
 
       importLegacyStats: (players) => {
         const next = { ...get().stats };
@@ -2390,6 +2470,8 @@ export const usePlayersStore = create<PlayersState>()(
         // El registro central de plantillas vive fuera de React: hay que
         // rehidratarlo antes de que nadie pida una plantilla.
         setClubOverrides(overrides);
+        const restoredDate = (persisted as Partial<PlayersState>)?.currentDate ?? GAME_START_DATE;
+        syncPlayerAgesForDate(restoredDate);
         return {
           ...current,
 
@@ -2402,7 +2484,7 @@ export const usePlayersStore = create<PlayersState>()(
 
           squad: syncSquadFromRoster(rosterIds),
 
-          currentDate: (persisted as Partial<PlayersState>)?.currentDate ?? GAME_START_DATE,
+          currentDate: restoredDate,
 
           fixtures: (persisted as Partial<PlayersState>)?.fixtures ?? [],
         };

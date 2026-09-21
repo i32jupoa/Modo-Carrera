@@ -21,7 +21,7 @@ import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { LEAGUES } from "@/data/teams";
-import { formatEuro, usePlayersStore, type FcPlayer } from "@/store/playersStore";
+import { clubOfPlayer, formatEuro, usePlayersStore, type FcPlayer } from "@/store/playersStore";
 import {
   ensureScoutingState,
   dismissHiredScout,
@@ -348,6 +348,7 @@ function ScoutingPage() {
   const [maxAge, setMaxAge] = useState("");
   const [nationFilter, setNationFilter] = useState("");
   const [leagueFilter, setLeagueFilter] = useState("");
+  const [clubStatus, setClubStatus] = useState<"all" | "free">("all");
   const [sortBy, setSortBy] = useState<"ovr" | "age">("ovr");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [searchDialogOpen, setSearchDialogOpen] = useState(false);
@@ -405,7 +406,8 @@ function ScoutingPage() {
       minAge.trim() ||
       maxAge.trim() ||
       nationFilter ||
-      leagueFilter,
+      leagueFilter ||
+      clubStatus !== "all",
   );
 
   const hasSearched = Boolean(hiredScout && hasSearchCriteria);
@@ -432,6 +434,7 @@ function ScoutingPage() {
         if (maxAgeValue !== null && Number(player.Age) > maxAgeValue) return false;
         if (nationFilter && (player.Nation ?? "") !== nationFilter) return false;
         if (leagueFilter && player.League !== leagueFilter) return false;
+        if (clubStatus === "free" && clubOfPlayer(String(player.ID)) !== null) return false;
         return true;
       })
       .sort((a, b) => {
@@ -441,7 +444,7 @@ function ScoutingPage() {
         if (valueDifference !== 0) return valueDifference * multiplier;
         return a.Name.localeCompare(b.Name, "es");
       });
-  }, [assignments, hasSearched, leagueFilter, maxAge, maxOvr, minAge, minOvr, nationFilter, positionFilter, rawPlayers, sortBy, sortDirection]);
+  }, [assignments, clubStatus, hasSearched, leagueFilter, maxAge, maxOvr, minAge, minOvr, nationFilter, positionFilter, rawPlayers, sortBy, sortDirection]);
 
   const totalSearchPages = Math.max(1, Math.ceil(availableSearchPlayers.length / RESULTS_PER_PAGE));
   const safeCurrentPage = Math.min(currentPage, totalSearchPages);
@@ -505,6 +508,7 @@ function ScoutingPage() {
     setMaxAge("");
     setNationFilter("");
     setLeagueFilter("");
+    setClubStatus("all");
     setSortBy("ovr");
     setSortDirection("desc");
     setCurrentPage(1);
@@ -547,8 +551,16 @@ function ScoutingPage() {
                 </span>
               </div>
               <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                <TeamLogo teamName={player.Team} leagueName={player.League} size={28} />
-                <span className="truncate font-semibold text-foreground">{player.Team}</span>
+                {clubOfPlayer(String(player.ID)) === null ? (
+                  <span className="inline-flex items-center rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[0.6rem] font-bold text-emerald-300">
+                    Agente libre
+                  </span>
+                ) : (
+                  <>
+                    <TeamLogo teamName={player.Team} leagueName={player.League} size={28} />
+                    <span className="truncate font-semibold text-foreground">{player.Team}</span>
+                  </>
+                )}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.62rem] text-muted-foreground">
                 <span>{formatShortPositions(positions.slice(0, 2))}</span>
@@ -777,12 +789,31 @@ function ScoutingPage() {
                 </select>
               </label>
 
-              <LeaguePicker
-                value={leagueFilter}
-                leagues={leagueOptions}
-                disabled={!hiredScout}
-                onChange={setLeagueFilter}
-              />
+              <label>
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Situación</span>
+                <select
+                  value={clubStatus}
+                  onChange={(event) => {
+                    const value = event.target.value as "all" | "free";
+                    setClubStatus(value);
+                    if (value === "free") setLeagueFilter("");
+                  }}
+                  disabled={!hiredScout}
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="all">Todos los jugadores</option>
+                  <option value="free">Solo agentes libres</option>
+                </select>
+              </label>
+
+              <div className={clubStatus === "free" ? "opacity-50" : ""}>
+                <LeaguePicker
+                  value={leagueFilter}
+                  leagues={leagueOptions}
+                  disabled={!hiredScout || clubStatus === "free"}
+                  onChange={setLeagueFilter}
+                />
+              </div>
 
               <label>
                 <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Nacionalidad</span>

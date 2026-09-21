@@ -124,6 +124,7 @@ function TeamStatsPage() {
   const navigate = useNavigate();
   const { loading } = usePlayersReady();
   const myTeamId = usePlayersStore((s) => s.myTeamId);
+  const currentDate = usePlayersStore((s) => s.currentDate);
   const squad = usePlayersStore((s) => s.squad);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const hydrate = usePlayersStore((s) => s.hydrateMyTeam);
