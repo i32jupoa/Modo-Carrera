@@ -17,6 +17,7 @@ const ICONS: Record<string, string> = {
   yellow_card: "🟨",
   chance: "⚡",
   counter: "⚡",
+  foul: "🆓",
   dangerous_free_kick: "🎯",
 };
 
@@ -79,7 +80,7 @@ export function MatchTimeline({
         icon: ICONS[h.type] || "⚡",
         label: h.playerName || h.detail || h.type,
         side: h.team,
-        priority: ["big_chance", "woodwork", "var_disallowed", "injury"].includes(h.type) ? 4 : 3,
+        priority: ["big_chance", "woodwork", "var_disallowed", "injury", "foul"].includes(h.type) ? 4 : 3,
       })),
     ...substitutions.map((s: any, i) => ({
       id: `sub-${s.minute}-${s.inId || s.playerInId || i}`,

@@ -1012,8 +1012,11 @@ export function buildSavePrelude({
   homeName: string;
   awayName: string;
 }): LiveMoment {
-  const teamName = highlight.team === "home" ? homeName : awayName;
-  const player = highlight.playerName || "El delantero";
+  // In a save highlight, `team` is the defending team and `player` is the
+  // goalkeeper. The danger scene must therefore belong to the opposite team.
+  const attackingTeam = highlight.team === "home" ? "away" : "home";
+  const teamName = attackingTeam === "home" ? homeName : awayName;
+  const player = highlight.attackerName || "El atacante";
   const variants = [
     `${player} arma la pierna dentro del área. El portero aguanta la posición y espera el último instante.`,
     `${player} se prepara para el golpeo. Todo el estadio contiene la respiración: llega un disparo con muchísimo peligro.`,
@@ -1027,14 +1030,14 @@ export function buildSavePrelude({
     title: "SE CARGA EL DISPARO",
     body: variants[(highlight.minute + player.length) % variants.length],
     playerName: player,
-    playerId: highlight.playerId,
+    playerId: highlight.attackerId,
     teamName,
     choices: dangerChoicesFor("save"),
     actionPrompt: "¿Cómo quieres resolver la jugada?",
     emoji: "🚨",
-    detail: "Siguiente: el disparo…",
+    detail: `Siguiente: el disparo de ${player}…`,
     hardPause: true,
-    teamSide: highlight.team,
+    teamSide: attackingTeam,
   };
 }
 
@@ -1203,7 +1206,9 @@ export function buildMomentFromHighlight({
         ...common,
         kicker: "🧤 Parada",
         title: highlight.detail === "¡Paradón!" ? "PARADÓN" : "PARADA CLAVE",
-        body: `${highlight.playerName} aparece para evitar el gol.`,
+        body: highlight.attackerName
+          ? `${highlight.playerName} detiene el disparo de ${highlight.attackerName}.`
+          : `${highlight.playerName} aparece para evitar el gol.`,
         emoji: "🧤",
         hardPause: true,
       };

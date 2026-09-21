@@ -38,6 +38,11 @@ export type Player = {
   morale: number;
   formHistory: number[];
   cardImage?: string;
+  /** Estadísticas de balón parado importadas del dataset original. */
+  penalties?: number;
+  passing?: number;
+  longPassing?: number;
+  freeKickAccuracy?: number;
   /** Estadísticas dinámicas que cambian con el tiempo (persistidas por partida) */
   dynamicStats?: DynamicPlayerStats;
 };
@@ -417,6 +422,12 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
       morale: 70,
       formHistory: [],
       cardImage: rp.cardImage,
+      penalties: Number(rp.rawData?.Penalties ?? rp.rawData?.penalties ?? 0),
+      passing: Number(rp.rawData?.PAS ?? rp.rawData?.Passing ?? rp.rawData?.['Short Passing'] ?? 0),
+      longPassing: Number(rp.rawData?.['Long Passing'] ?? rp.rawData?.longPassing ?? 0),
+      freeKickAccuracy: Number(
+        rp.rawData?.['Free Kick Accuracy'] ?? rp.rawData?.freeKickAccuracy ?? 0,
+      ),
     };
 
     if (map[rp.teamId]) {

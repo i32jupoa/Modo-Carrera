@@ -867,6 +867,12 @@ function LineupPage() {
     const player = squad.find((p) => p.id === playerId);
     if (!player) return;
 
+    // During a live match, an expelled/substituted player can never return to
+    // the pitch. This check is also required for an EMPTY slot: there is no
+    // pitch-player swap in that path, so handlePitchToEmptySwap must enforce the
+    // same live-match rule explicitly.
+    if (liveSubBlocked(playerId)) return;
+
     // Check if player is injured
     if (isCurrentlyInjured(player)) {
       toast.error(`${player.name} está lesionado y no puede jugar.`);
@@ -1478,6 +1484,14 @@ function LineupPage() {
               const isInjured = isCurrentlyInjured(player);
               const isForcedOut = liveMode && liveGoneIds().has(player.id);
               const isLiveForcedInjury = isForcedOut && liveForcedInjuryIds().has(player.id);
+              const isLiveRedCard =
+                liveMode &&
+                !!live?.playedCards?.some(
+                  (card: any) =>
+                    card.playerId === player.id &&
+                    card.team === (live.result?.homeId === save?.myTeamId ? "home" : "away") &&
+                    (card.cardType === "red" || card.isSecondYellow),
+                );
               const suspensions = save?.suspensions[save.myTeamId] ?? [];
               const suspendedPlayerIds = new Set(
                 suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
@@ -1510,16 +1524,18 @@ function LineupPage() {
                     {isForcedOut && (
                       <span
                         className="absolute -top-1 -left-1 grid h-5 w-5 place-items-center rounded-full border border-destructive/30 bg-background text-[0.62rem] shadow"
-                        title="No puede volver a jugar"
+                        title={isLiveRedCard ? "Expulsado · no puede volver a jugar" : "No puede volver a jugar"}
                       >
-                        🔒
+                        {isLiveRedCard ? "🟥" : "🔒"}
                       </span>
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold truncate text-sm flex items-center gap-1">
                       {player.name}
-                      {(isInjured || isLiveForcedInjury) && (
+                      {isLiveRedCard ? (
+                        <span className="text-xs font-black text-red-400">(EXPULSADO)</span>
+                      ) : (isInjured || isLiveForcedInjury) && (
                         <span className="text-xs font-bold text-destructive">
                           (
                           {isLiveForcedInjury && !isInjured
@@ -1530,7 +1546,7 @@ function LineupPage() {
                       )}
                       {isSuspended && <span className="text-xs text-destructive">(SUS)</span>}
                       {isForcedOut && (
-                        <span className="text-[0.55rem] font-black uppercase tracking-wider text-muted-foreground">
+                        <span className={`text-[0.55rem] font-black uppercase tracking-wider ${isLiveRedCard ? "text-red-400" : "text-muted-foreground"}`}>
                           · Bloqueado
                         </span>
                       )}

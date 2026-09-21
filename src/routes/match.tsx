@@ -1758,8 +1758,9 @@ function MatchPage() {
   }
 
   function isGkPlayer(p: any) {
-    const pos = p?.position ?? "";
-    return pos === "GK" || pos === "POR";
+    const positions = Array.isArray(p?.positions) ? p.positions : [];
+    const pos = String(p?.position ?? "").toUpperCase();
+    return positions.includes("GK") || pos === "GK" || pos === "POR";
   }
 
   /** Random outfield player of a pool, weighted by rating. */
@@ -2478,26 +2479,17 @@ function MatchPage() {
     const myId = myTeamIdRef.current || save?.myTeamId;
     const mySide: "home" | "away" = fx.homeId === myId ? "home" : "away";
     const attackingPlayers = (getCurrentPitchPlayers(source.team) as any[]).filter(
-      (p) => p && !p.positions?.includes("GK"),
+      (p) => p && !isGkPlayer(p),
     );
     const tactics = loadTactics(myId || "");
     const designatedId = source.team === mySide ? tactics.penaltyTakerId : null;
-    const sorted = attackingPlayers.slice().sort((a, b) => b.rating - a.rating);
     const preferred =
       attackingPlayers.find((p) => p.id === designatedId) ??
-      attackingPlayers.find((p) => p.id === source.scorerId) ??
-      attackingPlayers
-        .slice()
-        .sort(
-          (a, b) =>
-            Number(b.penaltyRating ?? b.penalties ?? b.rating ?? 0) -
-            Number(a.penaltyRating ?? a.penalties ?? a.rating ?? 0),
-        )[0] ??
-      sorted[0];
+      getPenaltyTaker(source.team);
     const defendingPlayers = getCurrentPitchPlayers(
       source.team === "home" ? "away" : "home",
     ) as any[];
-    const keeper = defendingPlayers.find((p) => p?.positions?.includes("GK"));
+    const keeper = defendingPlayers.find((p) => isGkPlayer(p));
     const attacking = source.team === mySide;
 
     pendingPenaltySourceRef.current = source;
@@ -2539,7 +2531,14 @@ function MatchPage() {
     if (!fx) return;
     const attacking = source.team === mySideOf(fx);
     const teamName = source.team === "home" ? home.name : away.name;
-    const kickerName = source.scorerName || (attacking ? "El lanzador" : "El rival");
+    const tactics = loadTactics(myTeamIdRef.current || save?.myTeamId || "");
+    const selectedTaker =
+      (attacking
+        ? (getCurrentPitchPlayers(source.team) as any[]).find(
+            (p) => p && !isGkPlayer(p) && p.id === tactics.penaltyTakerId,
+          )
+        : undefined) ?? getPenaltyTaker(source.team);
+    const kickerName = selectedTaker?.name || source.scorerName || (attacking ? "El lanzador" : "El rival");
     const intro: any = {
       id: `penalty-intro-${source.minute}-${source.team}-${source.scorerId || "unknown"}`,
       type: "penalty_intro",
@@ -2550,7 +2549,7 @@ function MatchPage() {
         ? `${kickerName} se prepara desde los once metros. Esta vez tú decides dónde colocarlo.`
         : `${teamName} se prepara para lanzar. Lee el momento y decide dónde quieres lanzarte.`,
       playerName: kickerName,
-      playerId: source.scorerId || undefined,
+      playerId: selectedTaker?.id || source.scorerId || undefined,
       teamName,
       teamLeagueName:
         source.team === "home"
@@ -2578,21 +2577,19 @@ function MatchPage() {
 
     const attackingSide = source.team as "home" | "away";
     const attackingPlayers = getCurrentPitchPlayers(attackingSide) as any[];
+    const bestPenaltyTaker = getPenaltyTaker(attackingSide);
+    const tactics = loadTactics(myTeamIdRef.current || save?.myTeamId || "");
+    const isMyPenalty = attackingSide === mySideOf(fx);
     const selected =
-      attackingPlayers.find((p) => p.id === pending.takerId) ??
-      attackingPlayers.find((p) => p.id === source.scorerId) ??
-      attackingPlayers
-        .slice()
-        .sort(
-          (a, b) =>
-            Number(b.penaltyRating ?? b.penalties ?? b.rating ?? 0) -
-            Number(a.penaltyRating ?? a.penalties ?? a.rating ?? 0),
-        )[0] ??
-      attackingPlayers.find((p) => !p.positions?.includes("GK"));
+      (isMyPenalty
+        ? attackingPlayers.find((p) => p.id === tactics.penaltyTakerId)
+        : undefined) ??
+      bestPenaltyTaker ??
+      attackingPlayers.find((p) => !isGkPlayer(p));
     const defendingPlayers = getCurrentPitchPlayers(
       attackingSide === "home" ? "away" : "home",
     ) as any[];
-    const keeper = defendingPlayers.find((p) => p?.positions?.includes("GK"));
+    const keeper = defendingPlayers.find((p) => isGkPlayer(p));
 
     const takerRating = Number(selected?.rating ?? 74);
     const takerMorale = Number(selected?.morale ?? 70);
@@ -2660,15 +2657,17 @@ function MatchPage() {
     }
     pendingPenaltyZoneRef.current = zoneId;
     const playerName = selected?.name ?? pending.takerName ?? source.scorerName ?? "Lanzador";
+    // The quick simulation may already contain the penalty goal. Remove that
+    // provisional event from the live feed first; only the manager's actual
+    // decision is allowed to remain in the score.
     if (source.type === "penalty_goal") {
+      playedEventsRef.current = playedEventsRef.current.filter((e: any) => e !== source);
       // The quick simulation has already credited the baseline taker. Reconcile
       // that credit with the manager's live decision (miss or different taker).
-      if (!scored || (selected?.id && selected.id !== source.scorerId)) {
-        try {
-          usePlayersStore.getState().unrecordGoal(source.scorerId, fx.competition);
-        } catch {}
-      }
-      if (scored && selected?.id && selected.id !== source.scorerId) {
+      try {
+        usePlayersStore.getState().unrecordGoal(source.scorerId, fx.competition);
+      } catch {}
+      if (scored && selected?.id) {
         try {
           usePlayersStore.getState().recordGoal(selected.id, fx.competition);
         } catch {}
@@ -2759,6 +2758,17 @@ function MatchPage() {
     }
     correctedResult.events = correctedEvents.sort((a: any, b: any) => a.minute - b.minute);
     correctedResult.highlights = correctedHighlights.sort((a: any, b: any) => a.minute - b.minute);
+
+    // Recalculate the live score from the ACTUAL played goal events. This is
+    // deliberately authoritative so a saved/precomputed penalty_goal can never
+    // remain on the scoreboard after the keeper has stopped it.
+    const playedGoalEvents = playedEventsRef.current.filter((e: any) =>
+      ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(e.type),
+    );
+    homeScoreRef.current = playedGoalEvents.filter((e: any) => e.team === "home").length;
+    awayScoreRef.current = playedGoalEvents.filter((e: any) => e.team === "away").length;
+    setHomeScore(homeScoreRef.current);
+    setAwayScore(awayScoreRef.current);
     correctedResult.homeGoals = homeScoreRef.current;
     correctedResult.awayGoals = awayScoreRef.current;
     fixtureRef.current = { ...fx, result: correctedResult } as any;
@@ -2915,7 +2925,7 @@ function MatchPage() {
 
   function getDangerAttacker(side: "home" | "away", preferredId?: string) {
     const players = (getCurrentPitchPlayers(side) as any[]).filter(
-      (p) => p && !p.positions?.includes("GK"),
+      (p) => p && !isGkPlayer(p),
     );
     return (
       players.find((p) => p.id === preferredId) ??
@@ -2924,7 +2934,31 @@ function MatchPage() {
   }
 
   function getDangerKeeper(side: "home" | "away") {
-    return (getCurrentPitchPlayers(side) as any[]).find((p) => p?.positions?.includes("GK"));
+    return (getCurrentPitchPlayers(side) as any[]).find((p) => isGkPlayer(p));
+  }
+
+  function getPenaltyTaker(side: "home" | "away") {
+    const players = (getCurrentPitchPlayers(side) as any[]).filter((p) => !isGkPlayer(p));
+    return players
+      .slice()
+      .sort(
+        (a, b) =>
+          Number(b.penalties ?? b.penaltyRating ?? b.penalty ?? 0) -
+            Number(a.penalties ?? a.penaltyRating ?? a.penalty ?? 0) ||
+          Number(b.rating ?? 0) - Number(a.rating ?? 0),
+      )[0];
+  }
+
+  function getSetPieceTaker(side: "home" | "away") {
+    const players = (getCurrentPitchPlayers(side) as any[]).filter((p) => !isGkPlayer(p));
+    return players
+      .slice()
+      .sort(
+        (a, b) =>
+          Math.max(Number(b.passing ?? 0), Number(b.longPassing ?? 0), Number(b.rating ?? 0) * 0.45) -
+            Math.max(Number(a.passing ?? 0), Number(a.longPassing ?? 0), Number(a.rating ?? 0) * 0.45) ||
+          Number(b.rating ?? 0) - Number(a.rating ?? 0),
+      )[0];
   }
 
   function clampRouletteWeight(value: number) {
@@ -3098,17 +3132,40 @@ function MatchPage() {
       : null;
     if (!goal && !keyHighlight) return false;
 
+    const normalizedHighlight =
+      keyHighlight?.type === "save"
+        ? {
+            ...keyHighlight,
+            attackerId:
+              keyHighlight.attackerId ??
+              getCurrentPitchPlayers(keyHighlight.team === "home" ? "away" : "home")
+                .filter((p: any) => !isGkPlayer(p))
+                .sort((a: any, b: any) => Number(b.rating ?? 0) - Number(a.rating ?? 0))[0]?.id,
+            attackerName:
+              keyHighlight.attackerName ??
+              getCurrentPitchPlayers(keyHighlight.team === "home" ? "away" : "home")
+                .filter((p: any) => !isGkPlayer(p))
+                .sort((a: any, b: any) => Number(b.rating ?? 0) - Number(a.rating ?? 0))[0]?.name,
+          }
+        : keyHighlight;
     const dangerBase = goal
       ? buildGoalPrelude({ event: goal, homeName: home.name, awayName: away.name })
-      : keyHighlight?.type === "save"
-        ? buildSavePrelude({ highlight: keyHighlight, homeName: home.name, awayName: away.name })
+      : normalizedHighlight?.type === "save"
+        ? buildSavePrelude({ highlight: normalizedHighlight, homeName: home.name, awayName: away.name })
         : buildDangerPreludeFromHighlight({
-            highlight: keyHighlight,
+            highlight: normalizedHighlight,
             homeName: home.name,
             awayName: away.name,
           });
 
-    const dangerSide = (goal?.team ?? keyHighlight?.team) as "home" | "away";
+    const dangerSide = (
+      goal?.team ??
+      (keyHighlight?.type === "save"
+        ? keyHighlight.team === "home"
+          ? "away"
+          : "home"
+        : keyHighlight?.team)
+    ) as "home" | "away";
     const attacking = dangerSide === mySideOf(fx);
     const danger = {
       ...dangerBase,
@@ -3141,64 +3198,94 @@ function MatchPage() {
     player: any,
     keeper: any,
   ) {
-    const team = source.team as "home" | "away";
+    const attackTeam = source.team as "home" | "away";
+    const defendTeam = attackTeam === "home" ? "away" : "home";
     const minute = Number(source.minute) || minuteRef.current;
-    const common = {
+    const defender =
+      (getCurrentPitchPlayers(defendTeam) as any[])
+        .filter((p) => !isGkPlayer(p))
+        .slice()
+        .sort((a, b) => Number(b.rating ?? 0) - Number(a.rating ?? 0))[0];
+    const attackingCommon = {
       minute,
-      team,
+      team: attackTeam,
       playerId: player?.id || source.playerId || source.scorerId || "",
       playerName: player?.name || source.playerName || source.scorerName || "Jugador",
     };
     switch (outcomeId) {
       case "save":
         return {
-          ...common,
+          ...attackingCommon,
+          team: defendTeam,
+          playerId: keeper?.id || "",
+          playerName: keeper?.name || "El portero",
+          attackerId: player?.id || source.playerId || source.scorerId || "",
+          attackerName: player?.name || source.playerName || source.scorerName || "El atacante",
           type: "save",
           detail: keeper ? `Parada de ${keeper.name}.` : "El portero responde al remate.",
         };
       case "woodwork":
         return {
-          ...common,
+          ...attackingCommon,
           type: "woodwork",
           detail: "El balón golpea en el palo y sale despedido.",
         };
       case "corner":
-        return { ...common, type: "corner", detail: `${common.playerName} fuerza un córner.` };
+        return { ...attackingCommon, type: "corner", detail: `${attackingCommon.playerName} fuerza un córner.` };
       case "counter":
         return {
-          ...common,
+          ...attackingCommon,
           type: "counterattack",
-          detail: `${common.playerName} recupera la segunda jugada y abre una contra.`,
+          detail: `${attackingCommon.playerName} recupera y lanza la contra.`,
         };
       case "blocked":
         return {
-          ...common,
+          minute,
+          team: defendTeam,
+          playerId: defender?.id || "",
+          playerName: defender?.name || "La defensa",
+          attackerId: player?.id || source.playerId || source.scorerId || "",
+          attackerName: player?.name || source.playerName || source.scorerName || "El atacante",
           type: "blocked_shot",
-          detail: "La defensa se cruza a tiempo y bloquea el remate.",
+          detail: defender
+            ? `${defender.name} bloquea el remate de ${player?.name || source.playerName || source.scorerName || "el atacante"}.`
+            : "La defensa se cruza a tiempo y bloquea el remate.",
         };
       case "offside":
         return {
-          ...common,
+          ...attackingCommon,
           type: "offside",
           detail: "La línea defensiva adelanta un paso y deja al atacante en fuera de juego.",
         };
       default:
-        return { ...common, type: "big_chance", detail: "La ocasión se pierde por centímetros." };
+        return { ...attackingCommon, type: "big_chance", detail: "La ocasión se pierde por centímetros." };
     }
   }
 
   function buildRouletteGoal(source: any, player: any) {
     const team = source.team as "home" | "away";
     const minute = Number(source.minute) || minuteRef.current;
+    const cornerFollowUp = source.rouletteStage === "followup" && source.presetType === "corner";
+    const finishers = (getCurrentPitchPlayers(team) as any[]).filter(
+      (p) => !isGkPlayer(p) && p.id !== player?.id,
+    );
+    const finisher =
+      cornerFollowUp && finishers.length
+        ? finishers
+            .slice()
+            .sort((a, b) => Number(b.rating ?? 0) - Number(a.rating ?? 0))[0]
+        : player;
     return {
       minute,
       team,
       type: "goal",
-      scorerId: player?.id || source.scorerId,
-      scorerName: player?.name || source.playerName || source.scorerName || "El rematador",
-      assistId: source.assistId,
-      assistName: source.assistName,
-      detail: source.detail || "La jugada termina en gol.",
+      scorerId: finisher?.id || source.scorerId,
+      scorerName: finisher?.name || source.playerName || source.scorerName || "El rematador",
+      assistId: cornerFollowUp ? player?.id : source.assistId,
+      assistName: cornerFollowUp ? player?.name : source.assistName,
+      detail: cornerFollowUp
+        ? "Gol tras córner"
+        : source.detail || "La jugada termina en gol.",
     };
   }
 
@@ -3292,7 +3379,12 @@ function MatchPage() {
       (outcomeId === "corner" || outcomeId === "counter") &&
       source.rouletteStage !== "followup"
     ) {
-      const branch = syntheticHighlightFromRoulette(source, outcomeId, attacker, keeper);
+      const nextTeam = outcomeId === "counter" ? (team === "home" ? "away" : "home") : team;
+      const nextAttacker = outcomeId === "counter"
+        ? getDangerAttacker(nextTeam)
+        : getSetPieceTaker(team);
+      const branchSource = outcomeId === "counter" ? { ...source, team: nextTeam } : source;
+      const branch = syntheticHighlightFromRoulette(branchSource, outcomeId, nextAttacker, getDangerKeeper(team));
       applyMinuteOutcome(Number(source.minute) || minuteRef.current, [], source.rawCards || [], [
         ...remainingHighlights,
         branch,
@@ -3306,11 +3398,11 @@ function MatchPage() {
         body:
           outcomeId === "corner"
             ? `${attacker?.name || "El atacante"} fuerza un saque de esquina. La jugada no ha terminado.`
-            : `${attacker?.name || "El jugador"} roba y lanza una transición antes de que el rival pueda replegarse. La jugada continúa.`,
-        playerName: attacker?.name,
-        playerId: attacker?.id,
-        teamName: team === "home" ? home.name : away.name,
-        teamSide: team,
+            : `${nextAttacker?.name || "El rival"} roba la pelota y lanza el contraataque. La dirección del ataque cambia por completo.`,
+        playerName: outcomeId === "corner" ? attacker?.name : nextAttacker?.name,
+        playerId: outcomeId === "corner" ? attacker?.id : nextAttacker?.id,
+        teamName: nextTeam === "home" ? home.name : away.name,
+        teamSide: nextTeam,
         emoji: outcomeId === "corner" ? "🚩" : "⚡",
         hardPause: true,
       };
@@ -3329,9 +3421,9 @@ function MatchPage() {
         moment: resolution,
         source: { minute: source.minute },
         nextRoulette: {
-          team,
-          playerId: attacker?.id,
-          playerName: attacker?.name,
+          team: nextTeam,
+          playerId: nextAttacker?.id,
+          playerName: nextAttacker?.name,
           minute: Number(source.minute) || minuteRef.current,
           presetType: outcomeId,
           stage: "followup",
@@ -3389,7 +3481,9 @@ function MatchPage() {
         resolution = {
           ...resolution,
           title: "BLOQUEADO",
-          body: `La defensa tapa el remate de ${attacker?.name || "el atacante"}.`,
+          body: highlight.attackerName
+            ? `${highlight.playerName} bloquea el remate de ${highlight.attackerName}.`
+            : `La defensa tapa el remate de ${attacker?.name || "el atacante"}.`,
         };
       if (effectiveOutcomeId === "offside")
         resolution = {

@@ -54,6 +54,8 @@ const iconByType: Record<string, string> = {
   goal_prelude: "🚨",
   danger_chance: "🚨",
   danger_save: "🚨",
+  corner: "🚩",
+  penalty_awarded: "🚨",
   injury: "🚑",
   red_card: "🟥",
   yellow_card: "🟨",
@@ -98,6 +100,20 @@ const eventTone: Record<
     badge: "border-blue-400/25 bg-blue-500/10 text-blue-200",
     icon: ShieldAlert,
   },
+  corner: {
+    bar: "from-amber-300 via-orange-300 to-yellow-200",
+    soft: "bg-amber-400/10",
+    text: "text-amber-200",
+    badge: "border-amber-300/25 bg-amber-400/10 text-amber-100",
+    icon: CircleAlert,
+  },
+  penalty_awarded: {
+    bar: "from-rose-400 via-red-300 to-orange-300",
+    soft: "bg-rose-500/10",
+    text: "text-rose-200",
+    badge: "border-rose-300/25 bg-rose-500/10 text-rose-100",
+    icon: Goal,
+  },
   save: {
     bar: "from-blue-400 via-cyan-300 to-indigo-300",
     soft: "bg-blue-500/10",
@@ -129,105 +145,152 @@ const eventTone: Record<
 };
 
 function EventDiagram({ type }: { type: string }) {
-  if (
-    ![
-      "goal",
-      "goal_prelude",
-      "danger_chance",
-      "danger_save",
-      "counter",
-      "big_chance",
-      "woodwork",
-      "save",
-      "dangerous_free_kick",
-    ].includes(type)
-  ) {
-    return null;
-  }
+  const supported = [
+    "goal",
+    "goal_prelude",
+    "danger_chance",
+    "danger_save",
+    "counter",
+    "big_chance",
+    "woodwork",
+    "save",
+    "dangerous_free_kick",
+    "corner",
+    "penalty_awarded",
+    "penalty_goal",
+    "penalty_missed",
+    "red_card",
+  ];
+  if (!supported.includes(type)) return null;
 
-  const danger = type === "save" || type === "danger_save" ? "#60a5fa" : "#fb7185";
-  const primary = "#67e8f9";
+  const isSave = type === "save" || type === "danger_save";
+  const isCounter = type === "counter";
+  const isCorner = type === "corner";
+  const isPenalty = type === "penalty_awarded" || type === "penalty_goal" || type === "penalty_missed";
+  const isWoodwork = type === "woodwork";
+  const isRed = type === "red_card";
+  const accent = isSave ? "#67e8f9" : isRed ? "#fb7185" : "#f97316";
+  const softAccent = isSave ? "#2563eb" : isRed ? "#991b1b" : "#be123c";
+  const fieldGradient = `field-gradient-${type.replace(/[^a-z0-9]/gi, "-")}`;
+  const ballPath = isCorner
+    ? "M82 45 C148 71, 224 84, 330 55"
+    : isCounter
+      ? "M76 151 C154 142, 245 82, 392 54"
+      : isPenalty
+        ? "M118 142 C176 125, 206 101, 230 86"
+        : "M94 147 C172 133, 273 75, 414 68";
 
   return (
-    <div className="mx-auto mt-4 w-full max-w-2xl overflow-hidden rounded-2xl border border-white/8 bg-black/10 p-2">
-      <svg viewBox="0 0 360 92" className="w-full" aria-hidden>
-        <defs>
-          <linearGradient id="event-path" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor={primary} stopOpacity=".25" />
-            <stop offset="60%" stopColor={primary} />
-            <stop offset="100%" stopColor={danger} />
-          </linearGradient>
-        </defs>
-        <rect
-          x="1"
-          y="1"
-          width="358"
-          height="90"
-          rx="14"
-          fill="none"
-          stroke="white"
-          strokeOpacity=".08"
-        />
-        <path
-          d="M278 12V80M278 28H349M278 64H349"
-          stroke="white"
-          strokeOpacity=".09"
-          strokeWidth="2"
-        />
-        <motion.circle
-          cx="68"
-          cy="60"
-          r="7"
-          fill={primary}
-          initial={{ scale: 0.5, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-        />
-        <motion.path
-          d="M84 59 C148 29, 214 28, 298 42"
-          fill="none"
-          stroke="url(#event-path)"
-          strokeWidth="4"
-          strokeDasharray="8 8"
-          initial={{ pathLength: 0 }}
-          animate={{ pathLength: 1 }}
-          transition={{ duration: 0.65 }}
-        />
-        <motion.circle
-          cx="298"
-          cy="42"
-          r="10"
-          fill="none"
-          stroke={danger}
-          strokeWidth="3"
-          initial={{ scale: 0.65, opacity: 0.35 }}
-          animate={{ scale: [0.8, 1.18, 0.95], opacity: [0.35, 1, 0.7] }}
-          transition={{ duration: 0.7 }}
-        />
-        <motion.circle
-          cx="298"
-          cy="42"
-          r="3"
-          fill={danger}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: [0.25, 1, 0.4] }}
-          transition={{ duration: 0.7 }}
-        />
-        {type === "woodwork" && (
-          <motion.line
-            x1="320"
-            y1="18"
-            x2="350"
-            y2="18"
-            stroke="#a78bfa"
-            strokeWidth="5"
-            initial={{ opacity: 0.2 }}
-            animate={{ opacity: [0.2, 1, 0.2] }}
-            transition={{ duration: 0.55 }}
+    <motion.div
+      className="mx-auto mt-5 w-full max-w-3xl overflow-hidden rounded-3xl border border-white/10 bg-black/20 p-2 shadow-[0_18px_60px_rgba(0,0,0,.28)]"
+      initial={{ opacity: 0, y: 10, scale: 0.985 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.35, ease: "easeOut" }}
+    >
+      <div className="overflow-hidden rounded-[1.3rem] border border-white/8 bg-[#071b12]">
+        <svg viewBox="0 0 520 226" className="block h-auto w-full" aria-hidden>
+          <defs>
+            <linearGradient id={fieldGradient} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#173d2a" />
+              <stop offset="48%" stopColor="#0e2b1d" />
+              <stop offset="100%" stopColor="#071911" />
+            </linearGradient>
+            <linearGradient id={`${fieldGradient}-stripe`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#d7ffe7" stopOpacity=".09" />
+              <stop offset="100%" stopColor="#d7ffe7" stopOpacity="0" />
+            </linearGradient>
+            <filter id={`${fieldGradient}-shadow`} x="-30%" y="-30%" width="160%" height="160%">
+              <feDropShadow dx="0" dy="5" stdDeviation="7" floodColor="#000" floodOpacity=".35" />
+            </filter>
+          </defs>
+
+          {/* Pseudo-3D pitch */}
+          <path
+            d="M20 27 Q260 1 500 27 L454 203 Q260 222 66 203 Z"
+            fill={`url(#${fieldGradient})`}
+            stroke="#dcfce7"
+            strokeOpacity=".16"
+            strokeWidth="2"
+            filter={`url(#${fieldGradient}-shadow)`}
           />
-        )}
-      </svg>
-    </div>
+          <path d="M35 39 Q260 17 485 39" fill="none" stroke="#e2f9e9" strokeOpacity=".08" strokeWidth="1.5" />
+          <path d="M55 67 Q260 48 465 67" fill="none" stroke="#e2f9e9" strokeOpacity=".05" strokeWidth="1" />
+          <path d="M75 95 Q260 82 445 95" fill="none" stroke="#e2f9e9" strokeOpacity=".04" strokeWidth="1" />
+          <path d="M94 123 Q260 116 426 123" fill="none" stroke="#e2f9e9" strokeOpacity=".04" strokeWidth="1" />
+          <path d="M111 151 Q260 151 409 151" fill="none" stroke="#e2f9e9" strokeOpacity=".04" strokeWidth="1" />
+
+          {/* Main lines */}
+          <path d="M260 17 L260 215" stroke="#e8fff0" strokeOpacity=".18" strokeWidth="1.5" />
+          <ellipse cx="260" cy="116" rx="31" ry="45" fill="none" stroke="#e8fff0" strokeOpacity=".11" />
+          <circle cx="260" cy="116" r="3" fill="#e8fff0" fillOpacity=".22" />
+
+          {/* Attacking third */}
+          <path d="M365 31 L454 39 L409 193 L336 201 Z" fill={`url(#${fieldGradient}-stripe)`} opacity=".7" />
+          <path d="M384 46 L453 51 L416 181 L357 187 Z" fill="none" stroke="#ecfdf5" strokeOpacity=".15" strokeWidth="2" />
+          <path d="M414 62 L454 65 L432 168 L392 171 Z" fill="none" stroke="#ecfdf5" strokeOpacity=".13" strokeWidth="2" />
+
+          {/* Goal frame / net */}
+          <path d="M444 67 L486 64 L471 169 L429 172 Z" fill="rgba(255,255,255,.025)" stroke="#f8fafc" strokeOpacity=".55" strokeWidth="2.5" />
+          <path d="M452 76 L479 74 M449 89 L477 87 M445 103 L475 101 M442 118 L472 116 M438 134 L469 132 M434 149 L466 147" stroke="#f8fafc" strokeOpacity=".12" />
+          <path d="M452 76 L437 165 M462 74 L449 168 M472 74 L461 165 M480 75 L471 163" stroke="#f8fafc" strokeOpacity=".09" />
+
+          {/* Scene-specific elements */}
+          {isCorner ? (
+            <>
+              <motion.circle cx="393" cy="49" r="19" fill={softAccent} fillOpacity=".18" animate={{ scale: [0.96, 1.06, 0.96] }} transition={{ repeat: Infinity, duration: 1.7 }} />
+              <path d="M393 50 L435 82 C451 94 459 105 468 121" fill="none" stroke={accent} strokeWidth="4" strokeDasharray="8 7" />
+              <motion.circle cx="468" cy="121" r="7" fill="#fff7ed" stroke={accent} strokeWidth="4" animate={{ r: [6, 9, 6] }} transition={{ repeat: Infinity, duration: 1.1 }} />
+              <path d="M393 49 V25" stroke="#f8fafc" strokeOpacity=".9" strokeWidth="2" />
+              <path d="M394 26 L411 32 L394 39 Z" fill={accent} fillOpacity=".95" />
+              <circle cx="393" cy="49" r="4" fill="#fff" />
+            </>
+          ) : isPenalty ? (
+            <>
+              <path d="M417 61 L452 64 L441 137 L408 134 Z" fill="none" stroke="#ecfdf5" strokeOpacity=".18" strokeWidth="3" />
+              <motion.circle cx="420" cy="116" r="6" fill="#fff" stroke={accent} strokeWidth="3" animate={{ r: [5, 8, 5] }} transition={{ repeat: Infinity, duration: 1 }} />
+              <motion.path d="M132 143 C190 126, 228 105, 420 116" fill="none" stroke={accent} strokeWidth="3.5" strokeDasharray="9 7" animate={{ pathLength: [0, 1] }} transition={{ duration: 0.9 }} />
+              <circle cx="420" cy="116" r="19" fill="none" stroke={accent} strokeOpacity=".22" strokeWidth="2" />
+            </>
+          ) : (
+            <>
+              <motion.path d={ballPath} fill="none" stroke={accent} strokeWidth="4.2" strokeDasharray="10 8" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.9 }} />
+              <motion.circle cx={isCounter ? 392 : 414} cy={isCounter ? 54 : 68} r="7" fill="#fff" stroke={accent} strokeWidth="3" animate={{ scale: [0.9, 1.25, 0.92] }} transition={{ repeat: Infinity, duration: 1.1 }} />
+              <circle cx="93" cy="147" r="8" fill={primaryDot(type)} stroke="#fff" strokeOpacity=".2" strokeWidth="2" />
+              {isCounter && <circle cx="210" cy="112" r="7" fill="#e2e8f0" opacity=".75" />}
+            </>
+          )}
+
+          {isSave && (
+            <>
+              <motion.path d="M434 84 L412 68 L398 89" fill="none" stroke="#dbeafe" strokeWidth="3.5" strokeLinecap="round" animate={{ x: [0, -7, 0], y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.9 }} />
+              <motion.circle cx="398" cy="89" r="15" fill="none" stroke={accent} strokeOpacity=".45" strokeWidth="3" animate={{ scale: [0.8, 1.15, 0.85] }} transition={{ repeat: Infinity, duration: 1 }} />
+              <text x="402" y="54" fill="#dbeafe" fillOpacity=".8" fontSize="10" fontWeight="900">🧤</text>
+            </>
+          )}
+
+          {isWoodwork && (
+            <motion.path d="M444 67 L486 64 L471 169" fill="none" stroke="#c4b5fd" strokeWidth="5" animate={{ opacity: [0.35, 1, 0.35] }} transition={{ repeat: Infinity, duration: 0.8 }} />
+          )}
+
+          {isRed && (
+            <motion.rect x="94" y="119" width="19" height="27" rx="3" fill="#ef4444" animate={{ rotate: [-4, 4, -4] }} transition={{ repeat: Infinity, duration: 0.65 }} />
+          )}
+        </svg>
+      </div>
+
+      <div className="flex items-center justify-between px-2 pt-2 text-[0.55rem] font-black uppercase tracking-[0.18em] text-white/35">
+        <span>Campo</span>
+        <span>{isCorner ? "Saque de esquina" : isPenalty ? "11 metros" : isCounter ? "Transición" : isSave ? "Área / parada" : isRed ? "Expulsión" : "Zona de remate"}</span>
+        <span>Portería</span>
+      </div>
+    </motion.div>
   );
+}
+
+function primaryDot(type: string) {
+  if (type === "save" || type === "danger_save") return "#38bdf8";
+  if (type === "red_card") return "#fb7185";
+  return "#22d3ee";
 }
 
 function iconClass(type: string) {
