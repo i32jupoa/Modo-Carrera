@@ -917,7 +917,7 @@ type PlayersState = {
 
   getSimXI: (teamId: string, lineupIds: string[], leagueMatchday: number) => Player[];
 
-  recordAppearance: (playerId: string, competition?: string) => void;
+  recordAppearance: (playerId: string, competition?: string, minutes?: number) => void;
 
   recordGoal: (playerId: string, competition?: string) => void;
 
@@ -964,7 +964,28 @@ function mutatePlayerStat(
 ) {
   const source = batchedStats ?? get().stats;
   const next = batchedStats ?? { ...source };
-  next[playerId] = updater(source[playerId] ?? defaultStats());
+  const existing = source[playerId] ?? defaultStats();
+  // Any player can receive a stat event before another action has created its
+  // dynamic season block. Initialise it here so appearances, minutes, goals,
+  // ratings, MVP and clean sheets are never silently discarded on first use.
+  const fc = FC_BY_ID.get(String(playerId));
+  const dynamicStats = existing.dynamicStats
+    ? existing.dynamicStats
+    : (() => {
+        const dynamic = initializeDynamicStats(Number(fc?.OVR) || 70);
+        // Migrate the old season counters when the player already has legacy
+        // stats but no dynamic block yet. This also repairs saves created
+        // before dynamic season statistics were introduced.
+        dynamic.seasonGoals = Number(existing.goals) || 0;
+        dynamic.seasonAssists = Number(existing.assists) || 0;
+        dynamic.seasonAppearances = Number(existing.appearances) || 0;
+        dynamic.seasonCleanSheets = Number(existing.cleanSheets) || 0;
+        dynamic.seasonMVPs = Number(existing.motm) || 0;
+        return dynamic;
+      })();
+  const stats = existing.dynamicStats ? existing : { ...existing, dynamicStats };
+
+  next[playerId] = updater(stats);
   if (batchedStats) batchedStats = next;
   else set({ stats: next });
 }
@@ -1600,10 +1621,16 @@ export const usePlayersStore = create<PlayersState>()(
 
           const awayXI = get().getSimXI(f.awayTeam, [], f.matchday);
 
-          // Record appearances for all starters
+          // Record the real participation/minutes produced by the simulation.
+          const minuteMap = new Map(
+            (result.ratings ?? []).map((r: any) => [r.playerId, Number(r.minutes) || 0]),
+          );
+          const participants = result.ratings?.length
+            ? result.ratings.map((r: any) => r.playerId)
+            : [...homeXI, ...awayXI].map((p) => p.id);
 
-          for (const p of [...homeXI, ...awayXI]) {
-            get().recordAppearance(p.id);
+          for (const playerId of participants) {
+            get().recordAppearance(playerId, f.competition, minuteMap.has(playerId) ? minuteMap.get(playerId) : 90);
           }
 
           // Record goals and assists from events
@@ -2168,7 +2195,13 @@ export const usePlayersStore = create<PlayersState>()(
         return xi.slice(0, 11);
       },
 
-      recordAppearance: (playerId, competition) => {
+      recordAppearance: (playerId, competition, minutes = 90) => {
+        const parsedMinutes = Number(minutes);
+        const safeMinutes = Math.max(
+          0,
+          Math.min(120, Math.round(Number.isFinite(parsedMinutes) ? parsedMinutes : 90)),
+        );
+
         mutatePlayerStat(get, set, playerId, (s) => {
           const isCup = competition === "cup";
           const isUcl = competition === "ucl";
@@ -2180,13 +2213,16 @@ export const usePlayersStore = create<PlayersState>()(
           };
         });
 
-        // Update season + historical monthly stats (assuming 90 minutes for an appearance).
+        // Match minutes are supplied by the match engine when available.
+        // Legacy callers without a value keep the old 90-minute fallback.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
           const dynamic = {
             ...s.dynamicStats,
-            seasonAppearances: s.dynamicStats.seasonAppearances + 1,
-            seasonMinutes: s.dynamicStats.seasonMinutes + 90,
+            // The legacy appearances counter is the source used by Team Stats;
+            // mirror it here so the detail sheet cannot drift from that screen.
+            seasonAppearances: s.appearances,
+            seasonMinutes: s.dynamicStats.seasonMinutes + safeMinutes,
           };
           return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { appearances: 1 }) };
         });
@@ -2208,7 +2244,7 @@ export const usePlayersStore = create<PlayersState>()(
         // Update season + historical monthly stats.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          const dynamic = { ...s.dynamicStats, seasonGoals: s.dynamicStats.seasonGoals + 1 };
+          const dynamic = { ...s.dynamicStats, seasonGoals: s.goals };
           return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { goals: 1 }) };
         });
         return;
@@ -2229,7 +2265,7 @@ export const usePlayersStore = create<PlayersState>()(
         // Update season + historical monthly stats.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          const dynamic = { ...s.dynamicStats, seasonAssists: s.dynamicStats.seasonAssists + 1 };
+          const dynamic = { ...s.dynamicStats, seasonAssists: s.assists };
           return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { assists: 1 }) };
         });
         return;
@@ -2284,7 +2320,7 @@ export const usePlayersStore = create<PlayersState>()(
         // Update season + historical monthly stats.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          const dynamic = { ...s.dynamicStats, seasonCleanSheets: s.dynamicStats.seasonCleanSheets + 1 };
+          const dynamic = { ...s.dynamicStats, seasonCleanSheets: s.cleanSheets };
           return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { cleanSheets: 1 }) };
         });
         return;
@@ -2333,7 +2369,7 @@ export const usePlayersStore = create<PlayersState>()(
         // Update season + historical monthly stats.
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
-          const dynamic = { ...s.dynamicStats, seasonMVPs: s.dynamicStats.seasonMVPs + 1 };
+          const dynamic = { ...s.dynamicStats, seasonMVPs: s.motm };
           return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { mvpCount: 1 }) };
         });
         return;
@@ -2467,6 +2503,23 @@ export const usePlayersStore = create<PlayersState>()(
           const raw = FC_BY_ID.get(playerId);
           return raw ? baseClubId(raw) === myTeamId : false;
         });
+
+        // Migrate old saves that have the legacy counters but no dynamic
+        // season block yet. This repairs the first matches played before the
+        // dynamic-statistics system was initialised for that player.
+        const restoredStats = { ...(saved.stats ?? {}) } as Record<string, PlayerStats>;
+        for (const [playerId, legacy] of Object.entries(restoredStats)) {
+          if (legacy.dynamicStats) continue;
+          const fc = FC_BY_ID.get(String(playerId));
+          const dynamic = initializeDynamicStats(Number(fc?.OVR) || 70);
+          dynamic.seasonGoals = Number(legacy.goals) || 0;
+          dynamic.seasonAssists = Number(legacy.assists) || 0;
+          dynamic.seasonAppearances = Number(legacy.appearances) || 0;
+          dynamic.seasonCleanSheets = Number(legacy.cleanSheets) || 0;
+          dynamic.seasonMVPs = Number(legacy.motm) || 0;
+          restoredStats[playerId] = { ...legacy, dynamicStats: dynamic };
+        }
+
         // El registro central de plantillas vive fuera de React: hay que
         // rehidratarlo antes de que nadie pida una plantilla.
         setClubOverrides(overrides);
@@ -2476,6 +2529,8 @@ export const usePlayersStore = create<PlayersState>()(
           ...current,
 
           ...saved,
+
+          stats: restoredStats,
 
           wageBudget: saved.wageBudget ?? Math.round((saved.budget ?? INITIAL_BUDGET) * 0.68),
           wageBill: saved.wageBill ?? 0,

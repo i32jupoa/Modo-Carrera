@@ -136,6 +136,8 @@ function MatchPage() {
   const staminaRef = useRef<Record<string, number>>({});
   const [myXI, setMyXI] = useState<string[]>([]);
   const myXIRef = useRef<string[]>([]);
+  const initialMyXIRef = useRef<string[]>([]);
+  const finalPerformanceRecordedRef = useRef(false);
   const [myBench, setMyBench] = useState<string[]>([]);
   const myBenchRef = useRef<string[]>([]);
   const [goneIds, setGoneIds] = useState<string[]>([]);
@@ -225,6 +227,16 @@ function MatchPage() {
     setMinute(m);
     minuteRef.current = m;
 
+    const resumeMySide = fx.homeId === s.myTeamId ? "home" : "away";
+    const storedInitialXI =
+      (resumeMySide === "home" ? fx.result?.homeLineup : fx.result?.awayLineup)
+        ?.map((p: any) => p.id)
+        ?.filter(Boolean);
+    initialMyXIRef.current =
+      Array.isArray(storedInitialXI) && storedInitialXI.length > 0
+        ? storedInitialXI.slice(0, 11)
+        : [...(s.lineups[s.myTeamId] ?? st.lineup)].slice(0, 11);
+    finalPerformanceRecordedRef.current = false;
     myXIRef.current = st.lineup;
     setMyXI(st.lineup);
     myBenchRef.current = st.bench;
@@ -1294,6 +1306,8 @@ function MatchPage() {
     squad.forEach((p) => {
       st[p.id] = STAMINA_START;
     });
+    initialMyXIRef.current = ids.slice();
+    finalPerformanceRecordedRef.current = false;
     myXIRef.current = ids;
     setMyXI(ids);
     myBenchRef.current = benchIds;
@@ -1658,6 +1672,204 @@ function MatchPage() {
    * official one: same goals, same scorers and the substitutions that really
    * happened (mine and the rival's). This is what "Jornadas" shows later.
    */
+  function buildActualLivePerformance(result: any) {
+    const fx = fixtureRef.current;
+    if (!fx) return null;
+
+    const myTeamId = myTeamIdRef.current || save?.myTeamId;
+    const mySide: "home" | "away" = fx.homeId === myTeamId ? "home" : "away";
+    const oppSide: "home" | "away" = mySide === "home" ? "away" : "home";
+
+    const mySquad = getSimSquad(myTeamId);
+    const resultInitialIds = (mySide === "home"
+      ? (result.homeLineup ?? [])
+      : (result.awayLineup ?? []))
+      .map((p: any) => p?.id)
+      .filter(Boolean);
+    const initialIds = initialMyXIRef.current.length > 0
+      ? initialMyXIRef.current
+      : resultInitialIds;
+    const myInitial = initialIds
+      .map((id) => mySquad.find((p: any) => p.id === id))
+      .filter(Boolean) as any[];
+    const oppInitial = (oppXIRef.current || []).slice();
+
+    const mySubs = subsRef.current.map((s: any) => ({
+      minute: Number(s.minute) || 0,
+      team: mySide,
+      playerOutId: s.outId,
+      playerInId: s.inId,
+    }));
+    const oppSubs = (oppSubsDoneRef.current || []).map((s: any) => ({
+      minute: Number(s.minute) || 0,
+      team: s.team,
+      playerOutId: s.playerOutId,
+      playerInId: s.playerInId,
+    }));
+    const substitutions = [...mySubs, ...oppSubs].sort((a, b) => a.minute - b.minute);
+
+    const actualParticipants = (initial: any[], side: "home" | "away") => {
+      const players = [...initial];
+      const byId = new Map(players.map((p) => [p.id, p]));
+      for (const sub of substitutions.filter((x) => x.team === side)) {
+        const outIndex = players.findIndex((p) => p.id === sub.playerOutId);
+        if (outIndex >= 0) players[outIndex] = byId.get(sub.playerInId) ??
+          (side === mySide
+            ? getSimSquad(myTeamId).find((p: any) => p.id === sub.playerInId)
+            : getSimSquad(fx.homeId === myTeamId ? fx.awayId : fx.homeId).find((p: any) => p.id === sub.playerInId));
+        const inPlayer = players.find((p) => p?.id === sub.playerInId);
+        if (inPlayer) byId.set(inPlayer.id, inPlayer);
+      }
+      return players.filter(Boolean);
+    };
+
+    const homeParticipants = mySide === "home"
+      ? actualParticipants(myInitial, "home")
+      : actualParticipants(oppInitial, "home");
+    const awayParticipants = mySide === "away"
+      ? actualParticipants(myInitial, "away")
+      : actualParticipants(oppInitial, "away");
+
+    const calculateMinutes = (
+      initial: any[],
+      side: "home" | "away",
+      endMinute: number,
+    ) => {
+      const minutes: Record<string, number> = {};
+      const onPitch = new Set(initial.map((p) => p.id));
+      const startAt = new Map<string, number>();
+      for (const id of onPitch) startAt.set(id, 0);
+
+      const addInterval = (id: string, end: number) => {
+        const started = startAt.get(id);
+        if (started === undefined) return;
+        minutes[id] = (minutes[id] ?? 0) + Math.max(0, end - started);
+        startAt.delete(id);
+      };
+
+      for (const sub of substitutions.filter((x) => x.team === side)) {
+        if (onPitch.has(sub.playerOutId)) {
+          addInterval(sub.playerOutId, sub.minute);
+          onPitch.delete(sub.playerOutId);
+        }
+        if (!onPitch.has(sub.playerInId)) {
+          onPitch.add(sub.playerInId);
+          startAt.set(sub.playerInId, sub.minute);
+        }
+      }
+
+      for (const card of result.cards ?? []) {
+        if (card.team !== side || card.cardType !== "red") continue;
+        if (onPitch.has(card.playerId)) {
+          addInterval(card.playerId, Number(card.minute) || 0);
+          onPitch.delete(card.playerId);
+        }
+      }
+
+      for (const injury of result.injuries ?? []) {
+        if (injury.team !== side || injury.minute === undefined || injury.forcedSub) continue;
+        if (onPitch.has(injury.playerId)) {
+          addInterval(injury.playerId, Number(injury.minute) || 0);
+          onPitch.delete(injury.playerId);
+        }
+      }
+
+      for (const id of onPitch) addInterval(id, endMinute);
+      for (const id of new Set(initial.concat(homeParticipants, awayParticipants).map((p) => p.id))) {
+        minutes[id] = Math.max(0, Math.min(120, Math.round(minutes[id] ?? 0)));
+      }
+      return minutes;
+    };
+
+    const endMinute = result.extraTime ? 120 : 90;
+    const minutesPlayed = {
+      ...calculateMinutes(mySide === "home" ? myInitial : oppInitial, "home", endMinute),
+      ...calculateMinutes(mySide === "away" ? myInitial : oppInitial, "away", endMinute),
+    };
+
+    const events = (result.events ?? []).map((e: any) => ({
+      team: e.team,
+      scorerId: e.scorerId,
+      assistId: e.assistId,
+      ownGoal: e.type === "own_goal",
+    }));
+    const cards = (result.cards ?? []).map((c: any) => ({
+      team: c.team,
+      playerId: c.playerId,
+      cardType: c.cardType,
+      minute: Number(c.minute) || 0,
+    }));
+    const homeSaves = (result.highlights ?? []).filter((h: any) => h.team === "home" && h.type === "save").length;
+    const awaySaves = (result.highlights ?? []).filter((h: any) => h.team === "away" && h.type === "save").length;
+    const totalHomeGoals = (result.homeGoals ?? 0) + (result.extraTime?.homeGoals ?? 0);
+    const totalAwayGoals = (result.awayGoals ?? 0) + (result.extraTime?.awayGoals ?? 0);
+
+    const { ratings, mvp } = computePlayerRatings({
+      homeXI: homeParticipants,
+      awayXI: awayParticipants,
+      homeGoals: totalHomeGoals,
+      awayGoals: totalAwayGoals,
+      goals: events,
+      cards,
+      minutesPlayed,
+      homeSaves,
+      awaySaves,
+    });
+
+    return {
+      ratings,
+      mvp,
+      homeParticipants,
+      awayParticipants,
+      minutesPlayed,
+    };
+  }
+
+  function recordFinalUserPerformance(result: any) {
+    if (finalPerformanceRecordedRef.current) return null;
+    const fx = fixtureRef.current;
+    if (!fx) return null;
+
+    const performance = buildActualLivePerformance(result);
+    if (!performance) return null;
+
+    const myTeamId = myTeamIdRef.current || save?.myTeamId;
+    const mySide: "home" | "away" = fx.homeId === myTeamId ? "home" : "away";
+    const myPlayers = mySide === "home" ? performance.homeParticipants : performance.awayParticipants;
+    const myPlayerIds = new Set(myPlayers.map((p: any) => p.id));
+    const store = usePlayersStore.getState();
+
+    for (const p of myPlayers) {
+      store.recordAppearance(
+        p.id,
+        fx.competition,
+        performance.minutesPlayed[p.id] ?? 0,
+      );
+    }
+
+    for (const pr of performance.ratings) {
+      if (myPlayerIds.has(pr.playerId)) store.recordMatchRating(pr.playerId, pr.rating);
+    }
+
+    const finalHomeGoals = (result.homeGoals ?? 0) + (result.extraTime?.homeGoals ?? 0);
+    const finalAwayGoals = (result.awayGoals ?? 0) + (result.extraTime?.awayGoals ?? 0);
+    if (mySide === "home" && finalAwayGoals === 0) {
+      const gk = myPlayers.find((p: any) => p.positions?.includes("GK"));
+      if (gk) store.recordCleanSheet(gk.id, fx.competition);
+    }
+    if (mySide === "away" && finalHomeGoals === 0) {
+      const gk = myPlayers.find((p: any) => p.positions?.includes("GK"));
+      if (gk) store.recordCleanSheet(gk.id, fx.competition);
+    }
+
+    if (performance.mvp && myPlayerIds.has(performance.mvp.playerId)) {
+      store.recordMotm(performance.mvp.playerId, fx.competition);
+    }
+
+    finalPerformanceRecordedRef.current = true;
+    return performance;
+  }
+
   function finalizePlayedChronicle() {
     const fx = fixtureRef.current;
     if (!fx?.result) return;
@@ -1696,7 +1908,20 @@ function MatchPage() {
     fixtureRef.current = { ...fx, result: nextResult } as any;
     allEventsRef.current = events;
     allCardsRef.current = cards;
-    persistResultToSave(fx.id, nextResult);
+
+    const performance = recordFinalUserPerformance(nextResult);
+    const finalResult = performance
+      ? {
+          ...nextResult,
+          ratings: performance.ratings,
+          mvp: performance.mvp,
+          homeLineup: performance.homeParticipants,
+          awayLineup: performance.awayParticipants,
+        }
+      : nextResult;
+
+    fixtureRef.current = { ...fx, result: finalResult } as any;
+    persistResultToSave(fx.id, finalResult);
   }
 
   // ------------------------------------------------- rival (CPU) substitutions

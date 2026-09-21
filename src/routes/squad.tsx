@@ -14,6 +14,7 @@ import {
   POS_LABEL_ES,
 } from "@/store/playersStore";
 import type { Position } from "@/data/players";
+import type { DynamicPlayerStats } from "@/types/playerStats";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { toast } from "sonner";
 import {
@@ -33,6 +34,14 @@ import {
   Banknote,
   CircleDollarSign,
   Handshake,
+  Cake,
+  Star,
+  Trophy,
+  TrendingUp,
+  TrendingDown,
+  Medal,
+  Target,
+  Users,
 } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { useUserMarket } from "@/hooks/useUserMarket";
@@ -44,6 +53,15 @@ import {
   unlistFromTransfer,
 } from "@/lib/transfers";
 import { saveTransferSystem } from "@/lib/transfers/Persistence";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   Dialog,
   DialogContent,
@@ -122,6 +140,220 @@ function StatBar({ label, value }: { label: string; value: number }) {
       </div>
       <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
         <div className={`h-full ${tone}`} style={{ width: `${v}%` }} />
+      </div>
+    </div>
+  );
+}
+
+
+function SectionHeading({
+  icon: Icon,
+  title,
+  subtitle,
+}: {
+  icon: typeof Target;
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="flex items-end justify-between gap-3">
+      <div>
+        <div className="flex items-center gap-2">
+          <Icon className="h-4 w-4 text-primary" />
+          <h3 className="text-sm font-black">{title}</h3>
+        </div>
+        {subtitle && <p className="mt-1 text-[0.65rem] text-muted-foreground">{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
+
+
+function formatBirthdate(birthdate?: string): string {
+  if (!birthdate) return "No disponible";
+  const match = birthdate.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return birthdate;
+  const [, year, month, day] = match;
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(Number(year), Number(month) - 1, Number(day)));
+}
+
+function formatMonthLabel(month: number, year: number): string {
+  const label = new Intl.DateTimeFormat("es-ES", { month: "short" }).format(
+    new Date(Date.UTC(year, Math.max(0, month - 1), 1)),
+  );
+  return `${label.replace(".", "")} ${String(year).slice(-2)}`;
+}
+
+function DetailMetric({
+  icon: Icon,
+  label,
+  value,
+  accent = "text-foreground",
+  hint,
+}: {
+  icon: typeof Goal;
+  label: string;
+  value: string;
+  accent?: string;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/65 p-3 shadow-sm">
+      <div className="flex items-center gap-1.5 text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </div>
+      <p className={`mt-1.5 scoreline text-lg font-black leading-none ${accent}`}>{value}</p>
+      {hint && <p className="mt-1 text-[0.55rem] text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+function SeasonProgressChart({
+  monthlyStats,
+}: {
+  monthlyStats: NonNullable<ReturnType<typeof usePlayersStore.getState>["stats"][string]>["monthlyStats"];
+}) {
+  const points = useMemo(
+    () =>
+      [...(monthlyStats ?? [])]
+        .filter((entry) => (entry.ratingCount ?? entry.appearances) > 0 && entry.averageRating > 0)
+        .sort((a, b) => a.year * 12 + a.month - (b.year * 12 + b.month))
+        .map((entry) => ({
+          label: formatMonthLabel(entry.month, entry.year),
+          media: Number(entry.averageRating.toFixed(2)),
+          partidos: entry.appearances,
+        })),
+    [monthlyStats],
+  );
+
+  if (points.length === 0) {
+    return (
+      <div className="grid min-h-44 place-items-center rounded-xl border border-dashed border-border/60 bg-secondary/20 p-6 text-center">
+        <div>
+          <TrendingUp className="mx-auto h-7 w-7 text-muted-foreground" />
+          <p className="mt-2 text-sm font-bold">Sin valoraciones todavía</p>
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+            La evolución de la media aparecerá aquí a medida que el jugador dispute partidos.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const first = points[0].media;
+  const last = points[points.length - 1].media;
+  const delta = Number((last - first).toFixed(2));
+  const trendUp = delta >= 0;
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/55 p-3">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-[0.58rem] font-black uppercase tracking-[0.18em] text-muted-foreground">
+            Progreso de la media
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Valoración media por mes de temporada</p>
+        </div>
+        <div className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-black ${
+          trendUp
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+            : "border-destructive/30 bg-destructive/10 text-destructive"
+        }`}>
+          {trendUp ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+          {delta >= 0 ? "+" : ""}
+          {delta.toFixed(2)}
+        </div>
+      </div>
+
+      <div className="h-48 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={points} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+            <XAxis
+              dataKey="label"
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 10 }}
+              minTickGap={18}
+            />
+            <YAxis
+              domain={[
+                (dataMin: number) => Math.max(0, Math.floor(dataMin - 1)),
+                (dataMax: number) => Math.min(10, Math.ceil(dataMax + 1)),
+              ]}
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 10 }}
+              width={32}
+            />
+            <Tooltip
+              contentStyle={{
+                borderRadius: 12,
+                border: "1px solid hsl(var(--border) / 0.6)",
+                background: "hsl(var(--background) / 0.96)",
+                fontSize: 12,
+              }}
+              formatter={(value: number | string) => [`${Number(value).toFixed(2)}`, "Media"]}
+              labelFormatter={(label) => String(label)}
+            />
+            <Line
+              type="monotone"
+              dataKey="media"
+              stroke="hsl(var(--primary))"
+              strokeWidth={3}
+              dot={{ r: 3, fill: "hsl(var(--primary))" }}
+              activeDot={{ r: 5 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-2 flex items-center justify-between text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">
+        <span>{points[0].label}</span>
+        <span>{points[points.length - 1].label}</span>
+      </div>
+    </div>
+  );
+}
+
+function FormStrip({ values }: { values: number[] }) {
+  const recent = values.slice(-10);
+  if (recent.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/55 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <p className="text-[0.58rem] font-black uppercase tracking-[0.18em] text-muted-foreground">
+            Forma reciente
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Últimas valoraciones registradas</p>
+        </div>
+        <span className="text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">
+          {recent.length} partidos
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {recent.map((rating, index) => (
+          <span
+            key={`${index}-${rating}`}
+            className={`grid h-8 min-w-8 place-items-center rounded-lg border px-1.5 text-[0.65rem] font-black ${
+              rating >= 8
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                : rating >= 7
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : rating >= 6
+                    ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-300"
+                    : "border-destructive/30 bg-destructive/10 text-destructive"
+            }`}
+          >
+            {Number(rating).toFixed(1)}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -462,6 +694,7 @@ function SquadPage() {
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const currentDate = usePlayersStore((s) => s.currentDate);
   const squad = usePlayersStore((s) => s.squad);
+  const fixtures = usePlayersStore((s) => s.fixtures);
   const budget = usePlayersStore((s) => s.budget);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const hydrate = usePlayersStore((s) => s.hydrateMyTeam);
@@ -515,9 +748,11 @@ function SquadPage() {
   const effectiveWageBudget = Math.max(wageBudget || 0, currentWageBill);
 
   const selected = selectedId ? (squad.find((p) => String(p.ID) === selectedId) ?? null) : null;
-  const selectedStats = selected
-    ? usePlayersStore.getState().stats[String(selected.ID)]
-    : undefined;
+  // Subscribe to the selected player's stats so the detail card always
+  // refreshes immediately after a match updates appearances/minutes/etc.
+  const selectedStats = usePlayersStore((s) =>
+    selectedId ? s.stats[selectedId] : undefined,
+  );
 
   function handleRenewSubmit(input: {
     playerId: string;
@@ -647,7 +882,7 @@ function SquadPage() {
 
       {/* Player detail dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelectedId(null)}>
-        <DialogContent className="max-w-lg p-0 overflow-hidden">
+        <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto overflow-x-hidden p-0">
           {selected &&
             (() => {
               const pos = mapEaPosition(selected.Position);
@@ -659,140 +894,298 @@ function SquadPage() {
               const isListed = marketPlayer?.transferListed ?? listed.has(String(selected.ID));
               const value = marketValueEuros(selected);
               const wage = marketContract?.wage ?? getPlayerAnnualWage(String(selected.ID));
+              const dynamicOvr = Math.round(Number(selectedStats?.currentOVR ?? selected.OVR));
+              const baseOvr = Math.round(Number(selectedStats?.baseOVR ?? selected.OVR));
+              const potential = Math.max(
+                dynamicOvr,
+                Number(selectedStats?.potentialOVR ?? selected.potential ?? selected.OVR),
+              );
+              const ovrDelta = dynamicOvr - baseOvr;
+              // Use the same authoritative legacy counters as the Team Stats screen.
+              const seasonAppearances = Number(selectedStats?.appearances ?? 0);
+              const seasonGoals = Number(selectedStats?.goals ?? 0);
+              const seasonAssists = Number(selectedStats?.assists ?? 0);
+              const seasonMVPs = Number(
+                selectedStats?.dynamicStats?.seasonMVPs ?? selectedStats?.motm ?? 0,
+              );
+              const seasonCleanSheets = Number(
+                selectedStats?.dynamicStats?.seasonCleanSheets ?? selectedStats?.cleanSheets ?? 0,
+              );
+              const seasonRating = Number(
+                selectedStats?.dynamicStats && selectedStats.dynamicStats.seasonAppearances > 0
+                  ? selectedStats.dynamicStats.seasonAverageRating
+                  : selectedStats?.formHistory?.length
+                    ? selectedStats.formHistory.reduce((sum, value) => sum + value, 0) / selectedStats.formHistory.length
+                    : 0,
+              );
+              const seasonTrophies = Number(selectedStats?.dynamicStats?.seasonTrophies ?? 0);
+              const currentForm =
+                selectedStats?.formHistory?.length
+                  ? selectedStats.formHistory[selectedStats.formHistory.length - 1]
+                  : 0;
+
               return (
                 <>
-                  <div className={`bg-gradient-to-br p-5 ${POSITION_ACCENT[pos]}`}>
+                  {/* Player hero */}
+                  <div className={`relative overflow-hidden bg-gradient-to-br p-5 ${POSITION_ACCENT[pos]}`}>
+                    <div className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-background/10 blur-3xl" />
                     <button
                       type="button"
                       onClick={() => setSelectedId(null)}
-                      className="absolute right-3 top-3 rounded-full p-1 text-foreground/70 hover:bg-background/30"
+                      className="absolute right-3 top-3 z-10 rounded-full p-2 text-foreground/70 transition hover:bg-background/30 hover:text-foreground"
                       aria-label="Cerrar"
                     >
                       <X className="h-4 w-4" />
                     </button>
-                    <DialogHeader className="space-y-3">
-                      <div className="flex items-center gap-4">
-                        <div className="w-20 shrink-0 overflow-hidden rounded-xl border border-border/60 bg-secondary/50">
-                          {faceUrl(String(selected.ID), selected.card) ? (
-                            <img
-                              src={faceUrl(String(selected.ID), selected.card)}
-                              alt={selected.Name}
-                              className="h-24 w-full object-cover object-top"
-                            />
-                          ) : (
-                            <div className="grid h-24 place-items-center text-xs text-muted-foreground">Sin foto</div>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 flex-col gap-2">
-                          <div
-                            className={`grid h-12 w-16 place-items-center rounded-xl border scoreline text-xl font-black ${ovrTone(selected.OVR)}`}
-                          >
-                            {selected.OVR}
+
+                    <DialogHeader className="relative">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+                        <div className="flex items-end gap-3">
+                          <div className="w-28 shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-secondary/50 shadow-xl">
+                            {faceUrl(String(selected.ID), selected.card) ? (
+                              <img
+                                src={faceUrl(String(selected.ID), selected.card)}
+                                alt={selected.Name}
+                                className="h-36 w-full object-cover object-top"
+                              />
+                            ) : (
+                              <div className="grid h-36 place-items-center text-xs text-muted-foreground">
+                                Sin foto
+                              </div>
+                            )}
                           </div>
-                          <div className="px-1 text-center">
-                            <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">POT</p>
-                            <p className="scoreline text-sm font-black text-muted-foreground">
-                              {Math.max(selected.OVR, Number(selected.potential ?? selected.OVR))}
-                            </p>
+                          <div className="mb-1 flex flex-col items-center gap-2">
+                            <div
+                              className={`grid h-16 w-16 place-items-center rounded-2xl border scoreline text-2xl font-black shadow-lg ${ovrTone(
+                                dynamicOvr,
+                              )}`}
+                            >
+                              {dynamicOvr}
+                            </div>
+                            <div className="rounded-xl border border-border/50 bg-background/45 px-2.5 py-1.5 text-center backdrop-blur">
+                              <p className="text-[0.48rem] font-black uppercase tracking-wider text-muted-foreground">
+                                POT
+                              </p>
+                              <p className="scoreline text-sm font-black">{potential}</p>
+                            </div>
                           </div>
                         </div>
-                        <div className="min-w-0">
-                          <DialogTitle className="truncate text-xl font-black">
-                            {selected.Name}
-                          </DialogTitle>
-                          <DialogDescription className="text-xs uppercase tracking-wider">
-                            {POS_LABEL_ES[pos]} · {selected.Age} años · {selected.Position}
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <DialogTitle className="text-2xl font-black tracking-tight">
+                              {selected.Name}
+                            </DialogTitle>
+                            <span className={`rounded-full border px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider ${ROLE_TEXT[roleFromPosition(selected.Position)]}`}>
+                              {POS_LABEL_ES[pos]}
+                            </span>
+                            {isListed && (
+                              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-amber-300">
+                                En venta
+                              </span>
+                            )}
+                          </div>
+
+                          <DialogDescription className="mt-1 text-xs font-semibold uppercase tracking-wider">
+                            {selected.Position} · {selected.Age} años · {selected.Nation ?? "Nacionalidad no disponible"}
                           </DialogDescription>
+
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-background/35 px-2.5 py-2 backdrop-blur">
+                              <TeamLogo
+                                teamName={team.name}
+                                leagueName={getLeagueName(team.league)}
+                                size={30}
+                                className="rounded-md"
+                              />
+                              <div>
+                                <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">
+                                  Equipo
+                                </p>
+                                <p className="text-xs font-black">{team.name}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 rounded-xl border border-border/50 bg-background/35 px-2.5 py-2 text-xs font-bold backdrop-blur">
+                              <Cake className="h-3.5 w-3.5" />
+                              {formatBirthdate(selected.birthdate)}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </DialogHeader>
                   </div>
 
-                  <div className="space-y-5 p-5">
-                    {/* Mood / Stats summary */}
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
-                        <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
-                          Valor
-                        </p>
-                        <p className="scoreline text-sm font-black text-emerald-400">
-                          {formatEuro(value)}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
-                        <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
-                          Goles
-                        </p>
-                        <p className="scoreline text-sm font-black text-primary">
-                          <Goal className="mr-1 inline h-3 w-3" />
-                          {selectedStats?.goals ?? 0}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-center">
-                        <p className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">
-                          Asist.
-                        </p>
-                        <p className="scoreline text-sm font-black text-accent">
-                          <Sparkles className="mr-1 inline h-3 w-3" />
-                          {selectedStats?.assists ?? 0}
-                        </p>
-                      </div>
-                    </div>
+                  <div className="space-y-5 p-4 sm:p-5">
+                    {/* Executive snapshot */}
+                    <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <DetailMetric
+                        icon={Target}
+                        label="Valor"
+                        value={formatEuro(value)}
+                        accent="text-emerald-300"
+                        hint="Valor de mercado"
+                      />
+                      <DetailMetric
+                        icon={Banknote}
+                        label="Salario"
+                        value={`${formatEuro(wage)}/año`}
+                        accent="text-primary"
+                      />
+                      <DetailMetric
+                        icon={CalendarDays}
+                        label="Contrato"
+                        value={`${marketContract?.yearsLeft ?? 0} temp.`}
+                      />
+                      <DetailMetric
+                        icon={Shield}
+                        label="Cláusula"
+                        value={formatEuro(marketContract?.releaseClause ?? 0)}
+                        accent="text-amber-300"
+                      />
+                    </section>
 
-                    {/* Morale meter */}
-                    <div className="rounded-lg border border-border/60 bg-card/60 p-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">
-                          Estado de ánimo
-                        </span>
-                        <span className={`flex items-center gap-1 text-sm font-bold ${mood.tone}`}>
+                    {/* Season performance */}
+                    <section className="space-y-3">
+                      <SectionHeading
+                        icon={Medal}
+                        title="Rendimiento de temporada"
+                        subtitle="Impacto real en los partidos disputados"
+                      />
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                        <DetailMetric icon={Users} label="Partidos" value={String(seasonAppearances)} />
+                        <DetailMetric
+                          icon={Star}
+                          label="Media"
+                          value={seasonRating > 0 ? seasonRating.toFixed(2) : "—"}
+                          accent="text-primary"
+                        />
+                        <DetailMetric icon={Goal} label="Goles" value={String(seasonGoals)} />
+                        <DetailMetric icon={Sparkles} label="Asistencias" value={String(seasonAssists)} />
+                        <DetailMetric
+                          icon={Trophy}
+                          label="Trofeos"
+                          value={String(seasonTrophies)}
+                          accent="text-amber-300"
+                        />
+                      </div>
+
+                      {pos === "GK" && (
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          <DetailMetric
+                            icon={Shield}
+                            label="Porterías a 0"
+                            value={String(seasonCleanSheets)}
+                            accent="text-emerald-300"
+                            hint="Esta temporada"
+                          />
+                          <DetailMetric
+                            icon={Star}
+                            label="MVP"
+                            value={String(seasonMVPs)}
+                            accent="text-amber-300"
+                          />
+                          <DetailMetric
+                            icon={Shield}
+                            label="Ratio"
+                            value={
+                              seasonAppearances > 0
+                                ? `${((seasonCleanSheets / seasonAppearances) * 100).toFixed(0)}%`
+                                : "—"
+                            }
+                            hint="Partidos con portería a cero"
+                          />
+                        </div>
+                      )}
+                    </section>
+
+                    {/* OVR progression */}
+                    <section className="space-y-3">
+                      <SectionHeading
+                        icon={TrendingUp}
+                        title="Evolución del jugador"
+                        subtitle="Cómo ha cambiado su media durante la partida"
+                      />
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <DetailMetric icon={Shield} label="Media inicial" value={String(baseOvr)} />
+                        <DetailMetric
+                          icon={TrendingUp}
+                          label="Media actual"
+                          value={String(dynamicOvr)}
+                          accent={ovrDelta >= 0 ? "text-emerald-300" : "text-destructive"}
+                          hint={`${ovrDelta >= 0 ? "+" : ""}${ovrDelta} OVR`}
+                        />
+                        <DetailMetric icon={Medal} label="Potencial" value={String(potential)} />
+                        <DetailMetric
+                          icon={Star}
+                          label="Forma"
+                          value={currentForm > 0 ? Number(currentForm).toFixed(1) : "—"}
+                          accent="text-primary"
+                        />
+                      </div>
+                    </section>
+
+                    <SeasonProgressChart monthlyStats={selectedStats?.monthlyStats ?? []} />
+                    <FormStrip values={selectedStats?.formHistory ?? []} />
+
+                    {/* Mood */}
+                    <section className="rounded-xl border border-border/60 bg-card/55 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[0.58rem] font-black uppercase tracking-[0.18em] text-muted-foreground">
+                            Estado de ánimo
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {morale}/100 · impacto de la satisfacción en la plantilla
+                          </p>
+                        </div>
+                        <span className={`flex items-center gap-1.5 text-sm font-black ${mood.tone}`}>
                           <mood.Icon className="h-4 w-4" />
                           {mood.label}
                         </span>
                       </div>
-                      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted/40">
+                      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted/40">
                         <div
-                          className={`h-full ${
+                          className={`h-full transition-[width] ${
                             morale >= 60
                               ? "bg-emerald-400"
                               : morale >= 40
                                 ? "bg-yellow-400"
                                 : "bg-destructive"
                           }`}
-                          style={{ width: `${Math.max(4, morale)}%` }}
+                          style={{ width: `${Math.max(4, Math.min(100, morale))}%` }}
                         />
                       </div>
-                    </div>
+                    </section>
 
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <ContractMetric icon={Banknote} label="Salario" value={`${formatEuro(wage)}/año`} />
-                      <ContractMetric icon={CalendarDays} label="Contrato" value={`${marketContract?.yearsLeft ?? 0} temp.`} />
-                      <ContractMetric icon={Shield} label="Cláusula" value={formatEuro(marketContract?.releaseClause ?? 0)} />
-                      <ContractMetric icon={CircleDollarSign} label="Prima" value={formatEuro(marketContract?.signingBonus ?? 0)} />
-                    </div>
-
-                    {/* Six stats */}
-
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                      <StatBar label="PAC" value={selected.PAC} />
-                      <StatBar label="SHO" value={selected.SHO} />
-                      <StatBar label="PAS" value={selected.PAS} />
-                      <StatBar label="DRI" value={selected.DRI} />
-                      <StatBar label="DEF" value={selected.DEF} />
-                      <StatBar label="PHY" value={selected.PHY} />
-                    </div>
+                    {/* Technical profile */}
+                    <section className="space-y-3">
+                      <SectionHeading
+                        icon={Target}
+                        title="Perfil técnico"
+                        subtitle="Atributos principales del jugador"
+                      />
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border/60 bg-card/55 p-4">
+                        <StatBar label="PAC" value={selected.PAC} />
+                        <StatBar label="SHO" value={selected.SHO} />
+                        <StatBar label="PAS" value={selected.PAS} />
+                        <StatBar label="DRI" value={selected.DRI} />
+                        <StatBar label="DEF" value={selected.DEF} />
+                        <StatBar label="PHY" value={selected.PHY} />
+                      </div>
+                    </section>
 
                     {/* Status flags */}
                     {(injured || isListed) && (
                       <div className="flex flex-wrap gap-2">
                         {injured && (
-                          <span className="flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-wider text-destructive">
+                          <span className="flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-[0.65rem] font-bold uppercase tracking-wider text-destructive">
                             <Activity className="h-3 w-3" />
                             Lesionado
                           </span>
                         )}
                         {isListed && (
-                          <span className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-wider text-amber-400">
+                          <span className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[0.65rem] font-bold uppercase tracking-wider text-amber-300">
                             <Tag className="h-3 w-3" />
                             En el mercado
                           </span>
@@ -801,7 +1194,7 @@ function SquadPage() {
                     )}
 
                     {/* Actions */}
-                    <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-2 border-t border-border/50 pt-4 sm:grid-cols-3">
                       <button
                         type="button"
                         onClick={() => setRenewalPlayerId(String(selected.ID))}

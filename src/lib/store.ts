@@ -1485,7 +1485,11 @@ export function squadOf(_save: SaveGame, teamId: string): Player[] {
   return store.getSimSquad(teamId);
 }
 
-function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
+function applyMatchToStats(
+  save: SaveGame,
+  fixture: Fixture,
+  options: { skipPerformanceTeamId?: string } = {},
+): SaveGame {
   if (!fixture.result) return save;
 
   const r = fixture.result;
@@ -1506,15 +1510,36 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
     updatedSave = processRedCards(updatedSave, r.cards, fixture.homeId, fixture.awayId);
   }
 
-  for (const p of [...homeXI, ...awayXI]) {
-    store.recordAppearance(p.id, fixture.competition);
-  }
+  // For a match watched live by the manager, defer the manager's own
+  // appearance/minute/rating/MVP/clean-sheet stats until the real chronicle is
+  // finished. The engine may have planned different substitutions up front.
+  const skipTeamId = options.skipPerformanceTeamId;
+  const teamForPlayer = (playerId: string) =>
+    homeXI.some((p) => p.id === playerId) ||
+    (r.substitutions ?? []).some(
+      (sub) => sub.playerInId === playerId && sub.team === "home",
+    )
+      ? fixture.homeId
+      : fixture.awayId;
 
-  // A substitute who actually enters the match also gets an appearance.
-  // Keep the stored event as the source of truth so players who stayed on the
-  // bench are not credited with an appearance.
-  for (const sub of r.substitutions ?? []) {
-    store.recordAppearance(sub.playerInId, fixture.competition);
+  const minuteMap = new Map(
+    (r.ratings ?? []).map((pr: any) => [pr.playerId, Number(pr.minutes) || 0]),
+  );
+  const participation = r.ratings?.length
+    ? r.ratings.map((pr: any) => pr.playerId)
+    : [
+        ...homeXI.map((p) => p.id),
+        ...awayXI.map((p) => p.id),
+        ...(r.substitutions ?? []).map((sub) => sub.playerInId),
+      ];
+
+  for (const playerId of [...new Set(participation)]) {
+    if (skipTeamId && teamForPlayer(playerId) === skipTeamId) continue;
+    store.recordAppearance(
+      playerId,
+      fixture.competition,
+      minuteMap.has(playerId) ? minuteMap.get(playerId) : 90,
+    );
   }
 
   // Process regular time events
@@ -1766,11 +1791,11 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
     const awayGoals = r.awayGoals ?? 0;
     if (awayGoals === 0) {
       const gk = homeXI.find((p) => p.positions.includes("GK"));
-      if (gk) store.recordCleanSheet(gk.id, fixture.competition);
+      if (gk && gk.teamId !== skipTeamId) store.recordCleanSheet(gk.id, fixture.competition);
     }
     if (homeGoals === 0) {
       const gk = awayXI.find((p) => p.positions.includes("GK"));
-      if (gk) store.recordCleanSheet(gk.id, fixture.competition);
+      if (gk && gk.teamId !== skipTeamId) store.recordCleanSheet(gk.id, fixture.competition);
     }
     // MOTM: top scorer of the match (or a random starter of winner if 0-0)
     const scorerCounts: Record<string, number> = {};
@@ -1794,7 +1819,11 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
     // player of the match, which is far more accurate than "top scorer".
     if (r.mvp?.playerId) motmId = r.mvp.playerId;
     // Match ratings feed each player's form history.
-    for (const pr of r.ratings ?? []) store.recordMatchRating(pr.playerId, pr.rating);
+    for (const pr of r.ratings ?? []) {
+      const prTeamId = pr.team === "home" ? fixture.homeId : fixture.awayId;
+      if (skipTeamId && prTeamId === skipTeamId) continue;
+      store.recordMatchRating(pr.playerId, pr.rating);
+    }
     if (!motmId) {
       const winnerXI =
         homeGoals > awayGoals
@@ -1806,7 +1835,16 @@ function applyMatchToStats(save: SaveGame, fixture: Fixture): SaveGame {
               : awayXI;
       motmId = winnerXI[Math.floor(Math.random() * winnerXI.length)]?.id;
     }
-    if (motmId) store.recordMotm(motmId, fixture.competition);
+    if (motmId) {
+      const motmTeamId = r.ratings?.find((pr) => pr.playerId === motmId)?.team === "home"
+        ? fixture.homeId
+        : r.ratings?.find((pr) => pr.playerId === motmId)?.team === "away"
+          ? fixture.awayId
+          : null;
+      if (!skipTeamId || motmTeamId !== skipTeamId) {
+        store.recordMotm(motmId, fixture.competition);
+      }
+    }
   } catch {}
 
   return updatedSave;
@@ -2908,7 +2946,12 @@ export function playSpecificFixture(
 
       next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], simmed);
 
-      next = applyMatchToStats(next, simmed);
+      const isUserMatch = simmed.homeId === next.myTeamId || simmed.awayId === next.myTeamId;
+      next = applyMatchToStats(
+        next,
+        simmed,
+        isUserMatch ? { skipPerformanceTeamId: next.myTeamId } : undefined,
+      );
     }
 
     return { save: next, fixture: simmed };
@@ -2933,7 +2976,11 @@ export function playSpecificFixture(
       if (idx >= 0) {
         next.cupFixtures[lg as LeagueId][idx] = simmed;
 
-        next = applyMatchToStats(next, simmed);
+        next = applyMatchToStats(
+          next,
+          simmed,
+          isUserMatch ? { skipPerformanceTeamId: next.myTeamId } : undefined,
+        );
       }
 
       return { save: next, fixture: simmed };
@@ -2955,7 +3002,12 @@ export function playSpecificFixture(
       if (idx >= 0) {
         next.uclFixtures[idx] = simmed;
 
-        next = applyMatchToStats(next, simmed);
+        const isUserMatch = simmed.homeId === next.myTeamId || simmed.awayId === next.myTeamId;
+        next = applyMatchToStats(
+          next,
+          simmed,
+          isUserMatch ? { skipPerformanceTeamId: next.myTeamId } : undefined,
+        );
 
         // Update UCL table (league phase only)
 
@@ -3679,13 +3731,20 @@ function recordFakeMatchStats(
     ].map((p) => [p.id, p]),
   );
 
+  const minuteMap = new Map(
+    (result.ratings ?? []).map((pr: any) => [pr.playerId, Number(pr.minutes) || 0]),
+  );
   const participants = new Set<string>();
-  for (const p of result.homeLineup ?? homePlayers) participants.add(p.id);
-  for (const p of result.awayLineup ?? awayPlayers) participants.add(p.id);
-  for (const sub of result.substitutions ?? []) participants.add(sub.playerInId);
+  if (result.ratings?.length) {
+    for (const pr of result.ratings) participants.add(pr.playerId);
+  } else {
+    for (const p of result.homeLineup ?? homePlayers) participants.add(p.id);
+    for (const p of result.awayLineup ?? awayPlayers) participants.add(p.id);
+    for (const sub of result.substitutions ?? []) participants.add(sub.playerInId);
+  }
 
   for (const playerId of participants) {
-    store.recordAppearance(playerId);
+    store.recordAppearance(playerId, competition, minuteMap.has(playerId) ? minuteMap.get(playerId) : 90);
   }
 
   for (const event of result.events ?? []) {
@@ -3985,13 +4044,10 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
           );
         }
 
-        // Second pass: record appearances
+        // Third pass: simulate and assign all player stats in one place.
+        // `recordFakeMatchStats` is responsible for appearances too, so they are
+        // not double-counted here.
 
-        for (const players of allPlayersToRecord.values()) {
-          for (const player of players) store.recordAppearance(player.id);
-        }
-
-        // Third pass: simulate and assign stats (goals, assists, cards, injuries)
 
         for (const f of fixtures) {
           const home = teamById(f.homeId);
