@@ -2944,14 +2944,14 @@ export function playSpecificFixture(
     if (idx >= 0) {
       next.fixtures[next.myLeague][idx] = simmed;
 
-      next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], simmed);
-
       const isUserMatch = simmed.homeId === next.myTeamId || simmed.awayId === next.myTeamId;
-      next = applyMatchToStats(
-        next,
-        simmed,
-        isUserMatch ? { skipPerformanceTeamId: next.myTeamId } : undefined,
-      );
+      // A live match is only provisional here. The manager can alter goals,
+      // scorers, substitutions and even missed/converted penalties before the
+      // final chronicle becomes official.
+      if (!isUserMatch) {
+        next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], simmed);
+        next = applyMatchToStats(next, simmed);
+      }
     }
 
     return { save: next, fixture: simmed };
@@ -2976,11 +2976,9 @@ export function playSpecificFixture(
       if (idx >= 0) {
         next.cupFixtures[lg as LeagueId][idx] = simmed;
 
-        next = applyMatchToStats(
-          next,
-          simmed,
-          isUserMatch ? { skipPerformanceTeamId: next.myTeamId } : undefined,
-        );
+        // Live cup matches are also provisional until the manager finishes
+        // the watched chronicle (including extra time / shootout where used).
+        if (!isUserMatch) next = applyMatchToStats(next, simmed);
       }
 
       return { save: next, fixture: simmed };
@@ -3003,22 +3001,19 @@ export function playSpecificFixture(
         next.uclFixtures[idx] = simmed;
 
         const isUserMatch = simmed.homeId === next.myTeamId || simmed.awayId === next.myTeamId;
-        next = applyMatchToStats(
-          next,
-          simmed,
-          isUserMatch ? { skipPerformanceTeamId: next.myTeamId } : undefined,
-        );
+        if (!isUserMatch) {
+          next = applyMatchToStats(next, simmed);
 
-        // Update UCL table (league phase only)
-
-        if (simmed.result && next.ucl && isUCLLeaguePhaseFixture(simmed.round)) {
-          next.ucl.table = applyUCLTableResult(
-            next.ucl.table,
-            simmed.homeId,
-            simmed.awayId,
-            simmed.result.homeGoals,
-            simmed.result.awayGoals,
-          );
+          // Update UCL table (league phase only)
+          if (simmed.result && next.ucl && isUCLLeaguePhaseFixture(simmed.round)) {
+            next.ucl.table = applyUCLTableResult(
+              next.ucl.table,
+              simmed.homeId,
+              simmed.awayId,
+              simmed.result.homeGoals,
+              simmed.result.awayGoals,
+            );
+          }
         }
       }
 
@@ -3029,6 +3024,85 @@ export function playSpecificFixture(
   console.log("Fixture not found in any competition:", fixtureId);
 
   return { save: next, fixture: null };
+}
+
+/**
+ * Commit the final chronicle of a user-watched fixture exactly once.
+ * The live route keeps the result provisional until this transition, so goals,
+ * cards, injuries, substitutions and standings all use the same final state.
+ */
+export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, result: any): SaveGame {
+  if (!result) return save;
+
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let fixture: Fixture | undefined;
+  let competition: "league" | "cup" | "ucl" | undefined;
+
+  const leagueList = next.fixtures?.[next.myLeague] ?? [];
+  const leagueIndex = leagueList.findIndex((f) => f.id === fixtureId);
+  if (leagueIndex >= 0) {
+    fixture = leagueList[leagueIndex];
+    competition = "league";
+    next.fixtures[next.myLeague][leagueIndex] = {
+      ...fixture,
+      result: { ...result, liveCommitted: true },
+    };
+  }
+
+  if (!fixture && next.cupFixtures) {
+    for (const [lg, list] of Object.entries(next.cupFixtures)) {
+      const index = list.findIndex((f) => f.id === fixtureId);
+      if (index >= 0) {
+        fixture = list[index];
+        competition = "cup";
+        next.cupFixtures[lg as LeagueId][index] = {
+          ...fixture,
+          result: { ...result, liveCommitted: true },
+        };
+        break;
+      }
+    }
+  }
+
+  if (!fixture && next.uclFixtures) {
+    const index = next.uclFixtures.findIndex((f) => f.id === fixtureId);
+    if (index >= 0) {
+      fixture = next.uclFixtures[index];
+      competition = "ucl";
+      next.uclFixtures[index] = {
+        ...fixture,
+        result: { ...result, liveCommitted: true },
+      };
+    }
+  }
+
+  if (!fixture || !competition) return save;
+
+  if (!result.liveCommitted) {
+    const officialFixture = { ...fixture, result: { ...result, liveCommitted: true } };
+
+    if (competition === "league") {
+      next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], officialFixture);
+      next = applyMatchToStats(next, officialFixture);
+    } else if (competition === "cup") {
+      next = applyMatchToStats(next, officialFixture);
+    } else {
+      next = applyMatchToStats(next, officialFixture);
+      if (officialFixture.result && next.ucl && isUCLLeaguePhaseFixture(officialFixture.round)) {
+        next.ucl.table = applyUCLTableResult(
+          next.ucl.table,
+          officialFixture.homeId,
+          officialFixture.awayId,
+          officialFixture.result.homeGoals,
+          officialFixture.result.awayGoals,
+        );
+      }
+      next = applyUCLMatchAftermath(next, officialFixture.homeId, officialFixture.awayId);
+    }
+  }
+
+  saveSaveWithRetry(next);
+  return next;
 }
 
 /**

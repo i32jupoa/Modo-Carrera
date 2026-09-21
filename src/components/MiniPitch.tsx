@@ -9,6 +9,7 @@ import {
 import { teamById } from "@/data/teams";
 import { CardEvent, MatchEvent, InjuryEvent, SubstitutionEvent } from "@/lib/simulation";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { Zap } from "lucide-react";
 import { faceUrl } from "@/lib/playerFaces";
 
 interface MiniPitchProps {
@@ -23,6 +24,7 @@ interface MiniPitchProps {
   mvp?: string;
   injuries?: InjuryEvent[];
   substitutions?: SubstitutionEvent[];
+  stamina?: Record<string, number>;
 }
 
 // Position role mappings for CPU lineup generation
@@ -93,6 +95,7 @@ export function MiniPitch({
   mvp,
   injuries = [],
   substitutions = [],
+  stamina = {},
 }: MiniPitchProps) {
   const formationPositions = FORMATION_COORDINATES[formation];
   const positionKeys = Object.keys(formationPositions);
@@ -224,6 +227,15 @@ export function MiniPitch({
 
           // Check if MVP
           const isMvp = mvp === player.id;
+          const energy = stamina[player.id];
+          const energyTone =
+            energy === undefined
+              ? ""
+              : energy >= 70
+                ? "border-emerald-400/40 bg-emerald-500/12 text-emerald-300"
+                : energy >= 45
+                  ? "border-amber-400/45 bg-amber-500/12 text-amber-300"
+                  : "border-destructive/45 bg-destructive/10 text-destructive";
 
           return (
             <div
@@ -248,6 +260,16 @@ export function MiniPitch({
                 {rating !== undefined && (
                   <div className="absolute -top-1 -right-1 bg-white/90 rounded-full w-5 h-5 flex items-center justify-center text-[0.5rem] font-bold text-black shadow-sm">
                     {rating.toFixed(1)}
+                  </div>
+                )}
+                {/* Energy stays attached to the player so the pitch keeps its full size. */}
+                {energy !== undefined && (
+                  <div
+                    className={`absolute -top-5 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[0.48rem] font-black tabular-nums shadow-lg backdrop-blur-sm ${energyTone}`}
+                    title={`Energía ${Math.round(energy)}%`}
+                  >
+                    <Zap className="h-2.5 w-2.5 fill-current" />
+                    <span>{Math.round(energy)}</span>
                   </div>
                 )}
                 {/* Indicators - bottom right */}

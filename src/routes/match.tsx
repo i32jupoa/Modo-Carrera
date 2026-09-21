@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createFileRoute, useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import {
   getMyNextFixture,
@@ -48,6 +49,7 @@ import {
 import {
   saveLive,
   loadLive,
+  LIVE_VERSION,
   clearLive,
   subLimits,
   isFreeWindow,
@@ -58,8 +60,6 @@ import {
   type LivePhase,
 } from "@/lib/liveMatch";
 import { loadTactics, tacticsModifiers } from "@/lib/teamTactics";
-import { SubstitutionPanel } from "@/components/match/SubstitutionPanel";
-import { StaminaPanel } from "@/components/match/StaminaPanel";
 import {
   btnPrimary,
   btnSecondary,
@@ -68,11 +68,41 @@ import {
   segmentBase,
   segmentItem,
 } from "@/components/match/matchUi";
-import { Pause, Play, FastForward, Users, ClipboardList } from "lucide-react";
+import { Pause, Play, FastForward, ClipboardList } from "lucide-react";
 import { isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
 import { MiniPitch } from "@/components/MiniPitch";
+import { PlayerFace } from "@/components/PlayerFace";
+import { faceUrl } from "@/lib/playerFaces";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";
+import { MomentumBar } from "@/components/match/MomentumBar";
+import { LiveEventOverlay } from "@/components/match/LiveEventOverlay";
+import {
+  LiveRouletteOverlay,
+  type LiveRouletteData,
+  type RouletteOutcome,
+} from "@/components/match/LiveRouletteOverlay";
+import { LiveCommentary, type CommentaryEntry } from "@/components/match/LiveCommentary";
+import {
+  PenaltyDecisionModal,
+  type PendingPenalty,
+  type PenaltyZoneId,
+} from "@/components/match/PenaltyDecisionModal";
+import {
+  DEFAULT_MANAGER_EFFECTS,
+  avg as averageNumbers,
+  buildMomentFromEvent,
+  buildMomentFromHighlight,
+  buildGoalPrelude,
+  buildSavePrelude,
+  buildDangerPreludeFromHighlight,
+  buildNarrativeCommentary,
+  buildSyntheticMoment,
+  momentumStatus,
+  updateMomentum,
+  type LiveManagerEffects,
+  type LiveMoment,
+} from "@/lib/liveMatchEngine";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -91,6 +121,8 @@ function MatchPage() {
   const [minute, setMinute] = useState(0);
   const [homeScore, setHomeScore] = useState(0);
   const [awayScore, setAwayScore] = useState(0);
+  const homeScoreRef = useRef(0);
+  const awayScoreRef = useRef(0);
   const [extraTimeHomeScore, setExtraTimeHomeScore] = useState(0);
   const [extraTimeAwayScore, setExtraTimeAwayScore] = useState(0);
   const [penaltyHomeScore, setPenaltyHomeScore] = useState(0);
@@ -121,11 +153,65 @@ function MatchPage() {
   const [isPaused, setIsPaused] = useState(false);
   const minuteRef = useRef(0);
 
+  // ---- living match layer --------------------------------------------------
+  const [momentum, setMomentum] = useState(50);
+  const momentumRef = useRef(50);
+  const [momentumHistory, setMomentumHistory] = useState<Array<{ minute: number; value: number }>>(
+    [],
+  );
+  const momentumHistoryRef = useRef<Array<{ minute: number; value: number }>>([]);
+  const [liveMoment, setLiveMoment] = useState<LiveMoment | null>(null);
+  const momentTimerRef = useRef<number | null>(null);
+  const [managerEffects, setManagerEffects] = useState<LiveManagerEffects>(DEFAULT_MANAGER_EFFECTS);
+  const managerEffectsRef = useRef<LiveManagerEffects>({ ...DEFAULT_MANAGER_EFFECTS });
+  const [commentaryEntries, setCommentaryEntries] = useState<CommentaryEntry[]>([]);
+  const commentaryEntriesRef = useRef<CommentaryEntry[]>([]);
+  const lastNarrativeMinuteRef = useRef(-99);
+  const lastMajorMomentMinuteRef = useRef(-99);
+  const [keyMoments, setKeyMoments] = useState<LiveMoment[]>([]);
+  const keyMomentsRef = useRef<LiveMoment[]>([]);
+  const [pendingPenalty, setPendingPenalty] = useState<PendingPenalty | null>(null);
+  const pendingPenaltySourceRef = useRef<any>(null);
+  const pendingPenaltyZoneRef = useRef<PenaltyZoneId | null>(null);
+  const pendingSceneRef = useRef<{
+    kind: "prelude" | "roulette" | "resolution" | "penalty_intro";
+    moment?: any;
+    resolution?: any;
+    source?: any;
+    nextRoulette?: any;
+    roulette?: LiveRouletteData;
+  } | null>(null);
+  const transientResumeTimerRef = useRef<number | null>(null);
+  const [roulette, setRoulette] = useState<LiveRouletteData | null>(null);
+  const clockRunIdRef = useRef(0);
+  const outcomeBiasRef = useRef(0);
+
   // ---- live match control (pause / subs / stamina) ----
   const pausedRef = useRef(false);
+  const pauseReasonRef = useRef<
+    | null
+    | "manual"
+    | "halftime"
+    | "injury"
+    | "et_break"
+    | "et_halftime"
+    | "moment"
+    | "coach"
+    | "penalty"
+  >(null);
+  const finishScheduledRef = useRef(false);
+  const halftimePendingAfterMomentRef = useRef(false);
   const scheduleRef = useRef<null | (() => void)>(null);
   const [pauseReason, setPauseReason] = useState<
-    null | "manual" | "halftime" | "injury" | "et_break" | "et_halftime"
+    | null
+    | "manual"
+    | "halftime"
+    | "injury"
+    | "et_break"
+    | "et_halftime"
+    | "moment"
+    | "coach"
+    | "penalty"
   >(null);
   const [speed, setSpeed] = useState(1);
   const speedRef = useRef(1);
@@ -142,7 +228,6 @@ function MatchPage() {
   const myBenchRef = useRef<string[]>([]);
   const [goneIds, setGoneIds] = useState<string[]>([]);
   const goneRef = useRef<string[]>([]);
-  const [showSubs, setShowSubs] = useState(false);
   const [forcedOutId, setForcedOutId] = useState<string | null>(null);
   const handledInjuriesRef = useRef<string[]>([]);
   const isExtraTimeRef = useRef(false);
@@ -203,6 +288,28 @@ function MatchPage() {
     allCardsRef.current = st.result?.cards ?? [];
     allHighlightsRef.current = st.result?.highlights ?? [];
 
+    // Restore the exact timeline already resolved before the route change.
+    // Older live snapshots did not have these fields, so use the visible feed
+    // / minute as a safe backwards-compatible fallback.
+    playedEventsRef.current = Array.isArray((st as any).playedEvents)
+      ? (st as any).playedEvents
+      : (st.result?.events ?? []).filter(
+          (e: any) => Number(e.minute ?? 0) <= Number(st.minute ?? 0),
+        );
+    playedCardsRef.current = Array.isArray((st as any).playedCards)
+      ? (st as any).playedCards
+      : (st.result?.cards ?? []).filter(
+          (c: any) => Number(c.minute ?? 0) <= Number(st.minute ?? 0),
+        );
+    playedHighlightsRef.current = Array.isArray((st as any).playedHighlights)
+      ? (st as any).playedHighlights
+      : (st.result?.highlights ?? []).filter(
+          (h: any) => Number(h.minute ?? 0) <= Number(st.minute ?? 0),
+        );
+    oppSubsDoneRef.current = Array.isArray((st as any).opponentSubsDone)
+      ? (st as any).opponentSubsDone
+      : [];
+
     const m = st.minute;
     setFeed(
       allEventsRef.current
@@ -222,16 +329,19 @@ function MatchPage() {
         .slice()
         .reverse(),
     );
-    setHomeScore(st.homeScore);
-    setAwayScore(st.awayScore);
+    homeScoreRef.current = Number(st.homeScore) || 0;
+    awayScoreRef.current = Number(st.awayScore) || 0;
+    setHomeScore(homeScoreRef.current);
+    setAwayScore(awayScoreRef.current);
     setMinute(m);
     minuteRef.current = m;
 
     const resumeMySide = fx.homeId === s.myTeamId ? "home" : "away";
-    const storedInitialXI =
-      (resumeMySide === "home" ? fx.result?.homeLineup : fx.result?.awayLineup)
-        ?.map((p: any) => p.id)
-        ?.filter(Boolean);
+    const storedInitialXI = (
+      resumeMySide === "home" ? fx.result?.homeLineup : fx.result?.awayLineup
+    )
+      ?.map((p: any) => p.id)
+      ?.filter(Boolean);
     initialMyXIRef.current =
       Array.isArray(storedInitialXI) && storedInitialXI.length > 0
         ? storedInitialXI.slice(0, 11)
@@ -243,6 +353,23 @@ function MatchPage() {
     setMyBench(st.bench);
     staminaRef.current = st.stamina || {};
     setStamina(st.stamina || {});
+    const restoredMomentum = Number(st.momentum ?? 50);
+    momentumRef.current = restoredMomentum;
+    setMomentum(restoredMomentum);
+    const restoredMomentumHistory = Array.isArray(st.momentumHistory) ? st.momentumHistory : [];
+    momentumHistoryRef.current = restoredMomentumHistory;
+    setMomentumHistory(restoredMomentumHistory);
+    const restoredEffects = { ...DEFAULT_MANAGER_EFFECTS, ...(st.managerEffects || {}) };
+    managerEffectsRef.current = restoredEffects;
+    setManagerEffects(restoredEffects);
+    outcomeBiasRef.current = Number(st.outcomeBias ?? 0);
+    if (Array.isArray(st.narrative)) {
+      commentaryEntriesRef.current = st.narrative;
+      setCommentaryEntries(st.narrative);
+    }
+    const restoredMoments = Array.isArray(st.keyMoments) ? st.keyMoments : [];
+    keyMomentsRef.current = restoredMoments.slice(-12);
+    setKeyMoments(keyMomentsRef.current);
     goneRef.current = st.gone || [];
     setGoneIds(st.gone || []);
     subsUsedRef.current = st.subsUsed;
@@ -269,17 +396,57 @@ function MatchPage() {
 
     handledInjuriesRef.current = st.handledInjuries || [];
     halftimeDoneRef.current = m >= 45;
+    etHalftimeDoneRef.current = m >= 105;
     isExtraTimeRef.current = st.isExtraTime;
     setMatchType(st.matchType);
     setCupRound(st.cupRound);
     setLiveFormation(st.formation);
     setIsCupMatch(st.matchType === "CUP");
 
-    setPhase("playing");
+    // Restore the exact saved phase. In particular, do not turn a saved
+    // halftime into a live second-half clock before the user has returned from
+    // lineup editing. The same applies to the break inside extra time.
+    const restoredPhase = st.phase || (st.isExtraTime ? "et_playing" : "playing");
+    const atBreak = restoredPhase === "halftime" || restoredPhase === "et_halftime";
+    setPhase(st.isExtraTime ? "extra_time" : "playing");
+    finishScheduledRef.current = false;
+    halftimePendingAfterMomentRef.current = false;
+    pendingSceneRef.current = (st.scene as any) || null;
+    setLiveFormation(st.formation);
+
+    if (st.scene?.kind === "roulette" && st.scene.roulette) {
+      setRoulette(st.scene.roulette);
+    } else if (st.scene?.moment) {
+      setLiveMoment(st.scene.moment);
+    }
+
+    // A saved half-time stays stopped. The manager must explicitly start the
+    // second half; this is also what lets the lineup screen be used safely.
+    if (atBreak) {
+      pausedRef.current = true;
+      pauseReasonRef.current = restoredPhase === "et_halftime" ? "et_halftime" : "halftime";
+      setIsPaused(true);
+      setPauseReason(restoredPhase === "et_halftime" ? "et_halftime" : "halftime");
+      if (st.narrative) commentaryEntriesRef.current = st.narrative;
+      return;
+    }
+
+    // If the browser was refreshed during a two-step event, restore the scene
+    // instead of skipping it.
+    if (st.scene?.moment || st.scene?.kind === "roulette") {
+      pausedRef.current = true;
+      pauseReasonRef.current = "moment";
+      setIsPaused(true);
+      setPauseReason("moment");
+      return;
+    }
+
     pausedRef.current = false;
+    pauseReasonRef.current = null;
     setIsPaused(false);
     setPauseReason(null);
-    runClock(m);
+    if (st.isExtraTime) runExtraTimeClock(m);
+    else runClock(m);
   }, [resumeLive, fixtureId]);
 
   // Show injury/red card notifications when match ends
@@ -429,16 +596,18 @@ function MatchPage() {
     runExtraTimeClock();
   }
 
-  function runExtraTimeClock() {
-    let m = 90;
+  function runExtraTimeClock(startMinute = 90) {
+    const runId = ++clockRunIdRef.current;
+    let m = Math.max(90, startMinute);
     const scheduleEt = (delay?: number) => {
+      if (pausedRef.current || runId !== clockRunIdRef.current) return;
       clockTimeoutRef.current = window.setTimeout(
         tick,
         delay ?? Math.max(40, Math.round(EXTRA_TIME_TICK_MS / speedRef.current)),
       );
     };
     const tick = () => {
-      if (pausedRef.current) return;
+      if (pausedRef.current || runId !== clockRunIdRef.current) return;
       m += 1;
       setMinute(m);
       minuteRef.current = m;
@@ -472,13 +641,8 @@ function MatchPage() {
       if (m < 120) {
         if (m === 105 && !etHalftimeDoneRef.current) {
           etHalftimeDoneRef.current = true;
-          pausedRef.current = true;
-          setIsPaused(true);
-          setPauseReason("et_halftime");
-          if (clockTimeoutRef.current !== null) {
-            window.clearTimeout(clockTimeoutRef.current);
-            clockTimeoutRef.current = null;
-          }
+          announceHalftime(true);
+          pauseMatch("et_halftime");
           return;
         }
         scheduleEt();
@@ -1092,8 +1256,10 @@ function MatchPage() {
             }))
             .reverse(),
         );
-        setHomeScore(foundFixture.result.homeGoals);
-        setAwayScore(foundFixture.result.awayGoals);
+        homeScoreRef.current = Number(foundFixture.result.homeGoals) || 0;
+        awayScoreRef.current = Number(foundFixture.result.awayGoals) || 0;
+        setHomeScore(homeScoreRef.current);
+        setAwayScore(awayScoreRef.current);
         setFeed(foundFixture.result.events.slice().reverse());
         setCardFeed((foundFixture.result.cards || []).slice().reverse());
         setMinute(90);
@@ -1203,7 +1369,10 @@ function MatchPage() {
       else planOpponentSubs();
     }
     fixtureRef.current = fixture;
-
+    homeScoreRef.current = 0;
+    awayScoreRef.current = 0;
+    setHomeScore(0);
+    setAwayScore(0);
 
     // For cup matches that end in a draw, don't save the result yet
     // Allow user to edit lineup and go to extra time
@@ -1314,6 +1483,23 @@ function MatchPage() {
     setMyBench(benchIds);
     staminaRef.current = st;
     setStamina(st);
+    momentumRef.current = 50;
+    setMomentum(50);
+    momentumHistoryRef.current = [{ minute: 0, value: 50 }];
+    setMomentumHistory(momentumHistoryRef.current);
+    managerEffectsRef.current = { ...DEFAULT_MANAGER_EFFECTS };
+    setManagerEffects(managerEffectsRef.current);
+    outcomeBiasRef.current = 0;
+    setPendingPenalty(null);
+    setLiveMoment(null);
+    pendingSceneRef.current = null;
+    setRoulette(null);
+    commentaryEntriesRef.current = [];
+    setCommentaryEntries([]);
+    keyMomentsRef.current = [];
+    setKeyMoments([]);
+    lastNarrativeMinuteRef.current = -99;
+    lastMajorMomentMinuteRef.current = -99;
     goneRef.current = [];
     setGoneIds([]);
     oppSubsDoneRef.current = [];
@@ -1330,28 +1516,41 @@ function MatchPage() {
     halftimeDoneRef.current = false;
     etHalftimeDoneRef.current = false;
     pausedRef.current = false;
+    pauseReasonRef.current = null;
+    finishScheduledRef.current = false;
     setIsPaused(false);
     setPauseReason(null);
     setLiveFormation(matchFormation || s.formations[s.myTeamId] || null);
   }
 
   function currentLivePhase(): LivePhase {
-    if (pauseReason === "halftime") return "halftime";
-    if (pauseReason === "et_break") return "et_break";
-    if (pauseReason === "et_halftime") return "et_halftime";
+    const activePauseReason = pauseReasonRef.current ?? pauseReason;
+    if (activePauseReason === "halftime") return "halftime";
+    if (activePauseReason === "et_break") return "et_break";
+    if (activePauseReason === "et_halftime") return "et_halftime";
     return isExtraTimeRef.current ? "et_playing" : "playing";
+  }
+
+  function announceHalftime(extraTime = false) {
+    const title = extraTime ? "DESCANSO DE LA PRÓRROGA" : "DESCANSO";
+    const homeTotal = homeScoreRef.current + (extraTime ? extraTimeHomeScoreRef.current : 0);
+    const awayTotal = awayScoreRef.current + (extraTime ? extraTimeAwayScoreRef.current : 0);
+    toast.info(title, {
+      description: `${home.name} ${homeTotal}-${awayTotal} ${away.name}.`,
+      duration: 4500,
+    });
   }
 
   function persistLive() {
     const fx = fixtureRef.current;
     if (!fx?.result) return;
     saveLive({
-      v: 3,
+      v: LIVE_VERSION,
       fixtureId: fx.id,
       minute: minuteRef.current,
       phase: currentLivePhase(),
-      homeScore,
-      awayScore,
+      homeScore: homeScoreRef.current,
+      awayScore: awayScoreRef.current,
       result: fx.result,
       feed: [],
       cardFeed: [],
@@ -1368,11 +1567,34 @@ function MatchPage() {
       matchType,
       cupRound,
       handledInjuries: handledInjuriesRef.current,
+      momentum: momentumRef.current,
+      momentumHistory: momentumHistoryRef.current,
+      managerEffects: managerEffectsRef.current,
+      outcomeBias: outcomeBiasRef.current,
+      narrative: commentaryEntries.slice(0, 12),
+      keyMoments: keyMomentsRef.current.slice(-12),
+      playedEvents: playedEventsRef.current.slice(),
+      playedCards: playedCardsRef.current.slice(),
+      playedHighlights: playedHighlightsRef.current.slice(),
+      opponentSubsDone: oppSubsDoneRef.current.slice(),
+      scene: pendingSceneRef.current,
     });
   }
 
-  function pauseMatch(reason: "manual" | "halftime" | "injury" | "et_break" | "et_halftime") {
+  function pauseMatch(
+    reason:
+      | "manual"
+      | "halftime"
+      | "injury"
+      | "et_break"
+      | "et_halftime"
+      | "moment"
+      | "coach"
+      | "penalty",
+  ) {
+    clockRunIdRef.current += 1;
     pausedRef.current = true;
+    pauseReasonRef.current = reason;
     setIsPaused(true);
     setPauseReason(reason);
     if (clockTimeoutRef.current !== null) {
@@ -1382,18 +1604,43 @@ function MatchPage() {
     persistLive();
   }
 
-  function resumeMatch() {
-    if (!pausedRef.current) return;
-    pausedRef.current = false;
-    setIsPaused(false);
-    setPauseReason(null);
-    setShowSubs(false);
-    setForcedOutId(null);
-    if (scheduleRef.current) scheduleRef.current();
-    else runClock(minuteRef.current);
+  function restartLiveClock() {
+    const startMinute = minuteRef.current;
+    const extraTime = isExtraTimeRef.current;
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+    // Let React flush the decision/lineup state before the next clock run.
+    // This prevents a synchronous state transition from racing with the old
+    // timer and leaving the live match apparently frozen.
+    window.setTimeout(() => {
+      if (pausedRef.current) return;
+      if (extraTime) runExtraTimeClock(startMinute);
+      else runClock(startMinute);
+    }, 0);
   }
 
-  /** Drain energy of the players currently on the pitch. */
+  function resumeMatch() {
+    if (!pausedRef.current) return;
+    const previousReason = pauseReasonRef.current ?? pauseReason;
+    pausedRef.current = false;
+    pauseReasonRef.current = null;
+    setIsPaused(false);
+    setPauseReason(null);
+
+    // Every pause invalidates the old clock run id. Always create a fresh run
+    // when continuing so decisions/events can never leave the match frozen.
+    if (previousReason === "et_halftime" || previousReason === "et_break") {
+      window.setTimeout(() => {
+        if (!pausedRef.current) runExtraTimeClock(Math.min(105, minuteRef.current));
+      }, 0);
+      return;
+    }
+    restartLiveClock();
+  }
+
+  /*** Drain energy of the players currently on the pitch. */
   function drainStamina() {
     const tactics = myTeamIdRef.current ? loadTactics(myTeamIdRef.current) : null;
     const pressure = (tactics?.pressure ?? "medium") as "low" | "medium" | "high";
@@ -1405,7 +1652,12 @@ function MatchPage() {
       if (!p) continue;
       next[id] = Math.max(
         0,
-        (next[id] ?? STAMINA_START) - drainPerMinute(p.position, pressure, staminaMult),
+        (next[id] ?? STAMINA_START) -
+          drainPerMinute(
+            p.position,
+            pressure,
+            staminaMult * managerEffectsRef.current.staminaMultiplier,
+          ),
       );
     }
     staminaRef.current = next;
@@ -1436,111 +1688,62 @@ function MatchPage() {
       },
       1,
     );
-    const benchAvailable = myBenchRef.current.length > 0;
-    if (!check.ok || !benchAvailable) {
-      playWithOneLess(inj.playerId, inj.playerName);
-      toast.error(
-        `${inj.playerName} se lesiona en el ${m}' y no quedan cambios: juegas con uno menos.`,
-      );
-      return false;
-    }
+    const benchAvailable = myBenchRef.current.some(
+      (id) =>
+        !goneRef.current.includes(id) &&
+        !isPlayerInjuredAtDate(playerById(id), usePlayersStore.getState().currentDate),
+    );
+    const canReplaceNow = check.ok && benchAvailable;
+
     pauseMatch("injury");
-    setForcedOutId(inj.playerId);
-    setShowSubs(true);
-    toast.warning(`${inj.playerName} se lesiona en el ${m}'. Cambio obligatorio.`);
+    playWithOneLess(inj.playerId, inj.playerName);
+
+    const moment = {
+      id: `injury-sub-${m}-${inj.playerId}`,
+      type: "injury_substitution",
+      minute: m,
+      kicker: "🚑 Lesión",
+      title: "CAMBIO POR LESIÓN",
+      body: canReplaceNow
+        ? `${inj.playerName} no puede continuar. El hueco queda vacío hasta que elijas tú al sustituto.`
+        : `${inj.playerName} no puede continuar y no quedan cambios disponibles. El equipo seguirá con uno menos.`,
+      playerName: inj.playerName,
+      playerId: inj.playerId,
+      teamName: mySide === "home" ? home.name : away.name,
+      teamSide: mySide,
+      teamLeagueName: getLeagueName(mySide === "home" ? home.league : away.league),
+      emoji: "🚑",
+      detail: `${inj.reason || "Lesión"}${inj.weeks ? ` · ${inj.weeks} jornada${inj.weeks > 1 ? "s" : ""} de baja` : ""}`,
+      forceLineupEdit: canReplaceNow,
+      hardPause: true,
+    } as any;
+    // Injury is a standalone live interruption, not a roulette resolution.
+    // Keeping the scene empty lets continueLiveMoment() route the user to the
+    // live lineup editor only when a replacement is actually available.
+    pendingSceneRef.current = null;
+    showLiveMoment(moment, 3200);
     return true;
   }
 
   function playWithOneLess(playerId: string, playerName?: string) {
-    myXIRef.current = myXIRef.current.filter((id) => id !== playerId);
-    setMyXI(myXIRef.current);
-    goneRef.current = [...goneRef.current, playerId];
-    setGoneIds(goneRef.current);
-    setForcedOutId(null);
-    setShowSubs(false);
-    persistLive();
-    if (playerName)
-      toast.info(`${playerName} abandona el campo. Te quedas con ${myXIRef.current.length}.`);
-  }
+    // A forced injury must vacate the player's exact formation slot. Never
+    // filter the XI array: doing that shifts every player after the injured
+    // one to a different slot, which can later be interpreted as a different
+    // substitution (e.g. Mendy for Militão instead of Mendy for Cucurella).
+    const nextXI = myXIRef.current.map((id) => (id === playerId ? "" : id));
+    myXIRef.current = nextXI;
+    setMyXI(nextXI);
 
-  function applySubstitutions(pairs: { outId: string; inId: string }[]) {
-    if (pairs.length === 0) return;
-    const free = isFreeWindow(currentLivePhase());
-    const check = canSubstitute(
-      {
-        subsUsed: subsUsedRef.current,
-        windowsUsed: windowsUsedRef.current,
-        isExtraTime: isExtraTimeRef.current,
-        phase: currentLivePhase(),
-      },
-      pairs.length,
-    );
-    if (!check.ok) {
-      toast.error(check.reason!);
-      return;
+    // Keep the injured player visible in the live bench as an unavailable
+    // entry. He/she is already in `gone` so the editor cannot bring them back.
+    if (!myBenchRef.current.includes(playerId)) {
+      myBenchRef.current = [...myBenchRef.current, playerId];
+      setMyBench(myBenchRef.current);
     }
 
-    const xi = [...myXIRef.current];
-    let bench = [...myBenchRef.current];
-    const madeNow: any[] = [];
-    for (const { outId, inId } of pairs) {
-      const idx = xi.indexOf(outId);
-      if (idx === -1) continue;
-      // A player who already left the pitch can never come back.
-      if (goneRef.current.includes(inId)) {
-        toast.error(`${playerById(inId)?.name ?? inId} ya ha sido sustituido y no puede volver.`);
-        continue;
-      }
-      xi[idx] = inId;
-      bench = bench.filter((id) => id !== inId && id !== outId);
-      goneRef.current = [...goneRef.current, outId];
-      staminaRef.current = { ...staminaRef.current, [inId]: STAMINA_START };
-      madeNow.push({
-        minute: minuteRef.current,
-        outId,
-        outName: playerById(outId)?.name ?? outId,
-        inId,
-        inName: playerById(inId)?.name ?? inId,
-      });
-    }
-    if (madeNow.length === 0) return;
-    myXIRef.current = xi;
-    setMyXI(xi);
-    myBenchRef.current = bench;
-    setMyBench(bench);
+    goneRef.current = Array.from(new Set([...goneRef.current, playerId]));
     setGoneIds(goneRef.current);
-    setStamina(staminaRef.current);
-    subsUsedRef.current += madeNow.length;
-    setSubsUsed(subsUsedRef.current);
-    if (!free) {
-      windowsUsedRef.current += 1;
-      setWindowsUsed(windowsUsedRef.current);
-    }
-    subsRef.current = [...subsRef.current, ...madeNow];
-    setSubsMade(subsRef.current);
-    const mySide =
-      fixtureRef.current?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
-    setSubFeed((prev) => [
-      ...madeNow
-        .map((s) => ({
-          minute: s.minute,
-          team: mySide,
-          inName: s.inName,
-          outName: s.outName,
-          playerInId: s.inId,
-          playerOutId: s.outId,
-        }))
-        .reverse(),
-      ...prev,
-    ]);
-    setShowSubs(false);
-    setForcedOutId(null);
     persistLive();
-    toast.success(
-      madeNow.length === 1
-        ? `${madeNow[0].minute}' Cambio: entra ${madeNow[0].inName} por ${madeNow[0].outName}`
-        : `${madeNow.length} cambios realizados`,
-    );
   }
 
   // ------------------------------------- chronicle consistency (played match)
@@ -1681,14 +1884,13 @@ function MatchPage() {
     const oppSide: "home" | "away" = mySide === "home" ? "away" : "home";
 
     const mySquad = getSimSquad(myTeamId);
-    const resultInitialIds = (mySide === "home"
-      ? (result.homeLineup ?? [])
-      : (result.awayLineup ?? []))
+    const resultInitialIds = (
+      mySide === "home" ? (result.homeLineup ?? []) : (result.awayLineup ?? [])
+    )
       .map((p: any) => p?.id)
       .filter(Boolean);
-    const initialIds = initialMyXIRef.current.length > 0
-      ? initialMyXIRef.current
-      : resultInitialIds;
+    const initialIds =
+      initialMyXIRef.current.length > 0 ? initialMyXIRef.current : resultInitialIds;
     const myInitial = initialIds
       .map((id) => mySquad.find((p: any) => p.id === id))
       .filter(Boolean) as any[];
@@ -1713,28 +1915,30 @@ function MatchPage() {
       const byId = new Map(players.map((p) => [p.id, p]));
       for (const sub of substitutions.filter((x) => x.team === side)) {
         const outIndex = players.findIndex((p) => p.id === sub.playerOutId);
-        if (outIndex >= 0) players[outIndex] = byId.get(sub.playerInId) ??
-          (side === mySide
-            ? getSimSquad(myTeamId).find((p: any) => p.id === sub.playerInId)
-            : getSimSquad(fx.homeId === myTeamId ? fx.awayId : fx.homeId).find((p: any) => p.id === sub.playerInId));
+        if (outIndex >= 0)
+          players[outIndex] =
+            byId.get(sub.playerInId) ??
+            (side === mySide
+              ? getSimSquad(myTeamId).find((p: any) => p.id === sub.playerInId)
+              : getSimSquad(fx.homeId === myTeamId ? fx.awayId : fx.homeId).find(
+                  (p: any) => p.id === sub.playerInId,
+                ));
         const inPlayer = players.find((p) => p?.id === sub.playerInId);
         if (inPlayer) byId.set(inPlayer.id, inPlayer);
       }
       return players.filter(Boolean);
     };
 
-    const homeParticipants = mySide === "home"
-      ? actualParticipants(myInitial, "home")
-      : actualParticipants(oppInitial, "home");
-    const awayParticipants = mySide === "away"
-      ? actualParticipants(myInitial, "away")
-      : actualParticipants(oppInitial, "away");
+    const homeParticipants =
+      mySide === "home"
+        ? actualParticipants(myInitial, "home")
+        : actualParticipants(oppInitial, "home");
+    const awayParticipants =
+      mySide === "away"
+        ? actualParticipants(myInitial, "away")
+        : actualParticipants(oppInitial, "away");
 
-    const calculateMinutes = (
-      initial: any[],
-      side: "home" | "away",
-      endMinute: number,
-    ) => {
+    const calculateMinutes = (initial: any[], side: "home" | "away", endMinute: number) => {
       const minutes: Record<string, number> = {};
       const onPitch = new Set(initial.map((p) => p.id));
       const startAt = new Map<string, number>();
@@ -1775,7 +1979,9 @@ function MatchPage() {
       }
 
       for (const id of onPitch) addInterval(id, endMinute);
-      for (const id of new Set(initial.concat(homeParticipants, awayParticipants).map((p) => p.id))) {
+      for (const id of new Set(
+        initial.concat(homeParticipants, awayParticipants).map((p) => p.id),
+      )) {
         minutes[id] = Math.max(0, Math.min(120, Math.round(minutes[id] ?? 0)));
       }
       return minutes;
@@ -1799,8 +2005,12 @@ function MatchPage() {
       cardType: c.cardType,
       minute: Number(c.minute) || 0,
     }));
-    const homeSaves = (result.highlights ?? []).filter((h: any) => h.team === "home" && h.type === "save").length;
-    const awaySaves = (result.highlights ?? []).filter((h: any) => h.team === "away" && h.type === "save").length;
+    const homeSaves = (result.highlights ?? []).filter(
+      (h: any) => h.team === "home" && h.type === "save",
+    ).length;
+    const awaySaves = (result.highlights ?? []).filter(
+      (h: any) => h.team === "away" && h.type === "save",
+    ).length;
     const totalHomeGoals = (result.homeGoals ?? 0) + (result.extraTime?.homeGoals ?? 0);
     const totalAwayGoals = (result.awayGoals ?? 0) + (result.extraTime?.awayGoals ?? 0);
 
@@ -1835,16 +2045,13 @@ function MatchPage() {
 
     const myTeamId = myTeamIdRef.current || save?.myTeamId;
     const mySide: "home" | "away" = fx.homeId === myTeamId ? "home" : "away";
-    const myPlayers = mySide === "home" ? performance.homeParticipants : performance.awayParticipants;
+    const myPlayers =
+      mySide === "home" ? performance.homeParticipants : performance.awayParticipants;
     const myPlayerIds = new Set(myPlayers.map((p: any) => p.id));
     const store = usePlayersStore.getState();
 
     for (const p of myPlayers) {
-      store.recordAppearance(
-        p.id,
-        fx.competition,
-        performance.minutesPlayed[p.id] ?? 0,
-      );
+      store.recordAppearance(p.id, fx.competition, performance.minutesPlayed[p.id] ?? 0);
     }
 
     for (const pr of performance.ratings) {
@@ -1902,12 +2109,55 @@ function MatchPage() {
       playedCardsRef.current.length > 0
         ? playedCardsRef.current.slice().sort((a: any, b: any) => a.minute - b.minute)
         : fx.result.cards;
+    const mySide = mySideOf(fx);
+    const highlights =
+      playedHighlightsRef.current.length > 0
+        ? playedHighlightsRef.current
+            .filter((h: any) => !(h.type === "forced_sub" && h.team === mySide))
+            .slice()
+            .sort((a: any, b: any) => a.minute - b.minute)
+        : (fx.result.highlights || []).filter(
+            (h: any) => !(h.type === "forced_sub" && h.team === mySide),
+          );
     const substitutions = buildPlayedSubstitutions();
 
-    const nextResult = { ...fx.result, events, cards, substitutions };
+    // The live chronicle is the source of truth for the final regular-time
+    // score. The fixture can still contain the pre-simulated score from before
+    // entering the live match (for example 1-0 at half-time), so spreading
+    // fx.result here would resurrect that old score and ignore goals that were
+    // actually played during the fast-forward.
+    const scoreFromLiveEvents = (side: "home" | "away") =>
+      events.reduce((total: number, ev: any) => {
+        if (!["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(ev.type)) {
+          return total;
+        }
+        if (ev.type === "own_goal") {
+          return total + (ev.team !== side ? 1 : 0);
+        }
+        return total + (ev.team === side ? 1 : 0);
+      }, 0);
+
+    const liveHomeGoals = scoreFromLiveEvents("home");
+    const liveAwayGoals = scoreFromLiveEvents("away");
+
+    homeScoreRef.current = liveHomeGoals;
+    awayScoreRef.current = liveAwayGoals;
+    setHomeScore(liveHomeGoals);
+    setAwayScore(liveAwayGoals);
+
+    const nextResult = {
+      ...fx.result,
+      homeGoals: liveHomeGoals,
+      awayGoals: liveAwayGoals,
+      events,
+      cards,
+      highlights,
+      substitutions,
+    };
     fixtureRef.current = { ...fx, result: nextResult } as any;
     allEventsRef.current = events;
     allCardsRef.current = cards;
+    allHighlightsRef.current = highlights;
 
     const performance = recordFinalUserPerformance(nextResult);
     const finalResult = performance
@@ -1925,7 +2175,6 @@ function MatchPage() {
   }
 
   // ------------------------------------------------- rival (CPU) substitutions
-
 
   /** Plan 2-3 substitutions for the CPU side, spread across the second half. */
   function planOpponentSubs() {
@@ -1957,7 +2206,14 @@ function MatchPage() {
   }
 
   function applyOpponentSubsAt(m: number) {
-    const due = oppPlanRef.current.filter((s) => s.minute === m);
+    const alreadyDone = new Set(
+      oppSubsDoneRef.current.map(
+        (s: any) => `${s.minute}|${s.outId ?? s.playerOutId}|${s.inId ?? s.playerInId}`,
+      ),
+    );
+    const due = oppPlanRef.current.filter(
+      (s) => s.minute === m && !alreadyDone.has(`${s.minute}|${s.outId}|${s.inId}`),
+    );
     if (due.length === 0) return;
     const fx = fixtureRef.current;
     if (!fx) return;
@@ -1996,7 +2252,6 @@ function MatchPage() {
     setSubFeed((prev) => [...made.slice().reverse(), ...prev]);
   }
 
-
   function goEditLineupLive() {
     if (!pausedRef.current) pauseMatch("manual");
     else persistLive();
@@ -2012,70 +2267,1405 @@ function MatchPage() {
     });
   }
 
+  function pushCommentary(entry: CommentaryEntry) {
+    const next = [entry, ...commentaryEntriesRef.current].slice(0, 12);
+    commentaryEntriesRef.current = next;
+    setCommentaryEntries(next);
+  }
+
+  function showLiveMoment(moment: LiveMoment, _duration = 2200, recordKeyMoment = true) {
+    // Key moments are deliberate stops: the manager must acknowledge the scene
+    // before the clock is allowed to advance again.
+    if (momentTimerRef.current !== null) {
+      window.clearTimeout(momentTimerRef.current);
+      momentTimerRef.current = null;
+    }
+    setLiveMoment(moment);
+    if (recordKeyMoment) {
+      keyMomentsRef.current = [...keyMomentsRef.current, moment].slice(-8);
+      setKeyMoments(keyMomentsRef.current);
+    }
+    pausedRef.current = true;
+    pauseReasonRef.current = "moment";
+    setIsPaused(true);
+    setPauseReason("moment");
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+    persistLive();
+  }
+
+  function continueLiveMoment() {
+    const scene = pendingSceneRef.current;
+    if (scene?.kind === "penalty_intro") {
+      const source = scene.source;
+      pendingSceneRef.current = null;
+      setLiveMoment(null);
+      openInteractivePenaltyModal(source);
+      return;
+    }
+
+    if (scene?.kind === "prelude") {
+      const source = scene.source;
+      setLiveMoment(null);
+      openRouletteScene(
+        {
+          minute: source?.minute ?? minuteRef.current,
+          team: source?.rawEvents?.[0]?.team ?? source?.rawHighlights?.[0]?.team,
+          playerId: source?.rawEvents?.[0]?.scorerId ?? source?.rawHighlights?.[0]?.playerId,
+          playerName: source?.rawEvents?.[0]?.scorerName ?? source?.rawHighlights?.[0]?.playerName,
+          rawEvents: source?.rawEvents ?? [],
+          rawHighlights: source?.rawHighlights ?? [],
+          rawCards: source?.rawCards ?? [],
+        },
+        "main",
+        source?.rawEvents?.[0]?.type ?? source?.rawHighlights?.[0]?.type,
+      );
+      return;
+    }
+
+    if (scene?.kind === "resolution") {
+      const currentMinute = minuteRef.current;
+      const next = scene.nextRoulette;
+      pendingSceneRef.current = null;
+      setLiveMoment(null);
+      if (next) {
+        openRouletteScene(
+          { ...next, rawEvents: [], rawHighlights: [], rawCards: [] },
+          "followup",
+          next.presetType,
+        );
+        return;
+      }
+      if (currentMinute === 45 && !isExtraTimeRef.current) {
+        halftimePendingAfterMomentRef.current = false;
+        announceHalftime(false);
+        pauseMatch("halftime");
+        return;
+      }
+      if (currentMinute >= 90 && !isExtraTimeRef.current) {
+        finishRegularLiveMatch();
+        return;
+      }
+      if (currentMinute === 105 && isExtraTimeRef.current) {
+        announceHalftime(true);
+        pauseMatch("et_halftime");
+        return;
+      }
+      if (currentMinute >= 120 && isExtraTimeRef.current) {
+        handleExtraTimeFinished();
+        return;
+      }
+      pausedRef.current = false;
+      pauseReasonRef.current = null;
+      setIsPaused(false);
+      setPauseReason(null);
+      persistLive();
+      restartLiveClock();
+      return;
+    }
+
+    if (!liveMoment) return;
+    const currentMinute = minuteRef.current;
+    const wasUserInjury =
+      ["injury", "injury_substitution"].includes(liveMoment.type) &&
+      liveMoment.teamSide === mySideOf(fixtureRef.current);
+    const shouldOpenLineupForInjury =
+      wasUserInjury && (liveMoment as any).forceLineupEdit !== false;
+    setLiveMoment(null);
+    pendingSceneRef.current = null;
+    if (momentTimerRef.current !== null) {
+      window.clearTimeout(momentTimerRef.current);
+      momentTimerRef.current = null;
+    }
+
+    if (shouldOpenLineupForInjury) {
+      goEditLineupLive();
+      return;
+    }
+
+    if (currentMinute >= 90 && !isExtraTimeRef.current) {
+      finishRegularLiveMatch();
+      return;
+    }
+
+    if (halftimePendingAfterMomentRef.current && currentMinute === 45) {
+      halftimePendingAfterMomentRef.current = false;
+      pauseMatch("halftime");
+      return;
+    }
+
+    pausedRef.current = false;
+    pauseReasonRef.current = null;
+    setIsPaused(false);
+    setPauseReason(null);
+    persistLive();
+    restartLiveClock();
+  }
+
+  function handleRouletteFinished(outcomeId: string) {
+    resolveRouletteOutcome(outcomeId);
+  }
+
+  function registerMomentum(next: number, m: number) {
+    momentumRef.current = next;
+    setMomentum(next);
+    const point = { minute: m, value: next };
+    momentumHistoryRef.current = [...momentumHistoryRef.current, point].slice(-91);
+    setMomentumHistory(momentumHistoryRef.current);
+  }
+
+  function currentAvgStamina() {
+    const values = myXIRef.current.map((id) => staminaRef.current[id] ?? STAMINA_START);
+    return averageNumbers(values);
+  }
+
+  function pushContextualNarrative(m: number, decisionApplied: string | null = null) {
+    const fx = fixtureRef.current;
+    if (!fx) return;
+    const myId = myTeamIdRef.current || save?.myTeamId;
+    const mySide: "home" | "away" = fx.homeId === myId ? "home" : "away";
+    const userTeam = mySide === "home" ? teamById(fx.homeId) : teamById(fx.awayId);
+    const opponentTeam = mySide === "home" ? teamById(fx.awayId) : teamById(fx.homeId);
+    if (!userTeam || !opponentTeam) return;
+
+    const recentEvents = playedEventsRef.current.filter((e) => e.minute >= m - 8 && e.minute <= m);
+    const recentHighlights = playedHighlightsRef.current.filter(
+      (h) => h.minute >= m - 8 && h.minute <= m,
+    );
+    const recentSubs = [
+      ...subsRef.current.map((x: any) => ({ ...x, team: mySide })),
+      ...(oppSubsDoneRef.current || []),
+    ].filter((x: any) => x.minute >= m - 8 && x.minute <= m);
+
+    const entry = buildNarrativeCommentary({
+      minute: m,
+      userTeamName: userTeam.name,
+      opponentName: opponentTeam.name,
+      momentum: momentumRef.current,
+      homeScore: homeScoreRef.current,
+      awayScore: awayScoreRef.current,
+      userSide: mySide,
+      recentEvents,
+      recentHighlights,
+      recentSubs,
+      decisionApplied,
+      recentNarratives: commentaryEntriesRef.current,
+    });
+    // Generic tactical narration is not tied to a footballer. Do not attach a
+    // random face merely because another event happened in the same time window.
+    // Player faces are reserved for comments explicitly generated about that player.
+    pushCommentary({
+      ...entry,
+      playerId: entry.playerId,
+      playerName: entry.playerName,
+      teamSide: entry.teamSide,
+    });
+  }
+
+  function getCurrentPitchPlayers(team: "home" | "away") {
+    const myId = myTeamIdRef.current || save?.myTeamId;
+    const mySide: "home" | "away" = fixtureRef.current?.homeId === myId ? "home" : "away";
+    return team === mySide
+      ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
+      : oppXIRef.current;
+  }
+
+  function openInteractivePenaltyModal(source: any) {
+    const fx = fixtureRef.current;
+    if (!fx) return;
+    const myId = myTeamIdRef.current || save?.myTeamId;
+    const mySide: "home" | "away" = fx.homeId === myId ? "home" : "away";
+    const attackingPlayers = (getCurrentPitchPlayers(source.team) as any[]).filter(
+      (p) => p && !p.positions?.includes("GK"),
+    );
+    const tactics = loadTactics(myId || "");
+    const designatedId = source.team === mySide ? tactics.penaltyTakerId : null;
+    const sorted = attackingPlayers.slice().sort((a, b) => b.rating - a.rating);
+    const preferred =
+      attackingPlayers.find((p) => p.id === designatedId) ??
+      attackingPlayers.find((p) => p.id === source.scorerId) ??
+      attackingPlayers
+        .slice()
+        .sort(
+          (a, b) =>
+            Number(b.penaltyRating ?? b.penalties ?? b.rating ?? 0) -
+            Number(a.penaltyRating ?? a.penalties ?? a.rating ?? 0),
+        )[0] ??
+      sorted[0];
+    const defendingPlayers = getCurrentPitchPlayers(
+      source.team === "home" ? "away" : "home",
+    ) as any[];
+    const keeper = defendingPlayers.find((p) => p?.positions?.includes("GK"));
+    const attacking = source.team === mySide;
+
+    pendingPenaltySourceRef.current = source;
+    if ((Number(source.minute) || minuteRef.current) === 45)
+      halftimePendingAfterMomentRef.current = true;
+    pendingPenaltyZoneRef.current = null;
+    setPendingPenalty({
+      minute: Number(source.minute) || minuteRef.current,
+      teamName:
+        source.team === "home"
+          ? (fx.homeTeam?.name ?? "Local")
+          : (fx.awayTeam?.name ?? "Visitante"),
+      attacking,
+      takerId: preferred?.id,
+      takerName: preferred?.name,
+      keeperName: keeper?.name,
+      keeperId: keeper?.id,
+      teamLeagueName:
+        source.team === "home"
+          ? getLeagueName(fx.homeTeam?.league ?? home.league)
+          : getLeagueName(fx.awayTeam?.league ?? away.league),
+      takerRating: preferred?.rating,
+      keeperRating: keeper?.rating,
+      baselineScored: source.type === "penalty_goal",
+      detail: source.detail,
+    });
+    pausedRef.current = true;
+    pauseReasonRef.current = "penalty";
+    setIsPaused(true);
+    setPauseReason("penalty");
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+  }
+
+  function queueInteractivePenalty(source: any) {
+    const fx = fixtureRef.current;
+    if (!fx) return;
+    const attacking = source.team === mySideOf(fx);
+    const teamName = source.team === "home" ? home.name : away.name;
+    const kickerName = source.scorerName || (attacking ? "El lanzador" : "El rival");
+    const intro: any = {
+      id: `penalty-intro-${source.minute}-${source.team}-${source.scorerId || "unknown"}`,
+      type: "penalty_intro",
+      minute: Number(source.minute) || minuteRef.current,
+      kicker: "🚨 Penalti",
+      title: "PENALTI",
+      body: attacking
+        ? `${kickerName} se prepara desde los once metros. Esta vez tú decides dónde colocarlo.`
+        : `${teamName} se prepara para lanzar. Lee el momento y decide dónde quieres lanzarte.`,
+      playerName: kickerName,
+      playerId: source.scorerId || undefined,
+      teamName,
+      teamLeagueName:
+        source.team === "home"
+          ? getLeagueName(fx.homeTeam?.league ?? home.league)
+          : getLeagueName(fx.awayTeam?.league ?? away.league),
+      emoji: "🚨",
+      detail: attacking
+        ? "Nueve zonas. Un instante para decidir."
+        : "Elige una de las nueve zonas e intenta adivinar al lanzador.",
+      hardPause: true,
+      teamSide: source.team,
+    };
+    pendingPenaltySourceRef.current = source;
+    pendingSceneRef.current = { kind: "penalty_intro", moment: intro, source };
+    if ((Number(source.minute) || minuteRef.current) === 45)
+      halftimePendingAfterMomentRef.current = true;
+    showLiveMoment(intro, 2200, false);
+  }
+
+  function resolveInteractivePenalty(zoneId: PenaltyZoneId) {
+    const pending = pendingPenalty;
+    const source = pendingPenaltySourceRef.current;
+    const fx = fixtureRef.current;
+    if (!pending || !source || !fx) return;
+
+    const attackingSide = source.team as "home" | "away";
+    const attackingPlayers = getCurrentPitchPlayers(attackingSide) as any[];
+    const selected =
+      attackingPlayers.find((p) => p.id === pending.takerId) ??
+      attackingPlayers.find((p) => p.id === source.scorerId) ??
+      attackingPlayers
+        .slice()
+        .sort(
+          (a, b) =>
+            Number(b.penaltyRating ?? b.penalties ?? b.rating ?? 0) -
+            Number(a.penaltyRating ?? a.penalties ?? a.rating ?? 0),
+        )[0] ??
+      attackingPlayers.find((p) => !p.positions?.includes("GK"));
+    const defendingPlayers = getCurrentPitchPlayers(
+      attackingSide === "home" ? "away" : "home",
+    ) as any[];
+    const keeper = defendingPlayers.find((p) => p?.positions?.includes("GK"));
+
+    const takerRating = Number(selected?.rating ?? 74);
+    const takerMorale = Number(selected?.morale ?? 70);
+    const keeperRating = Number(keeper?.rating ?? 72);
+    const baselineBias = pending.baselineScored ? 0.035 : -0.025;
+    const zoneQuality: Record<PenaltyZoneId, number> = {
+      "top-left": 0.095,
+      "top-center": 0.03,
+      "top-right": 0.095,
+      "mid-left": 0.065,
+      center: -0.14,
+      "mid-right": 0.065,
+      "bottom-left": 0.085,
+      "bottom-center": -0.07,
+      "bottom-right": 0.085,
+    };
+    let scored = false;
+    if (pending.attacking) {
+      // Scoring is generally more likely than saving, but a poor target creates
+      // a very real danger. Corners are rewarding; central areas are traps.
+      const accuracy = (takerRating - 70) * 0.0065 + (takerMorale - 70) * 0.0015;
+      const keeperFactor = (keeperRating - 75) * 0.0032;
+      const chance = Math.max(
+        0.48,
+        Math.min(0.94, 0.73 + accuracy + zoneQuality[zoneId] + baselineBias - keeperFactor),
+      );
+      scored = Math.random() < chance;
+    } else {
+      // Goalkeeper mode: the user guesses one of the nine zones. The striker
+      // chooses his target using a weighted roll, with better attackers keeping
+      // more of their shots away from the centre.
+      const weights: Record<PenaltyZoneId, number> = {
+        "top-left": 1.2,
+        "top-center": 0.7,
+        "top-right": 1.2,
+        "mid-left": 1.05,
+        center: 0.9,
+        "mid-right": 1.05,
+        "bottom-left": 1.15,
+        "bottom-center": 0.8,
+        "bottom-right": 1.15,
+      };
+      const entries = Object.entries(weights) as [PenaltyZoneId, number][];
+      let roll = Math.random() * entries.reduce((sum, [, weight]) => sum + weight, 0);
+      let target: PenaltyZoneId = "center";
+      for (const [id, weight] of entries) {
+        roll -= weight;
+        if (roll <= 0) {
+          target = id;
+          break;
+        }
+      }
+      const guessed = target === zoneId;
+      const targetDifficulty = zoneQuality[target];
+      const reflex = (keeperRating - 72) * 0.006;
+      const strikerQuality = (takerRating - 74) * 0.004;
+      const saveChance = Math.max(
+        0.08,
+        Math.min(
+          0.76,
+          0.12 + reflex - strikerQuality + (guessed ? 0.39 : 0.015) - targetDifficulty * 0.45,
+        ),
+      );
+      scored = Math.random() >= saveChance;
+    }
+    pendingPenaltyZoneRef.current = zoneId;
+    const playerName = selected?.name ?? pending.takerName ?? source.scorerName ?? "Lanzador";
+    if (source.type === "penalty_goal") {
+      // The quick simulation has already credited the baseline taker. Reconcile
+      // that credit with the manager's live decision (miss or different taker).
+      if (!scored || (selected?.id && selected.id !== source.scorerId)) {
+        try {
+          usePlayersStore.getState().unrecordGoal(source.scorerId, fx.competition);
+        } catch {}
+      }
+      if (scored && selected?.id && selected.id !== source.scorerId) {
+        try {
+          usePlayersStore.getState().recordGoal(selected.id, fx.competition);
+        } catch {}
+      }
+    } else if (source.type === "penalty_missed" && scored && selected?.id) {
+      try {
+        usePlayersStore.getState().recordGoal(selected.id, fx.competition);
+      } catch {}
+    } else if (source._fromRoulette && scored && selected?.id) {
+      try {
+        usePlayersStore.getState().recordGoal(selected.id, fx.competition);
+      } catch {}
+    }
+
+    const finalEvent: any = {
+      minute: Number(source.minute) || minuteRef.current,
+      team: attackingSide,
+      type: "penalty_goal",
+      scorerId: selected?.id ?? source.scorerId,
+      scorerName: playerName,
+      detail: source.detail || "Penalti",
+    };
+
+    if (scored) {
+      playedEventsRef.current = [...playedEventsRef.current, finalEvent];
+      setFeed((prev) => [finalEvent, ...prev]);
+      if (attackingSide === "home") {
+        homeScoreRef.current += 1;
+        setHomeScore(homeScoreRef.current);
+      } else {
+        awayScoreRef.current += 1;
+        setAwayScore(awayScoreRef.current);
+      }
+      const teamName = attackingSide === "home" ? home.name : away.name;
+      registerMomentum(Math.min(92, momentumRef.current + 12), minuteRef.current);
+      pushCommentary({
+        id: `penalty-goal-${finalEvent.minute}-${finalEvent.scorerId}`,
+        minute: finalEvent.minute,
+        tone: "celebration",
+        text: `${playerName} no falla desde los once metros. El ${teamName} convierte la tensión en ventaja.`,
+      });
+      showLiveMoment(
+        buildMomentFromEvent({ event: finalEvent, homeName: home.name, awayName: away.name }),
+        2800,
+      );
+    } else {
+      const missHighlight: any = {
+        minute: Number(source.minute) || minuteRef.current,
+        team: attackingSide,
+        type: "penalty_missed",
+        playerId: selected?.id ?? source.scorerId,
+        playerName,
+        detail: pending.keeperName
+          ? `${source.detail || "Penalti"} — lo detiene ${pending.keeperName}`
+          : `${source.detail || "Penalti"} — fuera`,
+      };
+      playedHighlightsRef.current = [...playedHighlightsRef.current, missHighlight];
+      setHighlightFeed((prev) => [missHighlight, ...prev]);
+      registerMomentum(Math.max(8, momentumRef.current - 7), minuteRef.current);
+      pushCommentary({
+        id: `penalty-miss-${missHighlight.minute}-${missHighlight.playerId}`,
+        minute: missHighlight.minute,
+        tone: "dramatic",
+        text: `${playerName} desperdicia una oportunidad enorme desde los once metros. El partido vuelve a quedar abierto.`,
+      });
+      showLiveMoment(
+        buildMomentFromHighlight({
+          highlight: missHighlight,
+          homeName: home.name,
+          awayName: away.name,
+        }),
+        2500,
+      );
+    }
+
+    // Replace the precomputed penalty in the stored live result so reloads do not
+    // show the old outcome a second time. This also keeps the final fixture score
+    // aligned with what actually happened on the pitch.
+    const correctedResult: any = { ...fx.result };
+    let correctedEvents = [...(correctedResult.events || [])];
+    let correctedHighlights = [...(correctedResult.highlights || [])];
+    if (source.type === "penalty_goal") {
+      correctedEvents = correctedEvents.filter((e: any) => e !== source);
+      if (scored) correctedEvents.push(finalEvent);
+    } else {
+      correctedHighlights = correctedHighlights.filter((h: any) => h !== source);
+      if (!scored) correctedHighlights.push(missHighlight);
+    }
+    correctedResult.events = correctedEvents.sort((a: any, b: any) => a.minute - b.minute);
+    correctedResult.highlights = correctedHighlights.sort((a: any, b: any) => a.minute - b.minute);
+    correctedResult.homeGoals = homeScoreRef.current;
+    correctedResult.awayGoals = awayScoreRef.current;
+    fixtureRef.current = { ...fx, result: correctedResult } as any;
+    allEventsRef.current = correctedResult.events;
+    allHighlightsRef.current = correctedResult.highlights;
+
+    pendingPenaltySourceRef.current = null;
+    pendingPenaltyZoneRef.current = null;
+    setPendingPenalty(null);
+    // The penalty result remains on screen until the manager explicitly presses
+    // Continue. There is no automatic timeout, especially in the final minutes.
+    persistLive();
+  }
+
+  /** A manager order can tip one real upcoming moment without inventing football from thin air. */
+  function applyDecisionToUpcomingFootball(effects: any) {
+    const fx = fixtureRef.current;
+    if (!fx?.result) return;
+    const myId = myTeamIdRef.current || save?.myTeamId;
+    const mySide: "home" | "away" = fx.homeId === myId ? "home" : "away";
+    const attackPush = Number(effects.attack ?? 1) - 1;
+    const counterPush = Number(effects.counter ?? 1) - 1;
+    const defensePush = Number(effects.defense ?? 1) - 1;
+    const staminaCost = Number(effects.staminaMultiplier ?? 1) - 1;
+    const riskPush = Number(effects.risk ?? 0) / 100;
+    const delta =
+      attackPush * 1.15 +
+      counterPush * 0.65 -
+      defensePush * 0.95 +
+      riskPush * 0.35 -
+      staminaCost * 0.45;
+    outcomeBiasRef.current = Math.max(-0.45, Math.min(0.45, outcomeBiasRef.current + delta));
+    const bias = outcomeBiasRef.current;
+    const minute = minuteRef.current;
+    const futureEnd = Math.min(90, minute + 20);
+    if (Math.abs(bias) < 0.035) return;
+
+    const events = [...(allEventsRef.current || [])];
+    const highlights = [...(allHighlightsRef.current || [])];
+    const isGoal = (type: any) => ["goal", "free_kick_goal", "own_goal"].includes(type);
+
+    if (bias > 0 && Math.random() < Math.min(0.84, 0.28 + bias * 0.95)) {
+      const candidate = highlights.find(
+        (h: any) =>
+          h.minute > minute &&
+          h.minute <= futureEnd &&
+          h.team === mySide &&
+          h.type === "big_chance" &&
+          !events.some((e: any) => e.minute === h.minute && isGoal(e.type)),
+      );
+      if (candidate) {
+        const goal: any = {
+          minute: candidate.minute,
+          team: mySide,
+          type: "goal",
+          scorerId: candidate.playerId,
+          scorerName: candidate.playerName,
+          detail: "La orden acelera la jugada y la gran ocasión se convierte en gol.",
+        };
+        allEventsRef.current = [...events.filter((e: any) => e !== candidate), goal].sort(
+          (a: any, b: any) => a.minute - b.minute,
+        );
+        allHighlightsRef.current = highlights.filter((h: any) => h !== candidate);
+        fixtureRef.current = {
+          ...fx,
+          result: {
+            ...fx.result,
+            events: allEventsRef.current,
+            highlights: allHighlightsRef.current,
+          },
+        } as any;
+        outcomeBiasRef.current *= 0.35;
+        return;
+      }
+    }
+
+    if (bias < 0 && Math.random() < Math.min(0.8, 0.25 + Math.abs(bias) * 0.9)) {
+      const candidate = events.find(
+        (e: any) =>
+          e.minute > minute &&
+          e.minute <= futureEnd &&
+          e.team !== mySide &&
+          ["goal", "free_kick_goal", "own_goal"].includes(e.type),
+      );
+      if (candidate) {
+        const chance: any = {
+          minute: candidate.minute,
+          team: candidate.team,
+          type: "big_chance",
+          playerId: candidate.scorerId,
+          playerName: candidate.scorerName,
+          detail: "El ajuste defensivo evita el golpe definitivo, pero el susto sigue ahí.",
+        };
+        allEventsRef.current = events.filter((e: any) => e !== candidate);
+        allHighlightsRef.current = [...highlights, chance].sort(
+          (a: any, b: any) => a.minute - b.minute,
+        );
+        fixtureRef.current = {
+          ...fx,
+          result: {
+            ...fx.result,
+            events: allEventsRef.current,
+            highlights: allHighlightsRef.current,
+          },
+        } as any;
+        outcomeBiasRef.current *= 0.35;
+      }
+    }
+  }
+
+  function applyMinuteOutcome(m: number, rawEvents: any[], rawCards: any[], rawHighlights: any[]) {
+    const events = rawEvents.map(remapEventToPitch);
+    const cards = rawCards.map(remapCardToPitch);
+    const hls = rawHighlights.filter(
+      (h: any) => !["penalty_missed", "forced_sub"].includes(h.type),
+    );
+
+    if (hls.length > 0) {
+      playedHighlightsRef.current = [...playedHighlightsRef.current, ...hls];
+      setHighlightFeed((prev) => [...hls, ...prev]);
+    }
+    if (events.length > 0) {
+      playedEventsRef.current = [...playedEventsRef.current, ...events];
+      setFeed((prev) => [...events, ...prev]);
+      for (const ev of events) {
+        if (!["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(ev.type)) continue;
+        if (ev.team === "home") {
+          homeScoreRef.current += 1;
+          setHomeScore(homeScoreRef.current);
+        } else {
+          awayScoreRef.current += 1;
+          setAwayScore(awayScoreRef.current);
+        }
+      }
+    }
+    if (cards.length > 0) {
+      playedCardsRef.current = [...playedCardsRef.current, ...cards];
+      setCardFeed((prev) => [...cards, ...prev]);
+      const mySide =
+        fixtureRef.current?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
+      for (const c of cards) {
+        if (
+          c.team === mySide &&
+          (c.cardType === "red" || c.isSecondYellow) &&
+          myXIRef.current.includes(c.playerId)
+        ) {
+          playWithOneLess(c.playerId, c.playerName);
+        }
+      }
+    }
+    applyOpponentSubsAt(m);
+    return { events, cards, hls };
+  }
+
+  function getDangerAttacker(side: "home" | "away", preferredId?: string) {
+    const players = (getCurrentPitchPlayers(side) as any[]).filter(
+      (p) => p && !p.positions?.includes("GK"),
+    );
+    return (
+      players.find((p) => p.id === preferredId) ??
+      players.slice().sort((a, b) => Number(b.rating ?? 0) - Number(a.rating ?? 0))[0]
+    );
+  }
+
+  function getDangerKeeper(side: "home" | "away") {
+    return (getCurrentPitchPlayers(side) as any[]).find((p) => p?.positions?.includes("GK"));
+  }
+
+  function clampRouletteWeight(value: number) {
+    return Math.max(1, Math.min(60, value));
+  }
+
+  function liveTeamStrength(side: "home" | "away") {
+    const players = getCurrentPitchPlayers(side) as any[];
+    const ratings = players.filter(Boolean).map((p) => Number(p.rating ?? 70));
+    if (!ratings.length) return 70;
+    return averageNumbers(ratings);
+  }
+
+  function pickWeightedRoulette(outcomes: RouletteOutcome[]) {
+    const total = outcomes.reduce((sum, item) => sum + Math.max(0.01, item.weight), 0);
+    let roll = Math.random() * total;
+    for (const item of outcomes) {
+      roll -= Math.max(0.01, item.weight);
+      if (roll <= 0) return item.id;
+    }
+    return outcomes[outcomes.length - 1]?.id ?? "blocked";
+  }
+
+  function buildLiveRouletteOutcomes(
+    side: "home" | "away",
+    presetType?: string,
+    stage: "main" | "followup" = "main",
+  ): RouletteOutcome[] {
+    const fx = fixtureRef.current;
+    const userSide = mySideOf(fx);
+    const attackStrength = liveTeamStrength(side);
+    const defendStrength = liveTeamStrength(side === "home" ? "away" : "home");
+    const strengthDelta = Math.max(-20, Math.min(20, attackStrength - defendStrength));
+    const momentumForAttack = side === userSide ? momentumRef.current : 100 - momentumRef.current;
+    const contextualEdge = Math.max(
+      -18,
+      Math.min(18, (momentumForAttack - 50) * 0.7 + strengthDelta * 0.7),
+    );
+    const quality = Math.max(-1, Math.min(1, contextualEdge / 24));
+
+    const base =
+      stage === "main"
+        ? [
+            { id: "goal", label: "Gol", emoji: "⚽", weight: 17 },
+            { id: "save", label: "Parada", emoji: "🧤", weight: 15 },
+            { id: "woodwork", label: "Palo", emoji: "🥅", weight: 9 },
+            { id: "corner", label: "Córner", emoji: "🚩", weight: 16 },
+            { id: "penalty", label: "Penalti", emoji: "🚨", weight: 6 },
+            { id: "counter", label: "Contra", emoji: "⚡", weight: 10 },
+            { id: "blocked", label: "Bloqueo", emoji: "🛡️", weight: 14 },
+            { id: "offside", label: "Fuera de juego", emoji: "🚩", weight: 7 },
+            { id: "miss", label: "Fuera", emoji: "↗️", weight: 6 },
+          ]
+        : [
+            { id: "goal", label: "Gol", emoji: "⚽", weight: 22 },
+            { id: "save", label: "Parada", emoji: "🧤", weight: 15 },
+            { id: "woodwork", label: "Palo", emoji: "🥅", weight: 9 },
+            { id: "counter", label: "Contra", emoji: "⚡", weight: 12 },
+            { id: "penalty", label: "Penalti", emoji: "🚨", weight: 5 },
+            { id: "corner", label: "Córner", emoji: "🚩", weight: 11 },
+            { id: "blocked", label: "Despeje", emoji: "🛡️", weight: 15 },
+            { id: "miss", label: "Fuera", emoji: "↗️", weight: 11 },
+          ];
+
+    for (const item of base) {
+      if (["goal", "woodwork", "save"].includes(item.id))
+        item.weight += quality * ({ goal: 9, woodwork: 2, save: -5 } as any)[item.id];
+      if (item.id === "counter") item.weight += -quality * 3;
+      if (item.id === "penalty") item.weight += Math.max(-1.5, Math.min(2.5, quality * 1.5));
+    }
+
+    // The pre-simulated event is a soft hint, not the final result. This keeps
+    // the underlying match strength meaningful while allowing the roulette to
+    // genuinely branch into another football scenario.
+    const hintMap: Record<string, string> = {
+      goal: "goal",
+      free_kick_goal: "goal",
+      own_goal: "goal",
+      save: "save",
+      woodwork: "woodwork",
+      big_chance: "goal",
+      penalty_goal: "penalty",
+      penalty_missed: "penalty",
+      penalty_awarded: "penalty",
+    };
+    const hinted = hintMap[presetType || ""];
+    if (hinted) {
+      const target = base.find((item) => item.id === hinted);
+      if (target) target.weight += hinted === "goal" ? 7 : hinted === "penalty" ? 5 : 5;
+    }
+
+    return base.map((item) => ({ ...item, weight: clampRouletteWeight(item.weight) }));
+  }
+
+  function rouletteDataForScene(
+    source: { minute: number; team: "home" | "away"; playerId?: string; playerName?: string },
+    stage: "main" | "followup" = "main",
+    presetType?: string,
+  ): LiveRouletteData {
+    const teamName = source.team === "home" ? home.name : away.name;
+    const attacking = source.team === mySideOf(fixtureRef.current);
+    const outcomes = buildLiveRouletteOutcomes(source.team, presetType, stage);
+    const selectedOutcomeId = pickWeightedRoulette(outcomes);
+    return {
+      id: `roulette-${source.minute}-${source.team}-${stage}-${Math.random().toString(36).slice(2, 8)}`,
+      minute: source.minute,
+      teamName,
+      playerName: source.playerName,
+      playerId: source.playerId,
+      sideLabel: attacking ? "Atacando el área" : "Buscando crear peligro",
+      outcomes,
+      selectedOutcomeId,
+      stageLabel:
+        stage === "main"
+          ? "La acción entra en zona de peligro"
+          : "Segunda jugada · la acción continúa",
+    };
+  }
+
+  function openRouletteScene(
+    source: any,
+    stage: "main" | "followup" = "main",
+    presetType?: string,
+  ) {
+    const data = rouletteDataForScene(
+      {
+        minute: Number(source.minute) || minuteRef.current,
+        team: source.team,
+        playerId: source.playerId || source.scorerId,
+        playerName: source.playerName || source.scorerName,
+      },
+      stage,
+      presetType,
+    );
+    const rouletteSource = { ...source, rouletteStage: stage };
+    pendingSceneRef.current = {
+      kind: "roulette",
+      roulette: data,
+      source: rouletteSource,
+    };
+    pausedRef.current = true;
+    pauseReasonRef.current = "moment";
+    setIsPaused(true);
+    setPauseReason("moment");
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+    setRoulette(data);
+    persistLive();
+  }
+
+  function stageDangerBeforeResolution(
+    m: number,
+    rawEvents: any[],
+    rawCards: any[],
+    rawHighlights: any[],
+  ) {
+    const fx = fixtureRef.current;
+    if (!fx) return false;
+
+    const goal = rawEvents.find((e: any) =>
+      ["goal", "free_kick_goal", "own_goal"].includes(e.type),
+    );
+    const keyHighlight = !goal
+      ? rawHighlights.find(
+          (h: any) =>
+            ["save", "woodwork", "big_chance", "penalty_awarded"].includes(h.type) &&
+            (h.type !== "save" || h.detail === "¡Paradón!"),
+        )
+      : null;
+    if (!goal && !keyHighlight) return false;
+
+    const dangerBase = goal
+      ? buildGoalPrelude({ event: goal, homeName: home.name, awayName: away.name })
+      : keyHighlight?.type === "save"
+        ? buildSavePrelude({ highlight: keyHighlight, homeName: home.name, awayName: away.name })
+        : buildDangerPreludeFromHighlight({
+            highlight: keyHighlight,
+            homeName: home.name,
+            awayName: away.name,
+          });
+
+    const dangerSide = (goal?.team ?? keyHighlight?.team) as "home" | "away";
+    const attacking = dangerSide === mySideOf(fx);
+    const danger = {
+      ...dangerBase,
+      type: goal ? "goal_prelude" : "danger_chance",
+      kicker: "🚨 Jugada en directo",
+      title: goal ? "¡PELIGRO!" : dangerBase.title,
+      body: attacking
+        ? `${dangerBase.body} La acción entra en zona de definición.`
+        : `${dangerBase.body} El rival ha encontrado un hueco y la defensa intenta contenerlo.`,
+      actionPrompt: undefined,
+      choices: undefined,
+    };
+
+    lastMajorMomentMinuteRef.current = m;
+    pendingSceneRef.current = {
+      kind: "prelude",
+      moment: danger,
+      source: { rawEvents, rawCards, rawHighlights, minute: m },
+    };
+    if (m === 45) halftimePendingAfterMomentRef.current = true;
+    drainStamina();
+    persistLive();
+    showLiveMoment(danger, 2200, false);
+    return true;
+  }
+
+  function syntheticHighlightFromRoulette(
+    source: any,
+    outcomeId: string,
+    player: any,
+    keeper: any,
+  ) {
+    const team = source.team as "home" | "away";
+    const minute = Number(source.minute) || minuteRef.current;
+    const common = {
+      minute,
+      team,
+      playerId: player?.id || source.playerId || source.scorerId || "",
+      playerName: player?.name || source.playerName || source.scorerName || "Jugador",
+    };
+    switch (outcomeId) {
+      case "save":
+        return {
+          ...common,
+          type: "save",
+          detail: keeper ? `Parada de ${keeper.name}.` : "El portero responde al remate.",
+        };
+      case "woodwork":
+        return {
+          ...common,
+          type: "woodwork",
+          detail: "El balón golpea en el palo y sale despedido.",
+        };
+      case "corner":
+        return { ...common, type: "corner", detail: `${common.playerName} fuerza un córner.` };
+      case "counter":
+        return {
+          ...common,
+          type: "counterattack",
+          detail: `${common.playerName} recupera la segunda jugada y abre una contra.`,
+        };
+      case "blocked":
+        return {
+          ...common,
+          type: "blocked_shot",
+          detail: "La defensa se cruza a tiempo y bloquea el remate.",
+        };
+      case "offside":
+        return {
+          ...common,
+          type: "offside",
+          detail: "La línea defensiva adelanta un paso y deja al atacante en fuera de juego.",
+        };
+      default:
+        return { ...common, type: "big_chance", detail: "La ocasión se pierde por centímetros." };
+    }
+  }
+
+  function buildRouletteGoal(source: any, player: any) {
+    const team = source.team as "home" | "away";
+    const minute = Number(source.minute) || minuteRef.current;
+    return {
+      minute,
+      team,
+      type: "goal",
+      scorerId: player?.id || source.scorerId,
+      scorerName: player?.name || source.playerName || source.scorerName || "El rematador",
+      assistId: source.assistId,
+      assistName: source.assistName,
+      detail: source.detail || "La jugada termina en gol.",
+    };
+  }
+
+  function resolveRouletteOutcome(outcomeId: string) {
+    const scene = pendingSceneRef.current;
+    if (!scene?.roulette || !scene.source) return;
+    const source = scene.source;
+    const team = source.team as "home" | "away";
+    const attacker = getDangerAttacker(team, source.playerId || source.scorerId);
+    const keeper = getDangerKeeper(team === "home" ? "away" : "home");
+    const fx = fixtureRef.current;
+    if (!fx) return;
+
+    const originalEvents = [...(source.rawEvents || [])];
+    const originalHighlights = [...(source.rawHighlights || [])];
+    const originalGoal = originalEvents.find((e: any) =>
+      ["goal", "free_kick_goal", "own_goal"].includes(e.type),
+    );
+    const originalHighlight = originalHighlights.find((h: any) =>
+      ["save", "woodwork", "big_chance", "penalty_awarded", "penalty_missed"].includes(h.type),
+    );
+
+    // playSpecificFixture already wrote the pre-simulated goals/assists to the
+    // persistent player stats. Once the roulette takes control we must remove
+    // that provisional scoring and re-add only what actually happens live.
+    if (originalGoal && originalGoal.type !== "own_goal") {
+      try {
+        usePlayersStore.getState().unrecordGoal(originalGoal.scorerId, fx.competition);
+      } catch {}
+      if (originalGoal.assistId) {
+        try {
+          usePlayersStore.getState().unrecordAssist(originalGoal.assistId, fx.competition);
+        } catch {}
+      }
+    }
+
+    const remainingHighlights = originalHighlights.filter((h: any) => h !== originalHighlight);
+    const removeOriginal = () => {
+      allEventsRef.current = (allEventsRef.current || []).filter((e: any) => e !== originalGoal);
+      allHighlightsRef.current = (allHighlightsRef.current || []).filter(
+        (h: any) => h !== originalHighlight,
+      );
+      fixtureRef.current = fx.result
+        ? ({
+            ...fx,
+            result: {
+              ...fx.result,
+              events: allEventsRef.current,
+              highlights: allHighlightsRef.current,
+            },
+          } as any)
+        : fx;
+    };
+
+    removeOriginal();
+
+    if (outcomeId === "penalty") {
+      const penaltySource = {
+        minute: source.minute,
+        team,
+        type: "penalty_awarded",
+        scorerId: attacker?.id || source.scorerId,
+        scorerName: attacker?.name || source.playerName || source.scorerName || "El atacante",
+        detail: "Penalti señalado tras la jugada.",
+        _fromRoulette: true,
+      };
+      pendingSceneRef.current = { kind: "penalty_intro", moment: null, source: penaltySource };
+      setLiveMoment({
+        id: `penalty-awarded-${minuteRef.current}-${team}-${Math.random().toString(36).slice(2, 7)}`,
+        type: "penalty_awarded",
+        minute: Number(source.minute) || minuteRef.current,
+        kicker: "🚨 Penalti",
+        title: "PENALTI",
+        body:
+          team === mySideOf(fx)
+            ? "El árbitro señala los once metros. Prepárate para el lanzamiento."
+            : "El rival dispone de un penalti. Tendrás que intentar detenerlo.",
+        playerName: attacker?.name || source.playerName,
+        playerId: attacker?.id || source.playerId,
+        teamName: team === "home" ? home.name : away.name,
+        teamSide: team,
+        emoji: "🚨",
+        hardPause: true,
+      });
+      setRoulette(null);
+      persistLive();
+      return;
+    }
+
+    if (
+      (outcomeId === "corner" || outcomeId === "counter") &&
+      source.rouletteStage !== "followup"
+    ) {
+      const branch = syntheticHighlightFromRoulette(source, outcomeId, attacker, keeper);
+      applyMinuteOutcome(Number(source.minute) || minuteRef.current, [], source.rawCards || [], [
+        ...remainingHighlights,
+        branch,
+      ]);
+      const resolution = {
+        id: `resolution-${outcomeId}-${source.minute}-${Math.random().toString(36).slice(2, 7)}`,
+        type: outcomeId === "corner" ? "corner" : "counter",
+        minute: Number(source.minute) || minuteRef.current,
+        kicker: outcomeId === "corner" ? "🚩 Córner" : "⚡ Contraataque",
+        title: outcomeId === "corner" ? "CÓRNER" : "CONTRAATAQUE",
+        body:
+          outcomeId === "corner"
+            ? `${attacker?.name || "El atacante"} fuerza un saque de esquina. La jugada no ha terminado.`
+            : `${attacker?.name || "El jugador"} roba y lanza una transición antes de que el rival pueda replegarse. La jugada continúa.`,
+        playerName: attacker?.name,
+        playerId: attacker?.id,
+        teamName: team === "home" ? home.name : away.name,
+        teamSide: team,
+        emoji: outcomeId === "corner" ? "🚩" : "⚡",
+        hardPause: true,
+      };
+      fixtureRef.current = {
+        ...fx,
+        result: {
+          ...fx.result,
+          events: allEventsRef.current,
+          highlights: allHighlightsRef.current,
+          homeGoals: homeScoreRef.current,
+          awayGoals: awayScoreRef.current,
+        },
+      } as any;
+      pendingSceneRef.current = {
+        kind: "resolution",
+        moment: resolution,
+        source: { minute: source.minute },
+        nextRoulette: {
+          team,
+          playerId: attacker?.id,
+          playerName: attacker?.name,
+          minute: Number(source.minute) || minuteRef.current,
+          presetType: outcomeId,
+          stage: "followup",
+        },
+      };
+      setRoulette(null);
+      setLiveMoment(resolution);
+      persistLive();
+      return;
+    }
+
+    let rawEvents: any[] = [];
+    let rawHighlights: any[] = [];
+    let resolution: any;
+    const effectiveOutcomeId =
+      source.rouletteStage === "followup" && (outcomeId === "corner" || outcomeId === "counter")
+        ? "blocked"
+        : outcomeId;
+
+    if (effectiveOutcomeId === "goal") {
+      const goalEvent = buildRouletteGoal(source, attacker);
+      rawEvents = [goalEvent];
+      rawHighlights = remainingHighlights;
+      try {
+        usePlayersStore.getState().recordGoal(goalEvent.scorerId, fx.competition);
+        if (goalEvent.assistId) {
+          usePlayersStore.getState().recordAssist(goalEvent.assistId, fx.competition);
+        }
+      } catch {}
+      resolution = buildMomentFromEvent({
+        event: goalEvent,
+        homeName: home.name,
+        awayName: away.name,
+      });
+    } else {
+      const highlight = syntheticHighlightFromRoulette(
+        source,
+        effectiveOutcomeId,
+        attacker,
+        keeper,
+      );
+      rawHighlights = [...remainingHighlights, highlight];
+      resolution = buildMomentFromHighlight({
+        highlight: highlight as any,
+        homeName: home.name,
+        awayName: away.name,
+      });
+      if (effectiveOutcomeId === "miss")
+        resolution = {
+          ...resolution,
+          title: "SE VA POR POCO",
+          body: `${attacker?.name || "El atacante"} no encuentra portería por muy poco.`,
+        };
+      if (effectiveOutcomeId === "blocked")
+        resolution = {
+          ...resolution,
+          title: "BLOQUEADO",
+          body: `La defensa tapa el remate de ${attacker?.name || "el atacante"}.`,
+        };
+      if (effectiveOutcomeId === "offside")
+        resolution = {
+          ...resolution,
+          title: "FUERA DE JUEGO",
+          body: `${attacker?.name || "El atacante"} queda adelantado y la jugada termina ahí.`,
+        };
+    }
+
+    const applied = applyMinuteOutcome(
+      Number(source.minute) || minuteRef.current,
+      rawEvents,
+      source.rawCards || [],
+      rawHighlights,
+    );
+    const mySide: "home" | "away" =
+      fx.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
+    const nextMomentum = updateMomentum({
+      previous: momentumRef.current,
+      minute: Number(source.minute) || minuteRef.current,
+      userSide: mySide,
+      homeScore: homeScoreRef.current,
+      awayScore: awayScoreRef.current,
+      events: applied.events,
+      cards: applied.cards,
+      highlights: applied.hls,
+      managerEffects: managerEffectsRef.current,
+      timeline: fx?.result?.stats?.timeline ?? [],
+      avgUserStamina: currentAvgStamina(),
+    });
+    registerMomentum(nextMomentum, Number(source.minute) || minuteRef.current);
+    pushContextualNarrative(Number(source.minute) || minuteRef.current);
+    lastNarrativeMinuteRef.current = Number(source.minute) || minuteRef.current;
+
+    fixtureRef.current = {
+      ...fixtureRef.current!,
+      result: {
+        ...fixtureRef.current!.result,
+        events: allEventsRef.current,
+        highlights: allHighlightsRef.current,
+        homeGoals: homeScoreRef.current,
+        awayGoals: awayScoreRef.current,
+      },
+    } as any;
+    pendingSceneRef.current = {
+      kind: "resolution",
+      moment: resolution,
+      source: { minute: source.minute },
+    };
+    setRoulette(null);
+    setLiveMoment(resolution);
+    persistLive();
+  }
+
+  function finishRegularLiveMatch() {
+    if (finishScheduledRef.current) return;
+    clockRunIdRef.current += 1;
+    finishScheduledRef.current = true;
+    finalizePlayedChronicle();
+    setPhase("done");
+    pausedRef.current = true;
+    pauseReasonRef.current = null;
+    setIsPaused(false);
+    setPauseReason(null);
+    if (clockTimeoutRef.current !== null) {
+      window.clearTimeout(clockTimeoutRef.current);
+      clockTimeoutRef.current = null;
+    }
+    if (momentTimerRef.current !== null) {
+      window.clearTimeout(momentTimerRef.current);
+      momentTimerRef.current = null;
+    }
+    clearMatchSnapshot();
+    clearLive();
+  }
+
   function runClock(startMinute = 0) {
+    const runId = ++clockRunIdRef.current;
     let m = startMinute;
     const schedule = (delay?: number) => {
+      if (pausedRef.current || runId !== clockRunIdRef.current) return;
       clockTimeoutRef.current = window.setTimeout(tick, delay ?? tickMs());
     };
     scheduleRef.current = () => schedule();
+
+    const selectMajorMoment = (events: any[], cards: any[], highlights: any[], minute: number) => {
+      // Goals are staged separately: danger -> resolution -> celebration.
+      const red = cards.find((c) => c.cardType === "red" || c.isSecondYellow);
+      if (red) {
+        return {
+          moment: {
+            id: `red-${red.minute}-${red.playerId}`,
+            type: "red_card",
+            minute: red.minute,
+            kicker: "🟥 Tarjeta roja",
+            title: "ROJA",
+            body: `${red.playerName} es expulsado. El partido cambia por completo para ${red.team === "home" ? home.name : away.name}.`,
+            playerName: red.playerName,
+            teamName: red.team === "home" ? home.name : away.name,
+            emoji: "🟥",
+            detail: red.reason,
+            hardPause: true,
+            teamSide: red.team,
+          },
+          emergency: true,
+        };
+      }
+
+      const priority: Record<string, number> = {
+        var_disallowed: 100,
+        injury: 95,
+        woodwork: 90,
+        big_chance: 85,
+        save: 80,
+      };
+      const candidates = highlights
+        .filter((h: any) => Object.prototype.hasOwnProperty.call(priority, h.type))
+        .filter((h: any) => h.type !== "save" || h.detail === "¡Paradón!")
+        .slice()
+        .sort((a: any, b: any) => (priority[b.type] ?? 0) - (priority[a.type] ?? 0));
+      const highlight = candidates[0];
+      if (!highlight) return null;
+
+      const emergency = ["var_disallowed", "injury"].includes(highlight.type);
+      // A major moment is deliberately rare. Emergency incidents can interrupt
+      // immediately; ordinary spectacular actions need a healthy gap.
+      const requiredGap =
+        highlight.type === "save"
+          ? 24
+          : highlight.type === "big_chance"
+            ? 22
+            : highlight.type === "woodwork"
+              ? 20
+              : 18;
+      const enoughGap = minute - lastMajorMomentMinuteRef.current >= requiredGap;
+      if (!emergency && !enoughGap) return null;
+      const baseMoment = buildMomentFromHighlight({
+        highlight,
+        homeName: home.name,
+        awayName: away.name,
+      });
+      const userTeamMoment = highlight.team === mySideOf(fixtureRef.current);
+      const looksLikeCounter =
+        highlight.type === "big_chance" && userTeamMoment && momentumRef.current >= 67;
+      const moment = looksLikeCounter
+        ? {
+            ...baseMoment,
+            id: `${baseMoment.id}-counter`,
+            type: "counter",
+            kicker: "⚡ Contraataque",
+            title: "CONTRAATAQUE",
+            body: `${highlight.playerName} recibe tras una recuperación y el ${highlight.team === "home" ? home.name : away.name} ataca el espacio antes de que el rival pueda replegarse.`,
+            emoji: "⚡",
+          }
+        : baseMoment;
+      return { moment, emergency };
+    };
     const tick = () => {
-      if (pausedRef.current) return;
+      if (pausedRef.current || runId !== clockRunIdRef.current) return;
       m += 1;
       setMinute(m);
       minuteRef.current = m;
+
       const rawEvents = allEventsRef.current.filter((e) => e.minute === m);
       const rawCards = allCardsRef.current.filter((c) => c.minute === m);
-      const events = rawEvents.map(remapEventToPitch);
-      const cards = rawCards.map(remapCardToPitch);
-      const hls = allHighlightsRef.current.filter((h) => h.minute === m);
-      if (hls.length > 0) {
-        playedHighlightsRef.current = [...playedHighlightsRef.current, ...hls];
-        setHighlightFeed((prev) => [...hls, ...prev]);
-      }
-      if (events.length > 0) {
-        playedEventsRef.current = [...playedEventsRef.current, ...events];
-        setFeed((prev) => [...events, ...prev]);
-        for (const ev of events) {
-          if (ev.team === "home") setHomeScore((s) => s + 1);
-          else setAwayScore((s) => s + 1);
-        }
-      }
-      if (cards.length > 0) {
-        playedCardsRef.current = [...playedCardsRef.current, ...cards];
-        setCardFeed((prev) => [...cards, ...prev]);
-        // A red card of my team leaves us one man down for the rest of the match.
-        const mySide =
-          fixtureRef.current?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
-        for (const c of cards) {
-          if (
-            c.team === mySide &&
-            (c.cardType === "red" || c.isSecondYellow) &&
-            myXIRef.current.includes(c.playerId)
-          ) {
-            playWithOneLess(c.playerId, c.playerName);
-          }
-        }
-      }
-      drainStamina();
-      applyOpponentSubsAt(m);
+      const rawHighlights = allHighlightsRef.current
+        .filter((h) => h.minute === m)
+        .filter((h) => !(h.type === "forced_sub" && h.team === mySideOf(fixtureRef.current)));
 
-      if (m >= 90) {
-        finalizePlayedChronicle();
-        setPhase("done");
-        clearMatchSnapshot();
-        clearLive();
+      // Penalties are interactive scenes of their own. A penalty goal is not
+      // credited to the scoreboard until the manager resolves the shootout.
+      const penaltySource =
+        rawEvents.find((e: any) => e.type === "penalty_goal") ??
+        rawHighlights.find((h: any) => h.type === "penalty_missed");
+      if (penaltySource) {
+        queueInteractivePenalty(penaltySource);
+        return;
+      }
+
+      // The most memorable scoring moments start with a short danger scene.
+      // This is the key MADFUT/Pacybits-like rhythm: anticipation -> resolution.
+      if (stageDangerBeforeResolution(m, rawEvents, rawCards, rawHighlights)) {
+        return;
+      }
+
+      const applied = applyMinuteOutcome(m, rawEvents, rawCards, rawHighlights);
+      const events = applied.events;
+      const cards = applied.cards;
+      const hls = applied.hls;
+
+      const fx = fixtureRef.current;
+      const mySide: "home" | "away" =
+        fx?.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
+      const nextMomentum = updateMomentum({
+        previous: momentumRef.current,
+        minute: m,
+        userSide: mySide,
+        homeScore: homeScoreRef.current,
+        awayScore: awayScoreRef.current,
+        events,
+        cards,
+        highlights: hls,
+        managerEffects: managerEffectsRef.current,
+        timeline: fx?.result?.stats?.timeline ?? [],
+        avgUserStamina: currentAvgStamina(),
+      });
+      const momentumShift = Math.abs(nextMomentum - momentumRef.current);
+      registerMomentum(nextMomentum, m);
+
+      drainStamina();
+
+      // Injuries keep their own manager flow (medical stop → mandatory change),
+      // but the major-moment overlay is shown first so the incident actually
+      // feels important rather than being hidden inside the substitution panel.
+      const injury = rawHighlights.find((h: any) => h.type === "injury" && (h.minute ?? 0) === m);
+      if (injury && mySide === injury.team && myXIRef.current.includes(injury.playerId)) {
+        if (checkInjuriesAt(m)) return;
+      }
+
+      const selected = selectMajorMoment(events, cards, rawHighlights, m);
+      const importantMoment = selected?.moment ?? null;
+      const isMajor = !!importantMoment;
+      const isEmergency =
+        !!selected?.emergency ||
+        ["goal", "free_kick_goal", "own_goal", "red_card"].includes(importantMoment?.type ?? "");
+
+      if (importantMoment) {
+        lastMajorMomentMinuteRef.current = m;
+        if (m === 45) halftimePendingAfterMomentRef.current = true;
+      }
+
+      // Commentary is deliberately less noisy than the raw event feed. It is
+      // produced for major scenes, meaningful momentum swings, substitutions,
+      // or once every ~5 minutes when there is a real tactical story to tell.
+      const lastCommentGap = m - lastNarrativeMinuteRef.current;
+      const hasSub =
+        subsRef.current.some((s: any) => s.minute === m) ||
+        (oppSubsDoneRef.current || []).some((s: any) => s.minute === m);
+      const shouldComment =
+        isMajor || hasSub || momentumShift >= 8 || (lastCommentGap >= 5 && m % 5 === 0);
+      if (shouldComment) {
+        pushContextualNarrative(m);
+        lastNarrativeMinuteRef.current = m;
+      }
+
+      persistLive();
+
+      // A major scene is now a real stop. Nothing advances until the manager
+      // presses “Continuar partido”. This also lets us catch a 45' or 90' scene
+      // without accidentally running into 46' / 91'.
+      if (importantMoment) {
+        if (m === 45) halftimePendingAfterMomentRef.current = true;
+        showLiveMoment(importantMoment, isEmergency ? 3200 : 2600);
         return;
       }
 
       if (checkInjuriesAt(m)) return;
+
       if (m === 45 && !halftimeDoneRef.current) {
         halftimeDoneRef.current = true;
+        announceHalftime(false);
         pauseMatch("halftime");
         return;
       }
+
+      if (pausedRef.current) return;
+
+      if (m >= 90) {
+        finishRegularLiveMatch();
+        return;
+      }
+
       persistLive();
       schedule();
     };
+
     schedule(startMinute === 0 ? MATCH_START_DELAY_MS : tickMs());
   }
 
@@ -2105,12 +3695,22 @@ function MatchPage() {
     const worst = candidates[0];
     if (!worst || worst.st > staminaThreshold) return [];
 
-
     const inId =
       myBenchRef.current.find((id) => {
         const bp = playerById(id);
-        return bp && bp.position !== "GK" && bp.position !== "POR";
-      }) ?? myBenchRef.current[0];
+        return (
+          bp &&
+          !goneRef.current.includes(id) &&
+          !isPlayerInjuredAtDate(bp, usePlayersStore.getState().currentDate) &&
+          bp.position !== "GK" &&
+          bp.position !== "POR"
+        );
+      }) ??
+      myBenchRef.current.find(
+        (id) =>
+          !goneRef.current.includes(id) &&
+          !isPlayerInjuredAtDate(playerById(id), usePlayersStore.getState().currentDate),
+      );
     if (!inId) return [];
 
     const xi = [...myXIRef.current];
@@ -2150,55 +3750,106 @@ function MatchPage() {
   }
 
   function skipToEnd(includeOpponentSubs = true) {
-    // Clear the running clock timeout immediately
     if (clockTimeoutRef.current !== null) {
       window.clearTimeout(clockTimeoutRef.current);
       clockTimeoutRef.current = null;
     }
+    clockRunIdRef.current += 1;
+    pausedRef.current = true;
+    pauseReasonRef.current = "manual";
 
-    if (!fixtureRef.current?.result) return;
+    const fx = fixtureRef.current;
+    if (!fx?.result) return;
 
-    // Fast-forward the remaining minutes so stamina keeps draining, our team
-    // makes its substitutions and every goal is credited to a player that was
-    // really on the pitch at that minute. When this is triggered from the
-    // preview skip button, the opponent does not perform planned subs.
+    const currentMinute = Math.max(0, Math.min(90, minuteRef.current));
+
+    const uniq = (items: any[], key: (x: any) => string) => {
+      const out: any[] = [];
+      const seen = new Set<string>();
+      for (const item of items) {
+        const k = key(item);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(item);
+      }
+      return out;
+    };
+    const eventKey = (e: any) =>
+      `${e.minute}|${e.team}|${e.type}|${e.scorerId ?? e.playerId ?? ""}|${e.assistId ?? ""}|${e.detail ?? ""}`;
+    const cardKey = (c: any) => `${c.minute}|${c.team}|${c.cardType}|${c.playerId}`;
+    const highlightKey = (h: any) =>
+      `${h.minute}|${h.team}|${h.type}|${h.playerId ?? ""}|${h.detail ?? ""}`;
+
+    // The React feed is a second source of truth for the first half. This is
+    // crucial because those events may have been transformed by the roulette
+    // after the original pre-simulation was generated. Never throw them away.
+    const feedEvents = (feed || []).filter((e: any) => Number(e.minute ?? 0) <= currentMinute);
+    const feedCards = (cardFeed || []).filter((c: any) => Number(c.minute ?? 0) <= currentMinute);
+    const feedHighlights = (highlightFeed || []).filter(
+      (h: any) => Number(h.minute ?? 0) <= currentMinute,
+    );
+    playedEventsRef.current = uniq([...playedEventsRef.current, ...feedEvents], eventKey);
+    playedCardsRef.current = uniq([...playedCardsRef.current, ...feedCards], cardKey);
+    playedHighlightsRef.current = uniq(
+      [...playedHighlightsRef.current, ...feedHighlights],
+      highlightKey,
+    );
+
     const madeWhileSkipping: any[] = [];
-    // The assistant always makes a couple of changes in the second half, just
-    // like the rival does, so the chronicle shows my substitutions too.
-    const autoSubMinutes = [61, 71, 80];
-    for (let m = minuteRef.current + 1; m <= 90; m++) {
+    for (let m = currentMinute + 1; m <= 90; m++) {
       drainStamina();
       if (includeOpponentSubs && oppPlanRef.current.some((s) => s.minute === m)) {
         applyOpponentSubsAt(m);
       }
+      const autoSubMinutes = [61, 71, 80];
       if (autoSubMinutes.includes(m)) {
-        // First change only if somebody is tired; the later ones are always made.
-        madeWhileSkipping.push(...autoSubMyTeamAt(m, m === autoSubMinutes[0] ? 80 : 101));
+        madeWhileSkipping.push(...autoSubMyTeamAt(m, m === 61 ? 80 : 101));
       }
+
       const evs = allEventsRef.current.filter((e) => e.minute === m).map(remapEventToPitch);
-      if (evs.length > 0) playedEventsRef.current = [...playedEventsRef.current, ...evs];
+      playedEventsRef.current = uniq([...playedEventsRef.current, ...evs], eventKey);
+
       const cds = allCardsRef.current.filter((c) => c.minute === m).map(remapCardToPitch);
-      if (cds.length > 0) playedCardsRef.current = [...playedCardsRef.current, ...cds];
-      const hls = allHighlightsRef.current.filter((h) => h.minute === m);
-      if (hls.length > 0) playedHighlightsRef.current = [...playedHighlightsRef.current, ...hls];
+      playedCardsRef.current = uniq([...playedCardsRef.current, ...cds], cardKey);
+
+      const hls = allHighlightsRef.current
+        .filter((h) => h.minute === m)
+        .filter((h) => !(h.type === "forced_sub" && h.team === mySideOf(fixtureRef.current)));
+      playedHighlightsRef.current = uniq([...playedHighlightsRef.current, ...hls], highlightKey);
     }
+
     if (madeWhileSkipping.length > 0) {
       setSubFeed((prev) => [...madeWhileSkipping.slice().reverse(), ...prev]);
     }
 
+    // From this point on there is only one authoritative timeline: what has
+    // actually been resolved. The future pre-simulation is never displayed.
     finalizePlayedChronicle();
-
-    setHomeScore(fixtureRef.current.result.homeGoals);
-    setAwayScore(fixtureRef.current.result.awayGoals);
-    setFeed(allEventsRef.current.slice().reverse());
-    setCardFeed(allCardsRef.current.slice().reverse());
-    setHighlightFeed(allHighlightsRef.current.slice().reverse());
+    setHomeScore(homeScoreRef.current);
+    setAwayScore(awayScoreRef.current);
+    setFeed(
+      playedEventsRef.current
+        .slice()
+        .sort((a: any, b: any) => a.minute - b.minute)
+        .reverse(),
+    );
+    setCardFeed(
+      playedCardsRef.current
+        .slice()
+        .sort((a: any, b: any) => a.minute - b.minute)
+        .reverse(),
+    );
+    setHighlightFeed(
+      playedHighlightsRef.current
+        .slice()
+        .sort((a: any, b: any) => a.minute - b.minute)
+        .reverse(),
+    );
     setMinute(90);
     minuteRef.current = 90;
     setPhase("done");
     clearMatchSnapshot();
     clearLive();
-
   }
 
   function skipPenaltyShootoutToEnd() {
@@ -2279,9 +3930,13 @@ function MatchPage() {
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
+      clockRunIdRef.current += 1;
       if (clockTimeoutRef.current !== null) {
         window.clearTimeout(clockTimeoutRef.current);
       }
+      if (momentTimerRef.current !== null) window.clearTimeout(momentTimerRef.current);
+      if (transientResumeTimerRef.current !== null)
+        window.clearTimeout(transientResumeTimerRef.current);
     };
   }, []);
 
@@ -2319,7 +3974,11 @@ function MatchPage() {
     const oppSquad = getSimSquad(oppId);
     const onPitchIds = new Set(oppPlayers.map((p: any) => p.id));
     oppBenchRef.current = oppSquad
-      .filter((p: any) => !onPitchIds.has(p.id) && !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate))
+      .filter(
+        (p: any) =>
+          !onPitchIds.has(p.id) &&
+          !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate),
+      )
       .sort((a: any, b: any) => b.rating - a.rating)
       .slice(0, 7);
     oppCacheRef.current = { key: `${fixture.id}:${oppId}`, formation: oppFmt };
@@ -2400,36 +4059,60 @@ function MatchPage() {
           : `${minute}'`;
 
   return (
-    <div className="p-3 md:p-4 max-w-[1700px] mx-auto">
+    <div
+      className={`p-1.5 md:p-2 max-w-[1240px] mx-auto ${phase === "playing" ? "pb-24 md:pb-5" : ""}`}
+    >
       {/* Always-visible match clock */}
-      <div className="sticky top-0 z-30 -mx-3 md:-mx-4 mb-3 px-3 md:px-4 py-2 bg-background/85 backdrop-blur border-b border-border/60">
+      <div className="sticky top-0 z-30 -mx-3 md:-mx-4 mb-1 px-1.5 md:px-2 py-1 bg-background/85 backdrop-blur border-b border-border/60">
         <div className="flex items-center justify-between gap-3">
           <span className="chip truncate">{headerText}</span>
           <div className="flex items-center gap-3">
             <span className="text-sm font-bold truncate max-w-[8rem] text-right">{home.short}</span>
-            <span className="scoreline text-lg font-black tabular-nums">
+            <span className="scoreline text-base font-black tabular-nums">
               {phase === "preview"
                 ? "– : –"
                 : `${homeScore + extraTimeHomeScore} : ${awayScore + extraTimeAwayScore}`}
             </span>
             <span className="text-sm font-bold truncate max-w-[8rem]">{away.short}</span>
-            <span className="scoreline text-lg font-black text-primary tabular-nums w-16 text-right">
+            <span className="scoreline text-lg font-black text-primary tabular-nums w-12 text-right">
               {liveMinuteLabel}
             </span>
           </div>
         </div>
       </div>
+
+      {phase !== "preview" && (
+        <div className="mb-4 grid gap-2 lg:grid-cols-[0.8fr_1.2fr]">
+          <MomentumBar
+            compact
+            value={isHome ? 100 - momentum : momentum}
+            homeLabel={home.short}
+            awayLabel={away.short}
+            status={momentumStatus(
+              momentum,
+              isHome ? home.name : away.name,
+              isHome ? away.name : home.name,
+            )}
+          />
+          <LiveCommentary
+            latest={commentaryEntries[0] ?? null}
+            entries={commentaryEntries.slice(0, 4)}
+            compact
+          />
+        </div>
+      )}
+
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] items-start">
         <div className="min-w-0">
-          <div className="panel-glow p-4 md:p-6">
-            <div className="flex items-center justify-between mb-6">
+          <div className="panel-glow p-3 md:p-4">
+            <div className="flex items-center justify-between mb-4">
               <span className="chip">{headerText}</span>
               <div className="text-sm scoreline font-bold text-primary">{liveMinuteLabel}</div>
             </div>
 
             <div className="grid grid-cols-[1fr_auto_1fr] gap-4 md:gap-6 items-center text-center">
               <div className="flex flex-col items-center gap-2 md:gap-3">
-                <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={64} />
+                <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={36} />
                 <div className="flex items-center gap-2">
                   <LeagueLogo league={LEAGUES[home.league]?.name || ""} size="sm" />
                   <CountryFlag country={LEAGUES[home.league]?.country || ""} />
@@ -2439,15 +4122,16 @@ function MatchPage() {
                   startingXI={homeLineup}
                   formation={homeFormation}
                   teamId={fixture.homeId}
-                  className="mt-2"
+                  className="mt-1"
                   cards={cardFeed.filter((c) => c.team === "home")}
                   goals={feed}
                   assists={feed}
                   mvp={phase === "done" ? fixture.result?.mvp?.playerId : undefined}
                   substitutions={subFeed.filter((s: any) => s.team === "home")}
+                  stamina={isHome ? stamina : {}}
                 />
               </div>
-              <div className="scoreline text-5xl md:text-7xl font-black">
+              <div className="scoreline text-3xl md:text-4xl font-black">
                 {phase === "preview"
                   ? "–"
                   : phase === "extra_time"
@@ -2479,7 +4163,7 @@ function MatchPage() {
                             : awayScore}
               </div>
               <div className="flex flex-col items-center gap-2 md:gap-3">
-                <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={64} />
+                <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={36} />
                 <div className="flex items-center gap-2">
                   <LeagueLogo league={LEAGUES[away.league]?.name || ""} size="sm" />
                   <CountryFlag country={LEAGUES[away.league]?.country || ""} />
@@ -2489,18 +4173,19 @@ function MatchPage() {
                   startingXI={awayLineup}
                   formation={awayFormation}
                   teamId={fixture.awayId}
-                  className="mt-2"
+                  className="mt-1"
                   cards={cardFeed.filter((c) => c.team === "away")}
                   goals={feed}
                   assists={feed}
                   mvp={phase === "done" ? fixture.result?.mvp?.playerId : undefined}
                   substitutions={subFeed.filter((s: any) => s.team === "away")}
+                  stamina={!isHome ? stamina : {}}
                 />
               </div>
             </div>
 
             {phase !== "preview" && (
-              <div className="mt-6 h-1 bg-secondary rounded overflow-hidden">
+              <div className="mt-4 h-1 bg-secondary rounded overflow-hidden">
                 <div
                   className="h-full bg-primary transition-all"
                   style={{ width: `${(minute / (phase === "extra_time" ? 120 : 90)) * 100}%` }}
@@ -2508,7 +4193,7 @@ function MatchPage() {
               </div>
             )}
 
-            <div className="mt-6 flex gap-2 justify-center flex-wrap items-center">
+            <div className="mt-4 flex gap-1.5 justify-center flex-wrap items-center">
               {phase === "preview" && (
                 <>
                   <button
@@ -2552,60 +4237,62 @@ function MatchPage() {
                 </>
               )}
               {phase === "playing" && (
-                <div className="w-full space-y-3">
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <span className={infoChip}>
-                      Cambios {subsUsed}/{subLimits(isExtraTimeRef.current).maxSubs}
-                    </span>
-                    <span className={infoChip}>
-                      Ventanas {windowsUsed}/{subLimits(isExtraTimeRef.current).maxWindows}
-                    </span>
-                    <span className={infoChip}>En campo {myXI.length}</span>
-                    {isPaused && (
-                      <span className={infoChip}>
-                        {pauseReason === "halftime"
-                          ? "Descanso"
-                          : pauseReason === "injury"
-                            ? "Lesión"
-                            : "Pausado"}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
+                <div className="w-full space-y-2">
+                  <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    <div className={segmentBase}>
+                      {[1, 2, 4].map((value) => (
+                        <button
+                          key={value}
+                          onClick={() => {
+                            speedRef.current = value;
+                            setSpeed(value);
+                          }}
+                          className={segmentItem(speed === value)}
+                        >
+                          {value}x
+                        </button>
+                      ))}
+                    </div>
                     <button
                       onClick={() => (isPaused ? resumeMatch() : pauseMatch("manual"))}
-                      className={isPaused ? btnPrimary : btnSecondary}
-                      disabled={pauseReason === "injury"}
+                      className={`${isPaused ? btnPrimary : btnSecondary} px-3 py-1.5 text-xs`}
+                      disabled={
+                        pauseReason === "injury" ||
+                        pauseReason === "coach" ||
+                        pauseReason === "penalty" ||
+                        pauseReason === "moment"
+                      }
                     >
                       {isPaused ? (
                         <>
-                          <Play className="h-4 w-4" /> Reanudar
+                          <Play className="h-3.5 w-3.5" />{" "}
+                          {pauseReason === "halftime"
+                            ? "Comenzar 2ª parte"
+                            : pauseReason === "et_halftime"
+                              ? "Continuar prórroga"
+                              : "Reanudar"}
                         </>
                       ) : (
                         <>
-                          <Pause className="h-4 w-4" /> Pausar
+                          <Pause className="h-3.5 w-3.5" /> Pausar
                         </>
                       )}
                     </button>
-                    <button onClick={goEditLineupLive} className={btnSecondary}>
-                      <ClipboardList className="h-4 w-4" /> Alineación y táctica
+                    <button
+                      onClick={goEditLineupLive}
+                      className={`${btnSecondary} px-3 py-1.5 text-xs`}
+                    >
+                      <ClipboardList className="h-3.5 w-3.5" /> Alineación
                     </button>
-                    <button onClick={skipToEnd} className={btnGhost}>
-                      <FastForward className="h-3.5 w-3.5" /> Saltar al final
+                    <button onClick={skipToEnd} className={`${btnGhost} px-3 py-1.5 text-xs`}>
+                      <FastForward className="h-3.5 w-3.5" /> Saltar
                     </button>
                   </div>
-                  {isPaused && pauseReason === "halftime" && (
-                    <p className="text-center text-xs text-muted-foreground">
-                      Descanso · los cambios que hagas ahora no gastan ventana.
-                    </p>
-                  )}
                 </div>
               )}
               {phase === "extra_time" && (
                 <div className="w-full flex flex-wrap items-center justify-center gap-2">
-                  <span className={infoChip}>
-                    Prórroga · cambios {subsUsed}/{subLimits(true).maxSubs}
-                  </span>
+                  <span className={infoChip}>Prórroga</span>
                   <button
                     onClick={() => (isPaused ? resumeMatch() : pauseMatch("manual"))}
                     className={isPaused ? btnPrimary : btnSecondary}
@@ -2725,38 +4412,6 @@ function MatchPage() {
             </div>
           </div>
 
-          {(phase === "playing" || phase === "extra_time") &&
-            showSubs &&
-            (() => {
-              const onPitch = myXI
-                .map((id) => mySquad().find((p: any) => p.id === id))
-                .filter(Boolean) as any[];
-              const benchPlayers = myBench
-                .map((id) => mySquad().find((p: any) => p.id === id))
-                .filter(Boolean) as any[];
-              const limits = subLimits(isExtraTimeRef.current);
-              return (
-                <SubstitutionPanel
-                  onPitch={onPitch}
-                  bench={benchPlayers}
-                  stamina={stamina}
-                  subsUsed={subsUsed}
-                  maxSubs={limits.maxSubs}
-                  windowsUsed={windowsUsed}
-                  maxWindows={limits.maxWindows}
-                  freeWindow={isFreeWindow(currentLivePhase())}
-                  forcedOutId={forcedOutId}
-                  onConfirm={applySubstitutions}
-                  onClose={() => {
-                    if (!forcedOutId) setShowSubs(false);
-                  }}
-                  onPlayShort={() =>
-                    forcedOutId && playWithOneLess(forcedOutId, playerById(forcedOutId)?.name)
-                  }
-                />
-              );
-            })()}
-
           {(phase === "playing" || phase === "extra_time" || phase === "done") && (
             <div className="mt-4 grid gap-4 lg:grid-cols-2 items-start">
               {fixture?.result?.stats &&
@@ -2764,16 +4419,6 @@ function MatchPage() {
                   const acc = accumulateStats(fixture.result.stats, phase === "done" ? 90 : minute);
                   return <MatchStatsPanel home={acc.home} away={acc.away} />;
                 })()}
-              {(phase === "playing" || phase === "extra_time") && (
-                <StaminaPanel
-                  players={
-                    myXI
-                      .map((id) => mySquad().find((p: any) => p.id === id))
-                      .filter(Boolean) as any[]
-                  }
-                  stamina={stamina}
-                />
-              )}
               {phase === "done" && fixture?.result && (
                 <PlayerRatingsPanel
                   ratings={fixture.result.ratings ?? []}
@@ -2811,6 +4456,11 @@ function MatchPage() {
                   // Only the highlights that add colour to the chronicle without flooding it.
                   const KEEP: Record<string, { icon: string; label: string }> = {
                     woodwork: { icon: "🥅", label: "Al palo" },
+                    corner: { icon: "🚩", label: "Córner" },
+                    counterattack: { icon: "⚡", label: "Contraataque" },
+                    blocked_shot: { icon: "🛡️", label: "Remate bloqueado" },
+                    offside: { icon: "🚩", label: "Fuera de juego" },
+                    big_chance: { icon: "🔥", label: "Gran ocasión" },
                     penalty_missed: { icon: "❌", label: "Penalti fallado" },
                     // "penalty_awarded" is intentionally NOT kept: a penalty is
                     // reported with a single line (scored or missed).
@@ -2863,6 +4513,13 @@ function MatchPage() {
                             leagueName={getLeagueName(cardTeam.league)}
                             size={22}
                           />
+                          <PlayerFace
+                            name={card.playerName}
+                            image={faceUrl(card.playerId)}
+                            size={24}
+                            showRing={false}
+                            className="shrink-0"
+                          />
                           <div className="text-sm min-w-0">
                             <span className="font-bold">{card.playerName}</span>
                             <span className="text-muted-foreground"> · {cardText}</span>
@@ -2887,6 +4544,13 @@ function MatchPage() {
                             teamName={subTeam.name}
                             leagueName={getLeagueName(subTeam.league)}
                             size={22}
+                          />
+                          <PlayerFace
+                            name={s.inName}
+                            image={faceUrl(s.playerInId)}
+                            size={24}
+                            showRing={false}
+                            className="shrink-0"
                           />
                           <div className="text-sm min-w-0 truncate">
                             <span className="text-primary font-bold">{s.inName}</span>
@@ -2914,6 +4578,13 @@ function MatchPage() {
                             teamName={hTeam.name}
                             leagueName={getLeagueName(hTeam.league)}
                             size={22}
+                          />
+                          <PlayerFace
+                            name={h.playerName || "Jugador"}
+                            image={faceUrl(h.playerId)}
+                            size={24}
+                            showRing={false}
+                            className="shrink-0"
                           />
                           <div className="text-sm min-w-0 truncate">
                             <span className="font-semibold">{h.playerName}</span>
@@ -2952,6 +4623,13 @@ function MatchPage() {
                           teamName={scoringTeam.name}
                           leagueName={getLeagueName(scoringTeam.league)}
                           size={22}
+                        />
+                        <PlayerFace
+                          name={e.scorerName || "Jugador"}
+                          image={faceUrl(e.scorerId)}
+                          size={24}
+                          showRing={false}
+                          className="shrink-0"
                         />
                         <div className="text-sm min-w-0">
                           <span className="font-bold">{e.scorerName}</span>
@@ -3024,6 +4702,27 @@ function MatchPage() {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {phase !== "preview" && liveMoment && (
+          <LiveEventOverlay
+            event={
+              liveMoment
+                ? ({
+                    ...(liveMoment as any),
+                    teamLeagueName:
+                      liveMoment.teamSide === "home"
+                        ? getLeagueName(home.league)
+                        : getLeagueName(away.league),
+                  } as any)
+                : null
+            }
+            onContinue={continueLiveMoment}
+          />
+        )}
+      </AnimatePresence>
+      <LiveRouletteOverlay data={roulette} onFinished={handleRouletteFinished} />
+      <PenaltyDecisionModal penalty={pendingPenalty} onResolve={resolveInteractivePenalty} />
     </div>
   );
 }

@@ -1,13 +1,6 @@
 import { createFileRoute, Link, useNavigate, useSearch, useLocation } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  loadSave,
-  SaveGame,
-  saveSave,
-  setLineup,
-  setFormation,
-  setSubstitutes,
-} from "@/lib/store";
+import { loadSave, SaveGame, saveSave, setLineup, setFormation, setSubstitutes } from "@/lib/store";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { defaultLineup } from "@/data/players";
@@ -198,15 +191,17 @@ function LineupPage() {
             ],
           };
 
-    const active =
-      state.plans.find((plan) => plan.id === state.activeId) ??
-      state.plans[0];
+    const active = state.plans.find((plan) => plan.id === state.activeId) ?? state.plans[0];
     if (!active) return;
 
     setTacticPlanState(state);
-    setSelectedFormation((active.formation || save.formations[save.myTeamId] || "Táctica 4-3-3") as FormationName);
+    setSelectedFormation(
+      (active.formation || save.formations[save.myTeamId] || "Táctica 4-3-3") as FormationName,
+    );
     setStartingXI(
-      active.lineup.length > 0 ? active.lineup.slice(0, 11) : (save.lineups[save.myTeamId] ?? []).slice(0, 11),
+      active.lineup.length > 0
+        ? active.lineup.slice(0, 11)
+        : (save.lineups[save.myTeamId] ?? []).slice(0, 11),
     );
     setBench(
       (active.substitutes.length > 0
@@ -228,8 +223,7 @@ function LineupPage() {
     [save, ready, getSimSquad, rosterIds, clubOverrides],
   );
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
-  const isCurrentlyInjured = (player: any) =>
-    isPlayerInjuredAtDate(player, currentDate, leagueMd);
+  const isCurrentlyInjured = (player: any) => isPlayerInjuredAtDate(player, currentDate, leagueMd);
 
   // Sincronización inmediata de Dirección de equipo con la plantilla real.
   // Una venta/cesión cambia `squad` en el store en el mismo evento que cierra
@@ -297,9 +291,7 @@ function LineupPage() {
   useEffect(() => {
     if (liveMode || !save || !ready || squad.length === 0) return;
 
-    const injuredIds = new Set(
-      squad.filter((p) => isCurrentlyInjured(p)).map((p) => p.id),
-    );
+    const injuredIds = new Set(squad.filter((p) => isCurrentlyInjured(p)).map((p) => p.id));
     if (injuredIds.size === 0) return;
 
     const nextXI = startingXI.map((id) => (id && injuredIds.has(id) ? "" : id));
@@ -313,11 +305,12 @@ function LineupPage() {
         }))
       : [];
     const plansChanged = tacticPlanState
-      ? cleanedPlans.some((plan, index) =>
-          plan.lineup.length !== tacticPlanState.plans[index].lineup.length ||
-          plan.lineup.some((id, i) => id !== tacticPlanState.plans[index].lineup[i]) ||
-          plan.substitutes.length !== tacticPlanState.plans[index].substitutes.length ||
-          plan.substitutes.some((id, i) => id !== tacticPlanState.plans[index].substitutes[i])
+      ? cleanedPlans.some(
+          (plan, index) =>
+            plan.lineup.length !== tacticPlanState.plans[index].lineup.length ||
+            plan.lineup.some((id, i) => id !== tacticPlanState.plans[index].lineup[i]) ||
+            plan.substitutes.length !== tacticPlanState.plans[index].substitutes.length ||
+            plan.substitutes.some((id, i) => id !== tacticPlanState.plans[index].substitutes[i]),
         )
       : false;
 
@@ -438,7 +431,9 @@ function LineupPage() {
       return { state: tacticPlanState, committedSave: save };
     }
 
-    const selectedIds = Array.from(new Set(bench.filter((id) => id && !startingXI.includes(id)))).slice(0, 12);
+    const selectedIds = Array.from(
+      new Set(bench.filter((id) => id && !startingXI.includes(id))),
+    ).slice(0, 12);
     const nextState: TacticPlanState = {
       activeId: tacticPlanState.activeId,
       plans: tacticPlanState.plans.map((plan) =>
@@ -499,7 +494,11 @@ function LineupPage() {
       activeId: target.id,
       plans: current.state.plans.map((plan) =>
         plan.id === target.id
-          ? { ...plan, lineup: healthyTargetXI.slice(0, 11), substitutes: healthyTargetBench.slice(0, 12) }
+          ? {
+              ...plan,
+              lineup: healthyTargetXI.slice(0, 11),
+              substitutes: healthyTargetBench.slice(0, 12),
+            }
           : plan,
       ),
     };
@@ -765,6 +764,16 @@ function LineupPage() {
     ]);
   }
 
+  function liveForcedInjuryIds(): Set<string> {
+    if (!live) return new Set<string>();
+    return new Set(
+      (live.result?.injuries || [])
+        .filter((i: any) => i.team === (live.result?.homeId === save?.myTeamId ? "home" : "away"))
+        .filter((i: any) => Number(i.minute ?? 0) <= Number(live.minute ?? 0))
+        .map((i: any) => i.playerId),
+    );
+  }
+
   /**
    * In live mode the number of substitutions (and windows) is limited: block any
    * bench -> XI move once there are no changes/windows left. A player who has
@@ -992,9 +1001,7 @@ function LineupPage() {
     }
 
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
-    const suspended = suspensions.some(
-      (s) => s.playerId === playerId && s.matchdaysRemaining > 0,
-    );
+    const suspended = suspensions.some((s) => s.playerId === playerId && s.matchdaysRemaining > 0);
     if (suspended) {
       toast.error(`${player.name} está suspendido y no puede ser convocado.`);
       return;
@@ -1021,9 +1028,7 @@ function LineupPage() {
     }
 
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
-    const suspended = suspensions.some(
-      (s) => s.playerId === playerId && s.matchdaysRemaining > 0,
-    );
+    const suspended = suspensions.some((s) => s.playerId === playerId && s.matchdaysRemaining > 0);
     if (suspended) {
       toast.error(`${player.name} está suspendido y no puede ser convocado.`);
       return;
@@ -1043,9 +1048,7 @@ function LineupPage() {
       const selectedBenchId = selectedPlayer;
       // Intercambio directo: el suplente pasa a reservas y el jugador de
       // reservas ocupa exactamente su plaza de suplente.
-      setBench((prev) =>
-        prev.map((id) => (id === selectedBenchId ? playerId : id)),
-      );
+      setBench((prev) => prev.map((id) => (id === selectedBenchId ? playerId : id)));
       setSelectedPlayer(null);
       return;
     }
@@ -1064,10 +1067,12 @@ function LineupPage() {
 
     // Never persist an injured player in the XI or convocados, even if an
     // injury was registered between renders.
-    if (startingXI.some((id) => {
-      const player = squad.find((p) => p.id === id);
-      return !!player && isCurrentlyInjured(player);
-    })) {
+    if (
+      startingXI.some((id) => {
+        const player = squad.find((p) => p.id === id);
+        return !!player && isCurrentlyInjured(player);
+      })
+    ) {
       toast.error("Hay un jugador lesionado en el 11. Debe quedar en Reservas hasta recuperarse.");
       return;
     }
@@ -1153,10 +1158,7 @@ function LineupPage() {
     setStartingXI(newStartingXI);
     const displacedStarters = startingXI.filter((id) => id && !newStartingXI.includes(id));
     const newBench = Array.from(
-      new Set([
-        ...bench.filter((id) => !newStartingXI.includes(id)),
-        ...displacedStarters,
-      ]),
+      new Set([...bench.filter((id) => !newStartingXI.includes(id)), ...displacedStarters]),
     ).slice(0, 12);
     setBench(newBench);
 
@@ -1432,10 +1434,29 @@ function LineupPage() {
         <div>
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">
-              Convocatoria
+              {liveMode ? "Suplentes disponibles" : "Convocatoria"}
             </h2>
             <span className="text-[0.65rem] font-black text-muted-foreground">
-              {bench.length}/12 suplentes
+              {liveMode
+                ? `${
+                    bench.filter((id) => {
+                      const p = squad.find((q) => q.id === id);
+                      return !p || !isCurrentlyInjured(p);
+                    }).length
+                  }/12 disponibles${
+                    bench.filter((id) => {
+                      const p = squad.find((q) => q.id === id);
+                      return !!p && isCurrentlyInjured(p);
+                    }).length
+                      ? ` · ${
+                          bench.filter((id) => {
+                            const p = squad.find((q) => q.id === id);
+                            return !!p && isCurrentlyInjured(p);
+                          }).length
+                        } lesionado(s)`
+                      : ""
+                  }`
+                : `${bench.length}/12 suplentes`}
             </span>
           </div>
 
@@ -1455,12 +1476,14 @@ function LineupPage() {
             {benchPlayers.map((player) => {
               if (!player) return null;
               const isInjured = isCurrentlyInjured(player);
+              const isForcedOut = liveMode && liveGoneIds().has(player.id);
+              const isLiveForcedInjury = isForcedOut && liveForcedInjuryIds().has(player.id);
               const suspensions = save?.suspensions[save.myTeamId] ?? [];
               const suspendedPlayerIds = new Set(
                 suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
               );
               const isSuspended = suspendedPlayerIds.has(player.id);
-              const isUnavailable = isInjured || isSuspended;
+              const isUnavailable = isInjured || isSuspended || isForcedOut;
               return (
                 <div
                   key={player.id}
@@ -1484,14 +1507,33 @@ function LineupPage() {
                     <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
                       {player.rating}
                     </span>
+                    {isForcedOut && (
+                      <span
+                        className="absolute -top-1 -left-1 grid h-5 w-5 place-items-center rounded-full border border-destructive/30 bg-background text-[0.62rem] shadow"
+                        title="No puede volver a jugar"
+                      >
+                        🔒
+                      </span>
+                    )}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold truncate text-sm flex items-center gap-1">
                       {player.name}
-                      {isInjured && (
-                        <span className="text-xs font-bold text-destructive">({formatInjuryShort(player, currentDate, leagueMd)})</span>
+                      {(isInjured || isLiveForcedInjury) && (
+                        <span className="text-xs font-bold text-destructive">
+                          (
+                          {isLiveForcedInjury && !isInjured
+                            ? "lesionado"
+                            : formatInjuryShort(player, currentDate, leagueMd)}
+                          )
+                        </span>
                       )}
                       {isSuspended && <span className="text-xs text-destructive">(SUS)</span>}
+                      {isForcedOut && (
+                        <span className="text-[0.55rem] font-black uppercase tracking-wider text-muted-foreground">
+                          · Bloqueado
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {posLabelOf(player)} · {player.age}a · {player.goals}G {player.assists}A
@@ -1504,98 +1546,104 @@ function LineupPage() {
 
             {bench.length === 0 && (
               <div className="rounded-lg border border-dashed border-border/60 p-4 text-center text-xs text-muted-foreground">
-                No hay suplentes convocados. Añade jugadores desde Reservas.
+                No hay suplentes convocados.{!liveMode && " Añade jugadores desde Reservas."}
               </div>
             )}
 
-            <div className="mt-5 border-t border-border/50 pt-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-black">Reservas</p>
-                  <p className="text-[0.6rem] text-muted-foreground">
-                    No están convocados. Pulsa un suplente y después una reserva para intercambiarlos.
-                  </p>
+            {!liveMode && (
+              <div className="mt-5 border-t border-border/50 pt-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-black">Reservas</p>
+                    <p className="text-[0.6rem] text-muted-foreground">
+                      No están convocados. Pulsa un suplente y después una reserva para
+                      intercambiarlos.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-border/60 bg-card px-2 py-1 text-[0.6rem] font-black text-muted-foreground">
+                    {reservePlayers.length}
+                  </span>
                 </div>
-                <span className="rounded-full border border-border/60 bg-card px-2 py-1 text-[0.6rem] font-black text-muted-foreground">
-                  {reservePlayers.length}
-                </span>
-              </div>
 
-              {reservePlayers.map((player) => {
-                const isInjured = isCurrentlyInjured(player);
-                return (
-                  <div
-                    key={player.id}
-                    onClick={() => {
-                      if (!isInjured) handleReservePlayerClick(player.id);
-                    }}
-                    className={`mb-2 flex items-center gap-3 rounded-xl border-2 p-3 transition ${
-                      isInjured
-                        ? "border-destructive/30 bg-destructive/5 opacity-75 cursor-not-allowed"
-                        : selectedPlayer === player.id
-                          ? "border-primary bg-primary/10 glow-cyan cursor-pointer"
-                          : "border-border/60 bg-card/50 hover:border-primary/60 cursor-pointer"
-                    }`}
-                  >
-                    <div className="relative shrink-0">
-                      <PlayerFace
-                        name={player.name}
-                        image={faceUrl(player.id, player.cardImage)}
-                        size={30}
-                        showRing={false}
-                        className="bg-secondary shadow"
-                      />
-                      {isInjured && (
-                        <span className="absolute -right-1 -bottom-1 grid h-5 w-5 place-items-center rounded-full border border-destructive/30 bg-background text-[0.65rem] shadow">
-                          🔒
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-semibold">{player.name}</p>
+                {reservePlayers.map((player) => {
+                  const isInjured = isCurrentlyInjured(player);
+                  return (
+                    <div
+                      key={player.id}
+                      onClick={() => {
+                        if (!isInjured) handleReservePlayerClick(player.id);
+                      }}
+                      className={`mb-2 flex items-center gap-3 rounded-xl border-2 p-3 transition ${
+                        isInjured
+                          ? "border-destructive/30 bg-destructive/5 opacity-75 cursor-not-allowed"
+                          : selectedPlayer === player.id
+                            ? "border-primary bg-primary/10 glow-cyan cursor-pointer"
+                            : "border-border/60 bg-card/50 hover:border-primary/60 cursor-pointer"
+                      }`}
+                    >
+                      <div className="relative shrink-0">
+                        <PlayerFace
+                          name={player.name}
+                          image={faceUrl(player.id, player.cardImage)}
+                          size={30}
+                          showRing={false}
+                          className="bg-secondary shadow"
+                        />
                         {isInjured && (
-                          <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-destructive">
-                            Lesionado
+                          <span className="absolute -right-1 -bottom-1 grid h-5 w-5 place-items-center rounded-full border border-destructive/30 bg-background text-[0.65rem] shadow">
+                            🔒
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {posLabelOf(player)} · {player.age}a · OVR {player.rating}
-                      </p>
-                      {isInjured && (
-                        <p className="mt-1 text-[0.62rem] font-semibold text-destructive">
-                          {player.injuryReason || "Lesión"} · {formatInjuryShort(player, currentDate, leagueMd)} restantes
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {isInjured ? (
-                        <span className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1 text-[0.6rem] font-black text-destructive">
-                          Bloqueado
-                        </span>
-                      ) : (
-                        <>
-                          {bench.length < 12 && (
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleCallUpPlayer(player.id);
-                              }}
-                              className="rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.65rem] font-black text-primary transition hover:bg-primary/20"
-                            >
-                              Convocar
-                            </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-semibold">{player.name}</p>
+                          {isInjured && (
+                            <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-destructive">
+                              Lesionado
+                            </span>
                           )}
-                          {selectedPlayer === player.id && <span className="text-primary text-lg">✓</span>}
-                        </>
-                      )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {posLabelOf(player)} · {player.age}a · OVR {player.rating}
+                        </p>
+                        {isInjured && (
+                          <p className="mt-1 text-[0.62rem] font-semibold text-destructive">
+                            {player.injuryReason || "Lesión"} ·{" "}
+                            {formatInjuryShort(player, currentDate, leagueMd)} restantes
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {isInjured ? (
+                          <span className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1 text-[0.6rem] font-black text-destructive">
+                            Bloqueado
+                          </span>
+                        ) : (
+                          <>
+                            {bench.length < 12 && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleCallUpPlayer(player.id);
+                                }}
+                                className="rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.65rem] font-black text-primary transition hover:bg-primary/20"
+                              >
+                                Convocar
+                              </button>
+                            )}
+                            {selectedPlayer === player.id && (
+                              <span className="text-primary text-lg">✓</span>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1609,11 +1657,18 @@ function LineupPage() {
           const limits = subLimits(live.isExtraTime);
           const outIds = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
           const inIds = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
-          const changes = Math.min(outIds.length, inIds.length);
+          const recordedOutIds = new Set((live.subs || []).map((s: any) => s.outId));
+          const forcedOutIds = (live.gone || []).filter(
+            (id: string) => !recordedOutIds.has(id) && !startingXI.includes(id),
+          );
+          const effectiveOutIds = [...outIds, ...forcedOutIds.filter((id) => !outIds.includes(id))];
+          const changes = Math.min(effectiveOutIds.length, inIds.length);
+          const intentionalVacancies =
+            (live.lineup || []).filter((id: string) => !id).length > 0 || forcedOutIds.length > 0;
           const free = isFreeWindow(live.phase);
           const overSubs = live.subsUsed + changes > limits.maxSubs;
           const overWindows = changes > 0 && !free && live.windowsUsed >= limits.maxWindows;
-          const blocked = overSubs || overWindows || !isLineupComplete;
+          const blocked = overSubs || overWindows || (!isLineupComplete && !intentionalVacancies);
           return (
             <div className="panel mt-8 p-5">
               <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -1649,23 +1704,47 @@ function LineupPage() {
                     const goneList = Array.from(
                       new Set([...(live.gone || []), ...liveGoneRef.current, ...outIds]),
                     );
-                    const nextBench = bench.filter(
-                      (id) => !startingXI.includes(id) && !goneList.includes(id),
+
+                    // A player who was forced off through injury remains visible
+                    // on the bench as a blocked/lesionado entry. Healthy players
+                    // that have already left the pitch stay out of the bench.
+                    const forcedInjuryIds = new Set<string>(
+                      (live.result?.injuries || [])
+                        .filter((i: any) => Number(i.minute ?? 0) <= Number(live.minute ?? 0))
+                        .map((i: any) => i.playerId),
                     );
+                    const nextBench = bench.filter((id) => {
+                      if (startingXI.includes(id)) return false;
+                      if (!goneList.includes(id)) return true;
+                      return forcedInjuryIds.has(id);
+                    });
+
+                    // The injured player must remain visible in the live bench,
+                    // even if the injury date has not yet propagated to the store.
+                    for (const injuredId of forcedInjuryIds) {
+                      if (!nextBench.includes(injuredId) && !startingXI.includes(injuredId)) {
+                        nextBench.push(injuredId);
+                      }
+                    }
+
                     const stamina = { ...(live.stamina || {}) };
                     const subs = [...(live.subs || [])];
                     for (let i = 0; i < changes; i++) {
-                      stamina[inIds[i]] = 100;
+                      const outId = effectiveOutIds[i];
+                      const inId = inIds[i];
+                      if (!outId || !inId) continue;
+                      stamina[inId] = 100;
                       subs.push({
                         minute: live.minute,
-                        outId: outIds[i],
-                        outName: squad.find((p) => p.id === outIds[i])?.name ?? outIds[i],
-                        inId: inIds[i],
-                        inName: squad.find((p) => p.id === inIds[i])?.name ?? inIds[i],
+                        outId,
+                        outName: squad.find((p) => p.id === outId)?.name ?? outId,
+                        inId,
+                        inName: squad.find((p) => p.id === inId)?.name ?? inId,
                       });
                     }
-                    saveLive({
+                    const nextLive: LiveMatchState = {
                       ...live,
+                      phase: live.phase,
                       lineup: startingXI,
                       bench: nextBench,
                       gone: goneList,
@@ -1674,14 +1753,17 @@ function LineupPage() {
                       subs,
                       subsUsed: live.subsUsed + changes,
                       windowsUsed: live.windowsUsed + (changes > 0 && !free ? 1 : 0),
-                    });
+                    };
+                    saveLive(nextLive);
                     navigate({
                       to: "/match",
                       state: { resumeLive: true, fixtureId: live.fixtureId } as any,
                     });
                   }}
                 >
-                  Volver al partido ({live.minute}') →
+                  {free
+                    ? `Aplicar cambios y volver al partido (${live.minute}') →`
+                    : `Guardar cambios y volver (${live.minute}') →`}
                 </button>
               </div>
             </div>

@@ -225,39 +225,39 @@ export function tacticsModifiers(t?: Partial<TeamTactics> | null): TacticsModifi
   // Play style: the main lever. Offensive creates more chances but concedes
   // more; defensive is the mirror image.
   if (style === "offensive") {
-    attack *= 1.14;
-    defense *= 0.9;
-    stamina *= 1.1;
+    attack *= 1.07;
+    defense *= 0.96;
+    stamina *= 1.04;
   } else if (style === "defensive") {
-    attack *= 0.86;
-    defense *= 1.13;
-    stamina *= 0.92;
+    attack *= 0.94;
+    defense *= 1.06;
+    stamina *= 0.97;
   }
 
   // Pressure: high press wins the ball higher (more chances) but burns energy
   // and produces more fouls.
   if (pressure === "high") {
-    attack *= 1.07;
-    defense *= 1.04;
-    stamina *= 1.18;
-    aggression *= 1.25;
+    attack *= 1.03;
+    defense *= 1.02;
+    stamina *= 1.06;
+    aggression *= 1.08;
   } else if (pressure === "low") {
-    attack *= 0.95;
-    defense *= 0.98;
-    stamina *= 0.86;
-    aggression *= 0.85;
+    attack *= 0.97;
+    defense *= 0.99;
+    stamina *= 0.94;
+    aggression *= 0.93;
   }
 
   // Defensive line: high line compresses the pitch but is vulnerable to balls
   // in behind; low line sits deep and concedes fewer clear chances.
   if (line === "high") {
-    attack *= 1.05;
-    defense *= 0.94;
-    stamina *= 1.05;
+    attack *= 1.02;
+    defense *= 0.98;
+    stamina *= 1.02;
   } else if (line === "low") {
-    attack *= 0.96;
-    defense *= 1.07;
-    stamina *= 0.95;
+    attack *= 0.98;
+    defense *= 1.04;
+    stamina *= 0.97;
   }
 
   return { attack, defense, stamina, aggression };

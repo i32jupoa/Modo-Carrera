@@ -38,9 +38,30 @@ export type LiveMatchState = {
   matchType: "LEAGUE" | "CUP" | "UCL";
   cupRound?: string;
   handledInjuries: string[];
+  /** Live match presentation/controller state. Optional for v3 saves. */
+  momentum?: number;
+  momentumHistory?: Array<{ minute: number; value: number }>;
+  managerEffects?: any;
+  narrative?: any[];
+  keyMoments?: any[];
+  /** Exact timeline already resolved on the pitch. Kept separate from the future pre-simulated timeline. */
+  playedEvents?: any[];
+  playedCards?: any[];
+  playedHighlights?: any[];
+  /** Rival substitutions already executed, so resume/fast-forward never repeats them. */
+  opponentSubsDone?: any[];
+  /** Small tactical bias carried by the live layer into upcoming events. */
+  outcomeBias?: number;
+  scene?: {
+    kind: "danger" | "resolution" | "penalty_intro";
+    moment?: any;
+    resolution?: any;
+    source?: any;
+    choiceId?: string;
+  } | null;
 };
 
-export const LIVE_VERSION = 3;
+export const LIVE_VERSION = 6;
 const KEY = "mc:live-match";
 
 export function saveLive(state: LiveMatchState) {
@@ -56,7 +77,7 @@ export function loadLive(fixtureId?: string): LiveMatchState | null {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
     const st = JSON.parse(raw) as LiveMatchState;
-    if (st.v !== LIVE_VERSION) return null;
+    if (st.v !== LIVE_VERSION && st.v !== 5 && st.v !== 4 && st.v !== 3) return null;
     if (fixtureId && st.fixtureId !== fixtureId) return null;
     return st;
   } catch {

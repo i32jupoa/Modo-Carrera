@@ -37,6 +37,7 @@ import {
   Cake,
   Star,
   Trophy,
+  Timer,
   TrendingUp,
   TrendingDown,
   Medal,
@@ -179,6 +180,32 @@ function formatBirthdate(birthdate?: string): string {
     month: "long",
     year: "numeric",
   }).format(new Date(Number(year), Number(month) - 1, Number(day)));
+}
+
+function getSeasonMinutesFromFixtures(
+  fixtures: Array<any>,
+  playerId: string,
+  myTeamId: string | null,
+): number | null {
+  if (!playerId || !myTeamId) return null;
+
+  let total = 0;
+  let hasRecordedMatch = false;
+
+  for (const fixture of fixtures ?? []) {
+    if (fixture.homeId !== myTeamId && fixture.awayId !== myTeamId) continue;
+    const ratings = fixture.result?.ratings;
+    if (!Array.isArray(ratings)) continue;
+
+    const rating = ratings.find((entry: any) => String(entry?.playerId) === String(playerId));
+    if (!rating) continue;
+
+    hasRecordedMatch = true;
+    const minutes = Number(rating.minutes);
+    if (Number.isFinite(minutes)) total += Math.max(0, Math.min(120, minutes));
+  }
+
+  return hasRecordedMatch ? Math.round(total) : null;
 }
 
 function formatMonthLabel(month: number, year: number): string {
@@ -902,7 +929,20 @@ function SquadPage() {
               );
               const ovrDelta = dynamicOvr - baseOvr;
               // Use the same authoritative legacy counters as the Team Stats screen.
+              // The dynamic block mirrors them for progression, but the team screen
+              // intentionally reads these counters because they are updated by every
+              // match path. Minutes remain in dynamicStats because they are not part
+              // of the legacy PlayerStats model.
               const seasonAppearances = Number(selectedStats?.appearances ?? 0);
+              // The Team Stats screen uses the legacy match counter as its source
+              // of truth. For minutes, use the minutes stored in each completed
+              // match rating so a 20-minute cameo is not turned into 90 minutes.
+              const fixtureMinutes = getSeasonMinutesFromFixtures(
+                fixtures,
+                String(selected.ID),
+                myTeamId,
+              );
+              const seasonMinutes = fixtureMinutes ?? Number(selectedStats?.dynamicStats?.seasonMinutes ?? 0);
               const seasonGoals = Number(selectedStats?.goals ?? 0);
               const seasonAssists = Number(selectedStats?.assists ?? 0);
               const seasonMVPs = Number(
@@ -1052,8 +1092,13 @@ function SquadPage() {
                         title="Rendimiento de temporada"
                         subtitle="Impacto real en los partidos disputados"
                       />
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                         <DetailMetric icon={Users} label="Partidos" value={String(seasonAppearances)} />
+                        <DetailMetric
+                          icon={Timer}
+                          label="Minutos"
+                          value={seasonMinutes.toLocaleString("es-ES")}
+                        />
                         <DetailMetric
                           icon={Star}
                           label="Media"

@@ -1438,53 +1438,9 @@ export function simulateMatch(
       return true;
     }
 
-    // 9% of chances come from the penalty spot. The taker is ALWAYS the one
-    // designated in the tactics screen when he is on the pitch. A penalty
-    // produces exactly ONE chronicle entry (scored or missed), never a
-    // separate "penalty awarded" line.
-    if (rand() < 0.09) {
-      const takers = attackXI.filter((p) => !isGoalkeeper(p.positions));
-      const taker =
-        designated(attackXI, tactics, "penaltyTakerId") ??
-        (takers.length > 0
-          ? takers.slice().sort((a, b) => b.rating - a.rating)[
-              Math.floor(rand() * Math.min(3, takers.length))
-            ]
-          : attackXI[0]);
-
-      // Which rival player gave the penalty away.
-      const foulPool = defendXI.filter((p) => !isGoalkeeper(p.positions));
-      const offender = (foulPool.length > 0 ? foulPool : defendXI)[
-        Math.floor(rand() * Math.max(1, (foulPool.length > 0 ? foulPool : defendXI).length))
-      ];
-      const foulVerb = FOUL_REASONS[Math.floor(rand() * FOUL_REASONS.length)];
-      const conceded = offender
-        ? `Penalti: ${offender.name} ${foulVerb} ${taker.name}`
-        : "Penalti señalado";
-
-      if (rand() < 0.78) {
-        events.push({
-          minute,
-          team,
-          type: "penalty_goal",
-          scorerId: taker.id,
-          scorerName: taker.name,
-          detail: conceded,
-        });
-        return true;
-      }
-      penaltiesMissed.push({ playerId: taker.id });
-      const keeper = defendXI.find((p) => isGoalkeeper(p.positions));
-      highlights.push({
-        minute,
-        team,
-        type: "penalty_missed",
-        playerId: taker.id,
-        playerName: taker.name,
-        detail: keeper ? `${conceded} — lo falla, para ${keeper.name}` : `${conceded} — lo falla`,
-      });
-      return false;
-    }
+    // Penalties are generated independently below. Goals must not be the only
+    // route into a penalty, otherwise long stretches without goals almost
+    // automatically become stretches without penalties.
 
     // 7% of would-be goals get chalked off by VAR: only the disallowed-goal
     // line is shown, never the goal itself.
@@ -1538,6 +1494,68 @@ export function simulateMatch(
     return true;
   }
 
+  const penaltyRating = (player: Player): number =>
+    Number((player as any).penalties ?? (player as any).penaltyRating ?? (player as any).penalty ?? player.rating ?? 70);
+
+  const pickPenaltyTaker = (xi: Player[], tactics: SimTactics | null): Player | undefined => {
+    const active = xi.filter((p) => !isGoalkeeper(p.positions));
+    if (!active.length) return undefined;
+    return designated(xi, tactics, "penaltyTakerId") ??
+      active.slice().sort((a, b) => penaltyRating(b) - penaltyRating(a) || b.rating - a.rating)[0];
+  };
+
+  const pickAvailableMinute = (team: "home" | "away") => {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const minute = 8 + Math.floor(rand() * 81);
+      const occupied = events.some((e) => e.minute === minute && e.team === team) ||
+        highlights.some((h) => h.minute === minute && h.team === team && ["big_chance", "woodwork", "injury"].includes(h.type));
+      if (!occupied) return minute;
+    }
+    return goalMinute(8, 88);
+  };
+
+  const generatePenaltyForTeam = (team: "home" | "away", xi: Player[], bench: Player[], defendXI: Player[], defendReds: Map<string, number>, tactics: SimTactics | null, attackStrength: number, defendStrength: number, isHome: boolean) => {
+    const strengthGap = attackStrength - defendStrength;
+    const style = tactics?.style ?? "balanced";
+    const styleBoost = style === "offensive" ? 0.018 : style === "defensive" ? -0.012 : 0;
+    const homeBoost = isHome ? 0.012 : 0;
+    const awardChance = Math.max(0.13, Math.min(0.40, 0.22 + strengthGap * 0.006 + styleBoost + homeBoost));
+    if (rand() >= awardChance) return false;
+
+    const minute = pickAvailableMinute(team);
+    const attackReds = team === "home" ? homeRedCardedPlayers : awayRedCardedPlayers;
+    const attackActive = activePlayersAt(xi, bench, substitutions, attackReds, team, minute);
+    const defendActive = activePlayersAt(
+      defendXI,
+      team === "home" ? awayBench : homeBench,
+      substitutions,
+      defendReds,
+      team === "home" ? "away" : "home",
+      minute,
+    );
+    const taker = pickPenaltyTaker(attackActive, tactics);
+    if (!taker) return false;
+
+    const foulPool = defendActive.filter((p) => !isGoalkeeper(p.positions));
+    const offender = foulPool[Math.floor(rand() * Math.max(1, foulPool.length))];
+    const foulVerb = FOUL_REASONS[Math.floor(rand() * FOUL_REASONS.length)];
+    const conceded = offender
+      ? `Penalti: ${offender.name} ${foulVerb} ${taker.name}`
+      : "Penalti señalado";
+    const scored = rand() < Math.min(0.91, Math.max(0.68, 0.78 + (penaltyRating(taker) - 75) * 0.005));
+
+    if (scored) {
+      events.push({ minute, team, type: "penalty_goal", scorerId: taker.id, scorerName: taker.name, detail: conceded });
+      if (team === "home") finalHomeGoalMinutes.push(minute);
+      else finalAwayGoalMinutes.push(minute);
+    } else {
+      penaltiesMissed.push({ playerId: taker.id });
+      const keeper = defendActive.find((p) => isGoalkeeper(p.positions));
+      highlights.push({ minute, team, type: "penalty_missed", playerId: taker.id, playerName: taker.name, detail: keeper ? `${conceded} — lo falla, para ${keeper.name}` : `${conceded} — lo falla` });
+    }
+    return true;
+  };
+
   for (const minute of homeGoalMinutes) {
     const attack = activeAt(homeXI, homeRedCardedPlayers, minute, "home");
     const defend = activeAt(awayXI, awayRedCardedPlayers, minute, "away");
@@ -1548,6 +1566,15 @@ export function simulateMatch(
     const defend = activeAt(homeXI, homeRedCardedPlayers, minute, "home");
     if (buildGoal(minute, "away", attack, defend)) finalAwayGoalMinutes.push(minute);
   }
+
+  // Penalty incidents are independent from goal generation, so penalty
+  // frequency reflects attacking dominance rather than “would-be goals”.
+  const homeAttStrength = calculateAttackStrength(adjustedHomeXI);
+  const awayAttStrength = calculateAttackStrength(adjustedAwayXI);
+  const homeDefStrength = calculateDefenseStrength(adjustedHomeXI);
+  const awayDefStrength = calculateDefenseStrength(adjustedAwayXI);
+  generatePenaltyForTeam("home", homeXI, homeBench, awayXI, awayRedCardedPlayers, homeTactics, homeAttStrength, awayDefStrength, true);
+  generatePenaltyForTeam("away", awayXI, awayBench, homeXI, homeRedCardedPlayers, awayTactics, awayAttStrength, homeDefStrength, false);
 
   const homeGoals = finalHomeGoalMinutes.length;
   const awayGoals = finalAwayGoalMinutes.length;
