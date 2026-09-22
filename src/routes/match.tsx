@@ -176,7 +176,6 @@ function MatchPage() {
   } | null>(null);
   const clockRunIdRef = useRef(0);
   const outcomeBiasRef = useRef(0);
-  const recentDangerAttackersRef = useRef<Record<"home" | "away", string[]>>({ home: [], away: [] });
 
   // ---- live match control (pause / subs / stamina) ----
   const pausedRef = useRef(false);
@@ -220,6 +219,8 @@ function MatchPage() {
   const myBenchRef = useRef<string[]>([]);
   const [goneIds, setGoneIds] = useState<string[]>([]);
   const goneRef = useRef<string[]>([]);
+  const goneSlotIndexesRef = useRef<Record<string, number>>({});
+  const lastDangerAttackerRef = useRef<Record<"home" | "away", string | null>>({ home: null, away: null });
   const [forcedOutId, setForcedOutId] = useState<string | null>(null);
   const handledInjuriesRef = useRef<string[]>([]);
   const isExtraTimeRef = useRef(false);
@@ -360,10 +361,11 @@ function MatchPage() {
       setCommentaryEntries(st.narrative);
     }
     const restoredMoments = Array.isArray(st.keyMoments) ? st.keyMoments : [];
-    keyMomentsRef.current = restoredMoments.slice(-12);
+    keyMomentsRef.current = restoredMoments.slice(-200);
     setKeyMoments(keyMomentsRef.current);
     goneRef.current = st.gone || [];
     setGoneIds(st.gone || []);
+    goneSlotIndexesRef.current = { ...((st as any).goneSlotIndexes || {}) };
     subsUsedRef.current = st.subsUsed;
     setSubsUsed(st.subsUsed);
     windowsUsedRef.current = st.windowsUsed;
@@ -1478,7 +1480,6 @@ function MatchPage() {
     managerEffectsRef.current = { ...DEFAULT_MANAGER_EFFECTS };
     setManagerEffects(managerEffectsRef.current);
     outcomeBiasRef.current = 0;
-    recentDangerAttackersRef.current = { home: [], away: [] };
     setPendingPenalty(null);
     setLiveMoment(null);
     pendingSceneRef.current = null;
@@ -1489,6 +1490,7 @@ function MatchPage() {
     lastNarrativeMinuteRef.current = -99;
     lastMajorMomentMinuteRef.current = -99;
     goneRef.current = [];
+    goneSlotIndexesRef.current = {};
     setGoneIds([]);
     oppSubsDoneRef.current = [];
     playedEventsRef.current = [];
@@ -1519,10 +1521,36 @@ function MatchPage() {
     return isExtraTimeRef.current ? "et_playing" : "playing";
   }
 
+  function recordChronicleMoment(moment: LiveMoment) {
+    const normalized = { ...moment } as LiveMoment;
+    const same = (a: LiveMoment, b: LiveMoment) =>
+      a.id === b.id ||
+      (Number(a.minute ?? -1) === Number(b.minute ?? -2) &&
+        String((a as any).type ?? "") === String((b as any).type ?? "") &&
+        String((a as any).playerId ?? "") === String((b as any).playerId ?? "") &&
+        String((a as any).title ?? "") === String((b as any).title ?? ""));
+    const withoutDuplicate = keyMomentsRef.current.filter((item) => !same(item, normalized));
+    keyMomentsRef.current = [...withoutDuplicate, normalized].slice(-200);
+    setKeyMoments(keyMomentsRef.current);
+  }
+
   function announceHalftime(extraTime = false) {
     const title = extraTime ? "DESCANSO DE LA PRÓRROGA" : "DESCANSO";
     const homeTotal = homeScoreRef.current + (extraTime ? extraTimeHomeScoreRef.current : 0);
     const awayTotal = awayScoreRef.current + (extraTime ? extraTimeAwayScoreRef.current : 0);
+    const minute = extraTime ? 105 : 45;
+    recordChronicleMoment({
+      id: `halftime-${extraTime ? "et" : "regular"}-${minute}-${homeTotal}-${awayTotal}`,
+      type: "halftime",
+      minute,
+      kicker: "⏸️ Descanso",
+      title,
+      body: `${home.name} ${homeTotal}-${awayTotal} ${away.name}.`,
+      emoji: "⏸️",
+      hardPause: true,
+      teamSide: undefined as any,
+      teamName: "",
+    } as any);
     toast.info(title, {
       description: `${home.name} ${homeTotal}-${awayTotal} ${away.name}.`,
       duration: 4500,
@@ -1547,6 +1575,7 @@ function MatchPage() {
       bench: myBenchRef.current,
       formation: liveFormation || "Táctica 4-4-2",
       gone: goneRef.current,
+      goneSlotIndexes: { ...goneSlotIndexesRef.current },
       subsUsed: subsUsedRef.current,
       windowsUsed: windowsUsedRef.current,
       subs: subsRef.current,
@@ -1560,7 +1589,7 @@ function MatchPage() {
       managerEffects: managerEffectsRef.current,
       outcomeBias: outcomeBiasRef.current,
       narrative: commentaryEntries.slice(0, 12),
-      keyMoments: keyMomentsRef.current.slice(-12),
+      keyMoments: keyMomentsRef.current.slice(-200),
       playedEvents: playedEventsRef.current.slice(),
       playedCards: playedCardsRef.current.slice(),
       playedHighlights: playedHighlightsRef.current.slice(),
@@ -1714,16 +1743,14 @@ function MatchPage() {
   }
 
   function playWithOneLess(playerId: string, playerName?: string) {
-    // A forced injury must vacate the player's exact formation slot. Never
-    // filter the XI array: doing that shifts every player after the injured
-    // one to a different slot, which can later be interpreted as a different
-    // substitution (e.g. Mendy for Militão instead of Mendy for Cucurella).
+    const currentIndex = myXIRef.current.indexOf(playerId);
+    if (currentIndex >= 0) {
+      goneSlotIndexesRef.current = { ...goneSlotIndexesRef.current, [playerId]: currentIndex };
+    }
     const nextXI = myXIRef.current.map((id) => (id === playerId ? "" : id));
     myXIRef.current = nextXI;
     setMyXI(nextXI);
 
-    // Keep the injured player visible in the live bench as an unavailable
-    // entry. He/she is already in `gone` so the editor cannot bring them back.
     if (!myBenchRef.current.includes(playerId)) {
       myBenchRef.current = [...myBenchRef.current, playerId];
       setMyBench(myBenchRef.current);
@@ -1771,7 +1798,7 @@ function MatchPage() {
   function remapEventToPitch(ev: any) {
     const fx = fixtureRef.current;
     if (!fx || !ev) return ev;
-    if (ev.type === "own_goal") return { ...ev };
+    if (ev.type === "own_goal") return normalizeOwnGoalEvent(ev);
     const pool = ev.team === mySideOf(fx) ? myOnPitchPlayers() : oppXIRef.current;
     if (!pool || pool.length === 0) return { ...ev };
     const onPitch = new Set(pool.map((p: any) => p.id));
@@ -2109,12 +2136,19 @@ function MatchPage() {
           );
     const substitutions = buildPlayedSubstitutions();
 
-    // The score shown during the live match is authoritative. Rebuilding the
-    // result from the pre-simulated event array can resurrect an old score or
-    // lose a live correction such as a VAR cancellation.
-    const liveHomeGoals = Math.max(0, Number(homeScoreRef.current) || 0);
-    const liveAwayGoals = Math.max(0, Number(awayScoreRef.current) || 0);
+    // The live chronicle is the source of truth for the final regular-time
+    // score. The fixture can still contain the pre-simulated score from before
+    // entering the live match (for example 1-0 at half-time), so spreading
+    // fx.result here would resurrect that old score and ignore goals that were
+    // actually played during the fast-forward.
+    // The live score refs are the only authoritative score once the match has
+    // started. Rebuilding the score from the pre-simulated events can resurrect
+    // a discarded goal or miss an interactive penalty/VAR decision.
+    const liveHomeGoals = Number(homeScoreRef.current || 0);
+    const liveAwayGoals = Number(awayScoreRef.current || 0);
 
+    homeScoreRef.current = liveHomeGoals;
+    awayScoreRef.current = liveAwayGoals;
     setHomeScore(liveHomeGoals);
     setAwayScore(liveAwayGoals);
 
@@ -2248,15 +2282,15 @@ function MatchPage() {
 
   function showLiveMoment(moment: LiveMoment, _duration = 2200, recordKeyMoment = true) {
     // Key moments are deliberate stops: the manager must acknowledge the scene
-    // before the clock is allowed to advance again.
+    // before the clock is allowed to advance again. Every notification that is
+    // actually shown to the manager is also stored in the match chronicle.
     if (momentTimerRef.current !== null) {
       window.clearTimeout(momentTimerRef.current);
       momentTimerRef.current = null;
     }
     setLiveMoment(moment);
     if (recordKeyMoment) {
-      keyMomentsRef.current = [...keyMomentsRef.current, moment].slice(-8);
-      setKeyMoments(keyMomentsRef.current);
+      recordChronicleMoment(moment);
     }
     pausedRef.current = true;
     pauseReasonRef.current = "moment";
@@ -2481,7 +2515,7 @@ function MatchPage() {
     const myId = myTeamIdRef.current || save?.myTeamId;
     const mySide: "home" | "away" = fx.homeId === myId ? "home" : "away";
     const attackingPlayers = (getCurrentPitchPlayers(source.team) as any[]).filter(
-      (p) => p && !p.positions?.includes("GK"),
+      (p) => p && !isGoalkeeperForDanger(p),
     );
     const tactics = loadTactics(myId || "");
     const designatedId = source.team === mySide ? tactics.penaltyTakerId : null;
@@ -2500,7 +2534,7 @@ function MatchPage() {
     const defendingPlayers = getCurrentPitchPlayers(
       source.team === "home" ? "away" : "home",
     ) as any[];
-    const keeper = defendingPlayers.find((p) => p?.positions?.includes("GK"));
+    const keeper = defendingPlayers.find((p) => isGoalkeeperForDanger(p));
     const attacking = source.team === mySide;
 
     pendingPenaltySourceRef.current = source;
@@ -2570,7 +2604,7 @@ function MatchPage() {
     pendingSceneRef.current = { kind: "penalty_intro", moment: intro, source };
     if ((Number(source.minute) || minuteRef.current) === 45)
       halftimePendingAfterMomentRef.current = true;
-    showLiveMoment(intro, 2200, false);
+    showLiveMoment(intro, 2200, true);
   }
 
   function weightedPenaltyZone(weights: Record<PenaltyZoneId, number>): PenaltyZoneId {
@@ -2605,7 +2639,7 @@ function MatchPage() {
     const selected =
       attackingPlayers.find((p) => p.id === pending.takerId) ??
       attackingPlayers
-        .filter((p) => p && !p.positions?.includes("GK"))
+        .filter((p) => p && !isGoalkeeperForDanger(p))
         .slice()
         .sort(
           (a, b) =>
@@ -2615,7 +2649,7 @@ function MatchPage() {
     const defendingPlayers = getCurrentPitchPlayers(
       attackingSide === "home" ? "away" : "home",
     ) as any[];
-    const keeper = defendingPlayers.find((p) => p?.positions?.includes("GK"));
+    const keeper = defendingPlayers.find((p) => isGoalkeeperForDanger(p));
 
     const takerRating = Number(selected?.penaltyRating ?? selected?.penalties ?? selected?.rating ?? 74);
     const keeperRating = Number(keeper?.rating ?? 72);
@@ -2646,35 +2680,41 @@ function MatchPage() {
     let scored = false;
     let actualTargetZone: PenaltyZoneId;
     if (pending.attacking) {
-      // The user's shot is fixed by the clicked cell; the keeper independently
-      // chooses a dive cell so the result explains exactly what happened.
+      // The selected cell is the actual shot location. The keeper independently
+      // chooses a dive cell. If both are the same physical zone, the keeper
+      // always gets there: a shot cannot be a goal when the goalkeeper correctly
+      // dives to that exact cell.
       actualTargetZone = weightedPenaltyZone(keeperWeights);
       const keeperGuessed = actualTargetZone === zoneId;
-      const accuracy = (takerRating - 70) * 0.006 + baselineBias;
-      const keeperFactor = (keeperRating - 75) * 0.0032;
-      const chance = Math.max(
-        0.48,
-        Math.min(
-          0.965,
-          0.78 + accuracy + zoneDifficulty[zoneId] - keeperFactor - (keeperGuessed ? 0.31 : 0),
-        ),
-      );
-      scored = Math.random() < chance;
+      const accuracy = (takerRating - 70) * 0.0055 + baselineBias;
+      const keeperFactor = (keeperRating - 75) * 0.0028;
+      if (keeperGuessed) {
+        scored = false;
+      } else {
+        const chance = Math.max(
+          0.62,
+          Math.min(0.985, 0.86 + accuracy + zoneDifficulty[zoneId] - keeperFactor),
+        );
+        scored = Math.random() < chance;
+      }
     } else {
-      // The CPU striker secretly chooses one of the five cells; the manager
-      // only controls the goalkeeper's dive.
+      // The CPU striker secretly chooses a physical target zone. The manager
+      // controls only the goalkeeper's dive. Matching the exact zone always
+      // produces a save; a different zone normally produces a goal, with
+      // goalkeeper/taker quality adding only a small secondary swing.
       actualTargetZone = weightedPenaltyZone(strikerWeights);
       const guessed = actualTargetZone === zoneId;
-      const reflex = (keeperRating - 72) * 0.006;
-      const strikerQuality = (takerRating - 74) * 0.004;
-      const saveChance = Math.max(
-        0.07,
-        Math.min(
-          0.78,
-          0.11 + reflex - strikerQuality + (guessed ? 0.52 : 0.02) - zoneDifficulty[actualTargetZone] * 0.35,
-        ),
-      );
-      scored = Math.random() >= saveChance;
+      const reflex = (keeperRating - 72) * 0.0055;
+      const strikerQuality = (takerRating - 74) * 0.0035;
+      if (guessed) {
+        scored = false;
+      } else {
+        const saveChance = Math.max(
+          0.015,
+          Math.min(0.2, 0.055 + reflex - strikerQuality - zoneDifficulty[actualTargetZone] * 0.2),
+        );
+        scored = Math.random() >= saveChance;
+      }
     }
 
     pendingPenaltyZoneRef.current = zoneId;
@@ -2759,9 +2799,25 @@ function MatchPage() {
           ? "¡PENALTI PARADO!"
           : "¡GOL! NO LO HAS PARADO",
       detail: pending.attacking
-        ? `El portero se lanzó a ${penaltyZoneLabel(actualTargetZone)}.`
-        : `${playerName} tiró a ${penaltyZoneLabel(actualTargetZone)}.`,
+        ? `Jugador tiró: ${penaltyZoneLabel(zoneId)} · Portero se lanzó: ${penaltyZoneLabel(actualTargetZone)}.`
+        : `Jugador tiró: ${penaltyZoneLabel(actualTargetZone)} · Portero se lanzó: ${penaltyZoneLabel(zoneId)}.`,
     } satisfies PendingPenalty["resolution"];
+
+    recordChronicleMoment({
+      id: `penalty-resolution-${source.minute}-${attackingSide}-${selected?.id ?? source.scorerId ?? "unknown"}-${zoneId}-${actualTargetZone}-${scored}`,
+      type: scored ? "penalty_goal" : "penalty_save",
+      minute: Number(source.minute) || minuteRef.current,
+      kicker: "🥅 Penalti",
+      title: resolution.label,
+      body: `${playerName} · ${pending.attacking ? "Lanzamiento" : "Parada desde la portería"}. ${resolution.detail}`,
+      detail: resolution.detail,
+      playerId: selected?.id ?? source.scorerId,
+      playerName,
+      teamSide: attackingSide,
+      teamName: attackingSide === "home" ? home.name : away.name,
+      emoji: scored ? "⚽" : "🧤",
+      hardPause: true,
+    } as any);
 
     setPendingPenalty((current) => (current ? { ...current, resolution } : current));
     persistLive();
@@ -2930,54 +2986,127 @@ function MatchPage() {
     return { events, cards, hls };
   }
 
+  function playerPositionCodesForDanger(player: any): string[] {
+    const raw = [
+      ...(Array.isArray(player?.positions) ? player.positions : []),
+      player?.position,
+      player?.role,
+    ].filter(Boolean);
+    return Array.from(new Set(raw.map((p: any) => String(p).toUpperCase())));
+  }
+
+  function isGoalkeeperForDanger(player: any) {
+    const positions = playerPositionCodesForDanger(player);
+    return positions.some((p) => ["GK", "POR", "GOALKEEPER", "PORTERO"].includes(p));
+  }
+
+  function dangerRoleWeight(player: any) {
+    const positions = playerPositionCodesForDanger(player);
+    if (positions.some((p) => ["ST", "CF", "SS", "DC", "DEL", "DC9", "SD"].includes(p))) return 7.2;
+    if (positions.some((p) => ["LW", "RW", "LM", "RM", "EI", "ED", "MI", "MD", "EXTREMO"].includes(p))) return 6.2;
+    if (positions.some((p) => ["CAM", "AM", "MCO", "MP", "MCOF"].includes(p))) return 5.6;
+    if (positions.some((p) => ["CM", "MC", "CDM", "MCD", "DM", "MDMC"].includes(p))) return 4.5;
+    if (positions.some((p) => ["LB", "RB", "LWB", "RWB", "LI", "LD", "CAI", "CAD"].includes(p))) return 2.6;
+    if (positions.some((p) => ["CB", "DFC", "DCB", "LIB", "D", "DEF"].includes(p))) return 1.8;
+    return 2.4;
+  }
+
+  function pickWeightedDangerPlayer(players: any[], roleWeight: (p: any) => number, excludeIds: string[] = []) {
+    const candidates = players.filter(
+      (p) => p && p.id && !excludeIds.includes(p.id) && !isGoalkeeperForDanger(p),
+    );
+    if (!candidates.length) return null;
+    const weighted = candidates.map((p) => {
+      const rating = Number(p.rating ?? p.overall ?? 70);
+      const stamina = Number(staminaRef.current[p.id] ?? STAMINA_START);
+      const energyFactor = 0.68 + Math.max(0, Math.min(1, stamina / 100)) * 0.32;
+      const ratingFactor = 0.7 + Math.max(0, Math.min(1, (rating - 45) / 55)) * 0.75;
+      return { p, weight: Math.max(0.05, roleWeight(p) * energyFactor * ratingFactor) };
+    });
+    const total = weighted.reduce((sum, x) => sum + x.weight, 0);
+    let roll = Math.random() * total;
+    for (const entry of weighted) {
+      roll -= entry.weight;
+      if (roll <= 0) return entry.p;
+    }
+    return weighted[weighted.length - 1]?.p ?? candidates[0];
+  }
+
   function getDangerAttacker(side: "home" | "away", preferredId?: string) {
     const players = (getCurrentPitchPlayers(side) as any[]).filter(
-      (p) => p && Array.isArray(p.positions) && !p.positions.includes("GK"),
+      (p) => p && !isGoalkeeperForDanger(p),
     );
-    if (!players.length) return undefined;
+    if (!players.length) return null;
 
-    const recent = recentDangerAttackersRef.current[side] ?? [];
-    const positionWeight = (positions: any[]) => {
-      if (positions.some((p) => p === "DC")) return 6.5;
-      if (positions.some((p) => p === "ED" || p === "EI")) return 5.4;
-      if (positions.some((p) => p === "MCO")) return 3.8;
-      if (positions.some((p) => p === "MD" || p === "MI" || p === "MC")) return 2.4;
-      if (positions.some((p) => p === "MCD")) return 1.8;
-      if (positions.some((p) => p === "LD" || p === "LI")) return 1.0;
-      return 0.65;
-    };
+    const lastId = lastDangerAttackerRef.current[side];
+    const preferred = players.find((p) => p.id === preferredId && p.id !== lastId);
+    const preferredWasLast = players.find((p) => p.id === preferredId);
+    const chosen =
+      preferred ??
+      pickWeightedDangerPlayer(players, dangerRoleWeight, lastId ? [lastId] : [] ) ??
+      preferredWasLast ??
+      players[0];
 
-    const weighted = players.map((p) => {
-      const role = positionWeight(p.positions);
-      const rating = Math.max(0.55, Number(p.rating ?? 70) / 75);
-      const formValues = Array.isArray(p.formHistory) ? p.formHistory : [];
-      const form = formValues.length
-        ? 0.75 + (formValues.reduce((a: number, b: number) => a + Number(b || 0), 0) / formValues.length) / 10 * 0.5
-        : 1;
-      const preferredBoost = p.id === preferredId ? 1.55 : 1;
-      const repeatPenalty = recent.includes(p.id)
-        ? (recent[recent.length - 1] === p.id ? 0.18 : 0.48)
-        : 1;
-      const energy = Math.max(0.72, Math.min(1.08, Number(staminaRef.current[p.id] ?? STAMINA_START) / STAMINA_START + 0.15));
-      return { player: p, weight: role * rating * form * preferredBoost * repeatPenalty * energy };
+    lastDangerAttackerRef.current[side] = chosen?.id ?? lastId ?? null;
+    return chosen;
+  }
+
+  function getDangerDefender(side: "home" | "away", preferredId?: string) {
+    const players = (getCurrentPitchPlayers(side) as any[]).filter(
+      (p) => p && !isGoalkeeperForDanger(p),
+    );
+    if (!players.length) return null;
+    const defenders = players.filter((p) => {
+      const positions = playerPositionCodesForDanger(p);
+      return positions.some((pos) =>
+        ["CB", "DFC", "DCB", "LB", "RB", "LWB", "RWB", "LI", "LD", "CAI", "CAD", "CDM", "MCD"].includes(pos),
+      );
     });
+    const pool = defenders.length ? defenders : players;
+    return (preferredId && pool.find((p) => p.id === preferredId)) ??
+      pickWeightedDangerPlayer(pool, (p) => {
+        const positions = playerPositionCodesForDanger(p);
+        if (positions.some((pos) => ["CB", "DFC", "DCB"].includes(pos))) return 6.5;
+        if (positions.some((pos) => ["LB", "RB", "LWB", "RWB", "LI", "LD", "CAI", "CAD"].includes(pos))) return 5;
+        if (positions.some((pos) => ["CDM", "MCD"].includes(pos))) return 4;
+        return 2;
+      }) ?? pool[0];
+  }
 
-    const total = weighted.reduce((sum, item) => sum + item.weight, 0);
-    let roll = Math.random() * Math.max(0.001, total);
-    let selected = weighted[weighted.length - 1].player;
-    for (const item of weighted) {
-      roll -= item.weight;
-      if (roll <= 0) {
-        selected = item.player;
-        break;
-      }
+  function playerSideOnPitch(playerId?: string): "home" | "away" | null {
+    if (!playerId) return null;
+    const fx = fixtureRef.current;
+    if (!fx) return null;
+    const homePlayers = getCurrentPitchPlayers("home") as any[];
+    const awayPlayers = getCurrentPitchPlayers("away") as any[];
+    if (homePlayers.some((p) => p?.id === playerId)) return "home";
+    if (awayPlayers.some((p) => p?.id === playerId)) return "away";
+    return null;
+  }
+
+  function normalizeOwnGoalEvent(goal: any) {
+    if (!goal || goal.type !== "own_goal") return goal;
+    const originalScorerSide = playerSideOnPitch(goal.scorerId);
+    let scoringTeam = goal.team as "home" | "away";
+    if (originalScorerSide && originalScorerSide === scoringTeam) {
+      scoringTeam = scoringTeam === "home" ? "away" : "home";
     }
-    recentDangerAttackersRef.current[side] = [...recent.slice(-3), selected.id].slice(-4);
-    return selected;
+    const defendingSide = scoringTeam === "home" ? "away" : "home";
+    const preferred = originalScorerSide === defendingSide ? goal.scorerId : undefined;
+    const defender = getDangerDefender(defendingSide, preferred);
+    return {
+      ...goal,
+      team: scoringTeam,
+      scorerId: defender?.id ?? goal.scorerId,
+      scorerName: defender?.name ?? goal.scorerName,
+      assistId: undefined,
+      assistName: undefined,
+      detail: `Gol en propia de ${defender?.name ?? goal.scorerName ?? "un defensor"}.`,
+    };
   }
 
   function getDangerKeeper(side: "home" | "away") {
-    return (getCurrentPitchPlayers(side) as any[]).find((p) => p?.positions?.includes("GK"));
+    return (getCurrentPitchPlayers(side) as any[]).find((p) => isGoalkeeperForDanger(p));
   }
 
   function projectedOpponentStamina(side: "home" | "away", minute: number) {
@@ -3161,47 +3290,24 @@ function MatchPage() {
     const rawGoal = source.rawEvents?.find((e: any) =>
       ["goal", "free_kick_goal", "own_goal", "penalty_goal"].includes(e.type),
     );
+    const goal = rawGoal?.type === "own_goal" ? normalizeOwnGoalEvent(rawGoal) : rawGoal;
     const keyHighlight = source.rawHighlights?.find((h: any) =>
       ["save", "woodwork", "big_chance", "penalty_awarded"].includes(h.type),
     );
     const varDecision = source.rawHighlights?.find((h: any) => h.type === "var_disallowed");
-    const syntheticVarGoal = !rawGoal && varDecision
-      ? {
-          minute,
-          team: varDecision.team as "home" | "away",
-          type: "goal",
-          scorerId: varDecision.playerId,
-          scorerName: varDecision.playerName,
-          detail: "Gol posteriormente revisado por el VAR.",
-        }
-      : null;
-    const goal = rawGoal ?? syntheticVarGoal;
 
     if (goal) {
+      // A normal goal belongs to an attacker from goal.team. An own goal is
+      // different: goal.team is the team that receives the goal, while the
+      // scorer belongs to the opposite team. Never replace the own-goal scorer
+      // with an attacker from the scoring team, otherwise a defender/keeper
+      // from the wrong side can appear as the scorer.
       const resolvedGoal = goal.type === "own_goal"
-        ? (() => {
-            const defendingSide = goal.team === "home" ? "away" : "home";
-            const defenders = (getCurrentPitchPlayers(defendingSide) as any[]).filter(Boolean);
-            const original = defenders.find((p) => p.id === goal.scorerId);
-            const defensivePool = defenders.filter(
-              (p) => Array.isArray(p.positions) && (
-                p.positions.some((pos: string) => ["DFC", "LD", "LI"].includes(pos)) ||
-                p.positions.includes("GK")
-              ),
-            );
-            const ownGoalPlayer = original ?? defensivePool[0] ?? defenders[0];
-            return {
-              ...goal,
-              scorerId: ownGoalPlayer?.id ?? goal.scorerId,
-              scorerName: ownGoalPlayer?.name ?? goal.scorerName,
-            };
-          })()
+        ? { ...goal }
         : (() => {
             const attacker = getDangerAttacker(goal.team, goal.scorerId);
             return {
               ...goal,
-              _origScorerId: goal.scorerId,
-              _origAssistId: goal.assistId,
               scorerId: attacker?.id ?? goal.scorerId,
               scorerName: attacker?.name ?? goal.scorerName,
             };
@@ -3213,7 +3319,15 @@ function MatchPage() {
         ? true
         : goalStandsInLiveContext(goal.team, minute, goal.scorerId);
       if (!stays) {
-        allEventsRef.current = (allEventsRef.current || []).filter((e: any) => e !== goal);
+        allEventsRef.current = (allEventsRef.current || []).filter(
+          (e: any) =>
+            !(
+              Number(e.minute) === minute &&
+              e.team === goal.team &&
+              e.type === goal.type &&
+              (e.scorerId === goal.scorerId || e.scorerName === goal.scorerName)
+            ),
+        );
         if (fixtureRef.current?.result) {
           fixtureRef.current = {
             ...fixtureRef.current,
@@ -3239,6 +3353,25 @@ function MatchPage() {
         setLiveMoment(resolution);
         persistLive();
         return;
+      }
+
+      if (rawGoal && fixtureRef.current?.result) {
+        const currentEvents = [...(allEventsRef.current || [])];
+        const replaceAt = currentEvents.findIndex(
+          (event: any) =>
+            Number(event.minute) === Number(rawGoal.minute) &&
+            event.type === rawGoal.type,
+        );
+        if (replaceAt >= 0) {
+          currentEvents[replaceAt] = resolvedGoal;
+        } else {
+          currentEvents.push(resolvedGoal);
+        }
+        allEventsRef.current = currentEvents.sort((a: any, b: any) => a.minute - b.minute);
+        fixtureRef.current = {
+          ...fixtureRef.current,
+          result: { ...fixtureRef.current.result, events: allEventsRef.current },
+        } as any;
       }
 
       const applied = applyMinuteOutcome(minute, [resolvedGoal], source.rawCards || [], []);
@@ -3307,25 +3440,14 @@ function MatchPage() {
     const fx = fixtureRef.current;
     if (!fx) return false;
 
-    const goal = rawEvents.find((e: any) =>
+    const rawGoal = rawEvents.find((e: any) =>
       ["goal", "free_kick_goal", "own_goal", "penalty_goal"].includes(e.type),
-    ) ?? (() => {
-      const varHighlight = rawHighlights.find((h: any) => h.type === "var_disallowed");
-      return varHighlight
-        ? {
-            minute: m,
-            team: varHighlight.team,
-            type: "goal",
-            scorerId: varHighlight.playerId,
-            scorerName: varHighlight.playerName,
-            detail: "Gol pendiente de revisión VAR.",
-          }
-        : null;
-    })();
+    );
+    const goal = rawGoal?.type === "own_goal" ? normalizeOwnGoalEvent(rawGoal) : rawGoal;
     const keyHighlight = !goal
       ? rawHighlights.find(
           (h: any) =>
-            ["save", "woodwork", "big_chance", "penalty_awarded", "var_disallowed"].includes(h.type),
+            ["save", "woodwork", "big_chance", "penalty_awarded"].includes(h.type),
         )
       : null;
     if (!goal && !keyHighlight) return false;
@@ -3403,15 +3525,27 @@ function MatchPage() {
     };
 
     lastMajorMomentMinuteRef.current = m;
+    const stagedEvents = rawEvents.map((event: any) =>
+      event === rawGoal && goal ? goal : event,
+    );
+    if (rawGoal && goal && rawGoal !== goal) {
+      allEventsRef.current = (allEventsRef.current || []).map((event: any) =>
+        event === rawGoal ? goal : event,
+      );
+      fixtureRef.current = {
+        ...fixtureRef.current,
+        result: { ...fixtureRef.current.result, events: allEventsRef.current },
+      } as any;
+    }
     pendingSceneRef.current = {
       kind: "prelude",
       moment: danger,
-      source: { rawEvents, rawCards, rawHighlights, minute: m },
+      source: { rawEvents: stagedEvents, rawCards, rawHighlights, minute: m },
     };
     if (m === 45) halftimePendingAfterMomentRef.current = true;
     drainStamina();
     persistLive();
-    showLiveMoment(danger, 2200, false);
+    showLiveMoment(danger, 2200, true);
     return true;
   }
 
@@ -3464,26 +3598,6 @@ function MatchPage() {
             detail: red.reason,
             hardPause: true,
             teamSide: red.team,
-          },
-          emergency: true,
-        };
-      }
-      const yellow = cards.find((c) => c.cardType === "yellow" && !c.isSecondYellow);
-      if (yellow) {
-        return {
-          moment: {
-            id: `yellow-${yellow.minute}-${yellow.playerId}`,
-            type: "yellow_card",
-            minute: yellow.minute,
-            kicker: "🟨 Tarjeta amarilla",
-            title: "AMARILLA",
-            body: `${yellow.playerName} recibe tarjeta amarilla.`,
-            playerName: yellow.playerName,
-            teamName: yellow.team === "home" ? home.name : away.name,
-            emoji: "🟨",
-            detail: yellow.reason,
-            hardPause: true,
-            teamSide: yellow.team,
           },
           emergency: true,
         };
@@ -3604,7 +3718,7 @@ function MatchPage() {
       const isMajor = !!importantMoment;
       const isEmergency =
         !!selected?.emergency ||
-        ["goal", "free_kick_goal", "own_goal", "red_card", "yellow_card"].includes(importantMoment?.type ?? "");
+        ["goal", "free_kick_goal", "own_goal", "red_card"].includes(importantMoment?.type ?? "");
 
       if (importantMoment) {
         lastMajorMomentMinuteRef.current = m;
@@ -3797,14 +3911,11 @@ function MatchPage() {
       }
 
       const evs = allEventsRef.current.filter((e) => e.minute === m).map(remapEventToPitch);
-      const freshEvs = evs.filter((ev: any) =>
-        !playedEventsRef.current.some((existing: any) => eventKey(existing) === eventKey(ev)),
-      );
       playedEventsRef.current = uniq([...playedEventsRef.current, ...evs], eventKey);
-      for (const ev of freshEvs) {
+      for (const ev of evs) {
         if (!["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(ev.type)) continue;
         if (ev.team === "home") homeScoreRef.current += 1;
-        else awayScoreRef.current += 1;
+        else if (ev.team === "away") awayScoreRef.current += 1;
       }
 
       const cds = allCardsRef.current.filter((c) => c.minute === m).map(remapCardToPitch);
@@ -3933,6 +4044,8 @@ function MatchPage() {
         window.clearTimeout(clockTimeoutRef.current);
       }
       if (momentTimerRef.current !== null) window.clearTimeout(momentTimerRef.current);
+      if (transientResumeTimerRef.current !== null)
+        window.clearTimeout(transientResumeTimerRef.current);
     };
   }, []);
 
@@ -4442,7 +4555,8 @@ function MatchPage() {
             ) : feed.length === 0 &&
               cardFeed.length === 0 &&
               highlightFeed.length === 0 &&
-              subFeed.length === 0 ? (
+              subFeed.length === 0 &&
+              keyMoments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Sin eventos aún... el partido está disputado.
               </p>
@@ -4466,25 +4580,74 @@ function MatchPage() {
                     forced_sub: { icon: "🔁", label: "Cambio forzado" },
                     save: { icon: "🧤", label: "Parada" },
                   };
-                  const usedSaves: number[] = [];
-                  const hls = highlightFeed.filter((h: any) => {
-                    if (!KEEP[h.type]) return false;
-                    if (h.type === "save") {
-                      // Keep only the outstanding saves, max 3, to avoid overload.
-                      if (h.detail !== "¡Paradón!" || usedSaves.length >= 3) return false;
-                      usedSaves.push(h.minute);
-                    }
-                    return true;
-                  });
+                  const liveMomentAlreadyShows = (h: any) =>
+                    keyMoments.some(
+                      (moment: any) =>
+                        Number(moment.minute ?? -1) === Number(h.minute ?? -2) &&
+                        (moment.playerId ? String(moment.playerId) === String(h.playerId ?? "") : true) &&
+                        (moment.teamSide ? moment.teamSide === h.team : true) &&
+                        ["save", "injury", "injury_substitution", "var", "var_disallowed", "penalty_missed", "penalty_save", "penalty_goal"].includes(String(moment.type ?? "")),
+                    );
+                  const hls = highlightFeed.filter((h: any) => KEEP[h.type]);
+                  const liveMoments = keyMoments.map((m: any) => ({
+                    kind: "moment",
+                    minute: Number(m.minute ?? 0),
+                    data: m,
+                  }));
                   const items = [
+                    ...liveMoments,
                     ...cardFeed.map((c: any) => ({ kind: "card", minute: c.minute, data: c })),
                     ...feed.map((e: any) => ({ kind: "goal", minute: e.minute, data: e })),
-                    ...hls.map((h: any) => ({ kind: "highlight", minute: h.minute, data: h })),
+                    ...hls
+                      .filter((h: any) => !liveMomentAlreadyShows(h))
+                      .map((h: any) => ({ kind: "highlight", minute: h.minute, data: h })),
                     ...subFeed.map((s: any) => ({ kind: "sub", minute: s.minute, data: s })),
-                  ].sort((a, b) => b.minute - a.minute);
+                  ].sort((a, b) => Number(b.minute) - Number(a.minute));
 
                   return items.map((item, i) => {
                     const teamOf = (t: string) => (t === "home" ? home : away);
+                    if (item.kind === "moment") {
+                      const m = item.data as any;
+                      const mTeam = m.teamSide ? teamOf(m.teamSide) : null;
+                      return (
+                        <div
+                          key={`moment-${m.id}-${i}`}
+                          className="flex items-start gap-3 rounded-lg border-b border-border/40 py-2.5"
+                        >
+                          <span className="scoreline w-10 shrink-0 pt-0.5 text-sm font-bold text-primary">
+                            {m.minute}'
+                          </span>
+                          <span className="w-5 shrink-0 text-center text-base">{m.emoji || m.kicker?.slice(0, 2) || "⚡"}</span>
+                          {mTeam ? (
+                            <TeamLogo
+                              teamName={mTeam.name}
+                              leagueName={getLeagueName(mTeam.league)}
+                              size={22}
+                            />
+                          ) : (
+                            <span className="w-[22px] shrink-0" />
+                          )}
+                          {m.playerId ? (
+                            <PlayerFace
+                              name={m.playerName || "Jugador"}
+                              image={faceUrl(m.playerId)}
+                              size={24}
+                              showRing={false}
+                              className="shrink-0"
+                            />
+                          ) : (
+                            <span className="w-6 shrink-0" />
+                          )}
+                          <div className="min-w-0 text-sm">
+                            <span className="font-black">{m.playerName || m.title || m.kicker || "Jugada"}</span>
+                            {m.playerName && m.title && <span className="text-muted-foreground"> · {m.title}</span>}
+                            {m.body && <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{m.body}</div>}
+                            {!m.body && m.detail && <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{m.detail}</div>}
+                            {mTeam && <span className="ml-1 text-muted-foreground">({mTeam.short})</span>}
+                          </div>
+                        </div>
+                      );
+                    }
                     if (item.kind === "card") {
                       const card = item.data as CardEvent;
                       const cardTeam = teamOf(card.team);

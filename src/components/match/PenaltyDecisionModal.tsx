@@ -21,7 +21,7 @@ export interface PenaltyPlayerOption {
 export interface PenaltyResolution {
   success: boolean;
   selectedZone: PenaltyZoneId;
-  actualTargetZone: PenaltyZoneId;
+  actualTargetZone?: PenaltyZoneId;
   label: string;
   detail: string;
 }
@@ -43,12 +43,17 @@ export interface PendingPenalty {
   resolution?: PenaltyResolution;
 }
 
-const zones: Array<{ id: PenaltyZoneId; label: string; className: string }> = [
-  { id: "top-left", label: "Arriba izquierda", className: "col-start-1 row-start-1" },
-  { id: "top-right", label: "Arriba derecha", className: "col-start-3 row-start-1" },
-  { id: "center", label: "Centro", className: "col-start-2 row-start-2" },
-  { id: "bottom-left", label: "Abajo izquierda", className: "col-start-1 row-start-3" },
-  { id: "bottom-right", label: "Abajo derecha", className: "col-start-3 row-start-3" },
+const zones: Array<{
+  id: PenaltyZoneId;
+  label: string;
+  top: string;
+  left: string;
+}> = [
+  { id: "top-left", label: "Arriba izquierda", top: "22%", left: "21%" },
+  { id: "top-right", label: "Arriba derecha", top: "22%", left: "79%" },
+  { id: "center", label: "Centro", top: "50%", left: "50%" },
+  { id: "bottom-left", label: "Abajo izquierda", top: "78%", left: "21%" },
+  { id: "bottom-right", label: "Abajo derecha", top: "78%", left: "79%" },
 ];
 
 function zoneLabel(zoneId?: PenaltyZoneId) {
@@ -60,7 +65,7 @@ function zoneClass(
   resolution: PenaltyResolution | undefined,
 ): string {
   const base =
-    "relative rounded-lg border min-h-[78px] md:min-h-[90px] bg-background/35 text-xl md:text-2xl font-black transition";
+    "relative rounded-full border-2 bg-white/5 font-black transition";
   if (!resolution) {
     return `${base} border-foreground/10 hover:border-primary hover:bg-primary/10`;
   }
@@ -176,26 +181,34 @@ export function PenaltyDecisionModal({
                   </span>
                 </div>
 
-                <div className="relative mx-auto aspect-[1.7] max-w-[360px] overflow-hidden rounded-lg border-2 border-foreground/80 bg-background/80 p-3">
-                  <div className="absolute inset-x-3 top-2 h-1 rounded-full bg-foreground/75" />
-                  <div className="absolute inset-x-[28%] top-2 bottom-3 rounded-b-[45%] border-x border-b border-foreground/15" />
-                  <div className="relative z-10 grid h-full grid-cols-3 grid-rows-3 gap-2">
-                    {zones.map((zone) => (
-                      <motion.button
-                        key={zone.id}
-                        type="button"
-                        disabled={Boolean(penalty.resolution)}
-                        onClick={() => onResolve(zone.id)}
-                        whileHover={!penalty.resolution ? { scale: 1.035, y: -1 } : undefined}
-                        whileTap={!penalty.resolution ? { scale: 0.96 } : undefined}
-                        className={`${zoneClass(zone.id, penalty.resolution)} ${zone.className} text-[0.62rem] uppercase tracking-[0.08em]`}
-                        title={zone.label}
-                        aria-label={zone.label}
-                      >
-                        <span className="px-1 text-center leading-tight">{zone.label}</span>
-                      </motion.button>
-                    ))}
-                  </div>
+                <div className="relative mx-auto aspect-[1.42/1] w-full max-w-md overflow-hidden rounded-b-xl border-x-[7px] border-b-[7px] border-white/80 bg-sky-700 shadow-[inset_0_0_0_2px_rgba(255,255,255,.12),0_18px_45px_rgba(0,0,0,.28)]">
+                  <div
+                    className="absolute inset-0 opacity-80"
+                    style={{
+                      backgroundImage:
+                        "repeating-linear-gradient(0deg, transparent 0 12px, rgba(255,255,255,.12) 12px 13px), repeating-linear-gradient(90deg, transparent 0 14px, rgba(255,255,255,.12) 14px 15px)",
+                    }}
+                  />
+                  <div className="absolute inset-x-0 top-0 h-2 border-b border-white/80 bg-white/90" />
+                  <div className="absolute left-0 top-0 h-full w-2 bg-white/90" />
+                  <div className="absolute right-0 top-0 h-full w-2 bg-white/90" />
+                  <div className="absolute inset-[8%] rounded-sm border-2 border-white/25" />
+                  {zones.map((zone) => (
+                    <motion.button
+                      key={zone.id}
+                      type="button"
+                      disabled={Boolean(penalty.resolution)}
+                      onClick={() => onResolve(zone.id)}
+                      whileHover={!penalty.resolution ? { scale: 1.05 } : undefined}
+                      whileTap={!penalty.resolution ? { scale: 0.94 } : undefined}
+                      className={`absolute h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 transition md:h-24 md:w-24 ${zoneClass(zone.id, penalty.resolution)}`}
+                      style={{ top: zone.top, left: zone.left }}
+                      title={zone.label}
+                      aria-label={zone.label}
+                    >
+                      <span className="sr-only">{zone.label}</span>
+                    </motion.button>
+                  ))}
                 </div>
 
                 {!penalty.resolution ? (

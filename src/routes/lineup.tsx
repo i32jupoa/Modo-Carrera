@@ -132,6 +132,9 @@ function LineupPage() {
   const liveBaseXIRef = useRef<string[]>([]);
   // Players taken off the pitch during this live edit (cannot come back).
   const liveGoneRef = useRef<string[]>([]);
+  // Red cards leave a locked empty formation slot. The slot may move only when
+  // an existing on-pitch player is rearranged into it.
+  const liveGoneSlotIndexesRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     const s = loadSave();
@@ -146,6 +149,8 @@ function LineupPage() {
       if (st) {
         setLive(st);
         liveBaseXIRef.current = st.lineup;
+        liveGoneRef.current = [...(st.gone || [])];
+        liveGoneSlotIndexesRef.current = { ...((st as any).goneSlotIndexes || {}) };
         setStartingXI(st.lineup);
         setBench(st.bench);
         setSelectedFormation((st.formation || "Táctica 4-3-3") as FormationName);
@@ -764,6 +769,35 @@ function LineupPage() {
     ]);
   }
 
+  function isKeeperForLiveLineup(player: any) {
+    const positions = posCodesOf(player);
+    return positions.some((p) => ["GK", "POR"].includes(String(p).toUpperCase()));
+  }
+
+  function liveRedCardPlayerAtSlot(slotIndex: number): string | null {
+    if (!live || slotIndex < 0) return null;
+    const side = live.result?.homeId === save?.myTeamId ? "home" : "away";
+    const cards = live.result?.cards || [];
+    for (const card of cards) {
+      const isRed = card.team === side &&
+        (card.cardType === "red" || card.isSecondYellow) &&
+        Number(card.minute ?? 0) <= Number(live.minute ?? 0);
+      if (!isRed) continue;
+      const idx = Number(
+        liveGoneSlotIndexesRef.current[card.playerId] ??
+          (live as any).goneSlotIndexes?.[card.playerId],
+      );
+      if (Number.isInteger(idx) && idx === slotIndex) return card.playerId;
+    }
+    return null;
+  }
+
+  function isLiveRedCardHole(posKey: string) {
+    if (!liveMode || !live) return false;
+    const index = formationPositions.indexOf(posKey);
+    return index >= 0 && liveRedCardPlayerAtSlot(index) !== null;
+  }
+
   function liveForcedInjuryIds(): Set<string> {
     if (!live) return new Set<string>();
     return new Set(
@@ -867,12 +901,6 @@ function LineupPage() {
     const player = squad.find((p) => p.id === playerId);
     if (!player) return;
 
-    // During a live match, an expelled/substituted player can never return to
-    // the pitch. This check is also required for an EMPTY slot: there is no
-    // pitch-player swap in that path, so handlePitchToEmptySwap must enforce the
-    // same live-match rule explicitly.
-    if (liveSubBlocked(playerId)) return;
-
     // Check if player is injured
     if (isCurrentlyInjured(player)) {
       toast.error(`${player.name} está lesionado y no puede jugar.`);
@@ -895,14 +923,27 @@ function LineupPage() {
       return;
     }
 
-    // Get the role required for the empty position
-    const requiredSlot = getSlotCodeForKey(emptyPosKey);
+    const emptyPosIndex = formationPositions.indexOf(emptyPosKey);
+    const redCardHole = isLiveRedCardHole(emptyPosKey);
 
-    // Validate that the player can play in this role
-    if (!canPlayInSlot(player, requiredSlot)) {
-      toast.error(invalidPositionMessage(player, requiredSlot));
+    // A red-card hole can only be filled by rearranging a player who is already
+    // on the pitch. A goalkeeper may not be moved into an outfield red-card hole.
+    if (redCardHole && isKeeperForLiveLineup(player) && getSlotCodeForKey(emptyPosKey) !== "GK") {
+      toast.error("El hueco de la expulsión no puede cubrirse colocando al portero ahí.");
       setSelectedPlayer(null);
       return;
+    }
+
+    // Normally positions are validated. A red-card hole is the one explicit
+    // exception: you may move an existing player into it, and the empty hole
+    // moves to the player's previous formation slot.
+    if (!redCardHole) {
+      const requiredSlot = getSlotCodeForKey(emptyPosKey);
+      if (!canPlayInSlot(player, requiredSlot)) {
+        toast.error(invalidPositionMessage(player, requiredSlot));
+        setSelectedPlayer(null);
+        return;
+      }
     }
 
     // Get the current position key of the player
@@ -910,8 +951,21 @@ function LineupPage() {
     if (!currentPlayerPosKey) return;
 
     // Get the indices of both positions
-    const emptyPosIndex = formationPositions.indexOf(emptyPosKey);
     const currentPlayerPosIndex = formationPositions.indexOf(currentPlayerPosKey);
+    if (emptyPosIndex < 0 || currentPlayerPosIndex < 0) {
+      setSelectedPlayer(null);
+      return;
+    }
+
+    if (redCardHole && live) {
+      const redPlayerId = liveRedCardPlayerAtSlot(emptyPosIndex);
+      if (redPlayerId) {
+        liveGoneSlotIndexesRef.current = {
+          ...liveGoneSlotIndexesRef.current,
+          [redPlayerId]: currentPlayerPosIndex,
+        };
+      }
+    }
 
     // Swap: move player to empty position, make old position empty
     setStartingXI((prev) => {
@@ -951,6 +1005,11 @@ function LineupPage() {
 
     // Check if pitchTarget is a position key (empty position) or a player ID
     const isPositionKey = formationPositions.includes(pitchTarget);
+    if (isPositionKey && isLiveRedCardHole(pitchTarget)) {
+      toast.error("La plaza está bloqueada por una expulsión. Solo puedes mover a otro jugador del campo a ese hueco.");
+      setSelectedPlayer(null);
+      return;
+    }
     let posKey: string | null = null;
 
     if (isPositionKey) {
@@ -1401,21 +1460,28 @@ function LineupPage() {
                   />
                 );
               } else {
-                // Render empty placeholder for empty positions
+                // Render empty placeholder for empty positions. A red-card hole is
+                // visibly locked: bench players can never be inserted directly.
+                const redCardHole = isLiveRedCardHole(posKey);
                 return (
                   <div
                     key={posKey}
                     onClick={() => {
-                      if (selectedPlayer) {
-                        if (bench.includes(selectedPlayer)) {
-                          handleBenchToPitchSwap(selectedPlayer, posKey);
-                        } else if (startingXI.includes(selectedPlayer)) {
-                          // Swap starting player with empty position
-                          handlePitchToEmptySwap(selectedPlayer, posKey);
+                      if (!selectedPlayer) return;
+                      if (bench.includes(selectedPlayer)) {
+                        if (redCardHole) {
+                          toast.error("El hueco de la expulsión está bloqueado. Mueve a un jugador que ya esté en el campo.");
+                          setSelectedPlayer(null);
+                          return;
                         }
+                        handleBenchToPitchSwap(selectedPlayer, posKey);
+                      } else if (startingXI.includes(selectedPlayer)) {
+                        handlePitchToEmptySwap(selectedPlayer, posKey);
                       }
                     }}
-                    className="absolute cursor-pointer hover:scale-110 transition-transform"
+                    className={`absolute transition-transform ${
+                      selectedPlayer && startingXI.includes(selectedPlayer) ? "cursor-pointer hover:scale-110" : redCardHole ? "cursor-not-allowed" : "cursor-pointer hover:scale-110"
+                    }`}
                     style={{
                       top: `${coords.top}%`,
                       left: `${coords.left}%`,
@@ -1423,11 +1489,15 @@ function LineupPage() {
                     }}
                   >
                     <div
-                      className="w-[64px] h-[64px] rounded-full border-2 border-dashed border-primary/40 bg-background/40 flex flex-col items-center justify-center text-primary/70 text-[0.55rem] font-black leading-tight"
-                      title={`Hueco vacío: ${emptySlotLabel(posKey)}`}
+                      className={`w-[64px] h-[64px] rounded-full border-2 flex flex-col items-center justify-center text-[0.55rem] font-black leading-tight ${
+                        redCardHole
+                          ? "border-destructive/80 bg-destructive/20 text-destructive shadow-[0_0_18px_rgba(239,68,68,.22)]"
+                          : "border-dashed border-primary/40 bg-background/40 text-primary/70"
+                      }`}
+                      title={redCardHole ? `Hueco bloqueado por expulsión: ${emptySlotLabel(posKey)}` : `Hueco vacío: ${emptySlotLabel(posKey)}`}
                     >
                       <span className="scoreline text-[0.6rem]">{emptySlotLabel(posKey)}</span>
-                      <span className="text-base leading-none">+</span>
+                      <span className="text-base leading-none">{redCardHole ? "🔒" : "+"}</span>
                     </div>
                   </div>
                 );
@@ -1484,14 +1554,6 @@ function LineupPage() {
               const isInjured = isCurrentlyInjured(player);
               const isForcedOut = liveMode && liveGoneIds().has(player.id);
               const isLiveForcedInjury = isForcedOut && liveForcedInjuryIds().has(player.id);
-              const isLiveRedCard =
-                liveMode &&
-                !!live?.playedCards?.some(
-                  (card: any) =>
-                    card.playerId === player.id &&
-                    card.team === (live.result?.homeId === save?.myTeamId ? "home" : "away") &&
-                    (card.cardType === "red" || card.isSecondYellow),
-                );
               const suspensions = save?.suspensions[save.myTeamId] ?? [];
               const suspendedPlayerIds = new Set(
                 suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
@@ -1524,18 +1586,16 @@ function LineupPage() {
                     {isForcedOut && (
                       <span
                         className="absolute -top-1 -left-1 grid h-5 w-5 place-items-center rounded-full border border-destructive/30 bg-background text-[0.62rem] shadow"
-                        title={isLiveRedCard ? "Expulsado · no puede volver a jugar" : "No puede volver a jugar"}
+                        title="No puede volver a jugar"
                       >
-                        {isLiveRedCard ? "🟥" : "🔒"}
+                        🔒
                       </span>
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold truncate text-sm flex items-center gap-1">
                       {player.name}
-                      {isLiveRedCard ? (
-                        <span className="text-xs font-black text-red-400">(EXPULSADO)</span>
-                      ) : (isInjured || isLiveForcedInjury) && (
+                      {(isInjured || isLiveForcedInjury) && (
                         <span className="text-xs font-bold text-destructive">
                           (
                           {isLiveForcedInjury && !isInjured
@@ -1546,7 +1606,7 @@ function LineupPage() {
                       )}
                       {isSuspended && <span className="text-xs text-destructive">(SUS)</span>}
                       {isForcedOut && (
-                        <span className={`text-[0.55rem] font-black uppercase tracking-wider ${isLiveRedCard ? "text-red-400" : "text-muted-foreground"}`}>
+                        <span className="text-[0.55rem] font-black uppercase tracking-wider text-muted-foreground">
                           · Bloqueado
                         </span>
                       )}
@@ -1764,6 +1824,7 @@ function LineupPage() {
                       lineup: startingXI,
                       bench: nextBench,
                       gone: goneList,
+                      goneSlotIndexes: { ...liveGoneSlotIndexesRef.current },
                       formation: selectedFormation,
                       stamina,
                       subs,

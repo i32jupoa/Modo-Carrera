@@ -29,6 +29,9 @@ export type LiveMatchState = {
   formation: string;
   /** Players that left the pitch and cannot come back (red card / injury with no sub left). */
   gone: string[];
+  /** Formation slot indexes occupied by red-card holes. The red-card player stays
+   * blocked, while the hole can be moved by rearranging players already on the pitch. */
+  goneSlotIndexes?: Record<string, number>;
   subsUsed: number;
   windowsUsed: number;
   subs: LiveSub[];
