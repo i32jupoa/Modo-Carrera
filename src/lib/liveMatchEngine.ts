@@ -503,7 +503,8 @@ export function updateMomentum({
   }
 
   for (const highlight of highlights) {
-    const sign = highlight.team === userSide ? 1 : -1;
+    const isNegativeOutcome = ["var_disallowed", "penalty_missed"].includes(highlight.type);
+    const sign = highlight.team === userSide ? (isNegativeOutcome ? -1 : 1) : isNegativeOutcome ? 1 : -1;
     const weight =
       highlight.type === "big_chance"
         ? 4.2
@@ -1012,11 +1013,8 @@ export function buildSavePrelude({
   homeName: string;
   awayName: string;
 }): LiveMoment {
-  // In a save highlight, `team` is the defending team and `player` is the
-  // goalkeeper. The danger scene must therefore belong to the opposite team.
-  const attackingTeam = highlight.team === "home" ? "away" : "home";
-  const teamName = attackingTeam === "home" ? homeName : awayName;
-  const player = highlight.attackerName || "El atacante";
+  const teamName = highlight.team === "home" ? homeName : awayName;
+  const player = highlight.playerName || "El delantero";
   const variants = [
     `${player} arma la pierna dentro del área. El portero aguanta la posición y espera el último instante.`,
     `${player} se prepara para el golpeo. Todo el estadio contiene la respiración: llega un disparo con muchísimo peligro.`,
@@ -1030,14 +1028,14 @@ export function buildSavePrelude({
     title: "SE CARGA EL DISPARO",
     body: variants[(highlight.minute + player.length) % variants.length],
     playerName: player,
-    playerId: highlight.attackerId,
+    playerId: highlight.playerId,
     teamName,
     choices: dangerChoicesFor("save"),
     actionPrompt: "¿Cómo quieres resolver la jugada?",
     emoji: "🚨",
-    detail: `Siguiente: el disparo de ${player}…`,
+    detail: "Siguiente: el disparo…",
     hardPause: true,
-    teamSide: attackingTeam,
+    teamSide: highlight.team,
   };
 }
 
@@ -1084,16 +1082,18 @@ export function buildMomentFromEvent({
     };
   }
   if (type === "own_goal") {
+    const ownGoalTeam = event.team === "home" ? awayName : homeName;
     return {
       id: `og-${event.minute}-${event.scorerId}`,
       type,
       minute: event.minute,
       kicker: "⚽ Gol en propia",
       title: "GOL EN PROPIA",
-      body: `Una acción desafortunada termina dentro de la portería de ${teamName}.`,
+      body: `${event.scorerName} desvía el balón hacia su propia portería. El tanto sube al marcador para ${teamName}.`,
       playerName: event.scorerName,
       teamName,
       emoji: "⚽",
+      detail: `${event.scorerName} · gol en propia de ${ownGoalTeam}`,
       hardPause: true,
     };
   }
@@ -1206,9 +1206,7 @@ export function buildMomentFromHighlight({
         ...common,
         kicker: "🧤 Parada",
         title: highlight.detail === "¡Paradón!" ? "PARADÓN" : "PARADA CLAVE",
-        body: highlight.attackerName
-          ? `${highlight.playerName} detiene el disparo de ${highlight.attackerName}.`
-          : `${highlight.playerName} aparece para evitar el gol.`,
+        body: `${highlight.playerName} aparece para evitar el gol.`,
         emoji: "🧤",
         hardPause: true,
       };

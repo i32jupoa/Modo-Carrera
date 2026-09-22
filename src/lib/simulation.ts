@@ -176,22 +176,24 @@ export function expectedGoals(
   const mh = teamMomentum(homeXI);
   const ma = teamMomentum(awayXI);
 
-  // Progressive weight for OVR difference - every 2 points has increasingly pronounced effect
-  // Uses quadratic scaling for more dramatic impact at higher differences
-  const homeProgressiveFactor = 0.1 + (Math.abs(homeDiff) / 100) * 0.15;
-  const awayProgressiveFactor = 0.1 + (Math.abs(awayDiff) / 100) * 0.15;
+  // Keep score rates in a realistic football range. Ratings/tactics still
+  // matter a lot, but a strong XI should not automatically create 4-5 xG
+  // because of a single quadratic OVR spike. The live layer later adds
+  // current momentum and energy to individual dangerous actions.
+  const homeQualityEdge = Math.max(-0.75, Math.min(1.2, homeDiff * 0.045));
+  const awayQualityEdge = Math.max(-0.75, Math.min(1.05, awayDiff * 0.045));
 
-  const baseHome = 1.3 + homeDiff * homeProgressiveFactor + HOME_ADVANTAGE;
-  const baseAway = 1.3 + awayDiff * awayProgressiveFactor;
+  const baseHome = 1.18 + homeQualityEdge + HOME_ADVANTAGE * 0.55;
+  const baseAway = 1.05 + awayQualityEdge;
 
-  // Add randomness factor to allow for upsets (David vs Goliath scenarios)
-  // Uses normal distribution with higher variance to enable surprises
-  const homeRandom = (rand() - 0.5) * 0.8; // ±0.4 variance
-  const awayRandom = (rand() - 0.5) * 0.8;
+  // Mild randomness keeps realistic upsets possible without producing arcade-like
+  // scorelines every few matches.
+  const homeRandom = (rand() - 0.5) * 0.42; // ±0.21
+  const awayRandom = (rand() - 0.5) * 0.42;
 
-  // Apply momentum and randomness
-  const lh = Math.max(0.3, (baseHome + homeRandom) * mh);
-  const la = Math.max(0.3, (baseAway + awayRandom) * ma);
+  // Apply form/morale momentum and clamp to a credible per-team goal expectation.
+  const lh = Math.max(0.22, Math.min(3.05, (baseHome + homeRandom) * mh));
+  const la = Math.max(0.18, Math.min(2.85, (baseAway + awayRandom) * ma));
 
   return { lh, la };
 }
@@ -237,9 +239,6 @@ export type HighlightEvent = {
   playerId: string;
   playerName: string;
   detail?: string;
-  /** Para highlights defensivos: atacante que originó la acción. */
-  attackerId?: string;
-  attackerName?: string;
 };
 
 export type CardEvent = {
@@ -973,28 +972,12 @@ export function simulateMatchFast(
       );
       const gk = gks[0];
       if (!gk) continue;
-      const attackingTeam = team === "home" ? "away" : "home";
-      const attackingXI = attackingTeam === "home" ? homeXI : awayXI;
-      const attackingBench = attackingTeam === "home" ? homeBench : awayBench;
-      const attackerPool = activePlayersAt(
-        attackingXI,
-        attackingBench,
-        substitutions,
-        new Map(),
-        attackingTeam,
-        minute,
-      ).filter((p) => !isGoalkeeper(p.positions));
-      const attacker = attackerPool.length
-        ? attackerPool.slice().sort((a, b) => b.rating - a.rating)[Math.floor(rand() * attackerPool.length)]
-        : undefined;
       highlights.push({
         minute,
         team,
         type: "save",
         playerId: gk.id,
         playerName: gk.name,
-        attackerId: attacker?.id,
-        attackerName: attacker?.name,
         detail: rand() < 0.35 ? "¡Paradón!" : "Buena intervención",
       });
     }
@@ -1148,33 +1131,6 @@ export function simulateMatch(
     const id = tactics?.[role];
     if (!id) return null;
     return xi.find((p) => p.id === id) ?? null;
-  };
-
-  const isGk = (p: Player) => p.positions?.includes("GK");
-  const penaltyRating = (player: Player): number =>
-    Number(player.penalties ?? 0) || Number(player.rating ?? 70);
-  const setPiecePassingRating = (player: Player): number =>
-    Math.max(Number(player.passing ?? 0), Number(player.longPassing ?? 0), Number(player.rating ?? 70) * 0.45);
-  const pickPenaltyTaker = (xi: Player[], tactics: SimTactics | null): Player | undefined => {
-    const active = xi.filter((p) => !isGk(p));
-    if (!active.length) return undefined;
-    return (designated(xi, tactics, "penaltyTakerId") ??
-      active.slice().sort((a, b) => penaltyRating(b) - penaltyRating(a) || b.rating - a.rating)[0]);
-  };
-  const pickSetPieceTaker = (
-    xi: Player[],
-    _tactics: SimTactics | null,
-    _role: "freekickTakerId" | "cornerTakerId",
-  ): Player | undefined => {
-    const active = xi.filter((p) => !isGk(p));
-    if (!active.length) return undefined;
-    // Corners and free kicks are awarded to the active outfield player with
-    // the strongest passing / long-passing profile. This is deliberately
-    // independent from a manually selected default taker so the simulated
-    // opponent always chooses the most suitable specialist.
-    return active
-      .slice()
-      .sort((a, b) => setPiecePassingRating(b) - setPiecePassingRating(a) || b.rating - a.rating)[0];
   };
 
   // -------------------------------------------------------------------------
@@ -1488,26 +1444,13 @@ export function simulateMatch(
     // route into a penalty, otherwise long stretches without goals almost
     // automatically become stretches without penalties.
 
-    // 7% of would-be goals get chalked off by VAR: only the disallowed-goal
-    // line is shown, never the goal itself.
-    if (rand() < 0.07) {
-      const scorer = pickScorer(attackXI);
-      highlights.push({
-        minute,
-        team,
-        type: "var_disallowed",
-        playerId: scorer.id,
-        playerName: scorer.name,
-        detail:
-          rand() < 0.6
-            ? "Gol anulado por fuera de juego (VAR)"
-            : "Gol anulado por falta previa (VAR)",
-      });
-      return false;
-    }
+    // VAR reviews happen AFTER the provisional goal is shown in the live
+    // chronicle. The goal is still excluded from the official score unless
+    // the review is cleared later.
+    const varReview = rand() < 0.07;
 
     // 6% direct free kicks, taken by the designated free-kick specialist.
-    const fkTaker = pickSetPieceTaker(attackXI, tactics, "freekickTakerId");
+    const fkTaker = pickDeadBallTaker(attackXI, tactics, "freekickTakerId");
     if (rand() < 0.06) {
       const shooter = fkTaker ?? pickScorer(attackXI);
       events.push({
@@ -1524,7 +1467,7 @@ export function simulateMatch(
     const scorer = pickScorer(attackXI);
     // Roughly a fifth of open-play goals come from a corner / dead ball, and
     // those are delivered by the designated corner taker.
-    const cornerTaker = pickSetPieceTaker(attackXI, tactics, "cornerTakerId");
+    const cornerTaker = pickDeadBallTaker(attackXI, tactics, "cornerTakerId");
     const fromCorner = !!cornerTaker && cornerTaker.id !== scorer.id && rand() < 0.22;
     const assister = fromCorner ? cornerTaker : pickAssister(attackXI, scorer.id);
     events.push({
@@ -1537,8 +1480,50 @@ export function simulateMatch(
       assistName: assister?.name,
       detail: fromCorner ? "A la salida de un córner" : undefined,
     });
+
+    if (varReview) {
+      highlights.push({
+        minute,
+        team,
+        type: "var_disallowed",
+        playerId: scorer.id,
+        playerName: scorer.name,
+        detail:
+          rand() < 0.6
+            ? "Gol anulado por fuera de juego (VAR)"
+            : "Gol anulado por falta previa (VAR)",
+      });
+      return false;
+    }
     return true;
   }
+
+  const penaltyRating = (player: Player): number =>
+    Number((player as any).penaltyRating ?? (player as any).penalties ?? (player as any).penalty ?? player.rating ?? 70);
+
+  const passingRating = (player: Player): number =>
+    Number((player as any).shortPassing ?? 0) * 0.55 + Number((player as any).longPassing ?? 0) * 0.45;
+
+  const pickDeadBallTaker = (
+    xi: Player[],
+    tactics: SimTactics | null,
+    key: "freekickTakerId" | "cornerTakerId",
+  ): Player | undefined => {
+    const active = xi.filter((p) => !isGoalkeeper(p.positions));
+    if (!active.length) return undefined;
+    const designatedPlayer = designated(xi, tactics, key);
+    return (
+      designatedPlayer ??
+      active.slice().sort((a, b) => passingRating(b) - passingRating(a) || b.rating - a.rating)[0]
+    );
+  };
+
+  const pickPenaltyTaker = (xi: Player[], tactics: SimTactics | null): Player | undefined => {
+    const active = xi.filter((p) => !isGoalkeeper(p.positions));
+    if (!active.length) return undefined;
+    return designated(xi, tactics, "penaltyTakerId") ??
+      active.slice().sort((a, b) => penaltyRating(b) - penaltyRating(a) || b.rating - a.rating)[0];
+  };
 
   const pickAvailableMinute = (team: "home" | "away") => {
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -1647,23 +1632,12 @@ export function simulateMatch(
         team,
       ).find((p) => isGoalkeeper(p.positions));
       if (!gk) continue;
-      const attackingTeam = team === "home" ? "away" : "home";
-      const attackingXI = attackingTeam === "home" ? homeXI : awayXI;
-      const attackingReds = attackingTeam === "home" ? homeRedCardedPlayers : awayRedCardedPlayers;
-      const attackerPool = activeAt(attackingXI, attackingReds, minute, attackingTeam).filter(
-        (p) => !isGoalkeeper(p.positions),
-      );
-      const attacker = attackerPool.length
-        ? attackerPool.slice().sort((a, b) => b.rating - a.rating)[Math.floor(rand() * attackerPool.length)]
-        : undefined;
       highlights.push({
         minute,
         team,
         type: "save",
         playerId: gk.id,
         playerName: gk.name,
-        attackerId: attacker?.id,
-        attackerName: attacker?.name,
         detail: rand() < 0.35 ? "¡Paradón!" : "Buena intervención",
       });
     }

@@ -53,15 +53,14 @@ export type LiveMatchState = {
   /** Small tactical bias carried by the live layer into upcoming events. */
   outcomeBias?: number;
   scene?: {
-    kind: "danger" | "resolution" | "penalty_intro";
+    kind: "prelude" | "resolution" | "var" | "penalty_intro";
     moment?: any;
     resolution?: any;
     source?: any;
-    choiceId?: string;
   } | null;
 };
 
-export const LIVE_VERSION = 6;
+export const LIVE_VERSION = 7;
 const KEY = "mc:live-match";
 
 export function saveLive(state: LiveMatchState) {
