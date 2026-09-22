@@ -67,9 +67,11 @@ export function MatchDayModal() {
       const cupStart = new Date("2025-07-07T00:00:00Z");
 
       // Check cup fixtures
-      for (const lg of Object.keys(save.cupFixtures)) {
+      for (const lg of Object.keys(save.cupFixtures || {})) {
         const cupList = save.cupFixtures[lg as LeagueId];
-        if (!cupList) continue;
+        // cupFixtures also contains `${league}_structure` metadata entries.
+        // They are objects, not match arrays, and must never be iterated here.
+        if (!Array.isArray(cupList)) continue;
 
         for (const f of cupList) {
           if (f.result) continue;
@@ -167,7 +169,10 @@ export function MatchDayModal() {
       const matchType =
         pending.competition === "cup" ? "CUP" : pending.competition === "ucl" ? "UCL" : "LEAGUE";
       const cupRound = pending.competition === "cup" ? `R${pending.matchday}` : undefined;
-      navigate({ to: "/match", state: { matchType, cupRound } as any });
+      navigate({
+        to: "/match",
+        state: { matchType, cupRound, fixtureId: pending.id } as any,
+      });
     }
   }
 

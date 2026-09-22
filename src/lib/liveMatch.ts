@@ -29,6 +29,8 @@ export type LiveMatchState = {
   formation: string;
   /** Players that left the pitch and cannot come back (red card / injury with no sub left). */
   gone: string[];
+  /** Injuries that forced a lineup edit: playerId -> formation slot index that must be filled by a bench player. */
+  pendingForcedInjurySlots?: Record<string, number>;
   /** Formation slot indexes occupied by red-card holes. The red-card player stays
    * blocked, while the hole can be moved by rearranging players already on the pitch. */
   goneSlotIndexes?: Record<string, number>;
@@ -63,7 +65,7 @@ export type LiveMatchState = {
   } | null;
 };
 
-export const LIVE_VERSION = 7;
+export const LIVE_VERSION = 8;
 const KEY = "mc:live-match";
 
 export function saveLive(state: LiveMatchState) {

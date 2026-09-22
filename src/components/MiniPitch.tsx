@@ -13,7 +13,7 @@ import { Zap } from "lucide-react";
 import { faceUrl } from "@/lib/playerFaces";
 
 interface MiniPitchProps {
-  startingXI: Player[];
+  startingXI: Array<Player | null>;
   formation: FormationName;
   teamId: string;
   className?: string;
@@ -97,18 +97,15 @@ export function MiniPitch({
   substitutions = [],
   stamina = {},
 }: MiniPitchProps) {
-  const formationPositions = FORMATION_COORDINATES[formation];
+  const formationPositions = FORMATION_COORDINATES[formation] ?? FORMATION_COORDINATES["Táctica 4-4-2"];
   const positionKeys = Object.keys(formationPositions);
   const team = teamById(teamId);
 
   // Map players to positions (simple mapping by index)
   const playerPositions: Record<string, Player | null> = {};
   positionKeys.forEach((posKey, index) => {
-    if (index < startingXI.length && startingXI[index]) {
-      playerPositions[posKey] = startingXI[index];
-    } else {
-      playerPositions[posKey] = null;
-    }
+    const player = startingXI[index] ?? null;
+    playerPositions[posKey] = player;
   });
 
   // Create a map of player IDs to their cards

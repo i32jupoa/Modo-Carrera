@@ -8,6 +8,51 @@ import type { DynamicPlayerStats, MonthlyStats, SeasonStats } from "@/types/play
 import { type PosCode } from "@/lib/positions";
 
 /**
+ * Repara bloques de progresión procedentes de partidas antiguas o parcialmente
+ * persistidas. La simulación no debe caerse porque falte un array nuevo.
+ */
+export function normalizeDynamicStats(raw: Partial<DynamicPlayerStats> | null | undefined, baseOVR = 70): DynamicPlayerStats {
+  const source = raw ?? {};
+  const n = (value: unknown, fallback = 0) =>
+    Number.isFinite(Number(value)) ? Number(value) : fallback;
+  const arr = (value: unknown): any[] => (Array.isArray(value) ? value : []);
+
+  return {
+    seasonGoals: n(source.seasonGoals),
+    seasonAssists: n(source.seasonAssists),
+    seasonAppearances: n(source.seasonAppearances),
+    seasonMinutes: n(source.seasonMinutes),
+    seasonMVPs: n(source.seasonMVPs),
+    seasonCleanSheets: n(source.seasonCleanSheets),
+    seasonAverageRating: n(source.seasonAverageRating, 6),
+    seasonRatingTotal: n(source.seasonRatingTotal),
+    seasonRatingCount: n(source.seasonRatingCount),
+    seasonTrophies: n(source.seasonTrophies),
+    monthlyStats: arr<MonthlyStats>(source.monthlyStats).map((m: any) => ({
+      month: n(m?.month),
+      year: n(m?.year),
+      goals: n(m?.goals),
+      assists: n(m?.assists),
+      appearances: n(m?.appearances),
+      averageRating: n(m?.averageRating, 6),
+      mvpCount: n(m?.mvpCount),
+      cleanSheets: n(m?.cleanSheets),
+      ratingTotal: n(m?.ratingTotal),
+      ratingCount: n(m?.ratingCount),
+      teamId: typeof m?.teamId === "string" ? m.teamId : undefined,
+    })),
+    currentOVR: Math.max(50, Math.min(99, n(source.currentOVR, baseOVR))),
+    baseOVR: Math.max(50, Math.min(99, n(source.baseOVR, baseOVR))),
+    potentialOVR: Math.max(50, Math.min(99, n(source.potentialOVR, baseOVR))),
+    formHistory: arr<number>(source.formHistory).map((v) => n(v)).slice(-10),
+    careerSeasons: arr<SeasonStats>(source.careerSeasons),
+    lastProgressionMonth: n(source.lastProgressionMonth),
+    lastProgressionYear: n(source.lastProgressionYear),
+    lastSeasonEndSeason: n(source.lastSeasonEndSeason),
+  };
+}
+
+/**
  * Calcula el modificador de edad para progresión.
  * Jóvenes progresan más rápido, veteranos decaen más rápido.
  */
@@ -68,6 +113,7 @@ export function calculateMonthlyProgression(
   age: number,
   positions: PosCode[],
 ): number {
+  stats = normalizeDynamicStats(stats, stats?.baseOVR ?? 70);
   const performanceScore = calculatePerformanceScore(stats);
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
@@ -239,7 +285,10 @@ export function applyMonthlyProgression(
   currentMonth: number,
   currentYear: number,
 ): DynamicPlayerStats {
-  // Solo progresar una vez por mes
+  stats = normalizeDynamicStats(stats, stats?.baseOVR ?? 70);
+
+  // Solo progresar una vez por mes. La rutina recibe la fecha del juego, no la
+  // fecha real del ordenador, así que la misma carrera es determinista al recargar.
   if (stats.lastProgressionMonth === currentMonth && stats.lastProgressionYear === currentYear) {
     return stats;
   }

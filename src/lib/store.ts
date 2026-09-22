@@ -60,6 +60,7 @@ import { applyMonthlyProgressionToAll } from "@/lib/monthlyProgression";
 import { applySeasonEndProgressionToAll } from "@/lib/seasonEndProgression";
 import { applySeasonEndProgressionToPlayer } from "@/lib/progressionHelper";
 import { applyMonthlyProgressionToPlayer } from "@/lib/progressionHelper";
+import { normalizeDynamicStats } from "@/lib/playerProgression";
 import type { DynamicPlayerStats } from "@/types/playerStats";
 import { invalidateSquadsCache, generateAllSquads } from "@/data/players";
 
@@ -108,35 +109,48 @@ function applySeasonEndProgressionToAllPlayers(seasonNumber: number): void {
  */
 function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: number): void {
   const store = usePlayersStore.getState();
-  const allStats = store.stats;
+  const allStats = store.stats ?? {};
 
-  // Apply monthly progression to each player's dynamic stats
+  // Una partida puede contener jugadores creados antes de que existiese
+  // `monthlyStats`, `formHistory` u otros campos del bloque dinámico.
+  // Normalizamos cada registro y aislamos los errores por jugador para que un
+  // dato corrupto nunca bloquee el inicio de una jornada completa.
   for (const [playerId, stats] of Object.entries(allStats)) {
-    if (!stats.dynamicStats) continue;
+    try {
+      const player = store.getSimPlayer(playerId);
+      if (!player) continue;
 
-    // Get player info for age and positions
-    const player = store.getSimPlayer(playerId);
-    if (!player) continue;
+      const safeDynamicStats = normalizeDynamicStats(
+        stats?.dynamicStats,
+        Number(player.rating) || 70,
+      );
 
-    const { updatedStats, newOVR } = applyMonthlyProgressionToPlayer(
-      player,
-      stats.dynamicStats,
-      currentMonth,
-      currentYear,
-    );
+      const { updatedStats } = applyMonthlyProgressionToPlayer(
+        player,
+        safeDynamicStats,
+        currentMonth,
+        currentYear,
+      );
 
-    // Update the stats with the modified dynamic stats
-    store.mutatePlayerStat(playerId, (s) => ({
-      ...s,
-      dynamicStats: updatedStats,
-    }));
+      store.mutatePlayerStat(playerId, (s) => ({
+        ...s,
+        dynamicStats: updatedStats,
+      }));
+    } catch (error) {
+      console.warn(`[monthly progression] jugador ${playerId} omitido para mantener la jornada jugable`, error);
+    }
   }
 
-  // Invalidate squads cache so new ratings are used when squads are regenerated
   invalidateSquadsCache();
 
-  // Regenerate squads with updated dynamic stats
-  generateAllSquads(allStats);
+  // Recalcular una vez con el estado YA actualizado. Si el recálculo de caché
+  // fallase por un dato externo, la jornada puede seguir simulándose.
+  try {
+    const currentStats = usePlayersStore.getState().stats ?? {};
+    generateAllSquads(currentStats);
+  } catch (error) {
+    console.warn("[monthly progression] no se pudo regenerar la caché de plantillas; se continúa la simulación", error);
+  }
 }
 
 import {
@@ -291,7 +305,8 @@ function findNextCpuFixture(save: SaveGame, teamId: string): CpuFixtureContext |
     }
   }
   for (const list of Object.values(save.cupFixtures ?? {})) {
-    for (const fixture of (list ?? []) as Fixture[]) {
+    if (!Array.isArray(list)) continue;
+    for (const fixture of list as Fixture[]) {
       if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
         candidates.push({ fixture, competition: "cup" });
       }
@@ -547,7 +562,7 @@ export function fixCupDraws(save: SaveGame): SaveGame {
   for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
     const list = next.cupFixtures[lg];
 
-    if (!list || list.length === 0) continue;
+    if (!Array.isArray(list) || list.length === 0) continue;
 
     const stale = list.some((f: any) => (f.matchday as number) < 63);
 
@@ -561,7 +576,7 @@ export function fixCupDraws(save: SaveGame): SaveGame {
   for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
     const cupFixtures = next.cupFixtures[lg];
 
-    if (!cupFixtures) continue;
+    if (!Array.isArray(cupFixtures)) continue;
 
     for (let i = 0; i < cupFixtures.length; i++) {
       const f = cupFixtures[i];
@@ -741,6 +756,17 @@ export function loadSave(): SaveGame | null {
     const parsed = JSON.parse(raw) as LegacySave;
 
     if (parsed.version !== 2) return null;
+
+    // Backward compatibility for careers created before these collections
+    // became mandatory. Without this, opening /match could crash while the
+    // CPU lineup/formation preview is being built.
+    parsed.formations ??= {};
+    parsed.substitutes ??= {};
+    parsed.suspensions ??= {};
+    parsed.lineups ??= {};
+    parsed.fixtures ??= {};
+    parsed.cupFixtures ??= {};
+    parsed.uclFixtures ??= [];
 
     // MIGRATION: Convert old cupFixtures structure if needed
 
@@ -1278,6 +1304,12 @@ export function getStartersWithFormation(
   teamId: string,
   options?: { randomFormation?: boolean; fixture?: CpuFixtureContext | null },
 ): { players: Player[]; formation: FormationName } {
+  // Be defensive when this helper is called with a legacy/incomplete save.
+  // Match preview needs these maps even for CPU teams.
+  save.formations ??= {};
+  save.lineups ??= {};
+  save.suspensions ??= {};
+
   const store = usePlayersStore.getState();
 
   store.init();
@@ -1865,9 +1897,10 @@ function simulateFixtureInline(
 
     // Check if we haven't applied monthly progression for this month yet
     const progressionKey = `monthlyProgression-${currentYear}-${currentMonth}`;
-    if (!save.uclPrizesAwarded?.includes(progressionKey)) {
+    const progressionKeys = Array.isArray(save.uclPrizesAwarded) ? save.uclPrizesAwarded : [];
+    if (!progressionKeys.includes(progressionKey)) {
       applyMonthlyProgressionToAllPlayers(currentMonth, currentYear);
-      save.uclPrizesAwarded = [...(save.uclPrizesAwarded || []), progressionKey];
+      save.uclPrizesAwarded = [...progressionKeys, progressionKey];
     }
   }
 
@@ -1944,17 +1977,10 @@ function simulateFixtureInline(
   const homeBenchForSim = getBenchForTeam(save, fixture.homeId, homeXI);
   const awayBenchForSim = getBenchForTeam(save, fixture.awayId, awayXI);
 
-  const result = isCup
-    ? simulateCupMatch(home, away, homeXI, awayXI, {
-        homeBench: homeBenchForSim,
-        awayBench: awayBenchForSim,
-        homeTactics: loadTactics(fixture.homeId),
-        awayTactics: loadTactics(fixture.awayId),
-        homeFormation: homeFormationForSim,
-        awayFormation: awayFormationForSim,
-      })
-    : fast
-      ? simulateMatchFast(home, away, homeXI, awayXI, {
+  let result: any;
+  try {
+    result = isCup
+      ? simulateCupMatch(home, away, homeXI, awayXI, {
           homeBench: homeBenchForSim,
           awayBench: awayBenchForSim,
           homeTactics: loadTactics(fixture.homeId),
@@ -1962,14 +1988,53 @@ function simulateFixtureInline(
           homeFormation: homeFormationForSim,
           awayFormation: awayFormationForSim,
         })
-      : simulateMatch(home, away, homeXI, awayXI, {
-          homeBench: homeBenchForSim,
-          awayBench: awayBenchForSim,
-          homeTactics: loadTactics(fixture.homeId),
-          awayTactics: loadTactics(fixture.awayId),
-          homeFormation: homeFormationForSim,
-          awayFormation: awayFormationForSim,
-        });
+      : fast
+        ? simulateMatchFast(home, away, homeXI, awayXI, {
+            homeBench: homeBenchForSim,
+            awayBench: awayBenchForSim,
+            homeTactics: loadTactics(fixture.homeId),
+            awayTactics: loadTactics(fixture.awayId),
+            homeFormation: homeFormationForSim,
+            awayFormation: awayFormationForSim,
+          })
+        : simulateMatch(home, away, homeXI, awayXI, {
+            homeBench: homeBenchForSim,
+            awayBench: awayBenchForSim,
+            homeTactics: loadTactics(fixture.homeId),
+            awayTactics: loadTactics(fixture.awayId),
+            homeFormation: homeFormationForSim,
+            awayFormation: awayFormationForSim,
+          });
+  } catch (error) {
+    // Última barrera de seguridad: una carrera no puede quedarse bloqueada
+    // porque un dato histórico aislado esté mal formado. Reintentamos con la
+    // simulación rápida y, si tampoco fuese posible, damos un 0-0 válido.
+    console.error(`[simulateFixtureInline] fallo en ${fixture.id}; reintentando en modo seguro`, error);
+    try {
+      result = simulateMatchFast(home, away, homeXI, awayXI, {
+        homeBench: homeBenchForSim,
+        awayBench: awayBenchForSim,
+        homeTactics: loadTactics(fixture.homeId),
+        awayTactics: loadTactics(fixture.awayId),
+        homeFormation: homeFormationForSim,
+        awayFormation: awayFormationForSim,
+      });
+    } catch (fallbackError) {
+      console.error(`[simulateFixtureInline] fallback también falló en ${fixture.id}`, fallbackError);
+      result = {
+        homeGoals: 0,
+        awayGoals: 0,
+        events: [],
+        cards: [],
+        injuries: [],
+        substitutions: [],
+        highlights: [],
+        ratings: [],
+        xgHome: 0,
+        xgAway: 0,
+      };
+    }
+  }
 
   return { ...fixture, result };
 }
@@ -2027,7 +2092,12 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
   // Get cup fixtures (use July-based dates: matchday = day offset from July 7th)
 
   for (const lg of Object.keys(save.cupFixtures)) {
-    save.cupFixtures[lg as LeagueId].forEach((f) => {
+    const cupList = save.cupFixtures[lg as LeagueId];
+    // `cupFixtures` also contains `${league}_structure` entries with the
+    // knockout-bracket metadata. Those entries are objects, not fixture lists.
+    if (!Array.isArray(cupList)) continue;
+
+    cupList.forEach((f) => {
       if (!f.result && (f.homeId === save.myTeamId || f.awayId === save.myTeamId)) {
         // Cup matchday = day offset from July 7th (0=Jul7, 1=Jul8, etc.)
 
@@ -2348,7 +2418,9 @@ export async function simulateCupMatchdayLayered(
   // Determine VIP cup leagues upfront to avoid cloning all cup fixtures
 
   const vipCupLeagueSet = new Set(
-    (Object.keys(save.cupFixtures) as LeagueId[]).filter((lg) => isVIPLeague(lg, userLeague)),
+    (Object.keys(save.cupFixtures) as LeagueId[]).filter(
+      (lg) => Array.isArray(save.cupFixtures[lg]) && isVIPLeague(lg, userLeague),
+    ),
   );
 
   // Partial clone: only deep copy VIP cup fixtures
@@ -2368,7 +2440,9 @@ export async function simulateCupMatchdayLayered(
   };
 
   for (const lg of vipCupLeagueSet) {
-    if (save.cupFixtures[lg]) next.cupFixtures[lg] = save.cupFixtures[lg].map((f) => ({ ...f }));
+    if (Array.isArray(save.cupFixtures[lg])) {
+      next.cupFixtures[lg] = save.cupFixtures[lg].map((f) => ({ ...f }));
+    }
   }
 
   const store = usePlayersStore.getState();
@@ -2380,7 +2454,7 @@ export async function simulateCupMatchdayLayered(
   for (const lg of vipCupLeagueSet) {
     const cupFixtures = next.cupFixtures[lg];
 
-    if (!cupFixtures) continue;
+    if (!Array.isArray(cupFixtures)) continue;
 
     const fixtures = cupFixtures.filter((f) => f.matchday === matchday && !f.result);
 
@@ -2579,7 +2653,7 @@ export async function simulateRemainingCupMatches(
   for (const lg of allLeagues) {
     const cupFixtures = next.cupFixtures[lg];
 
-    if (!cupFixtures) continue;
+    if (!Array.isArray(cupFixtures)) continue;
 
     // Determine if this league/country is VIP (active) - MIRRORS league logic
 
@@ -2795,9 +2869,9 @@ function addToUserBudget(save: SaveGame, teamId: string, amount: number) {
 
 function grantUCLPrizeOnce(save: SaveGame, key: string, teamId: string, amount: number) {
   if (teamId !== save.myTeamId) return;
-  save.uclPrizesAwarded = save.uclPrizesAwarded ?? [];
-  if (save.uclPrizesAwarded.includes(key)) return;
-  save.uclPrizesAwarded.push(key);
+  const progressionKeys = Array.isArray(save.uclPrizesAwarded) ? save.uclPrizesAwarded : [];
+  if (progressionKeys.includes(key)) return;
+  save.uclPrizesAwarded = [...progressionKeys, key];
   addToUserBudget(save, teamId, amount);
 }
 
@@ -2932,14 +3006,17 @@ export function playSpecificFixture(
 
   // Try to find fixture in league fixtures
 
-  let fixture = next.fixtures[next.myLeague].find((f) => f.id === fixtureId);
+  const leagueFixtures = Array.isArray(next.fixtures?.[next.myLeague])
+    ? next.fixtures[next.myLeague]
+    : [];
+  let fixture = leagueFixtures.find((f) => f.id === fixtureId);
 
   if (fixture && !fixture.result) {
     console.log("Found fixture in league fixtures:", fixture.id);
 
     const simmed = simulateFixtureInline(next, fixture);
 
-    const idx = next.fixtures[next.myLeague].findIndex((x) => x.id === fixtureId);
+    const idx = leagueFixtures.findIndex((x) => x.id === fixtureId);
 
     if (idx >= 0) {
       next.fixtures[next.myLeague][idx] = simmed;
@@ -2960,7 +3037,10 @@ export function playSpecificFixture(
   // Try to find fixture in cup fixtures
 
   for (const lg of Object.keys(next.cupFixtures)) {
-    fixture = next.cupFixtures[lg as LeagueId].find((f) => f.id === fixtureId);
+    const cupList = next.cupFixtures[lg as LeagueId];
+    if (!Array.isArray(cupList)) continue;
+
+    fixture = cupList.find((f) => f.id === fixtureId);
 
     if (fixture && !fixture.result) {
       console.log("Found fixture in cup fixtures:", fixture.id, "league:", lg);
@@ -2974,7 +3054,7 @@ export function playSpecificFixture(
       const idx = next.cupFixtures[lg as LeagueId].findIndex((x) => x.id === fixtureId);
 
       if (idx >= 0) {
-        next.cupFixtures[lg as LeagueId][idx] = simmed;
+        cupList[idx] = simmed;
 
         // Live cup matches are also provisional until the manager finishes
         // the watched chronicle (including extra time / shootout where used).
@@ -3051,6 +3131,7 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
 
   if (!fixture && next.cupFixtures) {
     for (const [lg, list] of Object.entries(next.cupFixtures)) {
+      if (!Array.isArray(list)) continue;
       const index = list.findIndex((f) => f.id === fixtureId);
       if (index >= 0) {
         fixture = list[index];
@@ -3734,7 +3815,7 @@ export async function scheduleBackgroundCupsOnly(
   for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
     const cupFixtures = next.cupFixtures[lg];
 
-    if (!cupFixtures) continue;
+    if (!Array.isArray(cupFixtures)) continue;
 
     const isVIP = isVIPLeague(lg, userLeague);
 
@@ -4021,7 +4102,9 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
     }
 
     for (const lg of dueCups) {
-      if (save.cupFixtures[lg]) next.cupFixtures[lg] = save.cupFixtures[lg].map((f) => ({ ...f }));
+      if (Array.isArray(save.cupFixtures[lg])) {
+        next.cupFixtures[lg] = save.cupFixtures[lg].map((f) => ({ ...f }));
+      }
     }
 
     const processedKeys = new Set<string>();
@@ -4228,7 +4311,9 @@ export async function advanceMatchdayLayered(
 
       next.standings[lg] = save.standings[lg].map((s) => ({ ...s }));
 
-      if (save.cupFixtures[lg]) next.cupFixtures[lg] = save.cupFixtures[lg].map((f) => ({ ...f }));
+      if (Array.isArray(save.cupFixtures[lg])) {
+        next.cupFixtures[lg] = save.cupFixtures[lg].map((f) => ({ ...f }));
+      }
     }
 
     // Only process VIP leagues - background leagues are handled by the scheduling system
@@ -4398,8 +4483,8 @@ export async function advanceMatchdayLayered(
 
     // Only process cup draws for VIP leagues
 
-    const vipCupLeagues = (Object.keys(next.cupFixtures) as LeagueId[]).filter((lg) =>
-      isVIPLeague(lg, userLeague),
+    const vipCupLeagues = (Object.keys(next.cupFixtures) as LeagueId[]).filter(
+      (lg) => Array.isArray(next.cupFixtures[lg]) && isVIPLeague(lg, userLeague),
     );
 
     for (const cupLg of vipCupLeagues) {
@@ -4945,7 +5030,9 @@ function hasFixtureConflict(save: SaveGame, date: Date): boolean {
     // Check cup fixtures
 
     for (const lg of Object.keys(save.cupFixtures)) {
-      const hasFixture = save.cupFixtures[lg as LeagueId]?.some((f) => {
+      const cupList = save.cupFixtures[lg as LeagueId];
+      if (!Array.isArray(cupList)) continue;
+      const hasFixture = cupList.some((f) => {
         const fixtureDate = new Date(seasonStartForLeague(lg, f.matchday));
 
         return fixtureDate.toISOString().split("T")[0] === checkDateIso;
@@ -6234,9 +6321,10 @@ export function processUCLKnockoutProgress(save: SaveGame, throughOffset: number
     // Apply season-end progression to all players (only once per season)
     const seasonNumber = parseSeasonNumber(next.season);
     const progressionKey = `seasonEndProgression-${next.season}`;
-    if (!next.uclPrizesAwarded?.includes(progressionKey)) {
+    const progressionKeys = Array.isArray(next.uclPrizesAwarded) ? next.uclPrizesAwarded : [];
+    if (!progressionKeys.includes(progressionKey)) {
       applySeasonEndProgressionToAllPlayers(seasonNumber);
-      next.uclPrizesAwarded = [...(next.uclPrizesAwarded || []), progressionKey];
+      next.uclPrizesAwarded = [...progressionKeys, progressionKey];
     }
   }
 

@@ -12,6 +12,7 @@ import {
   saveSaveWithRetry,
   setLineup,
   setFormation,
+  setSubstitutes,
   getMyNextFixtureAny,
   playSpecificFixture,
   simulateCupMatchday,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/store";
 import { uclDayOffset } from "@/data/ucl";
 import { Fixture } from "@/lib/season";
+import { FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
@@ -70,6 +72,7 @@ import {
 } from "@/components/match/matchUi";
 import { Pause, Play, FastForward, ClipboardList } from "lucide-react";
 import { isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
+import { getPlayerShootingStats } from "@/data/players";
 import { MiniPitch } from "@/components/MiniPitch";
 import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
@@ -91,6 +94,7 @@ import {
   buildGoalPrelude,
   buildSavePrelude,
   buildDangerPreludeFromHighlight,
+  buildMissDetail,
   buildNarrativeCommentary,
   buildSyntheticMoment,
   momentumStatus,
@@ -102,6 +106,14 @@ import {
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
+
+const DEFAULT_FORMATION: FormationName = "Táctica 4-4-2";
+
+function normalizeFormation(value: unknown): FormationName {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(FORMATION_COORDINATES, value)
+    ? (value as FormationName)
+    : DEFAULT_FORMATION;
 }
 
 export const Route = createFileRoute("/match")({ component: MatchPage });
@@ -157,6 +169,10 @@ function MatchPage() {
   const momentumHistoryRef = useRef<Array<{ minute: number; value: number }>>([]);
   const [liveMoment, setLiveMoment] = useState<LiveMoment | null>(null);
   const momentTimerRef = useRef<number | null>(null);
+  // Timer used when temporarily resuming the live match after lineup edits.
+  // It must exist even when no resume timer is scheduled because React Strict
+  // Mode runs effect cleanups during the initial development mount.
+  const transientResumeTimerRef = useRef<number | null>(null);
   const [managerEffects, setManagerEffects] = useState<LiveManagerEffects>(DEFAULT_MANAGER_EFFECTS);
   const managerEffectsRef = useRef<LiveManagerEffects>({ ...DEFAULT_MANAGER_EFFECTS });
   const [commentaryEntries, setCommentaryEntries] = useState<CommentaryEntry[]>([]);
@@ -169,7 +185,7 @@ function MatchPage() {
   const pendingPenaltySourceRef = useRef<any>(null);
   const pendingPenaltyZoneRef = useRef<PenaltyZoneId | null>(null);
   const pendingSceneRef = useRef<{
-    kind: "prelude" | "resolution" | "var" | "penalty_intro";
+    kind: "prelude" | "resolution" | "var" | "penalty_intro" | "card";
     moment?: any;
     resolution?: any;
     source?: any;
@@ -220,6 +236,8 @@ function MatchPage() {
   const [goneIds, setGoneIds] = useState<string[]>([]);
   const goneRef = useRef<string[]>([]);
   const goneSlotIndexesRef = useRef<Record<string, number>>({});
+  // Injuries with an available replacement must be resolved in the lineup editor.
+  const pendingForcedInjurySlotsRef = useRef<Record<string, number>>({});
   const lastDangerAttackerRef = useRef<Record<"home" | "away", string | null>>({ home: null, away: null });
   const [forcedOutId, setForcedOutId] = useState<string | null>(null);
   const handledInjuriesRef = useRef<string[]>([]);
@@ -241,6 +259,10 @@ function MatchPage() {
   const oppPlanRef = useRef<{ minute: number; outId: string; inId: string }[]>([]);
   // Rival substitutions actually shown during the match.
   const oppSubsDoneRef = useRef<any[]>([]);
+  // Rival substitutions that share a minute with an injury are deferred until
+  // the injury notification has been shown/resolved. This keeps the chronology
+  // faithful: injury first, forced change immediately after.
+  const deferredOpponentSubMinutesRef = useRef<Set<number>>(new Set());
   // The chronicle as it really happened (after remapping events to the players
   // that were on the pitch at that minute).
   const playedEventsRef = useRef<any[]>([]);
@@ -263,7 +285,7 @@ function MatchPage() {
     if (!st) return;
     const s = loadSave();
     if (!s) return;
-    let fx: any = s.fixtures[s.myLeague]?.find((f: any) => f.id === st.fixtureId);
+    let fx: any = s.fixtures?.[s.myLeague]?.find((f: any) => f.id === st.fixtureId);
     if (!fx) {
       for (const lg of Object.keys(s.cupFixtures || {})) {
         fx = (s.cupFixtures as any)[lg]?.find((f: any) => f.id === st.fixtureId);
@@ -338,7 +360,7 @@ function MatchPage() {
     initialMyXIRef.current =
       Array.isArray(storedInitialXI) && storedInitialXI.length > 0
         ? storedInitialXI.slice(0, 11)
-        : [...(s.lineups[s.myTeamId] ?? st.lineup)].slice(0, 11);
+        : [...(s.lineups?.[s.myTeamId] ?? st.lineup)].slice(0, 11);
     finalPerformanceRecordedRef.current = false;
     myXIRef.current = st.lineup;
     setMyXI(st.lineup);
@@ -361,11 +383,12 @@ function MatchPage() {
       setCommentaryEntries(st.narrative);
     }
     const restoredMoments = Array.isArray(st.keyMoments) ? st.keyMoments : [];
-    keyMomentsRef.current = restoredMoments.slice(-200);
+    keyMomentsRef.current = restoredMoments.filter(isChronicleMoment).slice(-200);
     setKeyMoments(keyMomentsRef.current);
     goneRef.current = st.gone || [];
     setGoneIds(st.gone || []);
     goneSlotIndexesRef.current = { ...((st as any).goneSlotIndexes || {}) };
+    pendingForcedInjurySlotsRef.current = { ...((st as any).pendingForcedInjurySlots || {}) };
     subsUsedRef.current = st.subsUsed;
     setSubsUsed(st.subsUsed);
     windowsUsedRef.current = st.windowsUsed;
@@ -460,7 +483,7 @@ function MatchPage() {
 
     for (const card of result.cards || []) {
       if (card.cardType === "red" && card.team === myTeam) {
-        const susp = save.suspensions[myTeamId]?.find((s) => s.playerId === card.playerId);
+        const susp = save.suspensions?.[myTeamId]?.find((s) => s.playerId === card.playerId);
         const matchdays = susp?.matchdaysRemaining ?? 1;
         toast.error(
           `${card.playerName} expulsado — suspensión de ${matchdays} partido${matchdays > 1 ? "s" : ""}`,
@@ -633,8 +656,7 @@ function MatchPage() {
       if (m < 120) {
         if (m === 105 && !etHalftimeDoneRef.current) {
           etHalftimeDoneRef.current = true;
-          announceHalftime(true);
-          pauseMatch("et_halftime");
+          showHalftimeMoment(true);
           return;
         }
         scheduleEt();
@@ -832,6 +854,7 @@ function MatchPage() {
       // If not found in UCL, check cup fixtures
       if (!found) {
         for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
+          if (!Array.isArray(fixtures)) continue;
           found = fixtures.find((f) => f.id === fixture.id);
           if (found) {
             fixtureRef.current = found;
@@ -907,6 +930,7 @@ function MatchPage() {
       // If not found in UCL, check cup fixtures
       if (!found) {
         for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
+          if (!Array.isArray(fixtures)) continue;
           found = fixtures.find((f) => f.id === fixture.id);
           if (found) {
             fixtureRef.current = found;
@@ -944,6 +968,7 @@ function MatchPage() {
       console.log("simulateRemainingCupMatches: saveToUse provided?", !!saveToUse);
       if (saveToUse) {
         const userFixture = Object.values(saveToUse.cupFixtures)
+          .filter((list): list is any[] => Array.isArray(list))
           .flat()
           .find((f) => f.homeId === saveToUse.myTeamId || f.awayId === saveToUse.myTeamId);
         console.log(
@@ -1098,6 +1123,7 @@ function MatchPage() {
         // Find the cup fixture across all leagues first, so we know home/away teams.
         let cupFx: Fixture | undefined;
         for (const fxs of Object.values(s.cupFixtures)) {
+          if (!Array.isArray(fxs)) continue;
           cupFx = fxs.find((f) => f.id === fixtureId);
           if (cupFx) break;
         }
@@ -1146,6 +1172,7 @@ function MatchPage() {
         // Find the fixture to determine which league it belongs to
         let fixtureLeague = s.myLeague;
         for (const [league, fixtures] of Object.entries(s.cupFixtures)) {
+          if (!Array.isArray(fixtures)) continue;
           const found = fixtures.find((f) => f.id === fixtureId);
           if (found) {
             fixtureLeague = league;
@@ -1186,8 +1213,8 @@ function MatchPage() {
 
     // Store original lineup BEFORE applying temporary changes
     if (matchLineup && matchFormation) {
-      originalLineupRef.current = s.lineups[s.myTeamId];
-      originalFormationRef.current = s.formations[s.myTeamId];
+      originalLineupRef.current = s.lineups?.[s.myTeamId] ?? [];
+      originalFormationRef.current = s.formations?.[s.myTeamId] ?? DEFAULT_FORMATION;
     }
 
     // Prioritize router state temporary lineup over global store
@@ -1205,21 +1232,28 @@ function MatchPage() {
     // Get the fixture based on match type
     if (isCup && pendingUserMatch && !returningFromLineup) {
       // Find cup fixture (only if not returning from lineup edit)
-      const cupFixture = s.cupFixtures[s.myLeague].find(
-        (f) =>
-          f.homeId === pendingUserMatch.homeTeam &&
-          f.awayId === pendingUserMatch.awayTeam &&
-          !f.result,
-      );
+      let cupFixture: any = null;
+      for (const list of Object.values(s.cupFixtures || {})) {
+        if (!Array.isArray(list)) continue;
+        cupFixture = list.find(
+          (f: any) =>
+            f.homeId === pendingUserMatch.homeTeam &&
+            f.awayId === pendingUserMatch.awayTeam &&
+            !f.result,
+        );
+        if (cupFixture) break;
+      }
       fixtureRef.current = cupFixture || null;
     } else if (returningFromLineup && fixtureId) {
       // Returning from lineup edit - load the specific fixture by ID
       // First try league fixtures
-      let foundFixture = s.fixtures[s.myLeague].find((f) => f.id === fixtureId);
+      let foundFixture = s.fixtures?.[s.myLeague]?.find((f) => f.id === fixtureId);
       if (!foundFixture) {
         // Try cup fixtures
-        for (const lg of Object.keys(s.cupFixtures) as LeagueId[]) {
-          foundFixture = s.cupFixtures[lg].find((f) => f.id === fixtureId);
+        for (const lg of Object.keys(s.cupFixtures || {}) as LeagueId[]) {
+          const cupList = s.cupFixtures[lg];
+          if (!Array.isArray(cupList)) continue;
+          foundFixture = cupList.find((f) => f.id === fixtureId);
           if (foundFixture) break;
         }
       }
@@ -1231,7 +1265,7 @@ function MatchPage() {
         console.log("Has extraTime:", !!foundFixture.result.extraTime);
         console.log("Has penalties:", !!foundFixture.result.penalties);
 
-        allEventsRef.current = foundFixture.result.events;
+        allEventsRef.current = foundFixture.result.events ?? [];
         allCardsRef.current = foundFixture.result.cards || [];
         allHighlightsRef.current = foundFixture.result.highlights || [];
         setSubFeed(
@@ -1250,7 +1284,7 @@ function MatchPage() {
         awayScoreRef.current = Number(foundFixture.result.awayGoals) || 0;
         setHomeScore(homeScoreRef.current);
         setAwayScore(awayScoreRef.current);
-        setFeed(foundFixture.result.events.slice().reverse());
+        setFeed((foundFixture.result.events ?? []).slice().reverse());
         setCardFeed((foundFixture.result.cards || []).slice().reverse());
         setMinute(90);
 
@@ -1278,8 +1312,30 @@ function MatchPage() {
         console.log("Phase set to done, isCupMatch:", foundFixture.competition === "cup");
       }
     } else {
-      // Use getMyNextFixtureAny to find next match from any competition
-      fixtureRef.current = getMyNextFixtureAny(saveToUse);
+      // Open the fixture explicitly selected from the Season page. Falling
+      // back to getMyNextFixtureAny is only for legacy navigation without an id.
+      if (fixtureId) {
+        let foundFixture = saveToUse.fixtures?.[saveToUse.myLeague]?.find(
+          (f) => f.id === fixtureId,
+        );
+
+        if (!foundFixture) {
+          for (const list of Object.values(saveToUse.cupFixtures || {})) {
+            if (!Array.isArray(list)) continue;
+            foundFixture = list.find((f: any) => f.id === fixtureId);
+            if (foundFixture) break;
+          }
+        }
+
+        if (!foundFixture) {
+          foundFixture = saveToUse.uclFixtures?.find((f) => f.id === fixtureId);
+        }
+
+        fixtureRef.current = foundFixture || null;
+      } else {
+        fixtureRef.current = getMyNextFixtureAny(saveToUse);
+      }
+
       // Set isCupMatch based on fixture competition
       if (fixtureRef.current) {
         setIsCupMatch(fixtureRef.current.competition === "cup");
@@ -1304,8 +1360,27 @@ function MatchPage() {
     const originalLineup = originalLineupRef.current;
     const originalFormation = originalFormationRef.current;
 
-    // Simulate the specific fixture that's currently loaded
-    const { save: newSave, fixture } = playSpecificFixture(save, fixtureRef.current.id);
+    // Always simulate from the freshest persisted save, not from a potentially
+    // stale SeasonPage React snapshot. This guarantees the XI selected in
+    // Alineación (e.g. Lunin instead of Courtois) is the XI the match engine
+    // actually receives. A one-off lineup passed through router state remains
+    // authoritative for this match only.
+    let simulationSave = loadSave() ?? save;
+    if (usedTemporaryLineup && matchLineup?.length && matchFormation) {
+      simulationSave = setLineup(simulationSave, simulationSave.myTeamId, matchLineup);
+      simulationSave = setFormation(simulationSave, simulationSave.myTeamId, matchFormation);
+      const temporarySubs = Array.isArray(routerState?.matchSubstitutes)
+        ? routerState.matchSubstitutes.filter(Boolean).slice(0, 12)
+        : undefined;
+      if (temporarySubs) {
+        simulationSave = setSubstitutes(simulationSave, simulationSave.myTeamId, temporarySubs);
+      }
+    }
+
+    const { save: newSave, fixture } = playSpecificFixture(
+      simulationSave,
+      fixtureRef.current.id,
+    );
 
     if (!fixture || !fixture.result) return;
     allEventsRef.current = fixture.result.events;
@@ -1456,7 +1531,7 @@ function MatchPage() {
     if (!s) return;
     myTeamIdRef.current = s.myTeamId;
     const squad = getSimSquad(s.myTeamId);
-    const ids = (matchLineup || s.lineups[s.myTeamId] || []).filter(Boolean);
+    const ids = (matchLineup || s.lineups?.[s.myTeamId] || []).filter(Boolean);
     const benchIds = squad
       .filter((p) => !ids.includes(p.id))
       .slice(0, 12)
@@ -1491,8 +1566,10 @@ function MatchPage() {
     lastMajorMomentMinuteRef.current = -99;
     goneRef.current = [];
     goneSlotIndexesRef.current = {};
+    pendingForcedInjurySlotsRef.current = {};
     setGoneIds([]);
     oppSubsDoneRef.current = [];
+    deferredOpponentSubMinutesRef.current = new Set();
     playedEventsRef.current = [];
     playedCardsRef.current = [];
     playedHighlightsRef.current = [];
@@ -1510,7 +1587,7 @@ function MatchPage() {
     finishScheduledRef.current = false;
     setIsPaused(false);
     setPauseReason(null);
-    setLiveFormation(matchFormation || s.formations[s.myTeamId] || null);
+    setLiveFormation(matchFormation || s.formations?.[s.myTeamId] || null);
   }
 
   function currentLivePhase(): LivePhase {
@@ -1521,7 +1598,29 @@ function MatchPage() {
     return isExtraTimeRef.current ? "et_playing" : "playing";
   }
 
+  const CHRONICLE_ONLY_TYPES = new Set([
+    "save",
+    "woodwork",
+    "big_chance",
+    "penalty_missed",
+    "penalty_save",
+    "penalty_goal",
+    "injury",
+    "injury_substitution",
+    "forced_sub",
+    "var",
+    "var_disallowed",
+    "red_card",
+  ]);
+
+  const isChronicleMoment = (moment: Partial<LiveMoment> | null | undefined) =>
+    !!moment && CHRONICLE_ONLY_TYPES.has(String(moment.type ?? ""));
+
   function recordChronicleMoment(moment: LiveMoment) {
+    // Prelude/presentation scenes (e.g. "SE CARGA EL DISPARO") pause the
+    // match but must never become a permanent chronicle entry. The chronicle
+    // is reserved for the resolved football event.
+    if (!isChronicleMoment(moment)) return;
     const normalized = { ...moment } as LiveMoment;
     const same = (a: LiveMoment, b: LiveMoment) =>
       a.id === b.id ||
@@ -1532,6 +1631,51 @@ function MatchPage() {
     const withoutDuplicate = keyMomentsRef.current.filter((item) => !same(item, normalized));
     keyMomentsRef.current = [...withoutDuplicate, normalized].slice(-200);
     setKeyMoments(keyMomentsRef.current);
+  }
+
+  function buildCardMoment(card: any): LiveMoment {
+    const isSecondYellow = Boolean(card?.isSecondYellow);
+    const isRed = card?.cardType === "red" || isSecondYellow;
+    const team = card?.team === "home" ? home : away;
+    return {
+      id: `${isRed ? "red" : "yellow"}-${card?.minute ?? minuteRef.current}-${card?.playerId ?? "unknown"}`,
+      type: isRed ? "red_card" : "yellow_card",
+      minute: Number(card?.minute) || minuteRef.current,
+      kicker: isRed ? "🟥 Tarjeta roja" : "🟨 Tarjeta amarilla",
+      title: isSecondYellow ? "SEGUNDA AMARILLA" : isRed ? "ROJA" : "AMARILLA",
+      body: isRed
+        ? `${card?.playerName ?? "Jugador"} es expulsado. ${team.name} se queda con uno menos.`
+        : `${card?.playerName ?? "Jugador"} ve la tarjeta amarilla.`,
+      playerName: card?.playerName,
+      playerId: card?.playerId,
+      teamName: team.name,
+      emoji: isRed ? "🟥" : "🟨",
+      detail: card?.reason,
+      hardPause: true,
+      teamSide: card?.team,
+    };
+  }
+
+  function showHalftimeMoment(extraTime = false) {
+    const title = extraTime ? "DESCANSO DE LA PRÓRROGA" : "DESCANSO";
+    const homeTotal = homeScoreRef.current + (extraTime ? extraTimeHomeScoreRef.current : 0);
+    const awayTotal = awayScoreRef.current + (extraTime ? extraTimeAwayScoreRef.current : 0);
+    const minute = extraTime ? 105 : 45;
+    showLiveMoment(
+      {
+        id: `halftime-notification-${extraTime ? "et" : "regular"}-${minute}-${homeTotal}-${awayTotal}`,
+        type: "halftime",
+        minute,
+        kicker: "⏸️ Descanso",
+        title,
+        body: `${home.name} ${homeTotal}-${awayTotal} ${away.name}.`,
+        emoji: "⏸️",
+        hardPause: true,
+        teamName: `${home.name} vs ${away.name}`,
+      } as any,
+      3200,
+      false,
+    );
   }
 
   function announceHalftime(extraTime = false) {
@@ -1576,6 +1720,7 @@ function MatchPage() {
       formation: liveFormation || "Táctica 4-4-2",
       gone: goneRef.current,
       goneSlotIndexes: { ...goneSlotIndexesRef.current },
+      pendingForcedInjurySlots: { ...pendingForcedInjurySlotsRef.current },
       subsUsed: subsUsedRef.current,
       windowsUsed: windowsUsedRef.current,
       subs: subsRef.current,
@@ -1681,7 +1826,7 @@ function MatchPage() {
     setStamina(next);
   }
 
-  /** Injury of one of my players at this exact minute → forced substitution. */
+  /** Injury of one of my players at this exact minute → the player leaves the pitch immediately. */
   function checkInjuriesAt(m: number) {
     const fx = fixtureRef.current;
     if (!fx?.result) return false;
@@ -1694,14 +1839,15 @@ function MatchPage() {
     );
     if (!inj) return false;
     handledInjuriesRef.current = [...handledInjuriesRef.current, inj.playerId];
-    if (!myXIRef.current.includes(inj.playerId)) return false;
+    const currentIndex = myXIRef.current.indexOf(inj.playerId);
+    if (currentIndex < 0) return false;
 
     const check = canSubstitute(
       {
         subsUsed: subsUsedRef.current,
         windowsUsed: windowsUsedRef.current,
         isExtraTime: isExtraTimeRef.current,
-        phase: "playing",
+        phase: currentLivePhase(),
       },
       1,
     );
@@ -1713,17 +1859,28 @@ function MatchPage() {
     const canReplaceNow = check.ok && benchAvailable;
 
     pauseMatch("injury");
-    playWithOneLess(inj.playerId, inj.playerName);
+
+    // A real injury always removes the player from the pitch immediately.
+    // When a legal replacement exists, remember the exact slot and force the
+    // manager to fill it in the live lineup editor before returning.
+    playWithOneLess(inj.playerId, inj.playerName, "injury");
+    if (canReplaceNow) {
+      pendingForcedInjurySlotsRef.current = {
+        ...pendingForcedInjurySlotsRef.current,
+        [inj.playerId]: currentIndex,
+      };
+    }
+    persistLive();
 
     const moment = {
       id: `injury-sub-${m}-${inj.playerId}`,
       type: "injury_substitution",
       minute: m,
       kicker: "🚑 Lesión",
-      title: "CAMBIO POR LESIÓN",
+      title: "LESIÓN",
       body: canReplaceNow
-        ? `${inj.playerName} no puede continuar. El hueco queda vacío hasta que elijas tú al sustituto.`
-        : `${inj.playerName} no puede continuar y no quedan cambios disponibles. El equipo seguirá con uno menos.`,
+        ? `${inj.playerName} sale del campo por lesión. Debes sustituirlo antes de continuar.`
+        : `${inj.playerName} sale del campo por lesión y no quedan cambios disponibles. El equipo seguirá con uno menos.`,
       playerName: inj.playerName,
       playerId: inj.playerId,
       teamName: mySide === "home" ? home.name : away.name,
@@ -1734,18 +1891,22 @@ function MatchPage() {
       forceLineupEdit: canReplaceNow,
       hardPause: true,
     } as any;
-    // Injury is a standalone live interruption.
-    // Keeping the scene empty lets continueLiveMoment() route the user to the
-    // live lineup editor only when a replacement is actually available.
     pendingSceneRef.current = null;
     showLiveMoment(moment, 3200);
     return true;
   }
 
-  function playWithOneLess(playerId: string, playerName?: string) {
+  function playWithOneLess(
+    playerId: string,
+    playerName?: string,
+    reason: "red_card" | "injury" | "other" = "other",
+  ) {
     const currentIndex = myXIRef.current.indexOf(playerId);
-    if (currentIndex >= 0) {
-      goneSlotIndexesRef.current = { ...goneSlotIndexesRef.current, [playerId]: currentIndex };
+    // Do not choose the red-card hole automatically. The formation editor will
+    // ask the manager where the vacancy should be and persist that choice.
+    if (currentIndex >= 0 && reason !== "red_card") {
+      // Non-red departures do not create a visible formation hole. Keep the
+      // former index only for legacy saves/debugging, not for hole rendering.
     }
     const nextXI = myXIRef.current.map((id) => (id === playerId ? "" : id));
     myXIRef.current = nextXI;
@@ -1801,14 +1962,15 @@ function MatchPage() {
     if (ev.type === "own_goal") return normalizeOwnGoalEvent(ev);
     const pool = ev.team === mySideOf(fx) ? myOnPitchPlayers() : oppXIRef.current;
     if (!pool || pool.length === 0) return { ...ev };
-    const onPitch = new Set(pool.map((p: any) => p.id));
+    const activePool = pool.filter(Boolean);
+    const onPitch = new Set(activePool.map((p: any) => p.id));
     let next: any = { ...ev, _origScorerId: ev.scorerId, _origAssistId: ev.assistId };
     if (next.scorerId && !onPitch.has(next.scorerId)) {
-      const repl = pickCredit(pool);
+      const repl = pickCredit(activePool);
       if (repl) next = { ...next, scorerId: repl.id, scorerName: repl.name };
     }
     if (next.assistId && (!onPitch.has(next.assistId) || next.assistId === next.scorerId)) {
-      const repl = pickCredit(pool, [next.scorerId]);
+      const repl = pickCredit(activePool, [next.scorerId]);
       next = repl
         ? { ...next, assistId: repl.id, assistName: repl.name }
         : { ...next, assistId: undefined, assistName: undefined };
@@ -1822,9 +1984,10 @@ function MatchPage() {
     if (!fx || !c) return c;
     const pool = c.team === mySideOf(fx) ? myOnPitchPlayers() : oppXIRef.current;
     if (!pool || pool.length === 0) return { ...c };
-    const onPitch = new Set(pool.map((p: any) => p.id));
+    const activePool = pool.filter(Boolean);
+    const onPitch = new Set(activePool.map((p: any) => p.id));
     if (onPitch.has(c.playerId)) return { ...c };
-    const repl = pickCredit(pool);
+    const repl = pickCredit(activePool);
     return repl ? { ...c, playerId: repl.id, playerName: repl.name } : { ...c };
   }
 
@@ -1873,8 +2036,9 @@ function MatchPage() {
     }
     if (next.cupFixtures) {
       const cupNext: any = {};
-      for (const lg of Object.keys(next.cupFixtures)) {
-        cupNext[lg] = patchList(next.cupFixtures[lg] || []);
+      for (const lg of Object.keys(next.cupFixtures || {})) {
+        const list = next.cupFixtures[lg];
+        cupNext[lg] = Array.isArray(list) ? patchList(list) : list;
       }
       next.cupFixtures = cupNext;
     }
@@ -1909,7 +2073,7 @@ function MatchPage() {
     const myInitial = initialIds
       .map((id) => mySquad.find((p: any) => p.id === id))
       .filter(Boolean) as any[];
-    const oppInitial = (oppXIRef.current || []).slice();
+    const oppInitial = (oppXIRef.current || []).filter(Boolean).slice();
 
     const mySubs = subsRef.current.map((s: any) => ({
       minute: Number(s.minute) || 0,
@@ -2218,23 +2382,31 @@ function MatchPage() {
         (s: any) => `${s.minute}|${s.outId ?? s.playerOutId}|${s.inId ?? s.playerInId}`,
       ),
     );
-    const due = oppPlanRef.current.filter(
-      (s) => s.minute === m && !alreadyDone.has(`${s.minute}|${s.outId}|${s.inId}`),
-    );
-    if (due.length === 0) return;
     const fx = fixtureRef.current;
     if (!fx) return;
     const myId = myTeamIdRef.current || save?.myTeamId;
     const oppSide = fx.homeId === myId ? "away" : "home";
+    const redIds = new Set(
+      (fx.result?.cards || [])
+        .filter((c: any) => c.team === oppSide && (c.cardType === "red" || c.isSecondYellow) && Number(c.minute ?? 0) <= m)
+        .map((c: any) => c.playerId),
+    );
+    const due = oppPlanRef.current.filter(
+      (s) =>
+        s.minute === m &&
+        !alreadyDone.has(`${s.minute}|${s.outId}|${s.inId}`) &&
+        !redIds.has(s.outId),
+    );
+    if (due.length === 0) return;
     const xi = [...oppXIRef.current];
     const made: any[] = [];
     for (const s of due) {
       // Be resilient: if the planned player is not on the pitch (or the planned
       // substitute is not on the bench any more) use a valid one instead, so the
       // rival always makes his changes.
-      let idx = xi.findIndex((p: any) => p.id === s.outId);
+      let idx = xi.findIndex((p: any) => p?.id === s.outId);
       if (idx === -1) {
-        idx = xi.findIndex((p: any) => !isGkPlayer(p));
+        idx = xi.findIndex((p: any) => p && !isGkPlayer(p));
       }
       const inn =
         oppBenchRef.current.find((p: any) => p.id === s.inId) ??
@@ -2242,6 +2414,7 @@ function MatchPage() {
         oppBenchRef.current[0];
       if (idx === -1 || !inn) continue;
       const out = xi[idx];
+      if (!out) continue;
       xi[idx] = inn;
       oppBenchRef.current = oppBenchRef.current.filter((p: any) => p.id !== inn.id);
       made.push({
@@ -2321,6 +2494,51 @@ function MatchPage() {
       return;
     }
 
+    if (scene?.kind === "card") {
+      const remainingCards = Array.isArray(scene.source?.remainingCards) ? scene.source.remainingCards : [];
+      const currentMinute = minuteRef.current;
+      if (remainingCards.length > 0) {
+        const [card, ...restCards] = remainingCards;
+        pendingSceneRef.current = {
+          kind: "card",
+          moment: buildCardMoment(card),
+          source: {
+            remainingCards: restCards,
+            nextHalftime: restCards.length === 0 && currentMinute === 45 && !isExtraTimeRef.current,
+            extraTime: false,
+          },
+        };
+        setLiveMoment(pendingSceneRef.current.moment);
+        return;
+      }
+
+      pendingSceneRef.current = null;
+      setLiveMoment(null);
+      if (scene.source?.nextHalftime) {
+        if (scene.source.extraTime) {
+          showHalftimeMoment(true);
+        } else {
+          showHalftimeMoment(false);
+        }
+        return;
+      }
+      if (currentMinute >= 90 && !isExtraTimeRef.current) {
+        finishRegularLiveMatch();
+        return;
+      }
+      if (currentMinute >= 120 && isExtraTimeRef.current) {
+        handleExtraTimeFinished();
+        return;
+      }
+      pausedRef.current = false;
+      pauseReasonRef.current = null;
+      setIsPaused(false);
+      setPauseReason(null);
+      persistLive();
+      restartLiveClock();
+      return;
+    }
+
     if (scene?.kind === "resolution") {
       const currentMinute = minuteRef.current;
       const nextVar = scene.source?.nextVar;
@@ -2348,6 +2566,7 @@ function MatchPage() {
           source: {
             varHighlight: nextVar,
             goalEvent: scene.source?.resolvedGoal,
+            cards: scene.source?.cards || [],
           },
         };
         setLiveMoment(pendingSceneRef.current.moment);
@@ -2355,12 +2574,43 @@ function MatchPage() {
         return;
       }
 
+      const resolvedCards = Array.isArray(scene.source?.cards) ? scene.source.cards : [];
+      if (resolvedCards.length > 0) {
+        const [card, ...restCards] = resolvedCards;
+        pendingSceneRef.current = {
+          kind: "card",
+          moment: buildCardMoment(card),
+          source: {
+            remainingCards: restCards,
+            nextHalftime: restCards.length === 0 && currentMinute === 45 && !isExtraTimeRef.current,
+            extraTime: false,
+          },
+        };
+        setLiveMoment(pendingSceneRef.current.moment);
+        return;
+      }
+
+      const remainingPostCards = Array.isArray(scene.source?.remainingCards) ? scene.source.remainingCards : [];
+      if (remainingPostCards.length > 0) {
+        const [card, ...restCards] = remainingPostCards;
+        pendingSceneRef.current = {
+          kind: "card",
+          moment: buildCardMoment(card),
+          source: {
+            remainingCards: restCards,
+            nextHalftime: restCards.length === 0 && currentMinute === 45 && !isExtraTimeRef.current,
+            extraTime: false,
+          },
+        };
+        setLiveMoment(pendingSceneRef.current.moment);
+        return;
+      }
+
       pendingSceneRef.current = null;
       setLiveMoment(null);
       if (currentMinute === 45 && !isExtraTimeRef.current) {
         halftimePendingAfterMomentRef.current = false;
-        announceHalftime(false);
-        pauseMatch("halftime");
+        showHalftimeMoment(false);
         return;
       }
       if (currentMinute >= 90 && !isExtraTimeRef.current) {
@@ -2368,8 +2618,7 @@ function MatchPage() {
         return;
       }
       if (currentMinute === 105 && isExtraTimeRef.current) {
-        announceHalftime(true);
-        pauseMatch("et_halftime");
+        showHalftimeMoment(true);
         return;
       }
       if (currentMinute >= 120 && isExtraTimeRef.current) {
@@ -2387,15 +2636,30 @@ function MatchPage() {
 
     if (scene?.kind === "var") {
       cancelGoalForVAR(scene.source);
+      const varCards = Array.isArray(scene.source?.cards) ? scene.source.cards : [];
       pendingSceneRef.current = null;
       setLiveMoment(null);
       const currentMinute = minuteRef.current;
+      if (varCards.length > 0) {
+        const [card, ...restCards] = varCards;
+        pendingSceneRef.current = {
+          kind: "card",
+          moment: buildCardMoment(card),
+          source: {
+            remainingCards: restCards,
+            nextHalftime: restCards.length === 0 && currentMinute === 45 && !isExtraTimeRef.current,
+            extraTime: false,
+          },
+        };
+        setLiveMoment(pendingSceneRef.current.moment);
+        return;
+      }
       if (currentMinute >= 90 && !isExtraTimeRef.current) {
         finishRegularLiveMatch();
         return;
       }
       if (currentMinute === 45 && !isExtraTimeRef.current) {
-        pauseMatch("halftime");
+        showHalftimeMoment(false);
         return;
       }
       pausedRef.current = false;
@@ -2414,6 +2678,11 @@ function MatchPage() {
       liveMoment.teamSide === mySideOf(fixtureRef.current);
     const shouldOpenLineupForInjury =
       wasUserInjury && (liveMoment as any).forceLineupEdit !== false;
+    const wasOpponentInjury =
+      liveMoment.type === "injury" && liveMoment.teamSide && liveMoment.teamSide !== mySideOf(fixtureRef.current);
+    const wasMyRedCard =
+      liveMoment.type === "red_card" && liveMoment.teamSide === mySideOf(fixtureRef.current);
+    const wasHalftime = liveMoment.type === "halftime";
     setLiveMoment(null);
     pendingSceneRef.current = null;
     if (momentTimerRef.current !== null) {
@@ -2423,6 +2692,74 @@ function MatchPage() {
 
     if (shouldOpenLineupForInjury) {
       goEditLineupLive();
+      return;
+    }
+
+    // After a red card, the player is already off the pitch, but the manager
+    // decides which formation slot becomes the visible vacancy. Open the live
+    // lineup editor instead of silently choosing the old slot.
+    if (wasMyRedCard) {
+      goEditLineupLive();
+      return;
+    }
+
+    // For an opponent injury, execute the forced substitution only after the
+    // injury notification has been acknowledged. The chronicle therefore reads
+    // naturally: 29' injury, then 29' change.
+    if (wasOpponentInjury && deferredOpponentSubMinutesRef.current.has(currentMinute)) {
+      deferredOpponentSubMinutesRef.current.delete(currentMinute);
+      applyOpponentSubsAt(currentMinute);
+      const deferredForced = (allHighlightsRef.current || []).filter(
+        (h: any) =>
+          h.minute === currentMinute &&
+          h.type === "forced_sub" &&
+          h.team !== mySideOf(fixtureRef.current),
+      );
+      if (deferredForced.length > 0) {
+        const nextHighlights = [...playedHighlightsRef.current, ...deferredForced];
+        playedHighlightsRef.current = nextHighlights.filter(
+          (item, index, arr) =>
+            arr.findIndex(
+              (x) =>
+                x.minute === item.minute &&
+                x.type === item.type &&
+                x.team === item.team &&
+                x.playerId === item.playerId,
+            ) === index,
+        );
+        setHighlightFeed((prev) => [
+          ...deferredForced,
+          ...prev.filter(
+            (item: any) =>
+              !deferredForced.some(
+                (d: any) =>
+                  d.minute === item.minute && d.type === item.type && d.team === item.team && d.playerId === item.playerId,
+              ),
+          ),
+        ]);
+      }
+      persistLive();
+    }
+
+    if (wasHalftime && currentMinute === 45 && !isExtraTimeRef.current) {
+      halftimePendingAfterMomentRef.current = false;
+      pauseReasonRef.current = "halftime";
+      setPauseReason("halftime");
+      pausedRef.current = true;
+      setIsPaused(true);
+      halftimeDoneRef.current = true;
+      persistLive();
+      return;
+    }
+
+    if (wasHalftime && currentMinute === 105 && isExtraTimeRef.current) {
+      halftimePendingAfterMomentRef.current = false;
+      pauseReasonRef.current = "et_halftime";
+      setPauseReason("et_halftime");
+      pausedRef.current = true;
+      setIsPaused(true);
+      etHalftimeDoneRef.current = true;
+      persistLive();
       return;
     }
 
@@ -2502,11 +2839,22 @@ function MatchPage() {
   }
 
   function getCurrentPitchPlayers(team: "home" | "away") {
+    const fx = fixtureRef.current;
     const myId = myTeamIdRef.current || save?.myTeamId;
-    const mySide: "home" | "away" = fixtureRef.current?.homeId === myId ? "home" : "away";
-    return team === mySide
+    if (fx?.homeId === myId) {
+      return team === "home"
+        ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
+        : (oppXIRef.current || []).filter(Boolean);
+    }
+    if (fx?.awayId === myId) {
+      return team === "away"
+        ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
+        : (oppXIRef.current || []).filter(Boolean);
+    }
+    // Fallback defensivo para partidas antiguas sin myTeamId consistente.
+    return team === mySideOf(fx)
       ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
-      : oppXIRef.current;
+      : (oppXIRef.current || []).filter(Boolean);
   }
 
   function openInteractivePenaltyModal(source: any) {
@@ -2519,14 +2867,16 @@ function MatchPage() {
     );
     const tactics = loadTactics(myId || "");
     const designatedId = source.team === mySide ? tactics.penaltyTakerId : null;
+    const shootingScore = (p: any) => {
+      const s = getPlayerShootingStats(p?.id);
+      const penalties = Number(p?.penaltyRating ?? p?.penalties ?? s.penalties ?? 0);
+      return (penalties * 0.45) + (s.finishing * 0.22) + (s.shooting * 0.13) +
+        (s.composure * 0.10) + (s.shotPower * 0.05) + (s.volleys * 0.03) +
+        (s.longShots * 0.02);
+    };
     const bestPenaltyTaker = attackingPlayers
       .slice()
-      .sort(
-        (a, b) =>
-          Number(b.penaltyRating ?? b.penalties ?? b.rating ?? 0) -
-          Number(a.penaltyRating ?? a.penalties ?? a.rating ?? 0) ||
-          Number(b.rating ?? 0) - Number(a.rating ?? 0),
-      )[0];
+      .sort((a, b) => shootingScore(b) - shootingScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0))[0];
     const preferred =
       attackingPlayers.find((p) => p.id === designatedId) ??
       (source.team === mySide ? attackingPlayers.find((p) => p.id === source.scorerId) : null) ??
@@ -2604,7 +2954,7 @@ function MatchPage() {
     pendingSceneRef.current = { kind: "penalty_intro", moment: intro, source };
     if ((Number(source.minute) || minuteRef.current) === 45)
       halftimePendingAfterMomentRef.current = true;
-    showLiveMoment(intro, 2200, true);
+    showLiveMoment(intro, 2200, false);
   }
 
   function weightedPenaltyZone(weights: Record<PenaltyZoneId, number>): PenaltyZoneId {
@@ -2641,11 +2991,16 @@ function MatchPage() {
       attackingPlayers
         .filter((p) => p && !isGoalkeeperForDanger(p))
         .slice()
-        .sort(
-          (a, b) =>
-            Number(b.penaltyRating ?? b.penalties ?? b.rating ?? 0) -
-            Number(a.penaltyRating ?? a.penalties ?? a.rating ?? 0),
-        )[0];
+        .sort((a, b) => {
+          const score = (p: any) => {
+            const s = getPlayerShootingStats(p?.id);
+            const penalties = Number(p?.penaltyRating ?? p?.penalties ?? s.penalties ?? 0);
+            return (penalties * 0.45) + (s.finishing * 0.22) + (s.shooting * 0.13) +
+              (s.composure * 0.10) + (s.shotPower * 0.05) + (s.volleys * 0.03) +
+              (s.longShots * 0.02);
+          };
+          return score(b) - score(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0);
+        })[0];
     const defendingPlayers = getCurrentPitchPlayers(
       attackingSide === "home" ? "away" : "home",
     ) as any[];
@@ -2704,16 +3059,14 @@ function MatchPage() {
       // goalkeeper/taker quality adding only a small secondary swing.
       actualTargetZone = weightedPenaltyZone(strikerWeights);
       const guessed = actualTargetZone === zoneId;
-      const reflex = (keeperRating - 72) * 0.0055;
-      const strikerQuality = (takerRating - 74) * 0.0035;
+      // En los penaltis que lanza la CPU, la decisión del portero del usuario
+      // tiene que ser determinante: solo hay parada si ambas direcciones
+      // coinciden. Si el portero se lanza a otra zona, no puede aparecer una
+      // parada "por suerte" porque eso contradice la decisión visual tomada.
       if (guessed) {
         scored = false;
       } else {
-        const saveChance = Math.max(
-          0.015,
-          Math.min(0.2, 0.055 + reflex - strikerQuality - zoneDifficulty[actualTargetZone] * 0.2),
-        );
-        scored = Math.random() >= saveChance;
+        scored = true;
       }
     }
 
@@ -2835,7 +3188,7 @@ function MatchPage() {
       return;
     }
     if (currentMinute === 45 && !isExtraTimeRef.current) {
-      pauseMatch("halftime");
+      showHalftimeMoment(false);
       return;
     }
     pausedRef.current = false;
@@ -2942,12 +3295,59 @@ function MatchPage() {
     }
   }
 
+  function remapHighlightToPitch(h: any) {
+    const fx = fixtureRef.current;
+    if (!fx || !h) return h;
+
+    // Highlights are generated before the live manager can change the XI.
+    // Re-anchor the protagonist to whoever is ACTUALLY on the pitch when the
+    // minute is reached. This is especially important for goalkeeper saves:
+    // a keeper who was replaced before the highlight must never appear as the
+    // player making the save.
+    const highlightTeam = h.team as "home" | "away";
+    const players = (getCurrentPitchPlayers(highlightTeam) as any[]).filter(Boolean);
+    if (!players.length) return { ...h };
+
+    if (h.type === "save") {
+      const keeper = players.find((p) => isGoalkeeperForDanger(p));
+      if (!keeper) return { ...h };
+      if (h.playerId === keeper.id && h.playerName === keeper.name) return { ...h };
+      return {
+        ...h,
+        playerId: keeper.id,
+        playerName: keeper.name,
+      };
+    }
+
+    // For all other player-based highlights, keep the original footballer when
+    // he is still on the pitch; otherwise replace it with a valid outfield
+    // player from that team.
+    if (h.playerId && players.some((p) => p.id === h.playerId)) return { ...h };
+    const repl = pickCredit(players);
+    return repl ? { ...h, playerId: repl.id, playerName: repl.name } : { ...h };
+  }
+
   function applyMinuteOutcome(m: number, rawEvents: any[], rawCards: any[], rawHighlights: any[]) {
+    const fx = fixtureRef.current;
+    const mySide = mySideOf(fx);
+    const opponentSide = mySide === "home" ? "away" : "home";
+    const hasOpponentInjury = rawHighlights.some(
+      (h: any) => h.type === "injury" && h.team === opponentSide,
+    );
+    if (hasOpponentInjury) {
+      deferredOpponentSubMinutesRef.current.add(m);
+    }
+
     const events = rawEvents.map(remapEventToPitch);
     const cards = rawCards.map(remapCardToPitch);
-    const hls = rawHighlights.filter(
-      (h: any) => !["penalty_missed", "forced_sub"].includes(h.type),
-    );
+    const hls = rawHighlights
+      .filter((h: any) => {
+        if (h.type === "penalty_missed") return false;
+        // Forced opponent changes are shown only after the injury interruption.
+        if (h.type === "forced_sub" && hasOpponentInjury && h.team === opponentSide) return false;
+        return h.type !== "forced_sub";
+      })
+      .map(remapHighlightToPitch);
 
     if (hls.length > 0) {
       playedHighlightsRef.current = [...playedHighlightsRef.current, ...hls];
@@ -2978,11 +3378,24 @@ function MatchPage() {
           (c.cardType === "red" || c.isSecondYellow) &&
           myXIRef.current.includes(c.playerId)
         ) {
-          playWithOneLess(c.playerId, c.playerName);
+          // A red card removes the player immediately, but the vacant formation
+          // slot is deliberately left unassigned. The manager chooses the hole
+          // position in the live lineup editor after the notification.
+          playWithOneLess(c.playerId, c.playerName, "red_card");
         }
       }
     }
-    applyOpponentSubsAt(m);
+    // Rival red cards remove the player from the minimap immediately, while
+    // preserving his original formation slot as an actual empty space.
+    for (const c of cards) {
+      if (c.team !== opponentSide || !(c.cardType === "red" || c.isSecondYellow)) continue;
+      const idx = oppXIRef.current.findIndex((p: any) => p?.id === c.playerId);
+      if (idx >= 0) oppXIRef.current[idx] = null;
+      oppPlanRef.current = oppPlanRef.current.filter((plan: any) => plan.outId !== c.playerId);
+    }
+    if (!hasOpponentInjury) {
+      applyOpponentSubsAt(m);
+    }
     return { events, cards, hls };
   }
 
@@ -3038,22 +3451,26 @@ function MatchPage() {
     );
     if (!players.length) return null;
 
+    // Una atribución explícita (por ejemplo, un gol de Mbappé) manda siempre.
+    // La variedad solo se aplica cuando NO existe un protagonista conocido.
+    const preferred = players.find((p) => p.id === preferredId);
+    if (preferred) {
+      lastDangerAttackerRef.current[side] = preferred.id;
+      return preferred;
+    }
+
     const lastId = lastDangerAttackerRef.current[side];
-    const preferred = players.find((p) => p.id === preferredId && p.id !== lastId);
-    const preferredWasLast = players.find((p) => p.id === preferredId);
     const chosen =
-      preferred ??
-      pickWeightedDangerPlayer(players, dangerRoleWeight, lastId ? [lastId] : [] ) ??
-      preferredWasLast ??
+      pickWeightedDangerPlayer(players, dangerRoleWeight, lastId ? [lastId] : []) ??
       players[0];
 
     lastDangerAttackerRef.current[side] = chosen?.id ?? lastId ?? null;
     return chosen;
   }
 
-  function getDangerDefender(side: "home" | "away", preferredId?: string) {
+  function getDangerDefender(side: "home" | "away", preferredId?: string, excludeIds: string[] = []) {
     const players = (getCurrentPitchPlayers(side) as any[]).filter(
-      (p) => p && !isGoalkeeperForDanger(p),
+      (p) => p && !isGoalkeeperForDanger(p) && !excludeIds.includes(p.id),
     );
     if (!players.length) return null;
     const defenders = players.filter((p) => {
@@ -3294,7 +3711,7 @@ function MatchPage() {
     const keyHighlight = source.rawHighlights?.find((h: any) =>
       ["save", "woodwork", "big_chance", "penalty_awarded"].includes(h.type),
     );
-    const varDecision = source.rawHighlights?.find((h: any) => h.type === "var_disallowed");
+    const varDecisionRaw = source.rawHighlights?.find((h: any) => h.type === "var_disallowed");
 
     if (goal) {
       // A normal goal belongs to an attacker from goal.team. An own goal is
@@ -3312,6 +3729,19 @@ function MatchPage() {
               scorerName: attacker?.name ?? goal.scorerName,
             };
           })();
+
+      // VAR must always reference the same scorer as the goal it reviews.
+      // Older generated highlights could carry a different player id/name,
+      // which is why a disallowed Mbappé goal could be displayed as Vinícius.
+      const varDecision = varDecisionRaw && resolvedGoal
+        ? {
+            ...varDecisionRaw,
+            team: resolvedGoal.team,
+            playerId: resolvedGoal.scorerId,
+            playerName: resolvedGoal.scorerName,
+            detail: varDecisionRaw.detail || `Gol de ${resolvedGoal.scorerName} anulado por VAR`,
+          }
+        : varDecisionRaw;
 
       // The VAR-generated goal is intentionally shown first. Only its final
       // decision determines whether it remains in the official chronicle.
@@ -3334,13 +3764,28 @@ function MatchPage() {
             result: { ...fixtureRef.current.result, events: allEventsRef.current },
           } as any;
         }
+        const attackingSide = goal.team as "home" | "away";
+        const defendingSide = attackingSide === "home" ? "away" : "home";
+        // El atacante debe pertenecer al equipo que estaba atacando y el
+        // defensor al equipo contrario. No reutilizamos un nombre del mismo XI.
+        const missAttacker = getDangerAttacker(attackingSide, resolvedGoal.scorerId);
+        const missDefender = getDangerDefender(
+          defendingSide,
+          undefined,
+          missAttacker ? [missAttacker.id] : [],
+        );
         const missHighlight = {
           minute,
-          team: goal.team,
+          team: attackingSide,
           type: "big_chance",
-          playerId: resolvedGoal.scorerId,
-          playerName: resolvedGoal.scorerName,
-          detail: "El remate parecía gol, pero el contexto del partido termina frenando la ocasión.",
+          playerId: missAttacker?.id ?? resolvedGoal.scorerId,
+          playerName: missAttacker?.name ?? resolvedGoal.scorerName,
+          detail: buildMissDetail({
+            attackerName: missAttacker?.name ?? resolvedGoal.scorerName ?? "El atacante",
+            defenderName: missDefender?.name,
+            minute,
+            eventType: goal.type,
+          }),
         };
         const applied = applyMinuteOutcome(minute, [], source.rawCards || [], [missHighlight]);
         applyLiveMomentumForResolvedAction(minute, applied.events, applied.cards, applied.hls);
@@ -3391,6 +3836,7 @@ function MatchPage() {
           minute,
           resolvedGoal: finalGoal,
           nextVar: varDecision,
+          cards: applied.cards,
         },
       };
       setLiveMoment(resolution);
@@ -3414,7 +3860,7 @@ function MatchPage() {
       pendingSceneRef.current = {
         kind: "resolution",
         moment: resolution,
-        source: { minute },
+        source: { minute, cards: applied.cards },
       };
       setLiveMoment(resolution);
       persistLive();
@@ -3514,8 +3960,8 @@ function MatchPage() {
       kicker: "🚨 Jugada en directo",
       title: goal ? "¡PELIGRO!" : dangerBase.title,
       body: attacking
-        ? `${dangerBase.body} La acción entra en zona de definición.`
-        : `${dangerBase.body} El rival ha encontrado un hueco y tu defensa intenta contenerlo.`,
+        ? dangerBase.body
+        : `${dangerBase.body} Tu defensa intenta cerrar el último pase y obligar al atacante a decidir con prisa.`,
       // No decision wheel/choice: this scene is pure match presentation.
       actionPrompt: undefined,
       choices: undefined,
@@ -3545,7 +3991,7 @@ function MatchPage() {
     if (m === 45) halftimePendingAfterMomentRef.current = true;
     drainStamina();
     persistLive();
-    showLiveMoment(danger, 2200, true);
+    showLiveMoment(danger, 2200, false);
     return true;
   }
 
@@ -3585,21 +4031,36 @@ function MatchPage() {
       const red = cards.find((c) => c.cardType === "red" || c.isSecondYellow);
       if (red) {
         return {
+          moment: buildCardMoment(red),
+          emergency: true,
+          isCard: true,
+        };
+      }
+
+      const yellow = cards.find((c) => c.cardType === "yellow");
+      if (yellow) {
+        return {
+          moment: buildCardMoment(yellow),
+          emergency: true,
+          isCard: true,
+        };
+      }
+
+      if (minute === 45 && !halftimeDoneRef.current) {
+        return {
           moment: {
-            id: `red-${red.minute}-${red.playerId}`,
-            type: "red_card",
-            minute: red.minute,
-            kicker: "🟥 Tarjeta roja",
-            title: "ROJA",
-            body: `${red.playerName} es expulsado. El partido cambia por completo para ${red.team === "home" ? home.name : away.name}.`,
-            playerName: red.playerName,
-            teamName: red.team === "home" ? home.name : away.name,
-            emoji: "🟥",
-            detail: red.reason,
+            id: `halftime-${minute}-${homeScoreRef.current}-${awayScoreRef.current}`,
+            type: "halftime",
+            minute,
+            kicker: "⏸️ Descanso",
+            title: "DESCANSO",
+            body: `${home.name} ${homeScoreRef.current}-${awayScoreRef.current} ${away.name}.`,
+            emoji: "⏸️",
             hardPause: true,
-            teamSide: red.team,
+            teamName: `${home.name} vs ${away.name}`,
           },
           emergency: true,
+          isHalftime: true,
         };
       }
 
@@ -3718,7 +4179,9 @@ function MatchPage() {
       const isMajor = !!importantMoment;
       const isEmergency =
         !!selected?.emergency ||
-        ["goal", "free_kick_goal", "own_goal", "red_card"].includes(importantMoment?.type ?? "");
+        ["goal", "free_kick_goal", "own_goal", "red_card", "yellow_card", "halftime"].includes(
+          importantMoment?.type ?? "",
+        );
 
       if (importantMoment) {
         lastMajorMomentMinuteRef.current = m;
@@ -3745,8 +4208,15 @@ function MatchPage() {
       // presses “Continuar partido”. This also lets us catch a 45' or 90' scene
       // without accidentally running into 46' / 91'.
       if (importantMoment) {
-        if (m === 45) halftimePendingAfterMomentRef.current = true;
-        showLiveMoment(importantMoment, isEmergency ? 3200 : 2600);
+        if (m === 45 && importantMoment.type !== "halftime") halftimePendingAfterMomentRef.current = true;
+        // Cards and the halftime board are transient notifications. They are
+        // already rendered from the dedicated card feed / match state and
+        // should not create duplicate chronicle entries.
+        const transientCardOrBreak =
+          importantMoment.type === "yellow_card" ||
+          importantMoment.type === "red_card" ||
+          importantMoment.type === "halftime";
+        showLiveMoment(importantMoment, isEmergency ? 3200 : 2600, !transientCardOrBreak);
         return;
       }
 
@@ -3754,8 +4224,7 @@ function MatchPage() {
 
       if (m === 45 && !halftimeDoneRef.current) {
         halftimeDoneRef.current = true;
-        announceHalftime(false);
-        pauseMatch("halftime");
+        showHalftimeMoment(false);
         return;
       }
 
@@ -3902,9 +4371,12 @@ function MatchPage() {
     const madeWhileSkipping: any[] = [];
     for (let m = currentMinute + 1; m <= 90; m++) {
       drainStamina();
-      if (includeOpponentSubs && oppPlanRef.current.some((s) => s.minute === m)) {
-        applyOpponentSubsAt(m);
-      }
+      const opponentInjuryAtMinute = allHighlightsRef.current.some(
+        (h: any) =>
+          h.minute === m &&
+          h.type === "injury" &&
+          h.team !== mySideOf(fixtureRef.current),
+      );
       const autoSubMinutes = [61, 71, 80];
       if (autoSubMinutes.includes(m)) {
         madeWhileSkipping.push(...autoSubMyTeamAt(m, m === 61 ? 80 : 101));
@@ -3923,8 +4395,12 @@ function MatchPage() {
 
       const hls = allHighlightsRef.current
         .filter((h) => h.minute === m)
-        .filter((h) => !(h.type === "forced_sub" && h.team === mySideOf(fixtureRef.current)));
+        .filter((h) => !(h.type === "forced_sub" && h.team === mySideOf(fixtureRef.current)))
+        .filter((h) => !(opponentInjuryAtMinute && h.type === "forced_sub"));
       playedHighlightsRef.current = uniq([...playedHighlightsRef.current, ...hls], highlightKey);
+      if (includeOpponentSubs) {
+        applyOpponentSubsAt(m);
+      }
     }
 
     if (madeWhileSkipping.length > 0) {
@@ -4053,10 +4529,12 @@ function MatchPage() {
   const fixture = fixtureRef.current;
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
-  const myId = save.myTeamId;
+  const myId = save.myTeamId || "";
   const isHome = fixture.homeId === myId;
   const isMe = (id: string) => id === myId;
   const injuries = fixture.result?.injuries ?? [];
+  const savedFormations = save.formations ?? {};
+  const savedLineups = save.lineups ?? {};
 
   // Debug: log fixture info
   console.log("Match fixture:", {
@@ -4068,25 +4546,52 @@ function MatchPage() {
     awayName: away?.name,
   });
 
-  // Get lineups for both teams
-  const homeSquad = getSimSquad(fixture.homeId);
-  const awaySquad = getSimSquad(fixture.awayId);
+  // The preview must never fail just because a legacy save contains an
+  // incomplete/missing squad. Keep rendering the match and fall back to an
+  // empty squad when the store data is malformed.
+  const safeGetSimSquad = (teamId: string) => {
+    try {
+      const squad = getSimSquad(teamId);
+      return Array.isArray(squad) ? squad : [];
+    } catch (error) {
+      console.error("Error loading squad for MatchPage:", { teamId, error });
+      return [];
+    }
+  };
+
+  const homeSquad = safeGetSimSquad(fixture.homeId);
+  const awaySquad = safeGetSimSquad(fixture.awayId);
 
   // Rival lineup is computed only once per fixture (and then mutated by the CPU
   // substitutions), so the mini pitch always shows who is actually on the pitch.
   const oppId = isMe(fixture.homeId) ? fixture.awayId : fixture.homeId;
   if (!oppCacheRef.current || oppCacheRef.current.key !== `${fixture.id}:${oppId}`) {
-    const { players: oppPlayers, formation: oppFmt } = getStartersWithFormation(save, oppId, {
-      randomFormation: true,
-    });
+    let oppPlayers: any[] = [];
+    let oppFmt: FormationName = DEFAULT_FORMATION;
+
+    try {
+      const generated = getStartersWithFormation(save, oppId, {
+        randomFormation: true,
+      });
+      oppPlayers = Array.isArray(generated?.players) ? generated.players : [];
+      oppFmt = normalizeFormation(generated?.formation);
+    } catch (error) {
+      console.error("Error generating rival lineup in MatchPage:", { fixtureId: fixture.id, oppId, error });
+      // Safe fallback: use the current squad, without asking the CPU lineup
+      // generator to process a possibly inconsistent legacy save.
+      oppPlayers = safeGetSimSquad(oppId).slice(0, 11);
+      oppFmt = DEFAULT_FORMATION;
+    }
+
     oppXIRef.current = oppPlayers;
-    const oppSquad = getSimSquad(oppId);
+    const oppSquad = safeGetSimSquad(oppId);
     const onPitchIds = new Set(oppPlayers.map((p: any) => p.id));
+    const currentDate = usePlayersStore.getState().currentDate;
     oppBenchRef.current = oppSquad
       .filter(
         (p: any) =>
           !onPitchIds.has(p.id) &&
-          !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate),
+          (!currentDate || !isPlayerInjuredAtDate(p, currentDate)),
       )
       .sort((a: any, b: any) => b.rating - a.rating)
       .slice(0, 7);
@@ -4096,7 +4601,7 @@ function MatchPage() {
       .map((sb: any) => ({ minute: sb.minute, outId: sb.playerOutId, inId: sb.playerInId }));
     oppPlanRef.current = storedOppSubs.length > 0 ? storedOppSubs : [];
   }
-  const oppFormation = oppCacheRef.current.formation;
+  const oppFormation = normalizeFormation(oppCacheRef.current?.formation);
 
   // Determine home team lineup and formation
   let homeLineup: any[] = [];
@@ -4105,13 +4610,15 @@ function MatchPage() {
   if (isMe(fixture.homeId)) {
     // User's team - use temporary lineup if available, otherwise use global
     const liveIds = phase !== "preview" && myXI.length > 0 ? myXI : null;
-    const homeLineupIds = liveIds || matchLineup || save.lineups[fixture.homeId] || [];
+    const homeLineupIdsRaw = liveIds || matchLineup || savedLineups[fixture.homeId] || [];
+    const homeLineupIds = Array.isArray(homeLineupIdsRaw) ? homeLineupIdsRaw : [];
     homeLineup = homeLineupIds.map((id) => homeSquad.find((p) => p.id === id)).filter(Boolean);
     homeFormation =
       (phase !== "preview" && liveFormation) ||
       matchFormation ||
-      save.formations[fixture.homeId] ||
-      "Táctica 4-4-2";
+      savedFormations[fixture.homeId] ||
+      DEFAULT_FORMATION;
+    homeFormation = normalizeFormation(homeFormation);
   } else {
     homeLineup = oppXIRef.current;
     homeFormation = oppFormation;
@@ -4124,13 +4631,15 @@ function MatchPage() {
   if (isMe(fixture.awayId)) {
     // User's team - use temporary lineup if available, otherwise use global
     const liveIdsAway = phase !== "preview" && myXI.length > 0 ? myXI : null;
-    const awayLineupIds = liveIdsAway || matchLineup || save.lineups[fixture.awayId] || [];
+    const awayLineupIdsRaw = liveIdsAway || matchLineup || savedLineups[fixture.awayId] || [];
+    const awayLineupIds = Array.isArray(awayLineupIdsRaw) ? awayLineupIdsRaw : [];
     awayLineup = awayLineupIds.map((id) => awaySquad.find((p) => p.id === id)).filter(Boolean);
     awayFormation =
       (phase !== "preview" && liveFormation) ||
       matchFormation ||
-      save.formations[fixture.awayId] ||
-      "Táctica 4-4-2";
+      savedFormations[fixture.awayId] ||
+      DEFAULT_FORMATION;
+    awayFormation = normalizeFormation(awayFormation);
   } else {
     awayLineup = oppXIRef.current;
     awayFormation = oppFormation;
@@ -4237,6 +4746,7 @@ function MatchPage() {
                   assists={feed}
                   mvp={phase === "done" ? fixture.result?.mvp?.playerId : undefined}
                   substitutions={subFeed.filter((s: any) => s.team === "home")}
+                  injuries={injuries}
                   stamina={isHome ? stamina : {}}
                 />
               </div>
@@ -4288,6 +4798,7 @@ function MatchPage() {
                   assists={feed}
                   mvp={phase === "done" ? fixture.result?.mvp?.playerId : undefined}
                   substitutions={subFeed.filter((s: any) => s.team === "away")}
+                  injuries={injuries}
                   stamina={!isHome ? stamina : {}}
                 />
               </div>
@@ -4566,19 +5077,13 @@ function MatchPage() {
                   // Only the highlights that add colour to the chronicle without flooding it.
                   const KEEP: Record<string, { icon: string; label: string }> = {
                     woodwork: { icon: "🥅", label: "Al palo" },
-                    corner: { icon: "🚩", label: "Córner" },
-                    counterattack: { icon: "⚡", label: "Contraataque" },
-                    blocked_shot: { icon: "🛡️", label: "Remate bloqueado" },
-                    offside: { icon: "🚩", label: "Fuera de juego" },
-                    big_chance: { icon: "🔥", label: "Gran ocasión" },
+                    big_chance: { icon: "❌", label: "Fallo" },
                     penalty_missed: { icon: "❌", label: "Penalti fallado" },
                     // "penalty_awarded" is intentionally NOT kept: a penalty is
                     // reported with a single line (scored or missed).
-
                     var_disallowed: { icon: "📺", label: "Gol anulado (VAR)" },
                     injury: { icon: "🚑", label: "Lesión" },
-                    forced_sub: { icon: "🔁", label: "Cambio forzado" },
-                    save: { icon: "🧤", label: "Parada" },
+                    save: { icon: "🧤", label: "Paradón" },
                   };
                   const liveMomentAlreadyShows = (h: any) =>
                     keyMoments.some(
@@ -4589,11 +5094,13 @@ function MatchPage() {
                         ["save", "injury", "injury_substitution", "var", "var_disallowed", "penalty_missed", "penalty_save", "penalty_goal"].includes(String(moment.type ?? "")),
                     );
                   const hls = highlightFeed.filter((h: any) => KEEP[h.type]);
-                  const liveMoments = keyMoments.map((m: any) => ({
-                    kind: "moment",
-                    minute: Number(m.minute ?? 0),
-                    data: m,
-                  }));
+                  const liveMoments = keyMoments
+                    .filter(isChronicleMoment)
+                    .map((m: any) => ({
+                      kind: "moment",
+                      minute: Number(m.minute ?? 0),
+                      data: m,
+                    }));
                   const items = [
                     ...liveMoments,
                     ...cardFeed.map((c: any) => ({ kind: "card", minute: c.minute, data: c })),
@@ -4602,7 +5109,18 @@ function MatchPage() {
                       .filter((h: any) => !liveMomentAlreadyShows(h))
                       .map((h: any) => ({ kind: "highlight", minute: h.minute, data: h })),
                     ...subFeed.map((s: any) => ({ kind: "sub", minute: s.minute, data: s })),
-                  ].sort((a, b) => Number(b.minute) - Number(a.minute));
+                  ].sort((a, b) => {
+                    const minuteDiff = Number(b.minute) - Number(a.minute);
+                    if (minuteDiff !== 0) return minuteDiff;
+                    const rank: Record<string, number> = {
+                      moment: 10,
+                      card: 20,
+                      goal: 30,
+                      highlight: 40,
+                      sub: 90,
+                    };
+                    return (rank[a.kind] ?? 50) - (rank[b.kind] ?? 50);
+                  });
 
                   return items.map((item, i) => {
                     const teamOf = (t: string) => (t === "home" ? home : away);
@@ -4867,13 +5385,24 @@ function MatchPage() {
           <LiveEventOverlay
             event={
               liveMoment
-                ? ({
-                    ...(liveMoment as any),
-                    teamLeagueName:
-                      liveMoment.teamSide === "home"
-                        ? getLeagueName(home.league)
-                        : getLeagueName(away.league),
-                  } as any)
+                ? (() => {
+                    const currentTeamPlayers = liveMoment.teamSide
+                      ? (getCurrentPitchPlayers(liveMoment.teamSide) as any[])
+                      : [];
+                    const currentPlayer = liveMoment.playerId
+                      ? currentTeamPlayers.find((p: any) => p?.id === liveMoment.playerId)
+                      : null;
+                    return {
+                      ...(liveMoment as any),
+                      teamLeagueName:
+                        liveMoment.teamSide === "home"
+                          ? getLeagueName(home.league)
+                          : getLeagueName(away.league),
+                      playerImage: liveMoment.playerId
+                        ? faceUrl(liveMoment.playerId, currentPlayer?.cardImage)
+                        : undefined,
+                    } as any;
+                  })()
                 : null
             }
             onContinue={continueLiveMoment}

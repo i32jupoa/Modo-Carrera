@@ -58,6 +58,7 @@ interface PlayerNodeProps {
     /** Resto de demarcaciones del jugador (burbuja): ["MD", "DC"]. */
     otherPositions?: string[];
     injured?: boolean;
+    forcedInjury?: boolean;
     suspended?: boolean;
     cardImage?: string;
   };
@@ -82,7 +83,7 @@ function getShortName(name: string): string {
 
 export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerNodeProps) {
   const shortName = getShortName(player.name);
-  const isUnavailable = player.injured || player.suspended;
+  const isUnavailable = (player.injured || player.suspended) && !player.forcedInjury;
 
   return (
     <button
@@ -98,7 +99,7 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
         top: `${coordinates.top}%`,
         left: `${coordinates.left}%`,
       }}
-      title={`${player.name} (${player.rating}) - ${[player.slotLabel, ...(player.otherPositions ?? [])].filter(Boolean).join(" · ") || player.position}${player.injured ? " - Lesionado" : ""}${player.suspended ? " - Suspendido" : ""}`}
+      title={`${player.name} (${player.rating}) - ${[player.slotLabel, ...(player.otherPositions ?? [])].filter(Boolean).join(" · ") || player.position}${player.forcedInjury ? " - Lesionado · sustitución obligatoria" : player.injured ? " - Lesionado" : ""}${player.suspended ? " - Suspendido" : ""}`}
       disabled={isUnavailable}
     >
       <span className="relative">
@@ -126,11 +127,19 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
           {player.slotLabel}
         </span>
       )}
-      {player.injured && (
+      {player.injured && !player.forcedInjury && (
         <span
           className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-orange-400"
           title="Lesionado"
         />
+      )}
+      {player.forcedInjury && (
+        <span
+          className="absolute -top-2 -right-2 grid h-6 w-6 place-items-center rounded-full border border-orange-300/60 bg-orange-500/20 text-[0.8rem] shadow-[0_0_14px_rgba(249,115,22,.35)]"
+          title="Lesionado · sustitución obligatoria"
+        >
+          🚑
+        </span>
       )}
       {player.suspended && (
         <span

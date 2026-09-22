@@ -1,5 +1,5 @@
 import { Team, teamsByLeague } from "@/data/teams";
-import { Player } from "@/data/players";
+import { Player, getPlayerShootingStats } from "@/data/players";
 import {
   buildMatchStats,
   computePlayerRatings,
@@ -42,6 +42,14 @@ function rand(): number {
 }
 
 // Weighted scorer pick considering position and OVR for fast simulation
+function penaltyTakerScore(player: Player): number {
+  const stats = getPlayerShootingStats(player.id);
+  const penalties = Number((player as any).penaltyRating ?? (player as any).penalties ?? stats.penalties ?? 0);
+  return (penalties * 0.45) + (stats.finishing * 0.22) +
+    (stats.shooting * 0.13) + (stats.composure * 0.10) +
+    (stats.shotPower * 0.05) + (stats.volleys * 0.03) + (stats.longShots * 0.02);
+}
+
 function fastPickScorerWeighted(xi: Player[]): Player {
   const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   if (candidates.length === 0) return xi[0];
@@ -785,6 +793,41 @@ function buildMinutesPlayed(
   return minutes;
 }
 
+const buildSaveDetail = (keeper: Player, attacker?: Player) => {
+  const name = attacker?.name || "El atacante";
+  const variants = [
+    `${keeper.name} se estira abajo y atrapa el disparo cruzado de ${name}.`,
+    `${name} prueba de primeras, pero ${keeper.name} responde con una mano firme y desvía el balón.`,
+    `${keeper.name} sale bien de su portería y tapa el remate de ${name} antes de que pueda ajustar el tiro.`,
+    `Disparo raso de ${name} al palo largo; ${keeper.name} llega a tiempo y manda la pelota a córner.`,
+    `${name} consigue girarse en el área, aunque ${keeper.name} aguanta el movimiento y bloquea el golpeo.`,
+    `${keeper.name} reacciona a quemarropa ante el remate de ${name} y evita el gol con una parada de reflejos.`,
+    `Centro atrás y remate de ${name}. ${keeper.name} se hace enorme y rechaza el balón con las dos manos.`,
+    `${name} encuentra un pequeño espacio en la frontal, pero ${keeper.name} se vence a tiempo para desviar el disparo.`,
+    `Remate potente de ${name}; ${keeper.name} mete los puños y aleja el peligro antes del rechace.`,
+    `${keeper.name} lee la jugada, se coloca a tiempo y acaba sacando el tiro de ${name}.`,
+    `${name} busca sorprender con un tiro ajustado, pero ${keeper.name} baja rápido y evita que entre por su palo.`,
+    `La ocasión termina con un mano a mano: ${keeper.name} espera hasta el último segundo y tapa el remate de ${name}.`,
+  ];
+  return variants[Math.floor(rand() * variants.length)];
+};
+
+const buildWoodworkDetail = (player: Player) => {
+  const variants = [
+    `${player.name} recorta desde la banda y estrella un disparo seco en el palo.`,
+    `${player.name} conecta un remate de primeras que golpea el travesaño y sale despedido.`,
+    `Gran golpeo de ${player.name} desde la frontal: la pelota besa la madera y se va fuera.`,
+    `${player.name} gana el segundo palo y cabecea al poste. El balón queda muerto antes del despeje.`,
+    `Rechace al borde del área y ${player.name} no se lo piensa: latigazo al poste.`,
+    `${player.name} encuentra la escuadra con una vaselina, pero el travesaño evita el gol.`,
+    `Disparo cruzado de ${player.name} que supera al portero y termina estrellándose en el palo.`,
+    `${player.name} se hace hueco entre dos rivales y saca un derechazo que retumba en la madera.`,
+    `Centro al segundo palo y remate de ${player.name}; la pelota toca el poste y se marcha por línea de fondo.`,
+    `${player.name} engancha un balón suelto dentro del área y el remate acaba en el larguero.`,
+  ];
+  return variants[Math.floor(rand() * variants.length)];
+};
+
 // Ultra-fast simulation for bulk matchdays (no detailed events, just results)
 // NOTE: Stats recording is handled by applyMatchToStats after the simulation
 export function simulateMatchFast(
@@ -963,22 +1006,33 @@ export function simulateMatchFast(
   // A couple of saves and the occasional woodwork, so the chronicle of
   // non-user matches has more than just goals.
   const highlights: HighlightEvent[] = [];
+
   const addFastSaves = (xi: Player[], bench: Player[], team: "home" | "away") => {
     const count = 1 + Math.floor(rand() * 3);
     for (let i = 0; i < count; i++) {
       const minute = 3 + Math.floor(rand() * 85);
-      const gks = activePlayersAt(xi, bench, substitutions, new Map(), team, minute).filter((p) =>
-        isGoalkeeper(p.positions),
-      );
-      const gk = gks[0];
+      const activeKeeperPool = activePlayersAt(xi, bench, substitutions, new Map(), team, minute);
+      const gk = activeKeeperPool.find((p) => isGoalkeeper(p.positions));
       if (!gk) continue;
+      const attackingSide = team === "home" ? "away" : "home";
+      const attackerPool = activePlayersAt(
+        attackingSide === "home" ? homeXI : awayXI,
+        attackingSide === "home" ? homeBench : awayBench,
+        substitutions,
+        new Map(),
+        attackingSide,
+        minute,
+      ).filter((p) => !isGoalkeeper(p.positions));
+      const attacker = attackerPool.length
+        ? attackerPool[Math.floor(rand() * attackerPool.length)]
+        : undefined;
       highlights.push({
         minute,
         team,
         type: "save",
         playerId: gk.id,
         playerName: gk.name,
-        detail: rand() < 0.35 ? "¡Paradón!" : "Buena intervención",
+        detail: buildSaveDetail(gk, attacker),
       });
     }
   };
@@ -999,7 +1053,7 @@ export function simulateMatchFast(
       type: "woodwork",
       playerId: p.id,
       playerName: p.name,
-      detail: rand() < 0.5 ? "¡Al palo!" : "¡Al travesaño!",
+      detail: buildWoodworkDetail(p),
     });
   };
   addFastWoodwork(homeXI, homeBench, "home");
@@ -1498,8 +1552,18 @@ export function simulateMatch(
     return true;
   }
 
-  const penaltyRating = (player: Player): number =>
-    Number((player as any).penaltyRating ?? (player as any).penalties ?? (player as any).penalty ?? player.rating ?? 70);
+  const penaltyRating = (player: Player): number => {
+    const stats = getPlayerShootingStats(player.id);
+    const direct = Number((player as any).penaltyRating ?? (player as any).penalties ?? 0);
+    const penalties = direct || stats.penalties;
+    // La elección del lanzador no depende solo de "Penalties": también
+    // ponderamos remate, definición y compostura para aproximar la calidad
+    // real de tiro del futbolista.
+    return (penalties * 0.45) + (stats.finishing * 0.22) +
+      (stats.shooting * 0.13) + (stats.composure * 0.10) +
+      (stats.shotPower * 0.05) + (stats.volleys * 0.03) +
+      (stats.longShots * 0.02);
+  };
 
   const passingRating = (player: Player): number =>
     Number((player as any).shortPassing ?? 0) * 0.55 + Number((player as any).longPassing ?? 0) * 0.45;
@@ -1522,7 +1586,7 @@ export function simulateMatch(
     const active = xi.filter((p) => !isGoalkeeper(p.positions));
     if (!active.length) return undefined;
     return designated(xi, tactics, "penaltyTakerId") ??
-      active.slice().sort((a, b) => penaltyRating(b) - penaltyRating(a) || b.rating - a.rating)[0];
+      active.slice().sort((a, b) => penaltyTakerScore(b) - penaltyTakerScore(a) || b.rating - a.rating)[0];
   };
 
   const pickAvailableMinute = (team: "home" | "away") => {
@@ -1625,20 +1689,31 @@ export function simulateMatch(
     const xi = team === "home" ? homeXI : awayXI;
     for (let i = 0; i < shown; i++) {
       const minute = 3 + Math.floor(rand() * 85);
-      const gk = activeAt(
+      const activeKeeperPool = activeAt(
         xi,
         team === "home" ? homeRedCardedPlayers : awayRedCardedPlayers,
         minute,
         team,
-      ).find((p) => isGoalkeeper(p.positions));
+      );
+      const gk = activeKeeperPool.find((p) => isGoalkeeper(p.positions));
       if (!gk) continue;
+      const attackingSide = team === "home" ? "away" : "home";
+      const attackerPool = activeAt(
+        attackingSide === "home" ? homeXI : awayXI,
+        attackingSide === "home" ? homeRedCardedPlayers : awayRedCardedPlayers,
+        minute,
+        attackingSide,
+      ).filter((p) => !isGoalkeeper(p.positions));
+      const attacker = attackerPool.length
+        ? attackerPool[Math.floor(rand() * attackerPool.length)]
+        : undefined;
       highlights.push({
         minute,
         team,
         type: "save",
         playerId: gk.id,
         playerName: gk.name,
-        detail: rand() < 0.35 ? "¡Paradón!" : "Buena intervención",
+        detail: buildSaveDetail(gk, attacker),
       });
     }
   };
@@ -1664,7 +1739,7 @@ export function simulateMatch(
       type: "woodwork",
       playerId: p.id,
       playerName: p.name,
-      detail: rand() < 0.5 ? "¡Al palo!" : "¡Al travesaño!",
+      detail: buildWoodworkDetail(p),
     });
   };
   addWoodwork("home");
@@ -1798,9 +1873,14 @@ export function simulatePenaltyShootout(
 } {
   const shootout: Array<{ team: "home" | "away"; scored: boolean; playerId?: string }> = [];
 
-  // Get penalty takers (field players + GK, sorted by rating)
-  const homeTakers = [...homeXI].sort((a, b) => b.rating - a.rating);
-  const awayTakers = [...awayXI].sort((a, b) => b.rating - a.rating);
+  // Los lanzadores de la tanda se ordenan por calidad de tiro, no por OVR
+  // bruto: el especialista en penaltis/remate debe ser quien lidere la lista.
+  const homeTakers = [...homeXI].sort((a, b) =>
+    penaltyTakerScore(b) - penaltyTakerScore(a) || b.rating - a.rating,
+  );
+  const awayTakers = [...awayXI].sort((a, b) =>
+    penaltyTakerScore(b) - penaltyTakerScore(a) || b.rating - a.rating,
+  );
 
   // Penalty success rate: 50% for each team (as requested)
   const getPenaltySuccess = () => rand() < 0.5;

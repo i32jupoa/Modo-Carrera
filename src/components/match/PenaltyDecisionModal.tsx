@@ -46,14 +46,14 @@ export interface PendingPenalty {
 const zones: Array<{
   id: PenaltyZoneId;
   label: string;
-  top: string;
-  left: string;
+  gridColumn: number;
+  gridRow: number;
 }> = [
-  { id: "top-left", label: "Arriba izquierda", top: "22%", left: "21%" },
-  { id: "top-right", label: "Arriba derecha", top: "22%", left: "79%" },
-  { id: "center", label: "Centro", top: "50%", left: "50%" },
-  { id: "bottom-left", label: "Abajo izquierda", top: "78%", left: "21%" },
-  { id: "bottom-right", label: "Abajo derecha", top: "78%", left: "79%" },
+  { id: "top-left", label: "Arriba izquierda", gridColumn: 1, gridRow: 1 },
+  { id: "top-right", label: "Arriba derecha", gridColumn: 3, gridRow: 1 },
+  { id: "center", label: "Centro", gridColumn: 2, gridRow: 2 },
+  { id: "bottom-left", label: "Abajo izquierda", gridColumn: 1, gridRow: 3 },
+  { id: "bottom-right", label: "Abajo derecha", gridColumn: 3, gridRow: 3 },
 ];
 
 function zoneLabel(zoneId?: PenaltyZoneId) {
@@ -65,7 +65,7 @@ function zoneClass(
   resolution: PenaltyResolution | undefined,
 ): string {
   const base =
-    "relative rounded-full border-2 bg-white/5 font-black transition";
+    "relative border-2 bg-white/5 font-black transition";
   if (!resolution) {
     return `${base} border-foreground/10 hover:border-primary hover:bg-primary/10`;
   }
@@ -181,34 +181,96 @@ export function PenaltyDecisionModal({
                   </span>
                 </div>
 
-                <div className="relative mx-auto aspect-[1.42/1] w-full max-w-md overflow-hidden rounded-b-xl border-x-[7px] border-b-[7px] border-white/80 bg-sky-700 shadow-[inset_0_0_0_2px_rgba(255,255,255,.12),0_18px_45px_rgba(0,0,0,.28)]">
+                <div
+                  className="relative mx-auto aspect-[1.72/1] w-full max-w-md overflow-hidden rounded-xl bg-[linear-gradient(180deg,#173f27_0%,#1f6b3a_55%,#2f8a45_100%)] shadow-[0_24px_55px_rgba(0,0,0,.38)]"
+                  aria-label="Portería para elegir zona del penalti"
+                >
+                  {/* Césped delante de la portería */}
                   <div
-                    className="absolute inset-0 opacity-80"
+                    className="absolute inset-x-0 bottom-0 h-[23%] opacity-70"
                     style={{
                       backgroundImage:
-                        "repeating-linear-gradient(0deg, transparent 0 12px, rgba(255,255,255,.12) 12px 13px), repeating-linear-gradient(90deg, transparent 0 14px, rgba(255,255,255,.12) 14px 15px)",
+                        "repeating-linear-gradient(90deg, rgba(255,255,255,.035) 0 2px, transparent 2px 10px), linear-gradient(180deg, rgba(255,255,255,.03), rgba(0,0,0,.18))",
                     }}
                   />
-                  <div className="absolute inset-x-0 top-0 h-2 border-b border-white/80 bg-white/90" />
-                  <div className="absolute left-0 top-0 h-full w-2 bg-white/90" />
-                  <div className="absolute right-0 top-0 h-full w-2 bg-white/90" />
-                  <div className="absolute inset-[8%] rounded-sm border-2 border-white/25" />
-                  {zones.map((zone) => (
-                    <motion.button
-                      key={zone.id}
-                      type="button"
-                      disabled={Boolean(penalty.resolution)}
-                      onClick={() => onResolve(zone.id)}
-                      whileHover={!penalty.resolution ? { scale: 1.05 } : undefined}
-                      whileTap={!penalty.resolution ? { scale: 0.94 } : undefined}
-                      className={`absolute h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 transition md:h-24 md:w-24 ${zoneClass(zone.id, penalty.resolution)}`}
-                      style={{ top: zone.top, left: zone.left }}
-                      title={zone.label}
-                      aria-label={zone.label}
-                    >
-                      <span className="sr-only">{zone.label}</span>
-                    </motion.button>
-                  ))}
+
+                  {/* Red profunda: panel trasero + laterales para dar sensación 3D */}
+                  <div
+                    className="absolute left-[7%] right-[7%] top-[10%] bottom-[13%] overflow-hidden border border-white/20 bg-[rgba(255,255,255,.035)]"
+                    style={{
+                      transform: "perspective(700px) rotateX(7deg) translateY(1px)",
+                      transformOrigin: "50% 0%",
+                      backgroundImage:
+                        "repeating-linear-gradient(0deg, rgba(255,255,255,.16) 0 1px, transparent 1px 12px), repeating-linear-gradient(90deg, rgba(255,255,255,.16) 0 1px, transparent 1px 12px)",
+                    }}
+                  />
+                  <div
+                    className="absolute left-[1.5%] top-[13%] bottom-[7%] w-[7%] skew-y-[18deg] origin-left border-l border-t border-white/25 bg-[rgba(255,255,255,.04)]"
+                    style={{
+                      backgroundImage:
+                        "repeating-linear-gradient(0deg, rgba(255,255,255,.12) 0 1px, transparent 1px 11px), repeating-linear-gradient(90deg, rgba(255,255,255,.12) 0 1px, transparent 1px 11px)",
+                    }}
+                  />
+                  <div
+                    className="absolute right-[1.5%] top-[13%] bottom-[7%] w-[7%] -skew-y-[18deg] origin-right border-r border-t border-white/25 bg-[rgba(255,255,255,.04)]"
+                    style={{
+                      backgroundImage:
+                        "repeating-linear-gradient(0deg, rgba(255,255,255,.12) 0 1px, transparent 1px 11px), repeating-linear-gradient(90deg, rgba(255,255,255,.12) 0 1px, transparent 1px 11px)",
+                    }}
+                  />
+
+                  {/* Boca de la portería: dos postes y larguero, como una portería real */}
+                  <div className="absolute inset-x-[4%] top-[5%] bottom-[7%] rounded-[5px] bg-black/10 shadow-[inset_0_0_0_2px_rgba(255,255,255,.12),0_12px_22px_rgba(0,0,0,.22)]" />
+                  <div className="absolute left-[4%] top-[5%] bottom-[7%] z-10 w-3 rounded-full bg-gradient-to-r from-white via-slate-100 to-slate-400 shadow-[2px_3px_5px_rgba(0,0,0,.28)]" />
+                  <div className="absolute right-[4%] top-[5%] bottom-[7%] z-10 w-3 rounded-full bg-gradient-to-r from-slate-400 via-slate-100 to-white shadow-[-2px_3px_5px_rgba(0,0,0,.28)]" />
+                  <div className="absolute left-[4%] right-[4%] top-[5%] z-10 h-3 rounded-full bg-gradient-to-b from-white via-slate-100 to-slate-400 shadow-[0_3px_5px_rgba(0,0,0,.3)]" />
+
+                  {/* Red de la boca, visible por detrás de los cinco huecos */}
+                  <div
+                    className="absolute left-[7.2%] right-[7.2%] top-[10%] bottom-[10%] opacity-65"
+                    style={{
+                      backgroundImage:
+                        "repeating-linear-gradient(0deg, transparent 0 14px, rgba(255,255,255,.22) 14px 15px), repeating-linear-gradient(90deg, transparent 0 14px, rgba(255,255,255,.22) 14px 15px)",
+                    }}
+                  />
+
+                  {/* Cinco zonas fijas en una cuadrícula 3×3: cuatro esquinas + centro.
+                      La cuadrícula evita que los botones se descuadren según el ancho de pantalla. */}
+                  <div className="absolute left-[10%] right-[10%] top-[14%] bottom-[13%] z-20 grid grid-cols-3 grid-rows-3 gap-2 md:gap-3">
+                    {zones.map((zone) => (
+                      <motion.button
+                        key={zone.id}
+                        type="button"
+                        disabled={Boolean(penalty.resolution)}
+                        onClick={() => onResolve(zone.id)}
+                        whileHover={!penalty.resolution ? { scale: 1.04 } : undefined}
+                        whileTap={!penalty.resolution ? { scale: 0.97 } : undefined}
+                        className={`flex min-h-0 w-full items-center justify-center rounded-lg border-2 px-1 text-[0.58rem] font-black uppercase tracking-[0.08em] transition md:text-[0.62rem] ${zoneClass(zone.id, penalty.resolution)}`}
+                        style={{
+                          gridColumn: zone.gridColumn,
+                          gridRow: zone.gridRow,
+                          borderStyle: penalty.resolution ? "solid" : "dashed",
+                          background:
+                            penalty.resolution
+                              ? undefined
+                              : "linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.08))",
+                          boxShadow: penalty.resolution
+                            ? undefined
+                            : "inset 0 0 20px rgba(255,255,255,.035), 0 4px 12px rgba(0,0,0,.12)",
+                        }}
+                        title={zone.label}
+                        aria-label={zone.label}
+                      >
+                        <span className="flex flex-col items-center justify-center gap-1 leading-tight">
+                          <span className="h-2.5 w-2.5 rounded-full border border-white/55 bg-white/25 shadow-[0_0_12px_rgba(255,255,255,.16)] md:h-3 md:w-3" />
+                          <span className="text-white/70">{zone.id === "center" ? "CENTRO" : zone.id === "top-left" ? "↖" : zone.id === "top-right" ? "↗" : zone.id === "bottom-left" ? "↙" : "↘"}</span>
+                        </span>
+                      </motion.button>
+                    ))}
+                  </div>
+
+                  {/* Línea de gol */}
+                  <div className="absolute inset-x-[4%] bottom-[6%] h-[3px] rounded-full bg-white/80 shadow-[0_1px_3px_rgba(0,0,0,.25)]" />
                 </div>
 
                 {!penalty.resolution ? (

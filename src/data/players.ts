@@ -11,6 +11,49 @@ import {
 } from "@/lib/positions";
 import type { DynamicPlayerStats } from "@/types/playerStats";
 
+/**
+ * Estadísticas ofensivas del dataset FC26 usadas por el motor de partido.
+ * Se resuelven por ID directamente desde los datos originales para que
+ * también funcionen con partidas guardadas antiguas cuyos objetos Player
+ * todavía no contienen estos campos opcionales.
+ */
+export type PlayerShootingStats = {
+  shooting: number;
+  finishing: number;
+  shotPower: number;
+  longShots: number;
+  volleys: number;
+  penalties: number;
+  composure: number;
+};
+
+const SHOOTING_STATS_BY_ID = new Map<string, PlayerShootingStats>();
+
+for (const raw of Array.isArray(playersData) ? playersData : []) {
+  if (raw?.ID == null) continue;
+  SHOOTING_STATS_BY_ID.set(String(raw.ID), {
+    shooting: Number(raw.SHO ?? raw.shooting ?? 0),
+    finishing: Number(raw.Finishing ?? raw.finishing ?? 0),
+    shotPower: Number(raw["Shot Power"] ?? raw.shotPower ?? 0),
+    longShots: Number(raw["Long Shots"] ?? raw.longShots ?? 0),
+    volleys: Number(raw.Volleys ?? raw.volleys ?? 0),
+    penalties: Number(raw.Penalties ?? raw.penalties ?? 0),
+    composure: Number(raw.Composure ?? raw.composure ?? 0),
+  });
+}
+
+export function getPlayerShootingStats(playerId: string | number | undefined): PlayerShootingStats {
+  return (playerId != null ? SHOOTING_STATS_BY_ID.get(String(playerId)) : undefined) ?? {
+    shooting: 0,
+    finishing: 0,
+    shotPower: 0,
+    longShots: 0,
+    volleys: 0,
+    penalties: 0,
+    composure: 0,
+  };
+}
+
 export type Position = "GK" | "DEF" | "MID" | "FWD";
 
 export type Player = {

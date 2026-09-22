@@ -132,9 +132,15 @@ function LineupPage() {
   const liveBaseXIRef = useRef<string[]>([]);
   // Players taken off the pitch during this live edit (cannot come back).
   const liveGoneRef = useRef<string[]>([]);
-  // Red cards leave a locked empty formation slot. The slot may move only when
-  // an existing on-pitch player is rearranged into it.
+  // Red cards leave a vacancy that the manager chooses explicitly. No formation
+  // slot is assigned automatically; once chosen, the hole can be moved again by
+  // rearranging a player already on the pitch.
   const liveGoneSlotIndexesRef = useRef<Record<string, number>>({});
+  // Clicking a placed red-card hole arms a dedicated move mode. The manager
+  // then clicks the player whose current position should become the new hole.
+  const [selectedRedHolePlayerId, setSelectedRedHolePlayerId] = useState<string | null>(null);
+  // Injury replacements are mandatory when a change is available.
+  const livePendingForcedInjurySlotsRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     const s = loadSave();
@@ -151,6 +157,7 @@ function LineupPage() {
         liveBaseXIRef.current = st.lineup;
         liveGoneRef.current = [...(st.gone || [])];
         liveGoneSlotIndexesRef.current = { ...((st as any).goneSlotIndexes || {}) };
+        livePendingForcedInjurySlotsRef.current = { ...((st as any).pendingForcedInjurySlots || {}) };
         setStartingXI(st.lineup);
         setBench(st.bench);
         setSelectedFormation((st.formation || "Táctica 4-3-3") as FormationName);
@@ -425,6 +432,61 @@ function LineupPage() {
   }, [startingXI]);
 
   const isLineupComplete = activeStartersCount === 11;
+  const liveRedCardIds = useMemo(() => {
+    if (!liveMode || !live || !save) return [] as string[];
+    const side = live.result?.homeId === save.myTeamId ? "home" : "away";
+    return Array.from(
+      new Set(
+        (live.result?.cards || [])
+          .filter(
+            (card: any) =>
+              card.team === side &&
+              (card.cardType === "red" || card.isSecondYellow) &&
+              Number(card.minute ?? 0) <= Number(live.minute ?? 0),
+          )
+          .map((card: any) => card.playerId)
+          .filter(Boolean),
+      ),
+    );
+  }, [liveMode, live, save]);
+
+  const liveRedUnassignedIds = useMemo(() => {
+    if (liveRedCardIds.length === 0) return [];
+    return liveRedCardIds.filter(
+      (id) => !Number.isInteger(
+        liveGoneSlotIndexesRef.current[id] ?? (live as any)?.goneSlotIndexes?.[id],
+      ),
+    );
+  }, [liveRedCardIds, live, startingXI]);
+
+  const liveNoChangeInjuryIds = useMemo(() => {
+    if (!liveMode || !live || !save) return [] as string[];
+    const side = live.result?.homeId === save.myTeamId ? "home" : "away";
+    const pendingIds = new Set(Object.keys(livePendingForcedInjurySlotsRef.current));
+    return Array.from(
+      new Set(
+        (live.result?.injuries || [])
+          .filter(
+            (injury: any) =>
+              injury.team === side &&
+              Number(injury.minute ?? 0) <= Number(live.minute ?? 0) &&
+              !pendingIds.has(injury.playerId) &&
+              !startingXI.includes(injury.playerId),
+          )
+          .map((injury: any) => injury.playerId)
+          .filter(Boolean),
+      ),
+    );
+  }, [liveMode, live, save, startingXI]);
+
+  const intentionalLiveVacancyCount = useMemo(
+    () => new Set([...liveRedCardIds, ...liveNoChangeInjuryIds]).size,
+    [liveRedCardIds, liveNoChangeInjuryIds],
+  );
+  const liveCanRemainUnderfilled =
+    liveMode &&
+    activeStartersCount < 11 &&
+    11 - activeStartersCount <= intentionalLiveVacancyCount;
 
   const formationPositions = getFormationPositions(selectedFormation);
 
@@ -602,7 +664,7 @@ function LineupPage() {
 
   // Get the position key for a player on the pitch
   function getPlayerPositionKey(playerId: string): string | null {
-    for (const [key, player] of Object.entries(playerPositions)) {
+    for (const [key, player] of Object.entries(playerPositions) as Array<[string, any]>) {
       if (player && player.id === playerId) {
         return key;
       }
@@ -648,6 +710,28 @@ function LineupPage() {
   }
 
   function handlePitchPlayerClick(playerId: string) {
+    if (liveMode && selectedRedHolePlayerId) {
+      moveLiveRedCardHole(selectedRedHolePlayerId, playerId);
+      return;
+    }
+
+    if (liveMode && liveRedUnassignedIds.length > 0) {
+      const posKey = getPlayerPositionKey(playerId);
+      const index = posKey ? formationPositions.indexOf(posKey) : -1;
+      if (index >= 0) {
+        assignLiveRedHole(liveRedUnassignedIds[0], index);
+      }
+      return;
+    }
+
+    const forcedInjuries = liveMode ? liveForcedInjuryIds() : new Set<string>();
+
+    if (forcedInjuries.size > 0 && !forcedInjuries.has(playerId)) {
+      toast.error("Debes sustituir primero al jugador lesionado antes de hacer otros ajustes.");
+      setSelectedPlayer(null);
+      return;
+    }
+
     if (selectedPlayer === null) {
       setSelectedPlayer(playerId);
     } else if (selectedPlayer === playerId) {
@@ -655,6 +739,11 @@ function LineupPage() {
     } else {
       // Both players are on the pitch - internal swap
       if (startingXI.includes(selectedPlayer) && startingXI.includes(playerId)) {
+        if (forcedInjuries.size > 0) {
+          toast.error("El lesionado no puede recolocarse. Selecciona un suplente para sustituirlo.");
+          setSelectedPlayer(null);
+          return;
+        }
         // Validate pitch-to-pitch swap
         const player1 = squad.find((p) => p.id === selectedPlayer);
         const player2 = squad.find((p) => p.id === playerId);
@@ -711,6 +800,7 @@ function LineupPage() {
   }
 
   function handleBenchPlayerClick(playerId: string) {
+    if (selectedRedHolePlayerId) setSelectedRedHolePlayerId(null);
     const player = squad.find((p) => p.id === playerId);
     if (!player) return;
 
@@ -798,14 +888,135 @@ function LineupPage() {
     return index >= 0 && liveRedCardPlayerAtSlot(index) !== null;
   }
 
+  function assignLiveRedHole(redPlayerId: string, targetIndex: number) {
+    if (!liveMode || !live) return;
+    if (!liveRedUnassignedIds.includes(redPlayerId)) return;
+    if (targetIndex < 0 || targetIndex >= formationPositions.length) return;
+
+    const assignedIndexes = new Set(
+      Object.values(liveGoneSlotIndexesRef.current).filter((value) => Number.isInteger(value)),
+    );
+    const injuryIndexes = new Set(
+      Object.values(livePendingForcedInjurySlotsRef.current).filter((value) => Number.isInteger(value)),
+    );
+    if (assignedIndexes.has(targetIndex)) {
+      toast.error("Ese hueco ya pertenece a otra expulsión.");
+      return;
+    }
+    if (injuryIndexes.has(targetIndex)) {
+      toast.error("Ese espacio está reservado para un jugador lesionado.");
+      return;
+    }
+    if (!startingXI[targetIndex]) {
+      toast.error("Elige una posición ocupada para colocar el hueco de la expulsión.");
+      return;
+    }
+
+    const sourceIndex = startingXI.findIndex(
+      (id, index) => !id && !assignedIndexes.has(index) && !injuryIndexes.has(index),
+    );
+    if (sourceIndex < 0) {
+      toast.error("No se ha encontrado la vacante que dejó la expulsión.");
+      return;
+    }
+
+    const targetPlayer = squad.find((p) => p.id === startingXI[targetIndex]);
+    const sourceSlot = formationPositions[sourceIndex];
+    if (targetPlayer && isKeeperForLiveLineup(targetPlayer) && getSlotCodeForKey(sourceSlot) !== "GK") {
+      toast.error("El portero no puede desplazarse a una posición de jugador de campo.");
+      return;
+    }
+
+    setStartingXI((prev) => {
+      const next = [...prev];
+      if (targetIndex !== sourceIndex) {
+        next[sourceIndex] = next[targetIndex] || "";
+        next[targetIndex] = "";
+      }
+      return next;
+    });
+    liveGoneSlotIndexesRef.current = {
+      ...liveGoneSlotIndexesRef.current,
+      [redPlayerId]: targetIndex,
+    };
+    setSelectedPlayer(null);
+    setSelectedRedHolePlayerId(null);
+    toast.success(`Hueco de ${"expulsión"} colocado en ${emptySlotLabel(formationPositions[targetIndex])}.`);
+  }
+
+  function livePendingForcedInjurySlotAt(slotIndex: number): string | null {
+    if (!live || slotIndex < 0) return null;
+    for (const [playerId, index] of Object.entries(livePendingForcedInjurySlotsRef.current)) {
+      if (Number(index) === slotIndex) return playerId;
+    }
+    return null;
+  }
+
+  function moveLiveRedCardHole(redPlayerId: string, targetPlayerId: string) {
+    if (!liveMode || !live) return;
+    const holeIndex = Number(
+      liveGoneSlotIndexesRef.current[redPlayerId] ?? (live as any)?.goneSlotIndexes?.[redPlayerId],
+    );
+    const targetIndex = startingXI.indexOf(targetPlayerId);
+    if (!Number.isInteger(holeIndex) || holeIndex < 0 || targetIndex < 0) return;
+
+    if (livePendingForcedInjurySlotAt(targetIndex)) {
+      toast.error("Ese jugador ocupa una vacante reservada para una lesión.");
+      setSelectedRedHolePlayerId(null);
+      return;
+    }
+
+    const targetPlayer = squad.find((p) => p.id === targetPlayerId);
+    const holeSlot = formationPositions[holeIndex];
+    if (targetPlayer && isKeeperForLiveLineup(targetPlayer) && getSlotCodeForKey(holeSlot) !== "GK") {
+      toast.error("El portero no puede ocupar un hueco de jugador de campo.");
+      setSelectedRedHolePlayerId(null);
+      return;
+    }
+
+    setStartingXI((prev) => {
+      const next = [...prev];
+      next[holeIndex] = next[targetIndex] || "";
+      next[targetIndex] = "";
+      return next;
+    });
+    liveGoneSlotIndexesRef.current = {
+      ...liveGoneSlotIndexesRef.current,
+      [redPlayerId]: targetIndex,
+    };
+    setSelectedRedHolePlayerId(null);
+    setSelectedPlayer(null);
+    toast.success(`Hueco desplazado a ${emptySlotLabel(formationPositions[targetIndex])}.`);
+  }
+
   function liveForcedInjuryIds(): Set<string> {
     if (!live) return new Set<string>();
-    return new Set(
-      (live.result?.injuries || [])
-        .filter((i: any) => i.team === (live.result?.homeId === save?.myTeamId ? "home" : "away"))
-        .filter((i: any) => Number(i.minute ?? 0) <= Number(live.minute ?? 0))
-        .map((i: any) => i.playerId),
-    );
+    return new Set(Object.keys(livePendingForcedInjurySlotsRef.current));
+  }
+
+  function pendingForcedInjuryAssignments(): Array<{ playerId: string; slotIndex: number; replacementId: string | null }> {
+    if (!live) return [];
+    return Object.entries(livePendingForcedInjurySlotsRef.current).map(([playerId, slotIndex]) => {
+      const index = Number(slotIndex);
+      return {
+        playerId,
+        slotIndex: index,
+        replacementId: startingXI[index] || null,
+      };
+    });
+  }
+
+  function hasUnresolvedLiveInjury(): boolean {
+    const pending = pendingForcedInjuryAssignments();
+    if (pending.length === 0) return false;
+    return pending.some(({ playerId, slotIndex, replacementId }) => {
+      if (startingXI[slotIndex] === playerId) return true;
+      if (!replacementId) return true;
+      const replacement = squad.find((p) => p.id === replacementId);
+      if (!replacement) return true;
+      if (liveGoneIds().has(replacementId)) return true;
+      return liveBaseXIRef.current.includes(replacementId);
+    });
   }
 
   /**
@@ -847,6 +1058,13 @@ function LineupPage() {
     if (!pitchPlayer || !benchPlayer) return;
     if (liveSubBlocked(benchPlayerId)) return;
 
+    const forcedInjuries = liveMode ? liveForcedInjuryIds() : new Set<string>();
+    if (liveMode && forcedInjuries.size > 0 && !forcedInjuries.has(pitchPlayerId)) {
+      toast.error("Debes sustituir primero al jugador lesionado.");
+      setSelectedPlayer(null);
+      return;
+    }
+
     // Check if bench player is injured
     if (isCurrentlyInjured(benchPlayer)) {
       toast.error(`${benchPlayer.name} está lesionado y no puede jugar.`);
@@ -883,14 +1101,16 @@ function LineupPage() {
       return;
     }
 
-    // Perform the swap
+    // Perform the swap. In live mode this is only a TEMPORARY edit: the
+    // outgoing player stays selectable until the manager presses
+    // “Guardar cambios y volver”. Only that final action makes the change
+    // permanent and blocks the outgoing player from returning.
     setStartingXI((prev) => prev.map((id) => (id === pitchPlayerId ? benchPlayerId : id)));
     if (liveMode) {
-      // During a live match the player who comes off is out for good.
-      if (!liveGoneRef.current.includes(pitchPlayerId)) {
-        liveGoneRef.current = [...liveGoneRef.current, pitchPlayerId];
-      }
-      setBench((prev) => prev.filter((id) => id !== benchPlayerId));
+      setBench((prev) => {
+        const withoutIn = prev.filter((id) => id !== benchPlayerId);
+        return withoutIn.includes(pitchPlayerId) ? withoutIn : [...withoutIn, pitchPlayerId];
+      });
     } else {
       setBench((prev) => prev.map((id) => (id === benchPlayerId ? pitchPlayerId : id)));
     }
@@ -1046,9 +1266,18 @@ function LineupPage() {
       setStartingXI(newStartingXI);
       setBench((prev) => prev.filter((id) => id !== benchPlayerId));
     } else {
-      // Swap with existing player
+      // Swap with an existing player. In live mode this is a TEMPORARY edit:
+      // the player who leaves is not blocked yet, so the manager can undo the
+      // move before saving.
       setStartingXI((prev) => prev.map((id) => (id === pitchTarget ? benchPlayerId : id)));
-      setBench((prev) => prev.map((id) => (id === benchPlayerId ? pitchTarget : id)));
+      if (liveMode) {
+        setBench((prev) => {
+          const withoutIn = prev.filter((id) => id !== benchPlayerId);
+          return withoutIn.includes(pitchTarget) ? withoutIn : [...withoutIn, pitchTarget];
+        });
+      } else {
+        setBench((prev) => prev.map((id) => (id === benchPlayerId ? pitchTarget : id)));
+      }
     }
     setSelectedPlayer(null);
   }
@@ -1305,15 +1534,16 @@ function LineupPage() {
             <div className="flex flex-wrap items-center gap-2">
               <span
                 className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${
-                  isLineupComplete
+                  isLineupComplete || liveCanRemainUnderfilled
                     ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
                     : "border-destructive/40 bg-destructive/10 text-destructive"
                 }`}
               >
                 <span
-                  className={`h-2 w-2 rounded-full ${isLineupComplete ? "bg-emerald-400" : "bg-destructive"}`}
+                  className={`h-2 w-2 rounded-full ${isLineupComplete || liveCanRemainUnderfilled ? "bg-emerald-400" : "bg-destructive"}`}
                 />
                 Titulares {activeStartersCount}/11
+                {liveCanRemainUnderfilled ? " · partido con uno menos" : ""}
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-3 py-1 text-xs font-bold text-muted-foreground">
                 Suplentes {bench.length}
@@ -1321,9 +1551,14 @@ function LineupPage() {
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-3 py-1 text-xs font-bold text-muted-foreground">
                 Edad media {avgAgeXI}
               </span>
-              {!isLineupComplete && (
+              {!isLineupComplete && !liveCanRemainUnderfilled && (
                 <span className="text-xs font-bold text-destructive">
                   La plantilla no está completa.
+                </span>
+              )}
+              {liveCanRemainUnderfilled && (
+                <span className="text-xs font-bold text-amber-300">
+                  Se permite jugar con {activeStartersCount} por la expulsión.
                 </span>
               )}
             </div>
@@ -1438,6 +1673,7 @@ function LineupPage() {
                   suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
                 );
                 const isSuspended = suspendedPlayerIds.has(player.id);
+                const liveForcedInjury = liveMode && liveForcedInjuryIds().has(player.id);
                 return (
                   <PlayerNode
                     key={player.id}
@@ -1450,7 +1686,8 @@ function LineupPage() {
                       otherPositions: posCodesOf(player).filter(
                         (c) => c !== getSlotCodeForKey(posKey),
                       ),
-                      injured: isCurrentlyInjured(player),
+                      injured: isCurrentlyInjured(player) && !liveForcedInjury,
+                      forcedInjury: liveForcedInjury,
                       suspended: isSuspended,
                       cardImage: player.cardImage,
                     }}
@@ -1460,27 +1697,49 @@ function LineupPage() {
                   />
                 );
               } else {
-                // Render empty placeholder for empty positions. A red-card hole is
-                // visibly locked: bench players can never be inserted directly.
                 const redCardHole = isLiveRedCardHole(posKey);
+                const injuryHolePlayerId = liveMode ? livePendingForcedInjurySlotAt(index) : null;
+                const injuryHole = !!injuryHolePlayerId;
+                const pendingRedHole = liveMode && liveRedUnassignedIds.length > 0 && !injuryHole;
+
+                // During a live match we only draw actionable vacancies:
+                // red-card holes (movable), a red card still waiting for its
+                // position, and injury holes that must be filled when a
+                // replacement is available. A no-change injury simply leaves
+                // the team numerically short without drawing a fake slot.
+                if (liveMode && !redCardHole && !pendingRedHole && !injuryHole) return null;
+
                 return (
                   <div
                     key={posKey}
                     onClick={() => {
+                      if (pendingRedHole) {
+                        assignLiveRedHole(liveRedUnassignedIds[0], index);
+                        return;
+                      }
+
+                      if (redCardHole) {
+                        const redPlayerId = liveRedCardPlayerAtSlot(index);
+                        if (redPlayerId) {
+                          setSelectedRedHolePlayerId(redPlayerId);
+                          setSelectedPlayer(null);
+                          toast.info("Hueco seleccionado. Pulsa sobre el jugador cuya posición quedará vacía.");
+                        }
+                        return;
+                      }
+
                       if (!selectedPlayer) return;
                       if (bench.includes(selectedPlayer)) {
-                        if (redCardHole) {
-                          toast.error("El hueco de la expulsión está bloqueado. Mueve a un jugador que ya esté en el campo.");
-                          setSelectedPlayer(null);
-                          return;
-                        }
                         handleBenchToPitchSwap(selectedPlayer, posKey);
+                      } else if (startingXI.includes(selectedPlayer) && injuryHole) {
+                        toast.error("Primero debes sustituir al jugador lesionado con un suplente.");
+                        setSelectedPlayer(null);
                       } else if (startingXI.includes(selectedPlayer)) {
                         handlePitchToEmptySwap(selectedPlayer, posKey);
                       }
                     }}
-                    className={`absolute transition-transform ${
-                      selectedPlayer && startingXI.includes(selectedPlayer) ? "cursor-pointer hover:scale-110" : redCardHole ? "cursor-not-allowed" : "cursor-pointer hover:scale-110"
+                    className={`absolute cursor-pointer transition-transform hover:scale-110 ${
+                      selectedRedHolePlayerId && redCardHole ? "ring-2 ring-destructive/70" : ""
                     }`}
                     style={{
                       top: `${coords.top}%`,
@@ -1490,14 +1749,25 @@ function LineupPage() {
                   >
                     <div
                       className={`w-[64px] h-[64px] rounded-full border-2 flex flex-col items-center justify-center text-[0.55rem] font-black leading-tight ${
-                        redCardHole
+                        redCardHole || pendingRedHole
                           ? "border-destructive/80 bg-destructive/20 text-destructive shadow-[0_0_18px_rgba(239,68,68,.22)]"
-                          : "border-dashed border-primary/40 bg-background/40 text-primary/70"
+                          : "border-amber-400/80 bg-amber-400/10 text-amber-200 shadow-[0_0_18px_rgba(245,158,11,.18)]"
                       }`}
-                      title={redCardHole ? `Hueco bloqueado por expulsión: ${emptySlotLabel(posKey)}` : `Hueco vacío: ${emptySlotLabel(posKey)}`}
+                      title={
+                        redCardHole
+                          ? `Hueco por expulsión: ${emptySlotLabel(posKey)} · pulsa para moverlo`
+                          : pendingRedHole
+                            ? `Colocar aquí el hueco de la expulsión (${emptySlotLabel(posKey)})`
+                            : injuryHole
+                              ? `Hueco por lesión · obligatorio sustituir (${emptySlotLabel(posKey)})`
+                              : `Hueco vacío: ${emptySlotLabel(posKey)}`
+                      }
                     >
                       <span className="scoreline text-[0.6rem]">{emptySlotLabel(posKey)}</span>
-                      <span className="text-base leading-none">{redCardHole ? "🔒" : "+"}</span>
+                      <span className="text-base leading-none">{redCardHole || pendingRedHole ? "🟥" : "🚑"}</span>
+                      {redCardHole && selectedRedHolePlayerId && (
+                        <span className="text-[0.45rem] uppercase tracking-wider">Mover</span>
+                      )}
                     </div>
                   </div>
                 );
@@ -1514,24 +1784,20 @@ function LineupPage() {
             </h2>
             <span className="text-[0.65rem] font-black text-muted-foreground">
               {liveMode
-                ? `${
-                    bench.filter((id) => {
+                ? `${(() => {
+                    const availableCount = bench.filter((id) => {
                       const p = squad.find((q) => q.id === id);
-                      return !p || !isCurrentlyInjured(p);
-                    }).length
-                  }/12 disponibles${
-                    bench.filter((id) => {
+                      if (!p) return false;
+                      if (liveGoneIds().has(id)) return false;
+                      if (isCurrentlyInjured(p)) return false;
+                      return true;
+                    }).length;
+                    const injuredCount = bench.filter((id) => {
                       const p = squad.find((q) => q.id === id);
-                      return !!p && isCurrentlyInjured(p);
-                    }).length
-                      ? ` · ${
-                          bench.filter((id) => {
-                            const p = squad.find((q) => q.id === id);
-                            return !!p && isCurrentlyInjured(p);
-                          }).length
-                        } lesionado(s)`
-                      : ""
-                  }`
+                      return !!p && (isCurrentlyInjured(p) || liveForcedInjuryIds().has(id));
+                    }).length;
+                    return `${availableCount}/12 disponibles${injuredCount ? ` · ${injuredCount} lesionado(s)` : ""}`;
+                  })()}`
                 : `${bench.length}/12 suplentes`}
             </span>
           </div>
@@ -1541,7 +1807,8 @@ function LineupPage() {
               <div>
                 <p className="text-xs font-black">Suplentes</p>
                 <p className="text-[0.6rem] text-muted-foreground">
-                  Son los únicos reservas disponibles para cambios durante el partido.
+                  Los movimientos son provisionales mientras editas. Los jugadores que salgan
+                  quedan bloqueados solo después de pulsar “Guardar cambios y volver”.
                 </p>
               </div>
               <span className="rounded-full border border-primary/40 bg-primary/10 px-2 py-1 text-[0.6rem] font-black text-primary">
@@ -1724,6 +1991,56 @@ function LineupPage() {
         </div>
       </div>
 
+      {liveMode && live && (() => {
+        const unassignedRedIds = liveRedUnassignedIds;
+        if (unassignedRedIds.length === 0) return null;
+
+        const assignHole = (redPlayerId: string, targetIndex: number) => {
+          assignLiveRedHole(redPlayerId, targetIndex);
+        };
+
+        return (
+          <div className="panel mt-5 p-4 border-destructive/30">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-destructive">
+                  Posición del hueco por expulsión
+                </p>
+                <p className="text-[0.65rem] text-muted-foreground mt-1">
+                  El hueco no se fija automáticamente. Elige dónde quieres reorganizarlo.
+                </p>
+              </div>
+              <span className="text-lg">🟥</span>
+            </div>
+            {unassignedRedIds.map((redId) => {
+              const redCard = (live.result?.cards || []).find((c: any) => c.playerId === redId && (c.cardType === "red" || c.isSecondYellow));
+              return (
+                <div key={redId} className="rounded-lg border border-border/60 bg-card/50 p-3 mb-2 last:mb-0">
+                  <div className="text-xs font-bold mb-2">{redCard?.playerName || "Jugador expulsado"}</div>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+                    {formationPositions.map((posKey, index) => (
+                      <button
+                        key={posKey}
+                        type="button"
+                        onClick={() => assignHole(redId, index)}
+                        disabled={isLiveRedCardHole(posKey)}
+                        className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[0.58rem] font-black text-destructive hover:bg-destructive/15 disabled:opacity-35 disabled:cursor-not-allowed"
+                        title={`Dejar hueco en ${emptySlotLabel(posKey)}`}
+                      >
+                        {emptySlotLabel(posKey)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            <p className="mt-2 text-[0.58rem] text-muted-foreground">
+              Para mover un hueco ya colocado, pulsa el hueco 🟥 en el campo y después pulsa el jugador cuya posición quieres dejar vacía.
+            </p>
+          </div>
+        );
+      })()}
+
       {/* Tactics panel */}
       <TacticsPanel tactics={tactics} updateTactics={updateTactics} xiPlayers={xiPlayers as any} />
 
@@ -1731,20 +2048,42 @@ function LineupPage() {
         live &&
         (() => {
           const limits = subLimits(live.isExtraTime);
-          const outIds = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
-          const inIds = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
-          const recordedOutIds = new Set((live.subs || []).map((s: any) => s.outId));
-          const forcedOutIds = (live.gone || []).filter(
-            (id: string) => !recordedOutIds.has(id) && !startingXI.includes(id),
+          const baseOutIds = liveBaseXIRef.current.filter((id) => id && !startingXI.includes(id));
+          const baseInIds = startingXI.filter((id) => id && !liveBaseXIRef.current.includes(id));
+          const pendingInjuryAssignments = pendingForcedInjuryAssignments();
+          const pendingReplacementIds = new Set(
+            pendingInjuryAssignments.map((item) => item.replacementId).filter(Boolean) as string[],
           );
-          const effectiveOutIds = [...outIds, ...forcedOutIds.filter((id) => !outIds.includes(id))];
-          const changes = Math.min(effectiveOutIds.length, inIds.length);
+          const resolvedInjuryAssignments = pendingInjuryAssignments.filter(
+            (item) =>
+              item.replacementId &&
+              !liveGoneIds().has(item.replacementId) &&
+              !liveBaseXIRef.current.includes(item.replacementId),
+          );
+          const normalOutIds = baseOutIds.filter((id) => !pendingInjuryAssignments.some((item) => item.playerId === id));
+          const normalInIds = baseInIds.filter((id) => !pendingReplacementIds.has(id));
+          const forcedOutIds = (live.gone || []).filter(
+            (id: string) => !normalOutIds.includes(id) && !pendingInjuryAssignments.some((item) => item.playerId === id) && !startingXI.includes(id),
+          );
+          const effectiveOutIds = [
+            ...normalOutIds,
+            ...forcedOutIds.filter((id) => !normalOutIds.includes(id)),
+          ];
+          const normalChanges = Math.min(effectiveOutIds.length, normalInIds.length);
+          const injuryChanges = resolvedInjuryAssignments.length;
+          const changes = normalChanges + injuryChanges;
           const intentionalVacancies =
-            (live.lineup || []).filter((id: string) => !id).length > 0 || forcedOutIds.length > 0;
+            !isLineupComplete &&
+            11 - activeStartersCount <= intentionalLiveVacancyCount;
           const free = isFreeWindow(live.phase);
           const overSubs = live.subsUsed + changes > limits.maxSubs;
           const overWindows = changes > 0 && !free && live.windowsUsed >= limits.maxWindows;
-          const blocked = overSubs || overWindows || (!isLineupComplete && !intentionalVacancies);
+          const unresolvedInjury = hasUnresolvedLiveInjury();
+          const blocked =
+            overSubs ||
+            overWindows ||
+            unresolvedInjury ||
+            (!isLineupComplete && !intentionalVacancies);
           return (
             <div className="panel mt-8 p-5">
               <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -1772,13 +2111,26 @@ function LineupPage() {
                   No te quedan ventanas de cambio: solo puedes ajustar la táctica.
                 </p>
               )}
+              {unresolvedInjury && (
+                <p className="text-xs font-semibold text-destructive mb-3">
+                  🚑 Hay una lesión pendiente. Debes cubrir el hueco con un suplente antes de volver al partido.
+                </p>
+              )}
               <div className="flex justify-end">
                 <button
                   disabled={blocked}
                   className={btnPrimary}
                   onClick={() => {
+                    // Commit permanent departures only now. A player moved out
+                    // during editing is not blocked until the manager saves. If the
+                    // move was undone before saving, that player is still in the
+                    // original live XI and therefore does not enter `gone`.
                     const goneList = Array.from(
-                      new Set([...(live.gone || []), ...liveGoneRef.current, ...outIds]),
+                      new Set([
+                        ...(live.gone || []),
+                        ...(live.subs || []).map((s: any) => s.outId),
+                        ...effectiveOutIds,
+                      ]),
                     );
 
                     // A player who was forced off through injury remains visible
@@ -1789,14 +2141,19 @@ function LineupPage() {
                         .filter((i: any) => Number(i.minute ?? 0) <= Number(live.minute ?? 0))
                         .map((i: any) => i.playerId),
                     );
-                    const nextBench = bench.filter((id) => {
-                      if (startingXI.includes(id)) return false;
-                      if (!goneList.includes(id)) return true;
-                      return forcedInjuryIds.has(id);
-                    });
+                    // Every player who has already left the pitch remains
+                    // visible on the live bench as a blocked entry. This applies
+                    // equally to normal substitutions, injuries and no-change
+                    // forced exits.
+                    const nextBench = Array.from(
+                      new Set([
+                        ...bench.filter((id) => !startingXI.includes(id)),
+                        ...goneList.filter((id) => id && !startingXI.includes(id)),
+                      ]),
+                    );
 
-                    // The injured player must remain visible in the live bench,
-                    // even if the injury date has not yet propagated to the store.
+                    // Keep injured players visible even if the injury has not yet
+                    // propagated into the normal player store.
                     for (const injuredId of forcedInjuryIds) {
                       if (!nextBench.includes(injuredId) && !startingXI.includes(injuredId)) {
                         nextBench.push(injuredId);
@@ -1805,9 +2162,26 @@ function LineupPage() {
 
                     const stamina = { ...(live.stamina || {}) };
                     const subs = [...(live.subs || [])];
-                    for (let i = 0; i < changes; i++) {
+                    const recordedForcedOutIds = new Set(subs.map((s: any) => s.outId));
+
+                    for (const assignment of resolvedInjuryAssignments) {
+                      if (!assignment.replacementId || recordedForcedOutIds.has(assignment.playerId)) continue;
+                      const outId = assignment.playerId;
+                      const inId = assignment.replacementId;
+                      stamina[inId] = 100;
+                      subs.push({
+                        minute: live.minute,
+                        outId,
+                        outName: squad.find((p) => p.id === outId)?.name ?? outId,
+                        inId,
+                        inName: squad.find((p) => p.id === inId)?.name ?? inId,
+                      });
+                      recordedForcedOutIds.add(outId);
+                    }
+
+                    for (let i = 0; i < normalChanges; i++) {
                       const outId = effectiveOutIds[i];
-                      const inId = inIds[i];
+                      const inId = normalInIds[i];
                       if (!outId || !inId) continue;
                       stamina[inId] = 100;
                       subs.push({
@@ -1825,12 +2199,15 @@ function LineupPage() {
                       bench: nextBench,
                       gone: goneList,
                       goneSlotIndexes: { ...liveGoneSlotIndexesRef.current },
+                      pendingForcedInjurySlots: {},
                       formation: selectedFormation,
                       stamina,
                       subs,
                       subsUsed: live.subsUsed + changes,
                       windowsUsed: live.windowsUsed + (changes > 0 && !free ? 1 : 0),
                     };
+                    livePendingForcedInjurySlotsRef.current = {};
+                    setSelectedRedHolePlayerId(null);
                     saveLive(nextLive);
                     navigate({
                       to: "/match",

@@ -29,6 +29,7 @@ export type LiveMoment = {
   playerName?: string;
   teamName: string;
   emoji: string;
+  playerImage?: string;
   detail?: string;
   hardPause?: boolean;
   teamSide?: "home" | "away";
@@ -451,6 +452,95 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 
 function teamScoreLabel(side: "home" | "away", homeName: string, awayName: string) {
   return side === "home" ? homeName : awayName;
+}
+
+function narrativeIndex(seed: unknown, length: number) {
+  if (length <= 0) return 0;
+  const text = String(seed ?? "");
+  let hash = 17;
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+  hash = Math.abs(hash);
+  return hash % length;
+}
+
+function pickNarrativeVariant(variants: string[], seed: unknown = Math.random()) {
+  if (!variants.length) return "";
+  return variants[narrativeIndex(seed, variants.length)];
+}
+
+export function buildMissDetail({
+  attackerName,
+  defenderName,
+  minute,
+  eventType = "goal",
+}: {
+  attackerName: string;
+  defenderName?: string;
+  minute?: number;
+  eventType?: MatchEvent["type"] | "open_play";
+}) {
+  const defender = defenderName || "la defensa";
+  const common = [
+    `${attackerName} recibe en carrera, se abre un metro y cruza el remate. El balón se marcha fuera por muy poco.`,
+    `Gran acción individual de ${attackerName}: supera a su primer rival, entra en el área y finaliza demasiado cruzado.`,
+    `${attackerName} encuentra el hueco tras una combinación rápida, pero su disparo sale rozando el poste.`,
+    `Pase al espacio y carrera de ${attackerName}. Llega antes que la defensa, aunque el remate se le va ligeramente alto.`,
+    `${attackerName} controla orientado, se gira hacia portería y prueba un disparo que acaba fuera por centímetros.`,
+    `La jugada cambia de velocidad y ${attackerName} termina la acción de primeras. Le faltaron unos centímetros para encontrar portería.`,
+    `${attackerName} gana la espalda, encara al guardameta y busca el palo largo. El balón se pierde por poco.`,
+    `Con el área abierta, ${attackerName} arma la pierna desde la frontal. El golpeo sale fuerte, pero se marcha rozando el travesaño.`,
+    `${attackerName} llega desde segunda línea y conecta un remate limpio. La pelota pasa muy cerca de la escuadra.`,
+    `Centro raso al corazón del área y ${attackerName} aparece para rematar. El toque final se va ligeramente desviado.`,
+    `${attackerName} recibe entre líneas, conduce unos metros y prueba suerte. El disparo se abre demasiado y sale por línea de fondo.`,
+    `Pared rápida que deja a ${attackerName} perfilado dentro del área. Busca el hueco entre central y portero, pero no lo encuentra.`,
+    `${attackerName} se inventa una salida individual y termina la jugada con un remate que se marcha lamiendo el palo.`,
+    `Cambio de ritmo de ${attackerName}, recorte hacia dentro y disparo. La trayectoria parecía buena, pero acaba fuera por muy poco.`,
+    `${attackerName} ataca el espacio en el segundo palo y llega al centro con ventaja. El remate de primeras se pierde por encima de la portería.`,
+    `Recuperación en campo rival y salida inmediata de ${attackerName}. Tiene ventaja al entrar en el área, pero el golpeo se va demasiado cruzado.`,
+    `${attackerName} amaga hacia fuera, vuelve a entrar y encuentra una línea de tiro. El balón pasa rozando la base del poste.`,
+    `Control con el pecho de ${attackerName} dentro del área y remate en el segundo toque. La pelota sale por encima del larguero.`,
+    `${attackerName} recibe de espaldas, gira entre dos rivales y consigue finalizar. El disparo pierde precisión justo al final.`,
+    `El pase atrás deja a ${attackerName} de frente al área. Golpea con potencia, pero la trayectoria se abre demasiado.`,
+    `${attackerName} ataca el primer palo y anticipa el centro. Su remate toca en un rival y termina alejándose de la portería.`,
+    `Una diagonal de ${attackerName} rompe la línea defensiva. Llega al balón y define de primeras, pero no logra ajustar el tiro.`,
+  ];
+  const blocked = [
+    `${attackerName} se prepara para rematar, pero ${defender} se cruza a tiempo y bloquea el disparo. El defensor despeja el peligro.`,
+    `${attackerName} encuentra sitio dentro del área y arma la pierna; ${defender} mete el pie justo a tiempo y desvía el remate.`,
+    `Remate de ${attackerName} tras una gran maniobra, pero ${defender} aguanta la posición, tapa el golpeo y despeja.`,
+    `${attackerName} consigue girarse en el área, aunque ${defender} lee la jugada y se lanza al bloqueo para evitar el disparo limpio.`,
+    `${attackerName} prueba el disparo entre varias piernas y ${defender} pone el cuerpo. La defensa consigue despejar el rechace.`,
+    `La combinación deja a ${attackerName} en buena posición, pero ${defender} llega desde atrás, bloquea el remate y corta la ocasión.`,
+    `${attackerName} intenta encontrar el palo corto; ${defender} cierra el ángulo y desvía la pelota antes de que llegue a portería.`,
+    `${attackerName} pisa área y prepara el golpeo, pero ${defender} anticipa el movimiento y limpia la jugada de inmediato.`,
+    `El disparo de ${attackerName} iba buscando portería, aunque ${defender} se interpone y consigue que el balón salga rechazado.`,
+    `${attackerName} tiene el hueco durante un instante. ${defender} recupera terreno, mete la pierna y evita una finalización limpia.`,
+    `${attackerName} arma el derechazo dentro del área, pero ${defender} se lanza al suelo, tapa la trayectoria y fuerza el despeje.`,
+    `El recorte deja a ${attackerName} con el disparo preparado. ${defender} aguanta el amago, mete la pierna y salva la jugada.`,
+    `${attackerName} busca el remate de primeras, pero ${defender} llega un segundo antes, bloquea el golpeo y aleja el balón del área.`,
+    `Centro atrás y remate de ${attackerName}. ${defender} se coloca en la trayectoria y evita que el balón llegue al portero.`,
+    `${attackerName} gana la posición para disparar, aunque ${defender} aparece por el costado y desvía el remate con el cuerpo.`,
+  ]
+  const setPieces = [
+    `${attackerName} ejecuta la falta directa con rosca buscando la escuadra, pero el balón se marcha rozando el larguero.`,
+    `Golpeo de falta de ${attackerName}. Supera la barrera, aunque pierde el punto de caída y se va fuera por muy poco.`,
+    `${attackerName} se encarga de la falta y busca el palo del portero. La pelota pasa cerca, pero no encuentra portería.`,
+    `Falta directa lanzada por ${attackerName}; el disparo baja tarde y termina saliendo por centímetros.`,
+  ];
+  const headers = [
+    `${attackerName} gana el duelo aéreo y cabecea con potencia, pero el balón se va por encima del larguero.`,
+    `Centro medido para ${attackerName}, que cabecea picado. El remate bota y sale rozando el poste.`,
+    `${attackerName} entra con ventaja al área pequeña y remata de cabeza, aunque no consigue dirigirlo entre los tres palos.`,
+  ];
+
+  let pool = common;
+  if (eventType === "free_kick_goal") pool = [...common.slice(0, 4), ...setPieces];
+  else if (eventType === "own_goal") pool = [...common, ...blocked];
+  else pool = [...common, ...blocked, ...headers];
+
+  return pickNarrativeVariant(pool, `${minute ?? 0}:${attackerName}:${defenderName ?? ""}:${eventType}`);
 }
 
 export function updateMomentum({
@@ -934,19 +1024,29 @@ export function buildGoalPrelude({
   const isFreeKick = event.type === "free_kick_goal";
   const isCorner = event.detail === "A la salida de un córner";
   const player = event.scorerName || "El lanzador";
+
   if (isFreeKick) {
     const variants = [
-      `${player} coloca el balón. Mira la distancia… está en una zona perfecta para pegarle directamente.`,
-      `${player} se perfila para lanzar. El ${teamName} trae un especialista y el área se llena de camisetas.`,
-      `Todo listo para el golpeo. ${player} tiene una falta que puede cambiar el partido en un instante.`,
-    ];
+      `${player} se coloca frente al balón, mide la distancia y empieza a buscar el ángulo de tiro. La barrera ya está colocada.`,
+      `El árbitro da permiso y ${player} se prepara para el golpeo. El portero ordena la barrera y nadie quiere pestañear.`,
+      `${player} coloca el balón con mimo. Hay espacio suficiente para intentar una falta directa y la defensa sabe dónde está el peligro.`,
+      `Todo listo para el golpeo: ${player} toma carrerilla mientras el guardameta rival corrige un paso hacia su palo.`,
+      `${player} se perfila para lanzar. El estadio baja el ruido por un instante y todas las miradas apuntan al área.`,
+      `La falta está en una distancia ideal. ${player} espera la señal, observa la colocación del portero y se prepara para pegarle.`,
+      `${player} se acerca al balón con decisión. La barrera queda a medio camino entre el lanzador y una oportunidad enorme.`,
+      `Hay una falta frontal y ${player} se hace cargo. La portería está al alcance de un golpeo preciso.`,
+      `${player} acomoda el balón, da unos pasos atrás y fija la mirada en la escuadra. La defensa prepara el salto.`,
+      `Ocasión a balón parado para ${teamName}: ${player} se perfila y el guardameta ya está avisando a sus compañeros.`,
+      `${player} pide unos segundos para colocar a todos. Tiene el remate directo en la cabeza y la barrera trata de tapar el camino.`,
+      `El especialista aparece en el balón parado. ${player} estudia la barrera y busca el punto exacto por donde hacer pasar el disparo.`,
+    ]
     return {
       id: `prelude-fk-${event.minute}-${event.scorerId}`,
       type: "dangerous_free_kick",
       minute: event.minute,
       kicker: "🎯 Falta peligrosa",
-      title: "FALTA PELIGROSA",
-      body: variants[(event.minute + player.length) % variants.length],
+      title: pickNarrativeVariant(["FALTA DIRECTA", "PELIGRO A BALÓN PARADO", "OCASIÓN DE FALTA", "EL BALÓN PIDE DISPARO"], `${event.minute}:${player}:title`),
+      body: pickNarrativeVariant(variants, `${event.minute}:${player}`),
       playerName: player,
       playerId: event.scorerId,
       teamName,
@@ -958,14 +1058,26 @@ export function buildGoalPrelude({
       teamSide: event.team,
     };
   }
+
   if (isCorner) {
+    const variants = [
+      `${teamName} carga el área. El córner cae en una zona caliente y ${player} ya busca el espacio entre los centrales.`,
+      `${player} levanta la cabeza y espera el movimiento de sus compañeros. El área se llena y el primer toque puede ser decisivo.`,
+      `El envío de ${player} está preparado. Los centrales se empujan y ${teamName} mete hombres en el primer y segundo palo.`,
+      `${player} se prepara para colgarla. La defensa ha cerrado la zona, pero hay varios atacantes esperando el centro.`,
+      `Córner para ${teamName}: ${player} coloca el balón y señala hacia qué zona quiere ponerlo. La marca se ajusta a última hora.`,
+      `El saque de esquina está a punto de ejecutarse. ${player} observa el desmarque y el portero rival ordena a sus centrales.`,
+      `${player} se acerca al banderín. Hay centímetros para atacar en el primer palo y espacio libre detrás de la última línea.`,
+      `La pelota está en el córner y ${player} prepara el centro. El área parece un embudo de piernas, marcas y carreras.`,
+      `Todos saben lo que viene: centro de ${player}. ${teamName} acumula rematadores y el rival protege como puede el punto de penalti.`,
+    ]
     return {
       id: `prelude-corner-${event.minute}-${event.scorerId}`,
       type: "goal_prelude",
       minute: event.minute,
       kicker: "🚩 Córner peligroso",
-      title: "CENTRO AL ÁREA",
-      body: `${teamName} carga el área. El envío cae donde más duele y ${player} ya prepara el remate.`,
+      title: pickNarrativeVariant(["CENTRO AL ÁREA", "CÓRNER PELIGROSO", "PUEDE CAER EL GOL", "BALÓN AL ÁREA"], `${event.minute}:${player}:corner:title`),
+      body: pickNarrativeVariant(variants, `${event.minute}:${player}:corner`),
       playerName: player,
       playerId: event.scorerId,
       teamName,
@@ -977,19 +1089,34 @@ export function buildGoalPrelude({
       teamSide: event.team,
     };
   }
+
   const variants = [
-    `${player} se cuela en zona de remate y levanta la cabeza. Hay un hueco que puede ser decisivo.`,
-    `${player} recibe con ventaja. La defensa retrocede y el delantero ya prepara el golpeo.`,
-    `Peligro dentro del área: ${player} tiene unos metros para armar la pierna.`,
-    `${player} aparece entre líneas, controla orientado y entra en zona de definición.`,
+    `${player} rompe hacia dentro y recibe entre líneas. Tiene un defensor delante y una ventana para probar el disparo.`,
+    `${player} arranca a la espalda del lateral y gana unos metros. La defensa retrocede y el remate se acerca.`,
+    `Pared rápida y carrera de ${player}. El último pase lo deja en una zona donde una sola decisión puede cambiar la jugada.`,
+    `${player} controla orientado, levanta la cabeza y ve un pasillo hacia el área. El rival empieza a cerrar tarde.`,
+    `La jugada se acelera y ${player} recibe con ventaja en el pico del área. Ya prepara el siguiente toque.`,
+    `${player} ataca el intervalo entre central y lateral. Si consigue girarse, tendrá la portería de frente.`,
+    `El ${teamName} encuentra una transición limpia. ${player} conduce con metros por delante y la defensa corre hacia su propia área.`,
+    `${player} aparece en el segundo palo después de una combinación por banda. El centro está a punto de llegar.`,
+    `Un pase filtrado deja a ${player} en el límite del área. El control es bueno y el hueco se abre durante un instante.`,
+    `${player} gana el uno contra uno y entra en zona de remate. El defensor ya está reculando para impedirle perfilarse.`,
+    `El balón cambia de lado y encuentra a ${player} con espacio. Recorta hacia su pierna buena y la portería queda a un toque.`,
+    `${player} recibe de espaldas, aguanta el contacto y se gira. La acción termina entrando de lleno en zona de definición.`,
+    `La defensa pierde una referencia y ${player} aparece solo unos metros por delante. El siguiente control puede dejarle de cara al gol.`,
+    `${player} llega desde segunda línea, recoge un rechace y arma la pierna antes de que la defensa pueda salir.`,
+    `El ${teamName} combina rápido alrededor del área y ${player} encuentra una línea de pase que rompe el bloque.`,
+    `${player} ataca la diagonal, recibe dentro del área y levanta la cabeza para decidir entre disparar o buscar al compañero.`,
+    `Con una conducción agresiva, ${player} obliga a dos defensores a cerrarle. Aun así encuentra un hueco para finalizar.`,
+    `${player} se mete entre centrales con un movimiento corto. El pase llega y todo queda preparado para el último gesto.`,
   ];
   return {
     id: `prelude-goal-${event.minute}-${event.scorerId}`,
     type: "goal_prelude",
     minute: event.minute,
     kicker: "🚨 Peligro",
-    title: "¡PELIGRO!",
-    body: variants[(event.minute + player.length) % variants.length],
+    title: pickNarrativeVariant(["¡PELIGRO!", "OCASIÓN EN EL ÁREA", "SE ABRE EL HUECO", "ALERTA EN LA PORTERÍA", "LLEGA EL REMATE"], `${event.minute}:${player}:goal:title`),
+    body: pickNarrativeVariant(variants, `${event.minute}:${player}:goal`),
     playerName: player,
     playerId: event.scorerId,
     teamName,
@@ -1016,17 +1143,32 @@ export function buildSavePrelude({
   const teamName = highlight.team === "home" ? homeName : awayName;
   const player = highlight.playerName || "El delantero";
   const variants = [
-    `${player} arma la pierna dentro del área. El portero aguanta la posición y espera el último instante.`,
-    `${player} se prepara para el golpeo. Todo el estadio contiene la respiración: llega un disparo con muchísimo peligro.`,
-    `Hay tiempo para un último toque… pero ${player} decide rematar. El portero ya está en guardia.`,
+    `${player} arma la pierna y cruza el disparo. El portero aguanta hasta el último instante antes de intentar la intervención.`,
+    `${player} recibe dentro del área y remata de primeras. El guardameta ya está bajando el centro de gravedad para responder.`,
+    `Pase al espacio para ${player}. Gana medio metro y prepara un golpeo al palo largo mientras el portero mide el ángulo.`,
+    `${player} se planta de frente a la portería. Tiene una ventana mínima para finalizar antes de que llegue la cobertura.`,
+    `La jugada termina en los pies de ${player}. Control corto, mirada al segundo palo y el disparo está a punto de salir.`,
+    `${player} encuentra un pasillo en la frontal y golpea con decisión. El balón viaja rápido hacia una portería que parece encogerse.`,
+    `Centro raso que atraviesa el área y encuentra a ${player}. La finalización de primeras puede ser letal.`,
+    `${player} ataca el espacio a la espalda del central y llega al balón con ventaja. El portero sale a proteger su zona.`,
+    `Recorte de ${player} dentro del área. El defensor queda atrás y el guardameta espera el golpeo con los pies preparados.`,
+    `${player} gana el duelo individual y entra en zona de remate. El siguiente toque será seguramente el disparo.`,
+    `El balón queda suelto en la frontal y ${player} llega antes que nadie. Levanta la cabeza y se prepara para pegarle.`,
+    `Transición rápida del ${teamName}: ${player} conduce hasta el área y el portero rival tiene que colocarse a toda prisa.`,
+    `${player} aparece en el segundo palo y espera el centro. El defensor no termina de llegar a tiempo para cerrar la línea de tiro.`,
+    `La pared deja a ${player} perfilado. El portero se mueve un paso y la ocasión ya está lista para ser resuelta.`,
+    `${player} recibe entre dos defensores, protege el balón y consigue girarse. La portería está a pocos metros.`,
+    `El ataque encuentra el último pase para ${player}. Hay una fracción de segundo antes de que la defensa vuelva a cerrarse.`,
+    `${player} engancha un balón dividido dentro del área y se prepara para un remate potente antes de que lo encimen.`,
+    `${player} llega de frente tras una segunda jugada. El disparo está armado y el guardameta ya se prepara para el vuelo.`,
   ];
   return {
     id: `prelude-save-${highlight.minute}-${highlight.playerId}`,
     type: "goal_prelude",
     minute: highlight.minute,
-    kicker: "🚨 Peligro",
-    title: "SE CARGA EL DISPARO",
-    body: variants[(highlight.minute + player.length) % variants.length],
+    kicker: "🚨 Peligro en el área",
+    title: pickNarrativeVariant(["DISPARO PELIGROSO", "OCASIÓN CLARA", "EL PORTERO TIENE TRABAJO", "SE PERFILA EL REMATE", "PELIGRO INMINENTE"], `${highlight.minute}:${player}:save:title`),
+    body: pickNarrativeVariant(variants, `${highlight.minute}:${player}:save`),
     playerName: player,
     playerId: highlight.playerId,
     teamName,
@@ -1076,7 +1218,10 @@ export function buildMomentFromEvent({
       title: "GOLAZO DE FALTA",
       body: `${event.scorerName} encuentra una trayectoria imposible desde una falta peligrosa.`,
       playerName: event.scorerName,
+      playerId: event.scorerId,
       teamName,
+      teamSide: event.team,
+      detail: event.detail,
       emoji: "🎯",
       hardPause: true,
     };
@@ -1124,50 +1269,88 @@ export function buildDangerPreludeFromHighlight({
 }): LiveMoment {
   const teamName = highlight.team === "home" ? homeName : awayName;
   const player = highlight.playerName || "El atacante";
-  const config: Record<
+
+  const configs: Record<
     string,
-    { title: string; kicker: string; emoji: string; variants: string[] }
+    {
+      title: string[];
+      kicker: string[];
+      emoji: string;
+      variants: string[];
+    }
   > = {
     woodwork: {
-      title: "¡PELIGRO!",
-      kicker: "💥 Se acerca el golpe",
+      // Esta es la escena previa: todavía NO revelamos que la pelota tocará
+      // la madera. El desenlace "AL PALO" se muestra únicamente al resolverla.
+      title: ["REMATE PELIGROSO", "SE PREPARA EL DISPARO", "OCASIÓN AL LÍMITE", "PELIGRO EN LA FRONTAL"],
+      kicker: ["💥 Remate preparado", "💥 Ocasión de máxima tensión", "💥 La portería entra en alerta"],
       emoji: "🚨",
       variants: [
-        `${player} encuentra el espacio y arma la pierna. La portería está a un toque de distancia.`,
-        `${player} recibe con metros para decidir. La defensa llega tarde y la jugada huele a gol.`,
-        `La acción se pone al rojo vivo: ${player} prepara el remate mientras el rival intenta cerrar el hueco.`,
+        `${player} recibe perfilado y carga el remate. La portería queda de frente y el defensor llega tarde.`,
+        `${player} encuentra un metro en la frontal y prepara un golpeo seco que puede acabar en la escuadra.`,
+        `El balón le cae a ${player} después de una segunda jugada. Controla y dispara antes de que se cierre el espacio.`,
+        `${player} ataca el segundo palo y llega con tiempo para rematar. La defensa pierde su referencia por un instante.`,
+        `Una combinación rápida deja a ${player} entrando de cara. El siguiente toque puede mandar el balón contra la red o contra la madera.`,
+        `${player} recorta hacia dentro y prepara la pierna buena. El ángulo parece pequeño, pero la ocasión es enorme.`,
+        `El ataque cambia de ritmo y ${player} recibe justo en el borde del área. Todos esperan el disparo.`,
+        `${player} gana la espalda y recibe dentro del área. Tiene el cuerpo preparado para buscar el palo largo.`,
+        `El rechace cae a ${player}. Sin pensárselo dos veces, arma el golpeo y la defensa solo puede intentar tapar.`,
+        `${player} se hace sitio entre dos rivales y consigue sacar la pierna. El remate lleva veneno.`,
+        `Pase atrás al punto de penalti y ${player} aparece de frente. Hay una ventana limpia de remate.`,
+        `${player} ataca el intervalo y controla orientado hacia portería. El rival corre hacia atrás sin poder frenarle.`,
       ],
     },
     big_chance: {
-      title: "GRAN PELIGRO",
-      kicker: "🔥 Ocasión clarísima",
+      title: ["GRAN PELIGRO", "OCASIÓN CLARÍSIMA", "¡SE HUELE EL GOL!", "MANO A MANO", "OCASIÓN DE ORO"],
+      kicker: ["🔥 Ocasión clarísima", "🔥 El área arde", "🔥 Peligro máximo", "🔥 Todo a punto de decidirse"],
       emoji: "🚨",
       variants: [
-        `${player} queda en una posición inmejorable. El siguiente toque puede decidir la jugada.`,
-        `Hay una ventana enorme para el ${teamName}. ${player} tiene tiempo para elegir cómo terminarla.`,
-        `${player} se planta en zona de remate. El rival está contra las cuerdas.`,
+        `${player} recibe solo dentro del área y tiene tiempo para escoger dónde colocar el remate.`,
+        `Pase filtrado a la espalda de la defensa y ${player} entra con ventaja. El guardameta ya sale a achicar.`,
+        `${player} rompe la línea, controla a un toque y queda frente a la portería con una ocasión enorme.`,
+        `El ${teamName} mueve la defensa de lado a lado y encuentra a ${player} en el hueco que estaba buscando.`,
+        `${player} aparece entre central y lateral, recibe de cara y levanta la cabeza: hay compañeros y portería esperando.`,
+        `Una recuperación alta deja a ${player} cerca del área. La defensa todavía está desordenada y la ocasión es de las grandes.`,
+        `${player} gana el uno contra uno y pisa el área. El defensor intenta aguantar, pero la ventaja está del lado del atacante.`,
+        `Centro raso al corazón del área y ${player} llega de frente. Tiene una sola cosa en la cabeza: finalizar.`,
+        `La combinación en corto deja a ${player} perfilado en el punto de penalti. El siguiente gesto puede cambiar el marcador.`,
+        `${player} recibe detrás de la última línea y entra con campo abierto. El portero se prepara para el duelo.`,
+        `Rebote favorable para ${player}, que se encuentra con el balón a pocos metros del arco y con la defensa fuera de sitio.`,
+        `${player} ataca la espalda del lateral, supera la ayuda y se planta en zona de remate con todo a favor.`,
+        `Pase atrás desde línea de fondo para ${player}. El área se abre y la ocasión aparece limpia por primera vez en la jugada.`,
+        `${player} se mete entre dos defensores, aguanta el contacto y consigue un metro para terminar la acción.`,
+        `El balón llega a ${player} en el segundo palo. Tiene tiempo para controlar y decidir cómo atacar la portería.`,
       ],
     },
     save: {
-      title: "DISPARO PELIGROSO",
-      kicker: "🧤 Peligro en el área",
+      title: ["DISPARO PELIGROSO", "EL PORTERO TIENE TRABAJO", "SE CARGA EL REMATE", "PELIGRO EN EL ÁREA"],
+      kicker: ["🧤 Peligro en el área", "🧤 Remate preparado", "🧤 El guardameta entra en acción"],
       emoji: "🚨",
       variants: [
-        `${player} aparece en la jugada y el remate se prepara. El portero no puede perder la concentración.`,
-        `El ataque encuentra una ventana. ${player} está a punto de rematar y el área contiene la respiración.`,
-        `Todo listo para el disparo: el siguiente gesto puede decidirlo todo.`,
+        `${player} encuentra el pasillo y se prepara para un disparo que va a exigir una reacción inmediata del portero.`,
+        `El balón llega a ${player} con ventaja. Se perfila hacia el palo largo y arma la pierna.`,
+        `${player} recibe tras una pared y pisa la frontal. Tiene espacio para sacar un golpeo limpio.`,
+        `Una pérdida en salida deja a ${player} con metros. El portero adelanta la posición para reducir la portería.`,
+        `${player} entra por dentro después de superar la primera presión. La cobertura llega, pero el remate ya está preparado.`,
+        `Centro hacia el segundo palo y ${player} gana la posición. La defensa intenta cerrar con el último paso.`,
+        `${player} se acomoda tras un control orientado y busca un disparo raso antes de que llegue el central.`,
+        `El ataque encuentra una línea de pase vertical y ${player} recibe de cara. El remate está a punto de salir.`,
+        `${player} ataca un balón dividido dentro del área. Tiene un instante para elegir entre potencia y colocación.`,
+        `La jugada acaba en la frontal con ${player} mirando a portería. El guardameta ajusta el ángulo y espera.`,
+        `${player} recibe a la espalda del mediocentro y conduce hacia la zona de disparo. El bloque rival se rompe.`,
+        `Un centro rechazado cae a ${player}. El remate de segunda jugada puede sorprender a toda la defensa.`,
       ],
     },
   };
-  const meta = config[highlight.type] ?? config.big_chance;
-  const variants = meta.variants;
+
+  const meta = configs[highlight.type] ?? configs.big_chance;
   return {
     id: `prelude-highlight-${highlight.type}-${highlight.minute}-${highlight.playerId}`,
     type: highlight.type === "save" ? "danger_save" : "danger_chance",
     minute: highlight.minute,
-    kicker: meta.kicker,
-    title: meta.title,
-    body: variants[(highlight.minute + player.length) % variants.length],
+    kicker: pickNarrativeVariant(meta.kicker, `${highlight.minute}:${player}:kicker`),
+    title: pickNarrativeVariant(meta.title, `${highlight.minute}:${player}:title`),
+    body: pickNarrativeVariant(meta.variants, `${highlight.minute}:${player}:body`),
     playerName: player,
     playerId: highlight.playerId,
     teamName,
@@ -1215,7 +1398,17 @@ export function buildMomentFromHighlight({
         ...common,
         kicker: "💥 Larguero",
         title: "AL PALO",
-        body: `${highlight.playerName} hace temblar la portería.`,
+        body:
+          highlight.detail ||
+          pickNarrativeVariant(
+            [
+              `${highlight.playerName} se saca un remate cruzado que se estrella en el palo.`,
+              `${highlight.playerName} conecta un disparo potente y la madera evita el gol por centímetros.`,
+              `Remate de ${highlight.playerName} al segundo palo: la pelota toca la madera y se va fuera.`,
+              `${highlight.playerName} encuentra la escuadra en su golpeo, pero el travesaño escupe el balón.`,
+            ],
+            `${highlight.minute}:${highlight.playerName}:woodwork`,
+          ),
         emoji: "💥",
         hardPause: true,
       };
@@ -1255,12 +1448,33 @@ export function buildMomentFromHighlight({
         emoji: "🔁",
         hardPause: false,
       };
+    case "big_chance":
+      return {
+        ...common,
+        kicker: "❌ Fallo",
+        title: "OCASIÓN DESPERDICIADA",
+        body:
+          highlight.detail ||
+          pickNarrativeVariant(
+            [
+              `${highlight.playerName} finaliza la jugada, pero el balón se marcha fuera por muy poco.`,
+              `${highlight.playerName} consigue el espacio, aunque el remate se va desviado en el último instante.`,
+              `La ocasión era muy clara para ${highlight.playerName}, que no consigue encontrar portería.`,
+              `${highlight.playerName} prueba el golpeo, pero la defensa consigue bloquear la finalización.`,
+              `El ataque había dejado la portería de frente; ${highlight.playerName} no logra convertir la oportunidad.`,
+              `${highlight.playerName} llega con ventaja al área, pero el último toque le hace perder el remate.`,
+            ],
+            `${highlight.minute}:${highlight.playerName}:big_chance`,
+          ),
+        emoji: "❌",
+        hardPause: true,
+      };
     default:
       return {
         ...common,
         kicker: "🔥 Momento clave",
         title: highlight.detail || "OCASIÓN",
-        body: `${highlight.playerName} aparece en una acción peligrosa.`,
+        body: highlight.detail || `${highlight.playerName} protagoniza una acción peligrosa.`,
         emoji: "🔥",
         hardPause: true,
       };
