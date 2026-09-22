@@ -3902,11 +3902,64 @@ function recordFakeMatchStats(
     store.recordAppearance(playerId, competition, minuteMap.has(playerId) ? minuteMap.get(playerId) : 90);
   }
 
-  for (const event of result.events ?? []) {
-    if (event.type === "own_goal") continue;
-    store.recordGoal(event.scorerId);
-    if (event.assistId) store.recordAssist(event.assistId);
-  }
+  const isGoalEvent = (event: any) =>
+    event && ["goal", "penalty_goal", "free_kick_goal"].includes(event.type) && event.scorerId;
+
+  // Some ultra-fast/background results intentionally omit the event list to
+  // save CPU. That must never mean that player scoring stats are lost: the
+  // final score is authoritative, so credit each goal to a real participant.
+  const creditGoalEvents = (events: any[], homeGoals: number, awayGoals: number) => {
+    const regular = (events ?? []).filter(isGoalEvent);
+    const ownGoalsByTeam = {
+      home: (events ?? []).filter((e) => e?.type === "own_goal" && e.team === "home").length,
+      away: (events ?? []).filter((e) => e?.type === "own_goal" && e.team === "away").length,
+    };
+
+    const creditExisting = (team: "home" | "away") => {
+      for (const event of regular.filter((e) => e.team === team)) {
+        store.recordGoal(event.scorerId, competition);
+        if (event.assistId) store.recordAssist(event.assistId, competition);
+      }
+    };
+
+    creditExisting("home");
+    creditExisting("away");
+
+    const pickScorer = (players: Player[]) => {
+      const candidates = players.filter((p) => !isGoalkeeper(p.positions));
+      if (candidates.length === 0) return undefined;
+      const weights = candidates.map((p) => {
+        const positional = isAttacking(p.positions) ? 5 : isMidfield(p.positions) ? 2 : 0.7;
+        return Math.max(0.1, positional + (Number(p.rating) - 70) * 0.08);
+      });
+      let roll = Math.random() * weights.reduce((a, b) => a + b, 0);
+      for (let i = 0; i < candidates.length; i++) {
+        roll -= weights[i];
+        if (roll <= 0) return candidates[i];
+      }
+      return candidates[candidates.length - 1];
+    };
+
+    const creditMissing = (team: "home" | "away", targetGoals: number, players: Player[]) => {
+      const existing = regular.filter((e) => e.team === team).length;
+      const targetNormalGoals = Math.max(0, targetGoals - ownGoalsByTeam[team]);
+      const missing = Math.max(0, targetNormalGoals - existing);
+      for (let i = 0; i < missing; i++) {
+        const scorer = pickScorer(players);
+        if (!scorer) continue;
+        store.recordGoal(scorer.id, competition);
+      }
+    };
+
+    creditMissing("home", homeGoals, homePlayers);
+    creditMissing("away", awayGoals, awayPlayers);
+  };
+
+  creditGoalEvents(
+    result.events ?? [],
+    result.homeGoals ?? 0,
+    result.awayGoals ?? 0,
+  );
 
   for (const card of result.cards ?? []) {
     if (card.cardType === "yellow") {
@@ -3938,10 +3991,32 @@ function recordFakeMatchStats(
     }
   }
 
-  for (const event of result.extraTime?.events ?? []) {
-    if (event.type === "own_goal") continue;
-    store.recordGoal(event.scorerId);
-    if (event.assistId) store.recordAssist(event.assistId);
+  const extraEvents = result.extraTime?.events ?? [];
+  for (const event of extraEvents) {
+    if (!isGoalEvent(event)) continue;
+    store.recordGoal(event.scorerId, competition);
+    if (event.assistId) store.recordAssist(event.assistId, competition);
+  }
+
+  // Fast cup paths can contain extra-time goals but no detailed event payload.
+  // Credit any missing extra-time goals too, without double-counting events we
+  // already recorded above.
+  const extraHomeTarget = result.extraTime?.homeGoals ?? 0;
+  const extraAwayTarget = result.extraTime?.awayGoals ?? 0;
+  const extraHomeExisting = extraEvents.filter((e) => isGoalEvent(e) && e.team === "home").length;
+  const extraAwayExisting = extraEvents.filter((e) => isGoalEvent(e) && e.team === "away").length;
+  const pickExtraScorer = (players: Player[]) => {
+    const candidates = players.filter((p) => !isGoalkeeper(p.positions));
+    if (candidates.length === 0) return undefined;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  };
+  for (let i = extraHomeExisting; i < extraHomeTarget; i++) {
+    const scorer = pickExtraScorer(homePlayers);
+    if (scorer) store.recordGoal(scorer.id, competition);
+  }
+  for (let i = extraAwayExisting; i < extraAwayTarget; i++) {
+    const scorer = pickExtraScorer(awayPlayers);
+    if (scorer) store.recordGoal(scorer.id, competition);
   }
 
   // Guardar también porterías a cero y MVP de los partidos simulados fuera

@@ -102,10 +102,73 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
     };
   };
 
+  const homeStartingLineup = (result as any).homeStartingLineup;
+  const awayStartingLineup = (result as any).awayStartingLineup;
+
+  // Some older saved/live results only stored the XI that was on the pitch at
+  // full time. Rebuild the true starting XI by reversing substitutions. This
+  // keeps a starter who was later replaced (e.g. Bernardo Silva) in the
+  // "Titulares" section and on the mini-pitch. For fast-simulated results the
+  // stored lineup can contain starters first and incoming substitutes after
+  // them; in that case the first 11 are already the real starters and the
+  // reverse pass is a no-op.
+  const reconstructStartingLineup = (
+    team: "home" | "away",
+    teamId: string,
+    lineupValue: unknown,
+  ): Player[] => {
+    const raw = Array.isArray(lineupValue) ? lineupValue.filter(Boolean) : [];
+    if (raw.length === 0) return [];
+
+    const starters = raw.slice(0, 11) as Player[];
+    if (starters.length < 11) return starters;
+
+    const teamSubs = (result.substitutions || [])
+      .filter((s: any) => s.team === team)
+      .slice()
+      .sort((a: any, b: any) => (Number(b.minute) || 0) - (Number(a.minute) || 0));
+
+    if (teamSubs.length === 0) return starters;
+
+    const squad = store.getSimSquad(teamId);
+    const resolve = (id: string) =>
+      starters.find((p) => p.id === id) ||
+      squad.find((p) => p.id === id) ||
+      store.getSimPlayer(id);
+
+    for (const sub of teamSubs) {
+      const outId = sub.playerOutId;
+      const inId = sub.playerInId;
+      if (!outId || !inId) continue;
+
+      // When the persisted XI is actually the final XI, the incoming player is
+      // present in the starting slots and the outgoing starter is missing.
+      // Reverse that substitution. If the incoming player is only appended
+      // after the first 11 (fast simulation format), nothing changes here.
+      const inIndex = starters.findIndex((p) => p.id === inId);
+      const outAlreadyPresent = starters.some((p) => p.id === outId);
+      if (inIndex < 0 || outAlreadyPresent) continue;
+
+      const outgoing = resolve(outId);
+      if (outgoing) starters[inIndex] = outgoing;
+    }
+
+    return starters;
+  };
+
+  const homeRecoveredStartingLineup =
+    Array.isArray(homeStartingLineup) && homeStartingLineup.length > 0
+      ? homeStartingLineup
+      : reconstructStartingLineup("home", fixture.homeId, result.homeLineup);
+  const awayRecoveredStartingLineup =
+    Array.isArray(awayStartingLineup) && awayStartingLineup.length > 0
+      ? awayStartingLineup
+      : reconstructStartingLineup("away", fixture.awayId, result.awayLineup);
+
   const homeLineupData =
-    result.homeLineup && result.homeLineup.length > 0
+    homeRecoveredStartingLineup.length > 0
       ? {
-          players: result.homeLineup,
+          players: homeRecoveredStartingLineup,
           formation: (result.homeFormation || "Táctica 4-4-2") as FormationName,
         }
       : homeRatings.length > 0
@@ -118,9 +181,9 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
         : getBasicLineup(fixture.homeId);
 
   const awayLineupData =
-    result.awayLineup && result.awayLineup.length > 0
+    awayRecoveredStartingLineup.length > 0
       ? {
-          players: result.awayLineup,
+          players: awayRecoveredStartingLineup,
           formation: (result.awayFormation || "Táctica 4-4-2") as FormationName,
         }
       : awayRatings.length > 0

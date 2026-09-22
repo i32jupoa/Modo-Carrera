@@ -17,6 +17,9 @@ import {
   simulateCupMatchday,
   simulateUCLMatchday,
   saveSaveWithRetry,
+  setLineup,
+  setFormation,
+  setSubstitutes,
 } from "@/lib/store";
 
 import {
@@ -194,13 +197,55 @@ function SeasonPage() {
     }
     if (!save.myTeamId) return;
 
+    // Starting a new match is the same checkpoint as pressing "Guardar" in
+    // Dirección de equipo: persist the exact XI, formation and the exact 0-12
+    // convocados BEFORE opening the match engine. This avoids any dependency on
+    // transient React/tactical-plan state and guarantees that "Saltar al final"
+    // receives the same squad the manager had selected.
+    const current = loadSave() ?? save;
+    const currentXI = (current.lineups?.[current.myTeamId] ?? []).filter(Boolean).slice(0, 11);
+    const squad = usePlayersStore.getState().getSimSquad(current.myTeamId);
+    const currentBench = Array.from(
+      new Set((current.substitutes?.[current.myTeamId] ?? []).filter(Boolean)),
+    )
+      .filter((id) => !currentXI.includes(id))
+      .filter((id) => squad.some((p) => p.id === id))
+      .slice(0, 12);
+    const fallbackBench =
+      currentBench.length > 0
+        ? currentBench
+        : squad
+            .filter((p) => !currentXI.includes(p.id))
+            .sort((a, b) => b.rating - a.rating)
+            .slice(0, 12)
+            .map((p) => p.id);
+
+    let checkpoint = setLineup(current, current.myTeamId, currentXI);
+    checkpoint = setFormation(
+      checkpoint,
+      current.myTeamId,
+      current.formations?.[current.myTeamId] ?? "Táctica 4-3-3",
+    );
+    checkpoint = setSubstitutes(checkpoint, current.myTeamId, fallbackBench);
+    saveSaveWithRetry(checkpoint);
+    setSave(checkpoint);
+
     // Determine match type from the fixture
     const matchType =
       fixture.competition === "league" ? "LEAGUE" : fixture.competition === "cup" ? "CUP" : "UCL";
     const cupRound = fixture.competition === "cup" ? fixture.round : undefined;
 
-    // Navigate directly to match with matchType in state
-    navigate({ to: "/match", state: { matchType, cupRound, fixtureId: fixture.id } as any });
+    navigate({
+      to: "/match",
+      state: {
+        matchType,
+        cupRound,
+        fixtureId: fixture.id,
+        matchLineup: currentXI,
+        matchFormation: current.formations?.[current.myTeamId] ?? "Táctica 4-3-3",
+        matchSubstitutes: fallbackBench,
+      } as any,
+    });
   }
 
   async function simulateRest() {

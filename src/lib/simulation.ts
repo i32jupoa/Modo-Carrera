@@ -312,6 +312,12 @@ export type SimResult = {
   };
   homeLineup?: Player[];
   awayLineup?: Player[];
+  /** Explicit starting XI, preserved even when substitutions occur. */
+  homeStartingLineup?: Player[];
+  awayStartingLineup?: Player[];
+  /** Optional final XI at full time. */
+  homeFinalLineup?: Player[];
+  awayFinalLineup?: Player[];
   homeFormation?: FormationName;
   awayFormation?: FormationName;
   substitutions?: SubstitutionEvent[];
@@ -1125,6 +1131,10 @@ export function simulateMatchFast(
     mvp,
     homeLineup: homeParticipants,
     awayLineup: awayParticipants,
+    homeStartingLineup: homeXI,
+    awayStartingLineup: awayXI,
+    homeFinalLineup: activePlayersAt(homeXI, homeBench, substitutions, new Map(), "home", 90),
+    awayFinalLineup: activePlayersAt(awayXI, awayBench, substitutions, new Map(), "away", 90),
     homeFormation,
     awayFormation,
     substitutions,
@@ -1807,6 +1817,10 @@ export function simulateMatch(
     mvp,
     homeLineup: homeXI,
     awayLineup: awayXI,
+    homeStartingLineup: homeXI,
+    awayStartingLineup: awayXI,
+    homeFinalLineup: activePlayersAt(homeXI, homeBench, substitutions, new Map(), "home", 90),
+    awayFinalLineup: activePlayersAt(awayXI, awayBench, substitutions, new Map(), "away", 90),
     homeFormation,
     awayFormation,
     substitutions,

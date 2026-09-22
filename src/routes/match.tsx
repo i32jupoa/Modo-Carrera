@@ -25,7 +25,7 @@ import {
   processUCLKnockoutProgress,
 } from "@/lib/store";
 import { uclDayOffset } from "@/data/ucl";
-import { Fixture } from "@/lib/season";
+import { applyResult, Fixture } from "@/lib/season";
 import { FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
@@ -231,6 +231,7 @@ function MatchPage() {
   const myXIRef = useRef<string[]>([]);
   const initialMyXIRef = useRef<string[]>([]);
   const finalPerformanceRecordedRef = useRef(false);
+  const playerScoringStatsRecordedRef = useRef(false);
   const [myBench, setMyBench] = useState<string[]>([]);
   const myBenchRef = useRef<string[]>([]);
   const [goneIds, setGoneIds] = useState<string[]>([]);
@@ -250,6 +251,10 @@ function MatchPage() {
   const subsUsedRef = useRef(0);
   const windowsUsedRef = useRef(0);
   const subsRef = useRef<any[]>([]);
+  // Planned substitutions used only when the manager chooses "Saltar al final".
+  // Keeping the plan per match makes the count/timings vary instead of replaying
+  // the same 61'/71'/80' pattern on every simulated match.
+  const autoSubPlanRef = useRef<number[]>([]);
   // Substitutions (mine and the rival's) shown inside the match chronicle.
   const [subFeed, setSubFeed] = useState<any[]>([]);
   // Rival (CPU) live lineup + planned substitutions.
@@ -524,6 +529,11 @@ function MatchPage() {
     setIsSimulating(true);
 
     try {
+      // Reload the persisted career so the final live result (and the
+      // standings updated with it) is always the source of truth. React state
+      // updates are asynchronous, and clicking the button immediately after
+      // the final chronicle could otherwise pass the provisional SaveGame.
+      const latestSave = loadSave() ?? save;
       let next: SaveGame;
 
       // STRICT BRANCHING by matchType - ensure correct simulation for each competition
@@ -531,20 +541,20 @@ function MatchPage() {
         // CUP: Simulate ALL Cup fixtures for the matchday across ALL VIP countries
         // Uses the same layered simulation format as league matches
         console.log("Post-match: Simulating CUP matches for matchday:", fixture.matchday);
-        next = await simulateCupMatchdayLayered(save, fixture.matchday, (done, total) => {
+        next = await simulateCupMatchdayLayered(latestSave, fixture.matchday, (done, total) => {
           console.log(`Cup matches: ${done}/${total}`);
         });
       } else if (matchType === "UCL") {
         // UCL: Simulate AI matches in user's phase on return to season
         console.log("Post-match: Simulating AI UCL matches for matchday:", fixture.matchday);
-        next = simulateUserPhaseUCLDay(save, fixture.matchday, save.myTeamId);
+        next = simulateUserPhaseUCLDay(latestSave, fixture.matchday, latestSave.myTeamId);
         // Process knockout progression if needed
         const offset = uclDayOffset(usePlayersStore.getState().currentDate);
         next = processUCLKnockoutProgress(next, offset);
       } else {
         // LEAGUE: Execute the league matchday simulation
         console.log("Post-match: Simulating LEAGUE matches");
-        next = await advanceMatchdayLayered(save, (done, total) => {
+        next = await advanceMatchdayLayered(latestSave, (done, total) => {
           console.log(`Matches: ${done}/${total}`);
         });
       }
@@ -1531,11 +1541,48 @@ function MatchPage() {
     if (!s) return;
     myTeamIdRef.current = s.myTeamId;
     const squad = getSimSquad(s.myTeamId);
-    const ids = (matchLineup || s.lineups?.[s.myTeamId] || []).filter(Boolean);
-    const benchIds = squad
-      .filter((p) => !ids.includes(p.id))
+    const ids = (matchLineup || s.lineups?.[s.myTeamId] || []).filter(Boolean).slice(0, 11);
+
+    // IMPORTANT: only players explicitly registered as substitutes can enter
+    // during this match. Everyone else remains in "Reservas" and is never
+    // eligible for an automatic or manual in-match change.
+    const configuredSubstitutes = Array.isArray(s.substitutes?.[s.myTeamId])
+      ? s.substitutes[s.myTeamId]
+      : [];
+    const suspendedIds = new Set(
+      (s.suspensions?.[s.myTeamId] ?? [])
+        .filter((susp: any) => Number(susp.matchdaysRemaining ?? 0) > 0)
+        .map((susp: any) => susp.playerId),
+    );
+    const matchDate = (fixtureRef.current as any)?.date ?? usePlayersStore.getState().currentDate;
+    const matchday = Number((fixtureRef.current as any)?.matchday ?? 1);
+    let benchIds = configuredSubstitutes
+      .map((id) => String(id))
+      .filter((id) => !ids.includes(id))
+      .map((id) => squad.find((p) => p.id === id))
+      .filter((p): p is any => !!p)
+      .filter((p) => !suspendedIds.has(p.id) && !isPlayerInjuredAtDate(p, matchDate, matchday))
       .slice(0, 12)
       .map((p) => p.id);
+
+    // Backwards compatibility for saves created before the automatic lineup
+    // checkpoint existed: if no convocados were persisted, create a legal
+    // bench from the current squad and persist it immediately. Reservas remain
+    // outside the match because only these 12 become convocados.
+    if (benchIds.length === 0) {
+      benchIds = squad
+        .filter((p) => !ids.includes(p.id))
+        .filter((p) => !suspendedIds.has(p.id) && !isPlayerInjuredAtDate(p, matchDate, matchday))
+        .sort((a, b) => b.rating - a.rating)
+        .slice(0, 12)
+        .map((p) => p.id);
+
+      let checkpoint = s;
+      checkpoint = setLineup(checkpoint, s.myTeamId, ids);
+      checkpoint = setSubstitutes(checkpoint, s.myTeamId, benchIds);
+      saveSaveWithRetry(checkpoint);
+      setSave(checkpoint);
+    }
     const st: Record<string, number> = {};
     squad.forEach((p) => {
       st[p.id] = STAMINA_START;
@@ -1579,6 +1626,7 @@ function MatchPage() {
     setWindowsUsed(0);
     subsRef.current = [];
     setSubsMade([]);
+    autoSubPlanRef.current = [];
     handledInjuriesRef.current = [];
     halftimeDoneRef.current = false;
     etHalftimeDoneRef.current = false;
@@ -1902,20 +1950,30 @@ function MatchPage() {
     reason: "red_card" | "injury" | "other" = "other",
   ) {
     const currentIndex = myXIRef.current.indexOf(playerId);
-    // Do not choose the red-card hole automatically. The formation editor will
-    // ask the manager where the vacancy should be and persist that choice.
+    // A player who leaves because of a red card or injury is permanently out
+    // for the rest of this match. He must NOT be returned to the substitutes
+    // list, otherwise the lineup editor could expose him as a legal replacement.
     if (currentIndex >= 0 && reason !== "red_card") {
-      // Non-red departures do not create a visible formation hole. Keep the
-      // former index only for legacy saves/debugging, not for hole rendering.
+      // Keep the old slot only through goneSlotIndexes/pending injury state.
+      // The player itself is never re-added to the bench.
     }
     const nextXI = myXIRef.current.map((id) => (id === playerId ? "" : id));
+
+    // A red card owns the exact slot vacated by the expelled player. Record it
+    // immediately for both direct reds and second-yellow reds, so the lineup
+    // editor can always render a movable red-card hole after returning.
+    if (reason === "red_card" && currentIndex >= 0) {
+      goneSlotIndexesRef.current = {
+        ...goneSlotIndexesRef.current,
+        [playerId]: currentIndex,
+      };
+    }
+
     myXIRef.current = nextXI;
     setMyXI(nextXI);
 
-    if (!myBenchRef.current.includes(playerId)) {
-      myBenchRef.current = [...myBenchRef.current, playerId];
-      setMyBench(myBenchRef.current);
-    }
+    myBenchRef.current = myBenchRef.current.filter((id) => id !== playerId);
+    setMyBench(myBenchRef.current);
 
     goneRef.current = Array.from(new Set([...goneRef.current, playerId]));
     setGoneIds(goneRef.current);
@@ -2017,34 +2075,65 @@ function MatchPage() {
   function persistResultToSave(fixtureId: string, result: any) {
     const s = loadSave();
     if (!s) return;
+
     const next: any = { ...s };
     let changed = false;
+    let matchedFixture: any = null;
+    let competition: "league" | "cup" | "ucl" | null = null;
 
-    const patchList = (list: any[]) =>
+    // The live chronicle is provisional while it is being played. At this
+    // point it becomes official. Mark it so this transition is idempotent and
+    // so later code can distinguish it from the provisional simulation.
+    const officialResult = { ...result, liveCommitted: true };
+
+    const patchList = (list: any[], kind: "league" | "cup") =>
       list.map((f: any) => {
-        if (f.id !== fixtureId || !f.result) return f;
+        if (f.id !== fixtureId) return f;
+        matchedFixture = f;
+        competition = kind;
         changed = true;
-        return { ...f, result };
+        return { ...f, result: officialResult };
       });
 
     if (next.fixtures) {
       const fixturesNext: any = {};
       for (const lg of Object.keys(next.fixtures)) {
-        fixturesNext[lg] = patchList(next.fixtures[lg] || []);
+        fixturesNext[lg] = patchList(next.fixtures[lg] || [], "league");
       }
       next.fixtures = fixturesNext;
     }
+
     if (next.cupFixtures) {
       const cupNext: any = {};
       for (const lg of Object.keys(next.cupFixtures || {})) {
         const list = next.cupFixtures[lg];
-        cupNext[lg] = Array.isArray(list) ? patchList(list) : list;
+        cupNext[lg] = Array.isArray(list) ? patchList(list, "cup") : list;
       }
       next.cupFixtures = cupNext;
     }
-    if (next.uclFixtures) next.uclFixtures = patchList(next.uclFixtures);
 
-    if (!changed) return;
+    if (next.uclFixtures) {
+      next.uclFixtures = next.uclFixtures.map((f: any) => {
+        if (f.id !== fixtureId) return f;
+        matchedFixture = f;
+        competition = "ucl";
+        changed = true;
+        return { ...f, result: officialResult };
+      });
+    }
+
+    if (!changed || !matchedFixture) return;
+
+    // `advanceMatchdayLayered` only processes fixtures with `!f.result`.
+    // Therefore the user's watched league fixture must have its table row
+    // updated here, otherwise it is skipped later and the win/draw points
+    // are never added. We only do this when the previous fixture was still
+    // provisional, so the points cannot be duplicated by a second commit.
+    if (competition === "league" && !matchedFixture.result?.liveCommitted) {
+      const officialFixture = { ...matchedFixture, result: officialResult };
+      next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], officialFixture);
+    }
+
     saveSaveWithRetry(next);
     setSave(next);
   }
@@ -2060,62 +2149,87 @@ function MatchPage() {
 
     const myTeamId = myTeamIdRef.current || save?.myTeamId;
     const mySide: "home" | "away" = fx.homeId === myTeamId ? "home" : "away";
-    const oppSide: "home" | "away" = mySide === "home" ? "away" : "home";
 
-    const mySquad = getSimSquad(myTeamId);
-    const resultInitialIds = (
-      mySide === "home" ? (result.homeLineup ?? []) : (result.awayLineup ?? [])
-    )
-      .map((p: any) => p?.id)
-      .filter(Boolean);
-    const initialIds =
-      initialMyXIRef.current.length > 0 ? initialMyXIRef.current : resultInitialIds;
-    const myInitial = initialIds
-      .map((id) => mySquad.find((p: any) => p.id === id))
-      .filter(Boolean) as any[];
-    const oppInitial = (oppXIRef.current || []).filter(Boolean).slice();
+    const getTeamSquad = (teamId: string) => getSimSquad(teamId);
 
-    const mySubs = subsRef.current.map((s: any) => ({
-      minute: Number(s.minute) || 0,
-      team: mySide,
-      playerOutId: s.outId,
-      playerInId: s.inId,
-    }));
-    const oppSubs = (oppSubsDoneRef.current || []).map((s: any) => ({
-      minute: Number(s.minute) || 0,
-      team: s.team,
-      playerOutId: s.playerOutId,
-      playerInId: s.playerInId,
-    }));
-    const substitutions = [...mySubs, ...oppSubs].sort((a, b) => a.minute - b.minute);
+    const initialIdsForSide = (side: "home" | "away") => {
+      if (side === mySide && initialMyXIRef.current.length > 0) {
+        return initialMyXIRef.current.slice(0, 11);
+      }
+      const fallback = side === "home" ? result.homeStartingLineup ?? result.homeLineup : result.awayStartingLineup ?? result.awayLineup;
+      return Array.isArray(fallback)
+        ? fallback.map((p: any) => p?.id ?? p).filter(Boolean).slice(0, 11)
+        : [];
+    };
 
-    const actualParticipants = (initial: any[], side: "home" | "away") => {
+    const initialPlayersForSide = (side: "home" | "away") => {
+      const teamId = side === "home" ? fx.homeId : fx.awayId;
+      const squad = getTeamSquad(teamId);
+      return initialIdsForSide(side)
+        .map((id: string) => squad.find((p: any) => p.id === id))
+        .filter(Boolean) as any[];
+    };
+
+    const homeInitial = initialPlayersForSide("home");
+    const awayInitial = initialPlayersForSide("away");
+
+    const substitutions = [
+      ...subsRef.current.map((s: any) => ({
+        minute: Number(s.minute) || 0,
+        team: mySide,
+        playerOutId: s.outId,
+        playerInId: s.inId,
+      })),
+      ...(oppSubsDoneRef.current || []).map((s: any) => ({
+        minute: Number(s.minute) || 0,
+        team: s.team,
+        playerOutId: s.outId ?? s.playerOutId,
+        playerInId: s.inId ?? s.playerInId,
+      })),
+    ].sort((a, b) => a.minute - b.minute);
+
+    const squadCache = new Map<string, any[]>([
+      [fx.homeId, getTeamSquad(fx.homeId)],
+      [fx.awayId, getTeamSquad(fx.awayId)],
+    ]);
+
+    const resolvePlayer = (side: "home" | "away", id: string) =>
+      squadCache
+        .get(side === "home" ? fx.homeId : fx.awayId)
+        ?.find((p: any) => p.id === id);
+
+    // Final XI = who is actually on the pitch at full time.
+    const finalLineup = (initial: any[], side: "home" | "away") => {
       const players = [...initial];
-      const byId = new Map(players.map((p) => [p.id, p]));
       for (const sub of substitutions.filter((x) => x.team === side)) {
-        const outIndex = players.findIndex((p) => p.id === sub.playerOutId);
-        if (outIndex >= 0)
-          players[outIndex] =
-            byId.get(sub.playerInId) ??
-            (side === mySide
-              ? getSimSquad(myTeamId).find((p: any) => p.id === sub.playerInId)
-              : getSimSquad(fx.homeId === myTeamId ? fx.awayId : fx.homeId).find(
-                  (p: any) => p.id === sub.playerInId,
-                ));
-        const inPlayer = players.find((p) => p?.id === sub.playerInId);
-        if (inPlayer) byId.set(inPlayer.id, inPlayer);
+        const outIndex = players.findIndex((p: any) => p.id === sub.playerOutId);
+        const incoming = resolvePlayer(side, sub.playerInId);
+        if (outIndex >= 0 && incoming) players[outIndex] = incoming;
       }
       return players.filter(Boolean);
     };
 
-    const homeParticipants =
-      mySide === "home"
-        ? actualParticipants(myInitial, "home")
-        : actualParticipants(oppInitial, "home");
-    const awayParticipants =
-      mySide === "away"
-        ? actualParticipants(myInitial, "away")
-        : actualParticipants(oppInitial, "away");
+    // Participants = every player who actually appeared: every starter plus
+    // every substitute who entered. A starter who was later substituted off
+    // must remain in this collection so his appearance, minutes and rating are
+    // retained. This is deliberately different from the final XI.
+    const participants = (initial: any[], side: "home" | "away") => {
+      const out = [...initial];
+      const seen = new Set(initial.map((p) => p.id));
+      for (const sub of substitutions.filter((x) => x.team === side)) {
+        const incoming = resolvePlayer(side, sub.playerInId);
+        if (incoming && !seen.has(incoming.id)) {
+          out.push(incoming);
+          seen.add(incoming.id);
+        }
+      }
+      return out;
+    };
+
+    const homeParticipants = participants(homeInitial, "home");
+    const awayParticipants = participants(awayInitial, "away");
+    const homeFinalXI = finalLineup(homeInitial, "home");
+    const awayFinalXI = finalLineup(awayInitial, "away");
 
     const calculateMinutes = (initial: any[], side: "home" | "away", endMinute: number) => {
       const minutes: Record<string, number> = {};
@@ -2158,18 +2272,25 @@ function MatchPage() {
       }
 
       for (const id of onPitch) addInterval(id, endMinute);
-      for (const id of new Set(
-        initial.concat(homeParticipants, awayParticipants).map((p) => p.id),
-      )) {
-        minutes[id] = Math.max(0, Math.min(120, Math.round(minutes[id] ?? 0)));
+
+      const allParticipants = side === "home" ? homeParticipants : awayParticipants;
+      for (const p of allParticipants) {
+        minutes[p.id] = Math.max(0, Math.min(120, Math.round(minutes[p.id] ?? 0)));
       }
+
+      // A late substitution still counts as an appearance even if the engine's
+      // minute arithmetic gives it 0. Give it the minimum visible match minute.
+      for (const sub of substitutions.filter((x) => x.team === side)) {
+        if (minutes[sub.playerInId] === 0) minutes[sub.playerInId] = 1;
+      }
+
       return minutes;
     };
 
     const endMinute = result.extraTime ? 120 : 90;
     const minutesPlayed = {
-      ...calculateMinutes(mySide === "home" ? myInitial : oppInitial, "home", endMinute),
-      ...calculateMinutes(mySide === "away" ? myInitial : oppInitial, "away", endMinute),
+      ...calculateMinutes(homeInitial, "home", endMinute),
+      ...calculateMinutes(awayInitial, "away", endMinute),
     };
 
     const events = (result.events ?? []).map((e: any) => ({
@@ -2208,8 +2329,12 @@ function MatchPage() {
     return {
       ratings,
       mvp,
+      homeStartingXI: homeInitial,
+      awayStartingXI: awayInitial,
       homeParticipants,
       awayParticipants,
+      homeFinalXI,
+      awayFinalXI,
       minutesPlayed,
     };
   }
@@ -2222,33 +2347,40 @@ function MatchPage() {
     const performance = buildActualLivePerformance(result);
     if (!performance) return null;
 
-    const myTeamId = myTeamIdRef.current || save?.myTeamId;
-    const mySide: "home" | "away" = fx.homeId === myTeamId ? "home" : "away";
-    const myPlayers =
-      mySide === "home" ? performance.homeParticipants : performance.awayParticipants;
-    const myPlayerIds = new Set(myPlayers.map((p: any) => p.id));
     const store = usePlayersStore.getState();
+    const participants = [...performance.homeParticipants, ...performance.awayParticipants];
 
-    for (const p of myPlayers) {
-      store.recordAppearance(p.id, fx.competition, performance.minutesPlayed[p.id] ?? 0);
+    // Every player who actually appeared gets one appearance, regardless of
+    // whether he started or entered from the bench. Do this for BOTH teams.
+    for (const p of participants) {
+      store.recordAppearance(p.id, fx.competition, performance.minutesPlayed[p.id] ?? 1);
     }
 
+    // Persist match ratings for every player who actually appeared, including
+    // starters who were later substituted and substitutes who entered.
     for (const pr of performance.ratings) {
-      if (myPlayerIds.has(pr.playerId)) store.recordMatchRating(pr.playerId, pr.rating);
+      store.recordMatchRating(pr.playerId, pr.rating);
     }
 
     const finalHomeGoals = (result.homeGoals ?? 0) + (result.extraTime?.homeGoals ?? 0);
     const finalAwayGoals = (result.awayGoals ?? 0) + (result.extraTime?.awayGoals ?? 0);
-    if (mySide === "home" && finalAwayGoals === 0) {
-      const gk = myPlayers.find((p: any) => p.positions?.includes("GK"));
-      if (gk) store.recordCleanSheet(gk.id, fx.competition);
+
+    // Preserve the existing clean-sheet behaviour, but evaluate the goalkeeper
+    // who was actually on the pitch at full time for each side.
+    if (finalAwayGoals === 0) {
+      const gk = performance.homeFinalXI.find((p: any) => p.positions?.includes("GK"));
+      if (gk && performance.minutesPlayed[gk.id] > 0) {
+        store.recordCleanSheet(gk.id, fx.competition);
+      }
     }
-    if (mySide === "away" && finalHomeGoals === 0) {
-      const gk = myPlayers.find((p: any) => p.positions?.includes("GK"));
-      if (gk) store.recordCleanSheet(gk.id, fx.competition);
+    if (finalHomeGoals === 0) {
+      const gk = performance.awayFinalXI.find((p: any) => p.positions?.includes("GK"));
+      if (gk && performance.minutesPlayed[gk.id] > 0) {
+        store.recordCleanSheet(gk.id, fx.competition);
+      }
     }
 
-    if (performance.mvp && myPlayerIds.has(performance.mvp.playerId)) {
+    if (performance.mvp) {
       store.recordMotm(performance.mvp.playerId, fx.competition);
     }
 
@@ -2262,24 +2394,32 @@ function MatchPage() {
     const comp = fx.competition;
     const store = usePlayersStore.getState();
 
-    for (const ev of playedEventsRef.current) {
-      if (ev.type === "own_goal") continue;
-      const origScorer = ev._origScorerId;
-      const origAssist = ev._origAssistId;
-      if (origScorer && origScorer !== ev.scorerId) {
-        store.unrecordGoal(origScorer, comp);
-        if (ev.scorerId) store.recordGoal(ev.scorerId, comp);
-      }
-      if ((origAssist ?? null) !== (ev.assistId ?? null)) {
-        if (origAssist) store.unrecordAssist(origAssist, comp);
-        if (ev.assistId) store.recordAssist(ev.assistId, comp);
-      }
-    }
-
+    // The live match is provisional until it ends, so its goals/assists must
+    // be committed exactly once from the final chronicle. Previously we only
+    // reconciled changed scorers against an imaginary provisional stat, which
+    // meant unchanged scorers were never credited at all.
     const strip = (o: any) => {
       const { _origScorerId, _origAssistId, ...rest } = o;
       return rest;
     };
+    if (!playerScoringStatsRecordedRef.current) {
+      const scoringEvents = [
+        ...playedEventsRef.current.map(strip),
+        ...extraTimeEventsRef.current,
+      ].filter((ev: any) =>
+        ev &&
+        ["goal", "penalty_goal", "free_kick_goal"].includes(ev.type) &&
+        ev.scorerId,
+      );
+
+      for (const ev of scoringEvents) {
+        store.recordGoal(ev.scorerId, comp);
+        if (ev.assistId) store.recordAssist(ev.assistId, comp);
+      }
+
+      playerScoringStatsRecordedRef.current = true;
+    }
+
     const events =
       playedEventsRef.current.length > 0
         ? playedEventsRef.current.map(strip).sort((a: any, b: any) => a.minute - b.minute)
@@ -2330,14 +2470,25 @@ function MatchPage() {
     allCardsRef.current = cards;
     allHighlightsRef.current = highlights;
 
+    // Goal/assist statistics are committed above for both teams before the
+    // user-only performance pass. This keeps the final scorer table in sync
+    // with the official live chronicle.
     const performance = recordFinalUserPerformance(nextResult);
     const finalResult = performance
       ? {
           ...nextResult,
           ratings: performance.ratings,
           mvp: performance.mvp,
-          homeLineup: performance.homeParticipants,
-          awayLineup: performance.awayParticipants,
+          // `homeLineup` / `awayLineup` are the STARTING XI. Keep them stable
+          // for the post-match lineup screen even when a starter was subbed
+          // off. The final XI is persisted separately for consumers that need
+          // the players on the pitch at the end.
+          homeLineup: performance.homeStartingXI,
+          awayLineup: performance.awayStartingXI,
+          homeStartingLineup: performance.homeStartingXI,
+          awayStartingLineup: performance.awayStartingXI,
+          homeFinalLineup: performance.homeFinalXI,
+          awayFinalLineup: performance.awayFinalXI,
         }
       : nextResult;
 
@@ -2543,8 +2694,9 @@ function MatchPage() {
       const currentMinute = minuteRef.current;
       const nextVar = scene.source?.nextVar;
       if (nextVar) {
+        const liveVarHighlight = remapHighlightToPitch(nextVar);
         const varMoment = buildMomentFromHighlight({
-          highlight: nextVar,
+          highlight: liveVarHighlight,
           homeName: home.name,
           awayName: away.name,
         });
@@ -3942,8 +4094,12 @@ function MatchPage() {
         awayName: away.name,
       });
     } else {
+      // The highlight was generated from the pre-match simulation, but the
+      // live match may have a different XI because the manager changed the
+      // lineup or a substitution already happened. Re-anchor every visible
+      // protagonist to a player who is actually on the pitch at this minute.
       const presentedHighlight = keyHighlight
-        ? { ...keyHighlight, team: attackingSide }
+        ? remapHighlightToPitch({ ...keyHighlight, team: attackingSide })
         : keyHighlight;
       dangerBase = buildDangerPreludeFromHighlight({
         highlight: presentedHighlight,
@@ -4091,14 +4247,17 @@ function MatchPage() {
               : 18;
       const enoughGap = minute - lastMajorMomentMinuteRef.current >= requiredGap;
       if (!emergency && !enoughGap) return null;
+      // Major highlights are also generated before the live XI can change.
+      // Never build a player-facing notification from a stale bench player.
+      const liveHighlight = remapHighlightToPitch(highlight);
       const baseMoment = buildMomentFromHighlight({
-        highlight,
+        highlight: liveHighlight,
         homeName: home.name,
         awayName: away.name,
       });
-      const userTeamMoment = highlight.team === mySideOf(fixtureRef.current);
+      const userTeamMoment = liveHighlight.team === mySideOf(fixtureRef.current);
       const looksLikeCounter =
-        highlight.type === "big_chance" && userTeamMoment && momentumRef.current >= 67;
+        liveHighlight.type === "big_chance" && userTeamMoment && momentumRef.current >= 67;
       const moment = looksLikeCounter
         ? {
             ...baseMoment,
@@ -4106,7 +4265,7 @@ function MatchPage() {
             type: "counter",
             kicker: "⚡ Contraataque",
             title: "CONTRAATAQUE",
-            body: `${highlight.playerName} recibe tras una recuperación y el ${highlight.team === "home" ? home.name : away.name} ataca el espacio antes de que el rival pueda replegarse.`,
+            body: `${liveHighlight.playerName} recibe tras una recuperación y el ${liveHighlight.team === "home" ? home.name : away.name} ataca el espacio antes de que el rival pueda replegarse.`,
             emoji: "⚡",
           }
         : baseMoment;
@@ -4243,11 +4402,70 @@ function MatchPage() {
   }
 
   /**
-   * Automatic substitution for MY team while the match is being fast-forwarded.
-   * The manager can't intervene, so the assistant takes the most tired outfield
-   * players off, mirroring what the CPU does for the rival.
+   * Build a varied automatic-substitution plan for "Saltar al final".
+   * The number of changes is random within the legal 0-5 range and is grouped
+   * into 1-3 substitution windows, so 2, 3, 4 or 5 are all possible.
    */
-  function autoSubMyTeamAt(m: number, staminaThreshold = 62): any[] {
+  function buildAutoSubPlan(fromMinute: number): number[] {
+    const usableBench = myBenchRef.current.filter((id) => {
+      const p = playerById(id);
+      return !!p && !goneRef.current.includes(id) &&
+        !isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate);
+    });
+    const maxByRoster = Math.min(5, usableBench.length, Math.max(0, myXIRef.current.filter(Boolean).length - 1));
+    if (maxByRoster <= 0 || fromMinute >= 88) return [];
+
+    // Realistic distribution: 2-3 changes are common, while 0/1 and 5 remain
+    // possible. The late in the match we start, the fewer changes we can plan.
+    const maxByTime = fromMinute >= 75 ? 1 : fromMinute >= 66 ? 2 : fromMinute >= 55 ? 4 : 5;
+    const maxTotal = Math.min(maxByRoster, maxByTime);
+    const weights = [0.06, 0.12, 0.27, 0.31, 0.18, 0.06];
+    const usableWeight = weights.slice(0, maxTotal + 1).reduce((sum, weight) => sum + weight, 0);
+    let roll = Math.random() * usableWeight;
+    let total = 0;
+    for (let i = 0; i <= maxTotal; i++) {
+      total += weights[i];
+      if (roll <= total) {
+        const selected = i;
+        if (selected === 0) return [];
+        const minutes: number[] = [];
+        const windows = selected >= 4 ? 2 + Math.floor(Math.random() * 2) : selected >= 2 ? 1 + Math.floor(Math.random() * 2) : 1;
+        const counts = Array<number>(windows).fill(1);
+        let remaining = selected - windows;
+        while (remaining > 0) {
+          counts[Math.floor(Math.random() * windows)] += 1;
+          remaining -= 1;
+        }
+
+        const windowMinutes: number[] = [];
+        for (let w = 0; w < windows; w++) {
+          const minStart = w === 0
+            ? Math.max(fromMinute + 3, 55)
+            : windowMinutes[w - 1] + 6 + Math.floor(Math.random() * 7);
+          const maxStart = w === 0 ? 69 : 84;
+          if (minStart > maxStart) break;
+          const minute = Math.min(maxStart, minStart + Math.floor(Math.random() * 6));
+          windowMinutes.push(minute);
+        }
+
+        for (let w = 0; w < windowMinutes.length; w++) {
+          for (let j = 0; j < counts[w]; j++) minutes.push(windowMinutes[w]);
+        }
+        return minutes.sort((a, b) => a - b);
+      }
+    }
+    return [];
+  }
+
+  /**
+   * Automatic substitution for MY team while the match is being fast-forwarded.
+   * The outgoing and incoming player are selected dynamically, and only from
+   * the real starting XI + the explicitly configured substitutes.
+   */
+  function autoSubMyTeamAt(m: number): any[] {
+    const plannedForMinute = autoSubPlanRef.current.filter((minute) => minute === m).length;
+    if (plannedForMinute <= 0) return [];
+
     const check = canSubstitute(
       {
         subsUsed: subsUsedRef.current,
@@ -4257,54 +4475,78 @@ function MatchPage() {
       },
       1,
     );
-    if (!check.ok) return [];
-    if (myBenchRef.current.length === 0) return [];
+    if (!check.ok || myBenchRef.current.length === 0) return [];
 
-    // Take off the most tired outfield player.
-    const candidates = myXIRef.current
+    const isGK = (p: any) => {
+      const positions = Array.isArray(p?.positions) ? p.positions.map((x: any) => String(x).toUpperCase()) : [];
+      const position = String(p?.position ?? "").toUpperCase();
+      return position === "GK" || position === "POR" || positions.includes("GK") || positions.includes("POR");
+    };
+    const isInjured = (p: any) => !!p && isPlayerInjuredAtDate(p, usePlayersStore.getState().currentDate);
+    const alreadyEntered = new Set(subsRef.current.map((s: any) => s.inId));
+
+    const candidatesOut = myXIRef.current
       .map((id) => ({ id, p: playerById(id), st: staminaRef.current[id] ?? STAMINA_START }))
-      .filter((c) => c.p && c.p.position !== "GK" && c.p.position !== "POR")
-      .sort((a, b) => a.st - b.st);
-    const worst = candidates[0];
-    if (!worst || worst.st > staminaThreshold) return [];
+      .filter((c) => c.p && !isGK(c.p) && !goneRef.current.includes(c.id));
+    if (candidatesOut.length === 0) return [];
 
-    const inId =
-      myBenchRef.current.find((id) => {
-        const bp = playerById(id);
-        return (
-          bp &&
-          !goneRef.current.includes(id) &&
-          !isPlayerInjuredAtDate(bp, usePlayersStore.getState().currentDate) &&
-          bp.position !== "GK" &&
-          bp.position !== "POR"
-        );
-      }) ??
-      myBenchRef.current.find(
-        (id) =>
-          !goneRef.current.includes(id) &&
-          !isPlayerInjuredAtDate(playerById(id), usePlayersStore.getState().currentDate),
-      );
-    if (!inId) return [];
+    // Do not always remove the exact same lowest-stamina player. Pick among the
+    // tired/less-fresh group with a small random component.
+    candidatesOut.sort((a, b) =>
+      ((100 - b.st) + Math.random() * 14) - ((100 - a.st) + Math.random() * 14),
+    );
+    const outPool = candidatesOut.slice(0, Math.min(5, candidatesOut.length));
+    const worst = outPool[Math.floor(Math.random() * outPool.length)];
+    if (!worst?.p) return [];
+
+    const benchPlayers = myBenchRef.current
+      .filter((id) => !goneRef.current.includes(id) && !alreadyEntered.has(id))
+      .map((id) => playerById(id))
+      .filter((p): p is any => !!p && !isInjured(p));
+
+    const roleCompatible = benchPlayers.filter((p) => isGK(p) === isGK(worst.p));
+    if (roleCompatible.length === 0) return [];
+
+    const samePosition = roleCompatible.filter((p) => {
+      const outPositions = new Set([...(Array.isArray(worst.p.positions) ? worst.p.positions : []), worst.p.position].filter(Boolean));
+      return (Array.isArray(p.positions) ? p.positions : [p.position]).some((pos: any) => outPositions.has(pos));
+    });
+    const inPool = (samePosition.length > 0 ? samePosition : roleCompatible).slice();
+    inPool.sort((a, b) =>
+      ((b.rating ?? 70) + Math.random() * 6) - ((a.rating ?? 70) + Math.random() * 6),
+    );
+    const playerIn = inPool[Math.floor(Math.random() * Math.min(4, inPool.length))];
+    if (!playerIn) return [];
 
     const xi = [...myXIRef.current];
-    xi[xi.indexOf(worst.id)] = inId;
+    const outIndex = xi.indexOf(worst.id);
+    if (outIndex < 0) return [];
+    xi[outIndex] = playerIn.id;
     myXIRef.current = xi;
     setMyXI(xi);
-    myBenchRef.current = myBenchRef.current.filter((id) => id !== inId);
+    myBenchRef.current = myBenchRef.current.filter((id) => id !== playerIn.id && id !== worst.id);
     setMyBench(myBenchRef.current);
-    staminaRef.current = { ...staminaRef.current, [inId]: STAMINA_START };
+    staminaRef.current = { ...staminaRef.current, [playerIn.id]: STAMINA_START };
     setStamina(staminaRef.current);
     subsUsedRef.current += 1;
     setSubsUsed(subsUsedRef.current);
-    windowsUsedRef.current += 1;
-    setWindowsUsed(windowsUsedRef.current);
+
+    // Multiple substitutions in the same planned window count as ONE window.
+    // This is why the manager can legally make 4-5 changes instead of being
+    // accidentally capped at 3.
+    const lastSub = subsRef.current[subsRef.current.length - 1];
+    const sameWindow = lastSub && Number(lastSub.minute) === Number(m);
+    if (!sameWindow) {
+      windowsUsedRef.current += 1;
+      setWindowsUsed(windowsUsedRef.current);
+    }
 
     const entry = {
       minute: m,
       outId: worst.id,
-      outName: playerById(worst.id)?.name ?? worst.id,
-      inId,
-      inName: playerById(inId)?.name ?? inId,
+      outName: worst.p.name,
+      inId: playerIn.id,
+      inName: playerIn.name,
     };
     subsRef.current = [...subsRef.current, entry];
     setSubsMade(subsRef.current);
@@ -4368,6 +4610,10 @@ function MatchPage() {
       highlightKey,
     );
 
+    // Create the assistant's substitution plan once per simulated match. It is
+    // deliberately randomised so the same three minutes/players are not replayed.
+    autoSubPlanRef.current = buildAutoSubPlan(currentMinute);
+
     const madeWhileSkipping: any[] = [];
     for (let m = currentMinute + 1; m <= 90; m++) {
       drainStamina();
@@ -4377,9 +4623,12 @@ function MatchPage() {
           h.type === "injury" &&
           h.team !== mySideOf(fixtureRef.current),
       );
-      const autoSubMinutes = [61, 71, 80];
-      if (autoSubMinutes.includes(m)) {
-        madeWhileSkipping.push(...autoSubMyTeamAt(m, m === 61 ? 80 : 101));
+      if (autoSubPlanRef.current.includes(m)) {
+        // A minute can contain 2-3 substitutions in the same legal window.
+        const plannedCount = autoSubPlanRef.current.filter((minute) => minute === m).length;
+        for (let i = 0; i < plannedCount; i++) {
+          madeWhileSkipping.push(...autoSubMyTeamAt(m));
+        }
       }
 
       const evs = allEventsRef.current.filter((e) => e.minute === m).map(remapEventToPitch);

@@ -288,7 +288,14 @@ function LineupPage() {
     const configured = save.substitutes?.[save.myTeamId];
     const activePlan = tacticPlanState?.plans.find((plan) => plan.id === tacticPlanState.activeId);
     const hasPlanSelection = !!activePlan && activePlan.substitutes.length > 0;
-    if (bench.length === 0 && configured === undefined && !hasPlanSelection) {
+    // An explicitly stored empty array is also an uninitialised bench.
+    // Before a match starts we must have real convocados so the live simulator
+    // can make legal substitutions; players outside these 12 remain Reservas.
+    if (
+      bench.length === 0 &&
+      (!Array.isArray(configured) || configured.length === 0) &&
+      !hasPlanSelection
+    ) {
       const defaults = squad
         .filter((player) => !startingXI.includes(player.id) && !isCurrentlyInjured(player))
         .sort((a, b) => b.rating - a.rating)
@@ -1420,13 +1427,49 @@ function LineupPage() {
 
     const newFormationPositions = getFormationPositions(newFormation);
 
-    // Reasignamos el 11 hueco a hueco por DEMARCACIÓN concreta.
-    // Solo se permiten las posiciones que el jugador tenga realmente
-    // declaradas (principal o alternativa); no se hacen conversiones.
+    // During a live match, red cards and mandatory injury vacancies are real
+    // absences, not ordinary empty slots. Preserve them across formation
+    // changes so changing shape cannot silently restore an expelled player.
+    const reservedLiveSlots = new Set<number>(
+      Object.values(liveGoneSlotIndexesRef.current).filter(
+        (value) => Number.isInteger(value) && value >= 0 && value < newFormationPositions.length,
+      ),
+    );
+
+    if (liveMode && liveRedCardIds.length > 0) {
+      // A red-card snapshot from before this fix may have the player removed but
+      // no stored slot. Bind those cards to currently empty slots before rebuild.
+      const emptyIndexes = startingXI
+        .map((id, index) => (!id ? index : -1))
+        .filter((index) => index >= 0 && !reservedLiveSlots.has(index));
+      liveRedCardIds
+        .filter((id) => !Number.isInteger(liveGoneSlotIndexesRef.current[id]))
+        .forEach((id, offset) => {
+          const slot = emptyIndexes[offset];
+          if (slot !== undefined && slot < newFormationPositions.length) {
+            liveGoneSlotIndexesRef.current[id] = slot;
+            reservedLiveSlots.add(slot);
+          }
+        });
+    }
+
+    if (liveMode) {
+      for (const index of Object.values(livePendingForcedInjurySlotsRef.current)) {
+        if (Number.isInteger(index) && index >= 0 && index < newFormationPositions.length) {
+          reservedLiveSlots.add(index);
+        }
+      }
+    }
+
     const availableIds = startingXI.filter((id) => !!id);
     const newStartingXI: string[] = [];
 
-    newFormationPositions.forEach((posKey) => {
+    newFormationPositions.forEach((posKey, index) => {
+      if (liveMode && reservedLiveSlots.has(index)) {
+        newStartingXI.push("");
+        return;
+      }
+
       const slot = slotPosCode(posKey);
       const pick = (predicate: (codes: PosCode[]) => boolean) =>
         availableIds.find((id) => {
@@ -1440,15 +1483,10 @@ function LineupPage() {
         availableIds.splice(availableIds.indexOf(chosen), 1);
         newStartingXI.push(chosen);
       } else {
-        // Sin jugador válido para esta demarcación: hueco vacío.
         newStartingXI.push("");
       }
     });
 
-    // Keep empty strings to maintain correct position mapping.
-    // Preserve the current convocados and move displaced starters to the bench
-    // only while the 12-player limit still has room. Everyone else remains in
-    // Reservas.
     setStartingXI(newStartingXI);
     const displacedStarters = startingXI.filter((id) => id && !newStartingXI.includes(id));
     const newBench = Array.from(
@@ -2242,12 +2280,37 @@ function LineupPage() {
                 (playerId) => !suspendedPlayerIds.has(playerId),
               );
 
-              // Persist the active plan itself even when this screen is editing
-              // a one-off match configuration. The global SaveGame is still left
-              // untouched until the match flow decides to restore it.
+              // Starting a match is an automatic team-management checkpoint:
+              // persist the exact XI, formation and 0-12 convocados before
+              // navigating to the match. This guarantees that "Saltar al final"
+              // never starts with an empty bench because of stale plan state.
+              const matchBench = bench
+                .filter((id) => id && !filteredStartingXI.includes(id))
+                .slice(0, 12);
+              const fallbackBench =
+                matchBench.length > 0
+                  ? matchBench
+                  : squad
+                      .filter((player) => !filteredStartingXI.includes(player.id) && !isCurrentlyInjured(player))
+                      .sort((a, b) => b.rating - a.rating)
+                      .slice(0, 12)
+                      .map((player) => player.id);
+
+              let matchStartSave = save;
+              matchStartSave = setLineup(
+                matchStartSave,
+                save.myTeamId,
+                filteredStartingXI.slice(0, 11),
+              );
+              matchStartSave = setFormation(matchStartSave, save.myTeamId, selectedFormation);
+              matchStartSave = setSubstitutes(matchStartSave, save.myTeamId, fallbackBench);
+              saveSave(matchStartSave);
+              setSave(matchStartSave);
+
+              // Keep the tactical preset in sync with the checkpoint too.
               persistCurrentPlan(false);
 
-              // Pass temporary lineup to match engine via router state
+              // Pass the same persisted XI/bench to the match engine via router state
               // This allows one-off changes for this specific match only
               // Also forward ALL match metadata (matchType, cupRound, fixtureId) for correct post-match simulation
               // If returning from lineup edit in a cup draw, pass returningFromLineupEdit to restore the draw state
@@ -2256,9 +2319,7 @@ function LineupPage() {
                 state: {
                   matchLineup: filteredStartingXI,
                   matchFormation: selectedFormation,
-                  matchSubstitutes: bench
-                    .filter((id) => id && !filteredStartingXI.includes(id))
-                    .slice(0, 12),
+                  matchSubstitutes: fallbackBench,
                   matchType: matchType || "LEAGUE", // Default to LEAGUE if undefined
                   cupRound,
                   fixtureId,
