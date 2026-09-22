@@ -168,6 +168,32 @@ export function fatiguePenalty(stamina: number): number {
 }
 
 /** Extra injury-risk multiplier caused by fatigue. */
+/** Multiplicador de rendimiento puramente físico. La forma del jugador no interviene. */
+export function staminaPerformanceMultiplier(stamina: number): number {
+  const e = Math.max(0, Math.min(100, Number(stamina) || 0));
+  if (e >= 90) return 0.97 + (e - 90) * 0.003;
+  if (e >= 80) return 0.94 + (e - 80) * 0.003;
+  if (e >= 70) return 0.89 + (e - 70) * 0.005;
+  if (e >= 60) return 0.82 + (e - 60) * 0.007;
+  if (e >= 50) return 0.73 + (e - 50) * 0.009;
+  if (e >= 40) return 0.62 + (e - 40) * 0.011;
+  if (e >= 30) return 0.50 + (e - 30) * 0.012;
+  if (e >= 20) return 0.36 + (e - 20) * 0.014;
+  if (e >= 10) return 0.25 + (e - 10) * 0.011;
+  return 0.15 + e * 0.01;
+}
+
+/** Recuperación determinista diaria: cuanto más baja la energía, más fácil es recuperar. */
+export function recoverStamina(stamina: number, days: number): number {
+  let value = Math.max(0, Math.min(100, Number(stamina) || 0));
+  const safeDays = Math.max(0, Math.floor(Number(days) || 0));
+  for (let i = 0; i < safeDays && value < 100; i++) {
+    const gain = value >= 97 ? 1.5 : value >= 90 ? 2.5 : value >= 75 ? 4 : value >= 55 ? 5 : value >= 35 ? 6 : 7;
+    value = Math.min(100, value + gain);
+  }
+  return Math.round(value * 10) / 10;
+}
+
 export function fatigueInjuryRisk(stamina: number): number {
   if (stamina >= 65) return 1;
   if (stamina >= 45) return 1.4;

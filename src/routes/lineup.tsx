@@ -51,6 +51,7 @@ import {
   CornerDownRight,
   CalendarClock,
   Plus,
+  Zap,
 } from "lucide-react";
 import { loadLive, saveLive, subLimits, isFreeWindow, type LiveMatchState } from "@/lib/liveMatch";
 import { btnPrimary, btnSecondary, infoChip } from "@/components/match/matchUi";
@@ -105,6 +106,7 @@ function LineupPage() {
   const rosterIds = usePlayersStore((s) => s.rosterIds);
   const currentDate = usePlayersStore((s) => s.currentDate);
   const clubOverrides = usePlayersStore((s) => s.clubOverrides);
+  const playerStats = usePlayersStore((s) => s.stats);
   const [save, setSave] = useState<SaveGame | null>(null);
   const [selectedFormation, setSelectedFormation] = useState<FormationName>("Táctica 4-3-3");
   const [startingXI, setStartingXI] = useState<string[]>([]);
@@ -232,7 +234,7 @@ function LineupPage() {
 
   const squad = useMemo(
     () => (save && ready ? getSimSquad(save.myTeamId) : []),
-    [save, ready, getSimSquad, rosterIds, clubOverrides],
+    [save, ready, getSimSquad, rosterIds, clubOverrides, playerStats],
   );
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
   const isCurrentlyInjured = (player: any) => isPlayerInjuredAtDate(player, currentDate, leagueMd);
@@ -288,14 +290,7 @@ function LineupPage() {
     const configured = save.substitutes?.[save.myTeamId];
     const activePlan = tacticPlanState?.plans.find((plan) => plan.id === tacticPlanState.activeId);
     const hasPlanSelection = !!activePlan && activePlan.substitutes.length > 0;
-    // An explicitly stored empty array is also an uninitialised bench.
-    // Before a match starts we must have real convocados so the live simulator
-    // can make legal substitutions; players outside these 12 remain Reservas.
-    if (
-      bench.length === 0 &&
-      (!Array.isArray(configured) || configured.length === 0) &&
-      !hasPlanSelection
-    ) {
+    if (bench.length === 0 && configured === undefined && !hasPlanSelection) {
       const defaults = squad
         .filter((player) => !startingXI.includes(player.id) && !isCurrentlyInjured(player))
         .sort((a, b) => b.rating - a.rating)
@@ -1719,6 +1714,7 @@ function LineupPage() {
                       id: player.id,
                       name: player.name,
                       rating: player.rating,
+                      energy: player.energy,
                       position: player.position,
                       slotLabel: getSlotCodeForKey(posKey),
                       otherPositions: posCodesOf(player).filter(
@@ -1919,6 +1915,18 @@ function LineupPage() {
                     <div className="text-xs text-muted-foreground">
                       {posLabelOf(player)} · {player.age}a · {player.goals}G {player.assists}A
                     </div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className={`inline-flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[0.55rem] font-black ${
+                        (player.energy ?? 100) >= 80
+                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                          : (player.energy ?? 100) >= 55
+                            ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
+                            : "border-destructive/30 bg-destructive/10 text-destructive"
+                      }`}>
+                        <Zap className="h-2.5 w-2.5 fill-current" />
+                        <span>{Math.round(player.energy ?? 100)}%</span>
+                      </span>
+                    </div>
                   </div>
                   {selectedPlayer === player.id && <span className="text-primary text-lg">✓</span>}
                 </div>
@@ -1988,6 +1996,18 @@ function LineupPage() {
                         <p className="text-xs text-muted-foreground">
                           {posLabelOf(player)} · {player.age}a · OVR {player.rating}
                         </p>
+                        <div className="mt-1">
+                          <span className={`inline-flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[0.55rem] font-black ${
+                            (player.energy ?? 100) >= 80
+                              ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                              : (player.energy ?? 100) >= 55
+                                ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
+                                : "border-destructive/30 bg-destructive/10 text-destructive"
+                          }`}>
+                            <Zap className="h-2.5 w-2.5 fill-current" />
+                            <span>{Math.round(player.energy ?? 100)}%</span>
+                          </span>
+                        </div>
                         {isInjured && (
                           <p className="mt-1 text-[0.62rem] font-semibold text-destructive">
                             {player.injuryReason || "Lesión"} ·{" "}
@@ -2280,37 +2300,12 @@ function LineupPage() {
                 (playerId) => !suspendedPlayerIds.has(playerId),
               );
 
-              // Starting a match is an automatic team-management checkpoint:
-              // persist the exact XI, formation and 0-12 convocados before
-              // navigating to the match. This guarantees that "Saltar al final"
-              // never starts with an empty bench because of stale plan state.
-              const matchBench = bench
-                .filter((id) => id && !filteredStartingXI.includes(id))
-                .slice(0, 12);
-              const fallbackBench =
-                matchBench.length > 0
-                  ? matchBench
-                  : squad
-                      .filter((player) => !filteredStartingXI.includes(player.id) && !isCurrentlyInjured(player))
-                      .sort((a, b) => b.rating - a.rating)
-                      .slice(0, 12)
-                      .map((player) => player.id);
-
-              let matchStartSave = save;
-              matchStartSave = setLineup(
-                matchStartSave,
-                save.myTeamId,
-                filteredStartingXI.slice(0, 11),
-              );
-              matchStartSave = setFormation(matchStartSave, save.myTeamId, selectedFormation);
-              matchStartSave = setSubstitutes(matchStartSave, save.myTeamId, fallbackBench);
-              saveSave(matchStartSave);
-              setSave(matchStartSave);
-
-              // Keep the tactical preset in sync with the checkpoint too.
+              // Persist the active plan itself even when this screen is editing
+              // a one-off match configuration. The global SaveGame is still left
+              // untouched until the match flow decides to restore it.
               persistCurrentPlan(false);
 
-              // Pass the same persisted XI/bench to the match engine via router state
+              // Pass temporary lineup to match engine via router state
               // This allows one-off changes for this specific match only
               // Also forward ALL match metadata (matchType, cupRound, fixtureId) for correct post-match simulation
               // If returning from lineup edit in a cup draw, pass returningFromLineupEdit to restore the draw state
@@ -2319,7 +2314,9 @@ function LineupPage() {
                 state: {
                   matchLineup: filteredStartingXI,
                   matchFormation: selectedFormation,
-                  matchSubstitutes: fallbackBench,
+                  matchSubstitutes: bench
+                    .filter((id) => id && !filteredStartingXI.includes(id))
+                    .slice(0, 12),
                   matchType: matchType || "LEAGUE", // Default to LEAGUE if undefined
                   cupRound,
                   fixtureId,

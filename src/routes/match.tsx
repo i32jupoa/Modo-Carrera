@@ -1584,8 +1584,13 @@ function MatchPage() {
       setSave(checkpoint);
     }
     const st: Record<string, number> = {};
+    const startingSet = new Set(ids);
     squad.forEach((p) => {
-      st[p.id] = STAMINA_START;
+      // Starters carry their persisted physical energy into the match.
+      // Everyone who begins on the bench/reserves is fresh at 100 for this match.
+      st[p.id] = startingSet.has(p.id)
+        ? Math.max(0, Math.min(100, Number(p.energy ?? STAMINA_START)))
+        : STAMINA_START;
     });
     initialMyXIRef.current = ids.slice();
     finalPerformanceRecordedRef.current = false;
@@ -2384,6 +2389,60 @@ function MatchPage() {
       store.recordMotm(performance.mvp.playerId, fx.competition);
     }
 
+    // Match energy is physical state, independent from form. Persist the
+    // exact final stamina for the manager's XI and reconstruct the opponent's
+    // energy from the substitutions that actually happened in the chronicle.
+    // This avoids using the engine's pre-planned substitution list when the AI
+    // changed its plan during the live match. Unused bench/reserve players are
+    // reset to 100 by setTeamMatchEnergy.
+    const myTeamId = myTeamIdRef.current || save?.myTeamId;
+    const opponentTeamId = myTeamId && fx.homeId === myTeamId ? fx.awayId : fx.homeId;
+
+    if (myTeamId) {
+      store.setTeamMatchEnergy(myTeamId, { ...staminaRef.current }, fx.date);
+    }
+
+    if (opponentTeamId) {
+      const opponentSide: "home" | "away" = fx.homeId === opponentTeamId ? "home" : "away";
+      const opponentInitial = opponentSide === "home" ? performance.homeParticipants : performance.awayParticipants;
+      const opponentSubstitutions = [
+        ...(oppSubsDoneRef.current || [])
+          .filter((sub: any) => sub.team === opponentSide)
+          .map((sub: any) => ({
+            minute: Number(sub.minute) || 0,
+            playerOutId: sub.outId ?? sub.playerOutId,
+            playerInId: sub.inId ?? sub.playerInId,
+          })),
+      ].sort((a, b) => a.minute - b.minute);
+      const opponentTactics = loadTactics(opponentTeamId) || {};
+      const opponentPressure = opponentTactics.pressure || "medium";
+      const opponentStaminaMultiplier = tacticsModifiers(opponentTactics).stamina;
+      const enteredAt = new Map<string, number>();
+      for (const sub of opponentSubstitutions) enteredAt.set(sub.playerInId, sub.minute);
+
+      const opponentEnergy: Record<string, number> = {};
+      for (const player of opponentInitial) {
+        const mins = Number(performance.minutesPlayed[player.id] ?? 0);
+        if (mins <= 0) {
+          opponentEnergy[player.id] = STAMINA_START;
+          continue;
+        }
+        const startEnergy = enteredAt.has(player.id)
+          ? STAMINA_START
+          : Math.max(0, Math.min(100, Number(player.energy ?? STAMINA_START)));
+        const drain = drainPerMinute(
+          player.positions?.[0] ?? "MC",
+          opponentPressure as "low" | "medium" | "high",
+          opponentStaminaMultiplier,
+        );
+        opponentEnergy[player.id] = Math.round(
+          Math.max(0, Math.min(100, startEnergy - mins * drain)) * 10,
+        ) / 10;
+      }
+
+      store.setTeamMatchEnergy(opponentTeamId, opponentEnergy, fx.date);
+    }
+
     finalPerformanceRecordedRef.current = true;
     return performance;
   }
@@ -2489,6 +2548,10 @@ function MatchPage() {
           awayStartingLineup: performance.awayStartingXI,
           homeFinalLineup: performance.homeFinalXI,
           awayFinalLineup: performance.awayFinalXI,
+          energyAtEnd: {
+            ...(nextResult.energyAtEnd || {}),
+            ...staminaRef.current,
+          },
         }
       : nextResult;
 
@@ -4402,6 +4465,134 @@ function MatchPage() {
   }
 
   /**
+   * Resolve one of my injuries automatically during "Saltar al final".
+   * The detailed engine already decides whether a compatible replacement exists
+   * and stores that forced substitution in the fixture result; the fast-forward
+   * layer must actually execute it, otherwise an injured player could remain on
+   * the pitch for the rest of the simulated match.
+   */
+  function autoResolveMyInjuryAt(m: number): any[] {
+    const fx = fixtureRef.current;
+    if (!fx?.result) return [];
+    const mySide = mySideOf(fx);
+    const injury = (fx.result.injuries || []).find(
+      (i: any) =>
+        i.team === mySide &&
+        Number(i.minute ?? 0) === m &&
+        !handledInjuriesRef.current.includes(i.playerId),
+    );
+    if (!injury) return [];
+
+    const currentIndex = myXIRef.current.indexOf(injury.playerId);
+    if (currentIndex < 0) return [];
+    handledInjuriesRef.current = [...handledInjuriesRef.current, injury.playerId];
+
+    // The injured player always leaves the pitch, even when no legal change remains.
+    playWithOneLess(injury.playerId, injury.playerName, "injury");
+
+    const check = canSubstitute(
+      {
+        subsUsed: subsUsedRef.current,
+        windowsUsed: windowsUsedRef.current,
+        isExtraTime: isExtraTimeRef.current,
+        phase: "playing",
+      },
+      1,
+    );
+    if (!check.ok) return [];
+
+    const planned = (fx.result.substitutions || []).find(
+      (sub: any) =>
+        sub.team === mySide &&
+        Number(sub.minute ?? 0) === m &&
+        sub.playerOutId === injury.playerId,
+    );
+
+    const benchPlayers = myBenchRef.current
+      .filter((id) => !goneRef.current.includes(id))
+      .map((id) => playerById(id))
+      .filter(Boolean);
+    const isGK = (p: any) => {
+      const pos = [
+        ...(Array.isArray(p?.positions) ? p.positions : []),
+        p?.position,
+      ].filter(Boolean).map((x: any) => String(x).toUpperCase());
+      return pos.some((x: string) => ["GK", "POR", "GOALKEEPER", "PORTERO"].includes(x));
+    };
+    const injuredPlayer = playerById(injury.playerId);
+    const compatible = benchPlayers.filter((p: any) =>
+      injuredPlayer ? isGK(p) === isGK(injuredPlayer) : true,
+    );
+    if (!compatible.length) return [];
+
+    let playerIn = planned
+      ? compatible.find((p: any) => p.id === planned.playerInId)
+      : undefined;
+    if (!playerIn) {
+      const samePosition = injuredPlayer
+        ? compatible.filter((p: any) => {
+            const outPositions = new Set([
+              ...(Array.isArray(injuredPlayer.positions) ? injuredPlayer.positions : []),
+              injuredPlayer.position,
+            ].filter(Boolean));
+            return (Array.isArray(p.positions) ? p.positions : [p.position]).some((pos: any) =>
+              outPositions.has(pos),
+            );
+          })
+        : [];
+      const pool = samePosition.length ? samePosition : compatible;
+      playerIn = pool.slice().sort(
+        (a: any, b: any) => (b.rating ?? 70) - (a.rating ?? 70),
+      )[0];
+    }
+    if (!playerIn) return [];
+
+    const xi = [...myXIRef.current];
+    const emptyIndex = xi.findIndex((id) => !id);
+    const targetIndex = emptyIndex >= 0 ? emptyIndex : currentIndex;
+    if (targetIndex < 0) return [];
+    xi[targetIndex] = playerIn.id;
+    myXIRef.current = xi;
+    setMyXI(xi);
+    myBenchRef.current = myBenchRef.current.filter((id) => id !== playerIn.id);
+    setMyBench(myBenchRef.current);
+    staminaRef.current = { ...staminaRef.current, [playerIn.id]: STAMINA_START };
+    setStamina(staminaRef.current);
+
+    // The forced injury substitution uses one of the normal substitution
+    // windows unless it shares a minute with another already-made change.
+    const lastSub = subsRef.current[subsRef.current.length - 1];
+    const sameWindow = lastSub && Number(lastSub.minute) === m;
+    subsUsedRef.current += 1;
+    setSubsUsed(subsUsedRef.current);
+    if (!sameWindow) {
+      windowsUsedRef.current += 1;
+      setWindowsUsed(windowsUsedRef.current);
+    }
+
+    const entry = {
+      minute: m,
+      outId: injury.playerId,
+      outName: injury.playerName,
+      inId: playerIn.id,
+      inName: playerIn.name,
+    };
+    subsRef.current = [...subsRef.current, entry];
+    setSubsMade(subsRef.current);
+    delete pendingForcedInjurySlotsRef.current[injury.playerId];
+
+    return [{
+      minute: m,
+      team: mySide,
+      inName: entry.inName,
+      outName: entry.outName,
+      playerInId: entry.inId,
+      playerOutId: entry.outId,
+      forcedInjury: true,
+    }];
+  }
+
+  /**
    * Build a varied automatic-substitution plan for "Saltar al final".
    * The number of changes is random within the legal 0-5 range and is grouped
    * into 1-3 substitution windows, so 2, 3, 4 or 5 are all possible.
@@ -4617,6 +4808,14 @@ function MatchPage() {
     const madeWhileSkipping: any[] = [];
     for (let m = currentMinute + 1; m <= 90; m++) {
       drainStamina();
+
+      // Injuries are emergency events: resolve them before ordinary planned
+      // substitutions so the injured player can never remain on the pitch.
+      const forcedInjurySubs = autoResolveMyInjuryAt(m);
+      if (forcedInjurySubs.length > 0) {
+        madeWhileSkipping.push(...forcedInjurySubs);
+      }
+
       const opponentInjuryAtMinute = allHighlightsRef.current.some(
         (h: any) =>
           h.minute === m &&

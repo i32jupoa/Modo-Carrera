@@ -80,6 +80,8 @@ export type Player = {
   injuryReason?: string;
   morale: number;
   formHistory: number[];
+  /** Energía física actual (0-100). La forma no participa en la simulación. */
+  energy?: number;
   cardImage?: string;
   /** Estadísticas de balón parado importadas del dataset original. */
   penalties?: number;

@@ -1,6 +1,7 @@
 import { PositionCoordinate } from "@/lib/formations";
 import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
+import { Zap } from "lucide-react";
 
 interface FootballPitchProps {
   children: React.ReactNode;
@@ -52,6 +53,7 @@ interface PlayerNodeProps {
     id: string;
     name: string;
     rating: number;
+    energy?: number;
     position: string;
     /** Demarcación del hueco que ocupa en el campo ("EI"). */
     slotLabel?: string;
@@ -110,7 +112,23 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
           showRing={false}
           className="shadow-md"
         />
-        <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1.5 text-[0.6rem] font-black leading-tight text-foreground shadow">
+        <span
+          className={`absolute -top-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[0.48rem] font-black leading-none tabular-nums shadow backdrop-blur-sm ${
+            (player.energy ?? 100) >= 80
+              ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-200"
+              : (player.energy ?? 100) >= 55
+                ? "border-amber-400/30 bg-amber-500/15 text-amber-200"
+                : "border-destructive/30 bg-destructive/15 text-destructive"
+          }`}
+          title={`Energía: ${Math.round(player.energy ?? 100)}%`}
+        >
+          <Zap className="h-2.5 w-2.5 fill-current" />
+          <span>{Math.round(player.energy ?? 100)}</span>
+        </span>
+        <span
+          className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1.5 text-[0.6rem] font-black leading-tight tabular-nums text-foreground shadow"
+          title={`Media: ${player.rating}`}
+        >
           {player.rating}
         </span>
         {player.otherPositions && player.otherPositions.length > 0 && (

@@ -64,6 +64,7 @@ import {
 import type { DynamicPlayerStats } from "@/types/playerStats";
 
 import { addDaysToIso, GAME_START_DATE, isMarketOpenForIso } from "@/lib/transferWindows";
+import { recoverStamina, STAMINA_START } from "@/lib/liveMatch";
 
 import {
   buildFullLeagueSchedule,
@@ -339,6 +340,11 @@ export type PlayerStats = {
 
   accumulatedYellowCards: number;
 
+  /** Energía física persistente del jugador (0-100). */
+  energy: number;
+  /** Última fecha hasta la que se aplicó recuperación. */
+  energyLastUpdatedDate: string;
+
   /** Estadísticas dinámicas que cambian con el tiempo (persistidas por partida) */
   dynamicStats?: DynamicPlayerStats;
 };
@@ -562,6 +568,9 @@ function defaultStats(): PlayerStats {
     redCards: 0,
 
     accumulatedYellowCards: 0,
+
+    energy: STAMINA_START,
+    energyLastUpdatedDate: GAME_START_DATE,
   };
 }
 
@@ -786,6 +795,8 @@ function fcToPlayer(
 
     formHistory: stats.formHistory,
 
+    energy: Math.max(0, Math.min(100, Number(stats.energy ?? STAMINA_START))),
+
     // Inicializar estadísticas dinámicas si no existen
     dynamicStats: stats.dynamicStats || initializeDynamicStats(fc.OVR),
   };
@@ -916,6 +927,11 @@ type PlayersState = {
   getSimSquad: (teamId: string) => Player[];
 
   getSimXI: (teamId: string, lineupIds: string[], leagueMatchday: number) => Player[];
+
+  /** Aplica el resultado físico de un partido a los dos equipos. */
+  setTeamMatchEnergy: (teamId: string, energyByPlayer: Record<string, number>, matchDate?: string) => void;
+  /** Recupera energía día a día hasta la fecha indicada. */
+  recoverPlayerEnergyToDate: (targetDate: string) => void;
 
   recordAppearance: (playerId: string, competition?: string, minutes?: number) => void;
 
@@ -1209,6 +1225,11 @@ export const usePlayersStore = create<PlayersState>()(
           state.getSimXI(teamId, [], matchday),
         );
 
+        if (sim.energyAtEnd) {
+          state.setTeamMatchEnergy(fixture.homeTeam, sim.energyAtEnd, fixture.date);
+          state.setTeamMatchEnergy(fixture.awayTeam, sim.energyAtEnd, fixture.date);
+        }
+
         const scores = {
           homeScore: sim.homeGoals,
 
@@ -1243,6 +1264,7 @@ export const usePlayersStore = create<PlayersState>()(
 
         if (!state.myTeamId) {
           const nextDate = addDaysToIso(state.currentDate, days);
+          get().recoverPlayerEnergyToDate(nextDate);
           syncPlayerAgesForDate(nextDate);
           set({ currentDate: nextDate });
 
@@ -1633,6 +1655,13 @@ export const usePlayersStore = create<PlayersState>()(
             get().recordAppearance(playerId, f.competition, minuteMap.has(playerId) ? minuteMap.get(playerId) : 90);
           }
 
+          // Persist physical energy after every simulated fixture. The method
+          // also resets unused bench/reserve players to 100 as required.
+          if (result.energyAtEnd) {
+            get().setTeamMatchEnergy(f.homeTeam, result.energyAtEnd, f.date);
+            get().setTeamMatchEnergy(f.awayTeam, result.energyAtEnd, f.date);
+          }
+
           // Record goals and assists from events
 
           for (const ev of result.events) {
@@ -1654,6 +1683,9 @@ export const usePlayersStore = create<PlayersState>()(
 
         for (let d = 0; d < days; d++) {
           const nextDate = addDaysToIso(date, 1);
+
+          // La energía se recupera con el paso del calendario, nunca por forma.
+          get().recoverPlayerEnergyToDate(nextDate);
 
           const onDay = unplayedOnDate(fixtures, nextDate);
 
@@ -1799,6 +1831,7 @@ export const usePlayersStore = create<PlayersState>()(
           lastUserMatchResult: null,
 
           dismissedMatchIds: [],
+          stats: {},
         });
       },
 
@@ -2104,6 +2137,8 @@ export const usePlayersStore = create<PlayersState>()(
             redCards: 0,
 
             accumulatedYellowCards: 0,
+            energy: Math.max(0, Math.min(100, Number((p as any).energy ?? STAMINA_START))),
+            energyLastUpdatedDate: GAME_START_DATE,
           };
         }
 
@@ -2154,7 +2189,17 @@ export const usePlayersStore = create<PlayersState>()(
         const teamIdOverride =
           myTeamId && rosterIds.includes(playerId) ? myTeamId : (overriddenClub ?? undefined);
 
-        return fcToPlayer(fc, stats, teamIdOverride);
+        // La energía física persistente es exclusiva del equipo del usuario.
+        // Los equipos CPU empiezan SIEMPRE cada partido con 100 y su desgaste
+        // solo existe dentro de la simulación de ese encuentro.
+        const isUserControlledPlayer = !!myTeamId && teamIdOverride === myTeamId;
+        const playerForGame = fcToPlayer(fc, stats, teamIdOverride);
+        if (!isUserControlledPlayer) {
+          playerForGame.energy = STAMINA_START;
+          playerForGame.energyLastUpdatedDate = get().currentDate || GAME_START_DATE;
+        }
+
+        return playerForGame;
       },
 
       getSimSquad: (teamId) => {
@@ -2193,6 +2238,78 @@ export const usePlayersStore = create<PlayersState>()(
           .filter((p): p is Player => !!p && p.teamId === teamId && !unavailable.has(p.id));
 
         return xi.slice(0, 11);
+      },
+
+      setTeamMatchEnergy: (teamId, energyByPlayer, matchDate) => {
+        const currentUserTeamId = get().myTeamId;
+
+        // Solo se persiste la energía del equipo controlado por el usuario.
+        // La energía de los rivales es temporal y siempre vuelve a 100 al
+        // comenzar su siguiente partido.
+        if (!currentUserTeamId || teamId !== currentUserTeamId) return;
+
+        const date = matchDate || get().currentDate || GAME_START_DATE;
+        const squad = get().getSimSquad(teamId);
+        if (!squad.length) return;
+        const next = { ...get().stats };
+        for (const player of squad) {
+          const existing = next[player.id] ?? defaultStats();
+          const rawEnergy = Number(energyByPlayer[player.id]);
+          const energy = Number.isFinite(rawEnergy)
+            ? Math.max(0, Math.min(100, rawEnergy))
+            : STAMINA_START;
+          next[player.id] = {
+            ...existing,
+            energy,
+            energyLastUpdatedDate: date,
+          };
+        }
+        set({ stats: next });
+      },
+
+      recoverPlayerEnergyToDate: (targetDate) => {
+        const current = get();
+        const targetMs = new Date(`${targetDate}T00:00:00Z`).getTime();
+        if (!Number.isFinite(targetMs) || !current.myTeamId) return;
+
+        // Solo recuperamos la energía persistente del equipo del usuario.
+        // La CPU no arrastra fatiga entre partidos: sus jugadores siempre
+        // vuelven a 100 al iniciar cada encuentro.
+        const userSquadIds = new Set(
+          current.getFcSquadByTeamId(current.myTeamId).map((p) => String(p.ID)),
+        );
+        const next = { ...current.stats };
+        let changed = false;
+
+        const diffDays = (from: string, to: string) => {
+          const fromMs = new Date(`${from}T00:00:00Z`).getTime();
+          if (!Number.isFinite(fromMs) || targetMs <= fromMs) return 0;
+          return Math.floor((targetMs - fromMs) / 86400000);
+        };
+
+        for (const [playerId, raw] of Object.entries(next)) {
+          if (!userSquadIds.has(String(playerId))) continue;
+
+          const stats = raw ?? defaultStats();
+          const energy = Number.isFinite(Number(stats.energy))
+            ? Math.max(0, Math.min(100, Number(stats.energy)))
+            : STAMINA_START;
+          const lastDate = stats.energyLastUpdatedDate || current.currentDate || GAME_START_DATE;
+          const days = diffDays(lastDate, targetDate);
+          if (days <= 0 && stats.energy === energy && stats.energyLastUpdatedDate === lastDate) continue;
+
+          const recovered = days > 0 ? recoverStamina(energy, days) : energy;
+          if (recovered !== stats.energy || stats.energyLastUpdatedDate !== targetDate) {
+            next[playerId] = {
+              ...stats,
+              energy: recovered,
+              energyLastUpdatedDate: targetDate,
+            };
+            changed = true;
+          }
+        }
+
+        if (changed) set({ stats: next });
       },
 
       recordAppearance: (playerId, competition, minutes = 90) => {

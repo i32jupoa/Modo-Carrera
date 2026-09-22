@@ -1546,6 +1546,20 @@ function applyMatchToStats(
   // appearance/minute/rating/MVP/clean-sheet stats until the real chronicle is
   // finished. The engine may have planned different substitutions up front.
   const skipTeamId = options.skipPerformanceTeamId;
+
+  // Persist the end-of-match physical energy. For live user matches the
+  // manager's own exact stamina timeline is written later by match.tsx; here
+  // we intentionally persist only the opponent when a team is skipped.
+  // La energía persistente solo pertenece al equipo del usuario. Los rivales
+  // se consumen durante el partido, pero empiezan el siguiente con 100.
+  if (r.energyAtEnd && save.myTeamId) {
+    if (save.myTeamId === fixture.homeId && skipTeamId !== fixture.homeId) {
+      store.setTeamMatchEnergy(fixture.homeId, r.energyAtEnd, fixture.date);
+    } else if (save.myTeamId === fixture.awayId && skipTeamId !== fixture.awayId) {
+      store.setTeamMatchEnergy(fixture.awayId, r.energyAtEnd, fixture.date);
+    }
+  }
+
   const teamForPlayer = (playerId: string) =>
     homeXI.some((p) => p.id === playerId) ||
     (r.substitutions ?? []).some(
@@ -3997,6 +4011,12 @@ function recordFakeMatchStats(
     store.recordGoal(event.scorerId, competition);
     if (event.assistId) store.recordAssist(event.assistId, competition);
   }
+
+  // Los partidos rápidos de CPU no deben arrastrar energía al siguiente
+  // encuentro. Esta función no recibe el SaveGame y, por tanto, no puede
+  // consultar save.myTeamId aquí. La energía persistente de tu equipo se
+  // guarda en los caminos que sí conocen el SaveGame (match en directo /
+  // simulación profunda del equipo del usuario).
 
   // Fast cup paths can contain extra-time goals but no detailed event payload.
   // Credit any missing extra-time goals too, without double-counting events we
