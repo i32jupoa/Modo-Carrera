@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { persistCurrentSave, getCurrentSaveId } from "./savedGames";
-import { getSaveItem, setSaveItem, removeSaveItem } from "./saveStorage";
+import { getSaveItem, setSaveItem, removeSaveItem, isSaveStorageFallback } from "./saveStorage";
 
 import { saveTransferSystem } from "./transfers/Persistence";
 import {
@@ -137,7 +137,10 @@ function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: 
         dynamicStats: updatedStats,
       }));
     } catch (error) {
-      console.warn(`[monthly progression] jugador ${playerId} omitido para mantener la jornada jugable`, error);
+      console.warn(
+        `[monthly progression] jugador ${playerId} omitido para mantener la jornada jugable`,
+        error,
+      );
     }
   }
 
@@ -149,7 +152,10 @@ function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: 
     const currentStats = usePlayersStore.getState().stats ?? {};
     generateAllSquads(currentStats);
   } catch (error) {
-    console.warn("[monthly progression] no se pudo regenerar la caché de plantillas; se continúa la simulación", error);
+    console.warn(
+      "[monthly progression] no se pudo regenerar la caché de plantillas; se continúa la simulación",
+      error,
+    );
   }
 }
 
@@ -313,12 +319,12 @@ function findNextCpuFixture(save: SaveGame, teamId: string): CpuFixtureContext |
       }
     }
   }
-  for (const fixture of ((save.uclFixtures ?? []) as Fixture[])) {
+  for (const fixture of (save.uclFixtures ?? []) as Fixture[]) {
     if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
       candidates.push({ fixture, competition: "ucl" });
     }
   }
-  for (const fixture of ((save.ucl?.fixtures ?? []) as Fixture[])) {
+  for (const fixture of (save.ucl?.fixtures ?? []) as Fixture[]) {
     if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
       candidates.push({ fixture, competition: "ucl" });
     }
@@ -343,11 +349,13 @@ function findNextCpuFixture(save: SaveGame, teamId: string): CpuFixtureContext |
 }
 
 function squadStrengthForSelection(squad: Player[]): number {
-  return squad
-    .slice()
-    .sort((a, b) => b.rating - a.rating)
-    .slice(0, 11)
-    .reduce((sum, p) => sum + p.rating, 0) / Math.max(1, Math.min(11, squad.length));
+  return (
+    squad
+      .slice()
+      .sort((a, b) => b.rating - a.rating)
+      .slice(0, 11)
+      .reduce((sum, p) => sum + p.rating, 0) / Math.max(1, Math.min(11, squad.length))
+  );
 }
 
 /**
@@ -381,11 +389,10 @@ function pickXIForFormationWithRotation(
         const natural = isNaturalFor(p.positions, required);
         const can = canPlayPosition(p.positions, required);
         const rank = rankMap.get(p.id) ?? 99;
-        const noise = (seeded01(`${seed}:xi:${formation}:${key}:${p.id}`) - 0.5) * (rotationLevel * 7);
+        const noise =
+          (seeded01(`${seed}:xi:${formation}:${key}:${p.id}`) - 0.5) * (rotationLevel * 7);
         const eliteRest =
-          rotationLevel > 0 &&
-          rank < 8 &&
-          seeded01(`${seed}:rest:${p.id}`) < rotationLevel * 0.58
+          rotationLevel > 0 && rank < 8 && seeded01(`${seed}:rest:${p.id}`) < rotationLevel * 0.58
             ? (8 - rank) * rotationLevel
             : 0;
         const positionalPenalty = natural ? 0 : 5;
@@ -410,9 +417,7 @@ function pickXIForFormationWithRotation(
   });
 
   if (slotIds.some((id) => id === null)) {
-    const leftovers = available
-      .filter((p) => !used.has(p.id))
-      .sort((a, b) => b.rating - a.rating);
+    const leftovers = available.filter((p) => !used.has(p.id)).sort((a, b) => b.rating - a.rating);
     for (let i = 0; i < slotIds.length; i++) {
       if (slotIds[i] === null && leftovers.length > 0) {
         const p = leftovers.shift()!;
@@ -453,7 +458,8 @@ function generateCPUXI(
 
   let formation = favorite;
   if (!forcedFormation && alternatives.length > 0) {
-    const favoriteChance = context?.competition === "ucl" ? 0.88 : context?.competition === "cup" ? 0.80 : 0.82;
+    const favoriteChance =
+      context?.competition === "ucl" ? 0.88 : context?.competition === "cup" ? 0.8 : 0.82;
     const strength = squadStrengthForSelection(squad);
     const opponent = context?.opponentId ? teamById(context.opponentId) : null;
     const opponentSquad = opponent ? usePlayersStore.getState().getSimSquad(opponent.id) : [];
@@ -465,11 +471,18 @@ function generateCPUXI(
     );
 
     if (seeded01(`${rotationSeed}:formation`) >= adjustedFavoriteChance) {
-      const viable = ranked.filter((r) => r.formation !== favorite).slice(0, Math.min(3, ranked.length - 1));
+      const viable = ranked
+        .filter((r) => r.formation !== favorite)
+        .slice(0, Math.min(3, ranked.length - 1));
       if (viable.length > 0) {
-        formation = viable[Math.floor(seeded01(`${rotationSeed}:formation:choice`) * viable.length)].formation;
+        formation =
+          viable[Math.floor(seeded01(`${rotationSeed}:formation:choice`) * viable.length)]
+            .formation;
       } else {
-        formation = alternatives[Math.floor(seeded01(`${rotationSeed}:formation:fallback`) * alternatives.length)];
+        formation =
+          alternatives[
+            Math.floor(seeded01(`${rotationSeed}:formation:fallback`) * alternatives.length)
+          ];
       }
     }
   }
@@ -484,10 +497,10 @@ function generateCPUXI(
   // nivel en la liga. Solo rotan de forma apreciable ante rivales claramente
   // inferiores y en competiciones de menor prioridad. Así se evita que una
   // plantilla de 88-90 OVR pierda demasiada fuerza por descansos aleatorios.
-  let rotationLevel = Math.max(0, Math.min(0.30, (strengthDiff - 6) / 24));
+  let rotationLevel = Math.max(0, Math.min(0.3, (strengthDiff - 6) / 24));
   if (context?.competition === "ucl") rotationLevel *= 0.25;
   else if (context?.competition === "cup") rotationLevel *= 0.55;
-  if (context?.isHome) rotationLevel *= 0.90;
+  if (context?.isHome) rotationLevel *= 0.9;
 
   const picked = pickXIForFormationWithRotation(
     squad,
@@ -552,7 +565,7 @@ function getCupMatchWinner(result: any): "home" | "away" {
  */
 
 export function fixCupDraws(save: SaveGame): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const next: SaveGame = createFastMutationSnapshot(save);
 
   let fixed = false;
 
@@ -589,6 +602,12 @@ export function fixCupDraws(save: SaveGame): SaveGame {
       // Check if this is a draw without extra time/penalty data
 
       if (f.result.homeGoals === f.result.awayGoals && !f.result.extraTime && !f.result.penalties) {
+        if (next.cupFixtures[lg] === save.cupFixtures[lg]) {
+          next.cupFixtures[lg] = [...cupFixtures];
+        }
+        const mutableFixture = { ...next.cupFixtures[lg][i], result: { ...f.result } };
+        next.cupFixtures[lg][i] = mutableFixture;
+        const mutableResult = mutableFixture.result!;
         console.log(
           `[fixCupDraws] Fixing draw in fixture ${f.id}: ${f.homeId} ${f.result.homeGoals}-${f.result.awayGoals} ${f.awayId}`,
         );
@@ -599,9 +618,25 @@ export function fixCupDraws(save: SaveGame): SaveGame {
 
         if (!home || !away) continue;
 
-        const homeData = getStartersWithFormation(next, f.homeId, { fixture: { fixtureId: f.id, opponentId: f.awayId, isHome: true, competition: "cup", matchday: f.matchday } });
+        const homeData = getStartersWithFormation(next, f.homeId, {
+          fixture: {
+            fixtureId: f.id,
+            opponentId: f.awayId,
+            isHome: true,
+            competition: "cup",
+            matchday: f.matchday,
+          },
+        });
 
-        const awayData = getStartersWithFormation(next, f.awayId, { fixture: { fixtureId: f.id, opponentId: f.homeId, isHome: false, competition: "cup", matchday: f.matchday } });
+        const awayData = getStartersWithFormation(next, f.awayId, {
+          fixture: {
+            fixtureId: f.id,
+            opponentId: f.homeId,
+            isHome: false,
+            competition: "cup",
+            matchday: f.matchday,
+          },
+        });
         const homeXI = homeData.players;
         const awayXI = awayData.players;
 
@@ -614,8 +649,11 @@ export function fixCupDraws(save: SaveGame): SaveGame {
           regularSubstitutions: f.result.substitutions ?? [],
           regularCards: f.result.cards ?? [],
         });
-        f.result.substitutions = [...(f.result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
-        f.result.extraTime = {
+        mutableResult.substitutions = [
+          ...(mutableResult.substitutions ?? []),
+          ...(etResult.substitutions ?? []),
+        ].sort((a, b) => a.minute - b.minute);
+        mutableResult.extraTime = {
           homeGoals: etResult.homeGoals,
           awayGoals: etResult.awayGoals,
           events: etResult.events,
@@ -624,25 +662,25 @@ export function fixCupDraws(save: SaveGame): SaveGame {
 
         // Check if still tied after extra time
 
-        const totalHome = f.result.homeGoals + etResult.homeGoals;
+        const totalHome = mutableResult.homeGoals + etResult.homeGoals;
 
-        const totalAway = f.result.awayGoals + etResult.awayGoals;
+        const totalAway = mutableResult.awayGoals + etResult.awayGoals;
 
         if (totalHome === totalAway) {
           // Use the players who are actually still on the pitch after extra time.
           const finalHome = getActivePlayersAtMinute(
             homeXI,
             homeBench,
-            f.result.substitutions ?? [],
-            f.result.cards ?? [],
+            mutableResult.substitutions ?? [],
+            mutableResult.cards ?? [],
             "home",
             120,
           );
           const finalAway = getActivePlayersAtMinute(
             awayXI,
             awayBench,
-            f.result.substitutions ?? [],
-            f.result.cards ?? [],
+            mutableResult.substitutions ?? [],
+            mutableResult.cards ?? [],
             "away",
             120,
           );
@@ -651,7 +689,7 @@ export function fixCupDraws(save: SaveGame): SaveGame {
             finalAway.length ? finalAway : awayXI,
           );
 
-          f.result.penalties = {
+          mutableResult.penalties = {
             homeGoals: penaltyResult.homeGoals,
 
             awayGoals: penaltyResult.awayGoals,
@@ -747,6 +785,21 @@ export type SaveGame = {
 const STORAGE_KEY = "fcsim:save:v2";
 const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
 
+// Caché del objeto SaveGame activo. Evita volver a ejecutar JSON.parse sobre
+// una carrera completa cada vez que una pantalla llama a loadSave().
+let parsedSaveCache: {
+  saveId: string | null;
+  save: SaveGame;
+  raw: string | null;
+  authoritative: boolean;
+} | null = null;
+
+// Guardado diferido: la UI recibe primero el estado en memoria y la
+// compactación/serialización grande se ejecuta en un hueco de CPU posterior.
+let pendingSaveForDisk: SaveGame | null = null;
+let pendingSaveTimer: number | null = null;
+let pendingSaveRevision = 0;
+
 export type SavedGameMeta = {
   id: string;
   teamId: string;
@@ -768,19 +821,25 @@ export function loadSave(): SaveGame | null {
   if (typeof window === "undefined") return null;
 
   try {
-    // Clear old v1 saves silently
-
+    const activeId = getCurrentSaveId();
     localStorage.removeItem("fcsim:save:v1");
 
-    // La partida activa vive en su propia ranura (`...:{id}`); la clave
-    // global sólo se usa cuando todavía no hay ninguna partida activa.
-    const activeId = getCurrentSaveId();
-    const raw =
-      (activeId ? getSaveItem(`${STORAGE_KEY}:${activeId}`) : null) ??
-      getSaveItem(STORAGE_KEY);
+    // Después de un guardado la memoria es la fuente de verdad inmediata.
+    // Esto hace que volver a /season no dependa de leer/parsear la partida.
+    if (parsedSaveCache?.saveId === activeId && parsedSaveCache.authoritative) {
+      return parsedSaveCache.save;
+    }
 
-    if (!raw) return null;
+    const saveKey = activeId ? `${STORAGE_KEY}:${activeId}` : STORAGE_KEY;
+    const raw = getSaveItem(saveKey);
+    if (!raw) {
+      parsedSaveCache = null;
+      return null;
+    }
 
+    if (parsedSaveCache?.saveId === activeId && parsedSaveCache.raw === raw) {
+      return parsedSaveCache.save;
+    }
 
     const parsed = JSON.parse(raw) as LegacySave;
 
@@ -796,13 +855,34 @@ export function loadSave(): SaveGame | null {
     // Backward compatibility for careers created before these collections
     // became mandatory. Without this, opening /match could crash while the
     // CPU lineup/formation preview is being built.
-    if (parsed.formations == null) { parsed.formations = {}; needsMigrationSave = true; }
-    if (parsed.substitutes == null) { parsed.substitutes = {}; needsMigrationSave = true; }
-    if (parsed.suspensions == null) { parsed.suspensions = {}; needsMigrationSave = true; }
-    if (parsed.lineups == null) { parsed.lineups = {}; needsMigrationSave = true; }
-    if (parsed.fixtures == null) { parsed.fixtures = {}; needsMigrationSave = true; }
-    if (parsed.cupFixtures == null) { parsed.cupFixtures = {}; needsMigrationSave = true; }
-    if (parsed.uclFixtures == null) { parsed.uclFixtures = []; needsMigrationSave = true; }
+    if (parsed.formations == null) {
+      parsed.formations = {};
+      needsMigrationSave = true;
+    }
+    if (parsed.substitutes == null) {
+      parsed.substitutes = {};
+      needsMigrationSave = true;
+    }
+    if (parsed.suspensions == null) {
+      parsed.suspensions = {};
+      needsMigrationSave = true;
+    }
+    if (parsed.lineups == null) {
+      parsed.lineups = {};
+      needsMigrationSave = true;
+    }
+    if (parsed.fixtures == null) {
+      parsed.fixtures = {};
+      needsMigrationSave = true;
+    }
+    if (parsed.cupFixtures == null) {
+      parsed.cupFixtures = {};
+      needsMigrationSave = true;
+    }
+    if (parsed.uclFixtures == null) {
+      parsed.uclFixtures = [];
+      needsMigrationSave = true;
+    }
 
     // MIGRATION: Convert old cupFixtures structure if needed
 
@@ -884,9 +964,10 @@ export function loadSave(): SaveGame | null {
           if (!rawSuspension?.playerId) continue;
           const player = playerStore.getSimPlayer(rawSuspension.playerId);
           const teamId = player?.teamId || storedTeamId;
-          const competition = rawSuspension.competition === "cup" || rawSuspension.competition === "ucl"
-            ? rawSuspension.competition
-            : "league";
+          const competition =
+            rawSuspension.competition === "cup" || rawSuspension.competition === "ucl"
+              ? rawSuspension.competition
+              : "league";
           const suspension: Suspension = {
             playerId: String(rawSuspension.playerId),
             playerName: String(rawSuspension.playerName || player?.name || "Jugador"),
@@ -925,6 +1006,13 @@ export function loadSave(): SaveGame | null {
     }
 
     const save = parsed as SaveGame;
+
+    parsedSaveCache = {
+      saveId: activeId,
+      save,
+      raw,
+      authoritative: false,
+    };
 
     // Persist only actual migrations. Ordinary reads must stay read-only so
     // loading the career is cheap even when the save contains a large season.
@@ -1066,81 +1154,112 @@ export function slimSave(s: SaveGame): SaveGame {
  * (eso arrasaba con el mercado y las demás partidas): se liberan cachés
  * reconstruibles y, como mucho, no se guarda esta vez. Nunca lanza.
  *
- * Devuelve `true` si la partida quedó realmente escrita en `localStorage`.
- * Los llamantes que hacen algo importante justo después de guardar (avanzar
- * de pantalla, dar por bueno un resultado) deben comprobar este valor: si es
- * `false` la jornada que se acaba de jugar NO se persistió y, por ejemplo, la
- * pantalla de la central volverá a mostrar el partido anterior como
- * "siguiente" en cuanto se recargue el guardado desde `localStorage`.
+ * En IndexedDB devuelve `true` en cuanto el nuevo estado quedó publicado en
+ * memoria y en la cola de persistencia. Así los llamantes pueden navegar o
+ * continuar simulando sin esperar a serializar una carrera completa. En el
+ * fallback de `localStorage` sí mantiene el guardado síncrono.
  */
 export function saveSave(s: SaveGame): boolean {
   if (typeof window === "undefined") return false;
 
-  const slim = slimSave(s);
   const activeId = getCurrentSaveId();
 
-  let ok = true;
+  if (activeId) removeSaveItem(STORAGE_KEY);
 
-  if (activeId) {
-    // La ranura por partida es la fuente de verdad; la clave global antigua
-    // sobra y sólo ocupa espacio.
-    removeSaveItem(STORAGE_KEY);
-  } else {
-    // Sin partida activa (partida rápida antigua) la clave global también va
-    // al almacén sin límite de cuota.
-    ok = setSaveItem(STORAGE_KEY, JSON.stringify(slim));
+  // Publicamos el nuevo estado en memoria inmediatamente. La navegación y
+  // los siguientes renders ya no esperan a compactar toda la temporada.
+  parsedSaveCache = {
+    saveId: activeId,
+    save: s,
+    raw: parsedSaveCache?.raw ?? null,
+    authoritative: true,
+  };
+  pendingSaveForDisk = s;
+  pendingSaveRevision += 1;
+
+  // Si IndexedDB no está disponible, localStorage es síncrono y no hay otro
+  // camino seguro: mantenemos el guardado inmediato en ese entorno.
+  if (isSaveStorageFallback()) {
+    try {
+      const slim = slimSave(s);
+      const ok = activeId
+        ? persistCurrentSave(slim, { immediate: true })
+        : setSaveItem(STORAGE_KEY, JSON.stringify(slim));
+      parsedSaveCache = {
+        saveId: activeId,
+        save: slim,
+        raw: null,
+        authoritative: true,
+      };
+      pendingSaveForDisk = null;
+      void saveTransferSystem();
+      return ok;
+    } catch (e) {
+      console.error("Error persisting current save:", e);
+      return false;
+    }
   }
 
-  try {
-    const persisted = persistCurrentSave(slim, { immediate: true });
-    // Sólo cuenta si hay una partida activa (si no, ya se guardó arriba en
-    // la clave global).
-    if (activeId) ok = persisted;
-  } catch (e) {
-    console.error("persistCurrentSave failed", e);
-    if (activeId) ok = false;
-  }
-
-  // El mercado tiene su propia instantánea por partida y por ventana de
-  // fichajes. Guardarlo aquí hace que un guardado de la carrera también
-  // persista rumores, negociaciones e historial de traspasos. Un fallo aquí
-  // no invalida el guardado de la carrera en sí (que es lo crítico para la
-  // central), así que no afecta al valor devuelto.
-  try {
-    saveTransferSystem();
-  } catch (e) {
-    console.error("saveTransferSystem failed", e);
-  }
-
-  return ok;
+  scheduleSaveForDisk();
+  return true;
 }
 
-/**
- * Igual que `saveSave`, pero si el primer intento no logra escribir en
- * `localStorage` (por ejemplo por cuota agotada), reintenta recortando aún
- * más el detalle de partidos antiguos antes de rendirse. Se usa en los
- * puntos en los que perder el guardado sería especialmente visible para el
- * jugador (terminar un partido y volver a la temporada).
- */
-export function saveSaveWithRetry(s: SaveGame): boolean {
-  if (saveSave(s)) return true;
+function scheduleSaveForDisk(): void {
+  if (pendingSaveTimer !== null || typeof window === "undefined") return;
 
-  console.warn("saveSaveWithRetry: primer intento falló, recortando detalle y reintentando");
+  const run = () => {
+    pendingSaveTimer = null;
+    const target = pendingSaveForDisk;
+    pendingSaveForDisk = null;
+    if (!target) return;
 
-  // Recorte extra: nos quedamos solo con el último partido detallado en vez
-  // de los últimos DETAILED_MATCHES_KEPT, lo que reduce bastante el tamaño
-  // del guardado sin perder resultados ni clasificaciones.
-  const trimmed: SaveGame = {
-    ...s,
-    fixtures: mapValues(s.fixtures, (list) => slimFixtures(list, s.myTeamId, new Set())),
-    cupFixtures: mapValues(s.cupFixtures, (list) => slimFixtures(list, s.myTeamId, new Set())),
-    uclFixtures: slimFixtures(s.uclFixtures, s.myTeamId, new Set()),
+    const revisionAtStart = pendingSaveRevision;
+    try {
+      const slim = slimSave(target);
+      const activeId = getCurrentSaveId();
+      if (activeId) {
+        persistCurrentSave(slim, { immediate: true });
+      } else {
+        setSaveItem(STORAGE_KEY, JSON.stringify(slim));
+      }
+
+      parsedSaveCache = {
+        saveId: activeId,
+        save: slim,
+        raw: null,
+        authoritative: true,
+      };
+
+      // El mercado también queda fuera del camino del click.
+      void saveTransferSystem();
+
+      if (pendingSaveRevision !== revisionAtStart && pendingSaveForDisk) {
+        scheduleSaveForDisk();
+      }
+    } catch (error) {
+      console.error("Error persisting current save in background:", error);
+      if (pendingSaveForDisk) scheduleSaveForDisk();
+    }
   };
 
-  if (saveSave(trimmed)) return true;
+  const ric = (window as any).requestIdleCallback as
+    | ((cb: () => void, options?: { timeout?: number }) => number)
+    | undefined;
 
-  console.error("saveSaveWithRetry: no fue posible guardar la partida ni tras recortar el detalle");
-  return false;
+  // Dejamos respirar al render/navegación antes de compactar una carrera larga.
+  // requestIdleCallback permite que el navegador mueva todavía más este trabajo
+  // fuera de interacciones activas; con navegadores antiguos usamos 100 ms.
+  pendingSaveTimer = window.setTimeout(() => {
+    pendingSaveTimer = null;
+    if (typeof ric === "function") ric(run, { timeout: 1500 });
+    else run();
+  }, 100);
+}
+
+export function saveSaveWithRetry(s: SaveGame): boolean {
+  // El almacenamiento moderno hace el guardado pesado fuera del camino del
+  // click. El fallback sin IndexedDB sigue guardando de forma síncrona.
+  return saveSave(s);
 }
 
 function mapValues<T>(obj: Record<string, T> | undefined, fn: (v: T) => T): Record<string, T> {
@@ -1152,6 +1271,14 @@ function mapValues<T>(obj: Record<string, T> | undefined, fn: (v: T) => T): Reco
 
 export function clearSave() {
   if (typeof window === "undefined") return;
+
+  if (pendingSaveTimer !== null) {
+    window.clearTimeout(pendingSaveTimer);
+    pendingSaveTimer = null;
+  }
+  pendingSaveForDisk = null;
+  pendingSaveRevision += 1;
+  parsedSaveCache = null;
 
   localStorage.removeItem(STORAGE_KEY);
 
@@ -1356,21 +1483,30 @@ function consumeSuspensionsForFixture(
   teamIds: string[],
   competition: import("@/lib/season").Competition,
 ): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
-  next.suspensions ??= {};
+  // Este helper se ejecuta para cada partido. No debe clonar la partida
+  // completa: el caller ya trabaja sobre un snapshot mutable.
+  save.suspensions ??= {};
 
   for (const teamId of teamIds) {
-    const suspensions = next.suspensions[teamId] ?? [];
-    next.suspensions[teamId] = suspensions
+    const suspensions = save.suspensions[teamId];
+    if (!Array.isArray(suspensions) || suspensions.length === 0) continue;
+
+    save.suspensions[teamId] = suspensions
       .map((s: Suspension) =>
         suspensionAppliesToCompetition(s, competition)
-          ? { ...s, competition: s.competition ?? competition, matchdaysRemaining: s.matchdaysRemaining - 1 }
-          : { ...s, competition: s.competition ?? "league" },
+          ? {
+              ...s,
+              competition: s.competition ?? competition,
+              matchdaysRemaining: s.matchdaysRemaining - 1,
+            }
+          : s.competition
+            ? s
+            : { ...s, competition: "league" as const },
       )
       .filter((s: Suspension) => s.matchdaysRemaining > 0);
   }
 
-  return next;
+  return save;
 }
 
 function addSuspension(
@@ -1412,7 +1548,7 @@ function directRedSuspensionLength(competition: import("@/lib/season").Competiti
   // League direct reds: 75% 1 match, 15% 2, 7.5% 3, 2.5% 4.
   const roll = Math.random();
   if (roll < 0.75) return 1;
-  if (roll < 0.90) return 2;
+  if (roll < 0.9) return 2;
   if (roll < 0.975) return 3;
   return 4;
 }
@@ -1432,14 +1568,7 @@ function processRedCards(
     const teamId = card.team === "home" ? homeTeamId : awayTeamId;
     const suspensionLength = card.isSecondYellow ? 1 : directRedSuspensionLength(competition);
 
-    addSuspension(
-      next,
-      teamId,
-      card.playerId,
-      card.playerName,
-      competition,
-      suspensionLength,
-    );
+    addSuspension(next, teamId, card.playerId, card.playerName, competition, suspensionLength);
 
     console.log(
       `Red card for ${card.playerName} (${teamId}) in ${competition}: ${suspensionLength} match suspension`,
@@ -1497,6 +1626,40 @@ export function getSuspensionForPlayer(
   );
 }
 
+// Cheap copy-on-write snapshot for interactive actions. The old code cloned
+// the whole career with JSON.parse(JSON.stringify(save)), which meant a single
+// button click had to copy every fixture, player-related map and historical
+// result accumulated so far. Only maps that are commonly written by the
+// simulation are shallow-copied here; the caller clones the one fixture list
+// it is actually going to modify.
+function createFastMutationSnapshot(save: SaveGame): SaveGame {
+  return {
+    ...save,
+    fixtures: { ...save.fixtures },
+    standings: { ...save.standings },
+    cupFixtures: { ...save.cupFixtures },
+    uclFixtures: Array.isArray(save.uclFixtures) ? [...save.uclFixtures] : [],
+    currentMatchday: { ...save.currentMatchday },
+    formations: { ...(save.formations ?? {}) },
+    lineups: { ...(save.lineups ?? {}) },
+    substitutes: { ...(save.substitutes ?? {}) },
+    suspensions: Object.fromEntries(
+      Object.entries(save.suspensions ?? {}).map(([teamId, list]) => [
+        teamId,
+        Array.isArray(list) ? list.map((item) => ({ ...item })) : [],
+      ]),
+    ),
+    ucl: save.ucl
+      ? {
+          ...save.ucl,
+          table: Array.isArray(save.ucl.table)
+            ? save.ucl.table.map((entry) => ({ ...entry }))
+            : save.ucl.table,
+        }
+      : save.ucl,
+  };
+}
+
 /**
  * Commits discipline from a live fixture without replaying the rest of the
  * match statistics. Live matches are marked `liveCommitted`, so the normal
@@ -1507,7 +1670,7 @@ export function getSuspensionForPlayer(
  * flows that may call the finalization path more than once.
  */
 export function commitLiveFixtureDiscipline(save: SaveGame, fixtureId: string): SaveGame {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
   next.suspensions ??= {};
 
   let target: Fixture | undefined;
@@ -1518,7 +1681,9 @@ export function commitLiveFixtureDiscipline(save: SaveGame, fixtureId: string): 
   const leagueList = next.fixtures?.[next.myLeague] ?? [];
   const leagueIndex = leagueList.findIndex((f) => f.id === fixtureId);
   if (leagueIndex >= 0) {
-    target = leagueList[leagueIndex];
+    next.fixtures[next.myLeague] = [...leagueList];
+    const mutableLeagueList = next.fixtures[next.myLeague];
+    target = mutableLeagueList[leagueIndex];
     result = target.result;
     competition = "league";
     applyResultToFixture = (updated) => {
@@ -1531,7 +1696,9 @@ export function commitLiveFixtureDiscipline(save: SaveGame, fixtureId: string): 
       if (!Array.isArray(list)) continue;
       const index = list.findIndex((f) => f.id === fixtureId);
       if (index >= 0) {
-        target = list[index];
+        next.cupFixtures[lg as LeagueId] = [...list];
+        const mutableCupList = next.cupFixtures[lg as LeagueId];
+        target = mutableCupList[index];
         result = target.result;
         competition = "cup";
         applyResultToFixture = (updated) => {
@@ -1568,7 +1735,12 @@ export function commitLiveFixtureDiscipline(save: SaveGame, fixtureId: string): 
         playerStore.incrementAccumulatedYellowCards(card.playerId);
         const player = playerStore.getSimPlayer(card.playerId);
         if (player) {
-          next = processAccumulatedYellowSuspension(next, card.playerId, player.teamId, competition);
+          next = processAccumulatedYellowSuspension(
+            next,
+            card.playerId,
+            player.teamId,
+            competition,
+          );
         }
       } else if (card.isSecondYellow) {
         // A second-yellow red also counts as the player's second yellow.
@@ -1613,7 +1785,9 @@ export function getStartersWithFormation(
 
   const suspendedPlayerIds = new Set(
     suspensions
-      .filter((s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, matchCompetition))
+      .filter(
+        (s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, matchCompetition),
+      )
       .map((s) => s.playerId),
   );
 
@@ -1621,9 +1795,7 @@ export function getStartersWithFormation(
 
   const currentDate = store.currentDate;
   const injuredIds = new Set(
-    squad
-      .filter((p) => isPlayerInjuredAtDate(p, currentDate, md))
-      .map((p) => p.id),
+    squad.filter((p) => isPlayerInjuredAtDate(p, currentDate, md)).map((p) => p.id),
   );
 
   const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
@@ -1653,8 +1825,16 @@ export function getStartersWithFormation(
       // Guardar como favorita la mejor que encaja con la plantilla; la
       // selección de cada partido no sobreescribe esta preferencia.
       const favoriteCandidate = formationsForStyle(getTeamStyle(team).style)
-        .map((f) => ({ f, ...pickXIForFormationWithRotation(squad, unavailable, f, 0, `${rotationSeed}:favorite`) }))
-        .sort((a, b) => (b.score + (FIVE_DEFENDER_TEAMS.has(team.name) && b.f.includes("5-") ? 12 : 0)) - (a.score + (FIVE_DEFENDER_TEAMS.has(team.name) && a.f.includes("5-") ? 12 : 0)))[0];
+        .map((f) => ({
+          f,
+          ...pickXIForFormationWithRotation(squad, unavailable, f, 0, `${rotationSeed}:favorite`),
+        }))
+        .sort(
+          (a, b) =>
+            b.score +
+            (FIVE_DEFENDER_TEAMS.has(team.name) && b.f.includes("5-") ? 12 : 0) -
+            (a.score + (FIVE_DEFENDER_TEAMS.has(team.name) && a.f.includes("5-") ? 12 : 0)),
+        )[0];
       save.formations[teamId] = favoriteCandidate?.f || formation;
     }
 
@@ -1685,7 +1865,11 @@ export function getStartersWithFormation(
   };
 }
 
-export function getStarters(save: SaveGame, teamId: string, options?: { fixture?: CpuFixtureContext | null }): Player[] {
+export function getStarters(
+  save: SaveGame,
+  teamId: string,
+  options?: { fixture?: CpuFixtureContext | null },
+): Player[] {
   const store = usePlayersStore.getState();
 
   store.init();
@@ -1713,7 +1897,9 @@ export function getStarters(save: SaveGame, teamId: string, options?: { fixture?
 
   const suspendedPlayerIds = new Set(
     suspensions
-      .filter((s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, matchCompetition))
+      .filter(
+        (s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, matchCompetition),
+      )
       .map((s) => s.playerId),
   );
 
@@ -1723,9 +1909,7 @@ export function getStarters(save: SaveGame, teamId: string, options?: { fixture?
 
   const currentDate = store.currentDate;
   const injuredIds = new Set(
-    squad
-      .filter((p) => isPlayerInjuredAtDate(p, currentDate, md))
-      .map((p) => p.id),
+    squad.filter((p) => isPlayerInjuredAtDate(p, currentDate, md)).map((p) => p.id),
   );
 
   const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
@@ -1738,7 +1922,14 @@ export function getStarters(save: SaveGame, teamId: string, options?: { fixture?
   if (!isUserTeam || lineup.length === 0) {
     const fixtureContext = options?.fixture ?? findNextCpuFixture(save, teamId);
     const rotationSeed = `${save.season}:${teamId}:${fixtureContext?.fixtureId ?? save.currentMatchday[lg] ?? 0}`;
-    const { ids: autoIds, formation } = generateCPUXI(squad, unavailable, team, undefined, rotationSeed, fixtureContext);
+    const { ids: autoIds, formation } = generateCPUXI(
+      squad,
+      unavailable,
+      team,
+      undefined,
+      rotationSeed,
+      fixtureContext,
+    );
 
     if (!save.formations[teamId]) {
       save.formations[teamId] = formation;
@@ -1766,7 +1957,12 @@ export function getStarters(save: SaveGame, teamId: string, options?: { fixture?
  * the starting XI and not injured/suspended, best-rated first. Used so that
  * in-match substitutions bring on real players instead of inventing IDs.
  */
-function getCupSimulationBench(save: SaveGame, teamId: string, xi: Player[], competition: import("@/lib/season").Competition = "cup"): Player[] {
+function getCupSimulationBench(
+  save: SaveGame,
+  teamId: string,
+  xi: Player[],
+  competition: import("@/lib/season").Competition = "cup",
+): Player[] {
   const configured = getBenchForTeam(save, teamId, xi, competition);
   if (configured.length > 0) return configured;
 
@@ -1787,7 +1983,9 @@ function getCupSimulationBench(save: SaveGame, teamId: string, xi: Player[], com
   const currentDate = store.currentDate;
   return store
     .getSimSquad(teamId)
-    .filter((p) => !xiIds.has(p.id) && !suspended.has(p.id) && !isPlayerInjuredAtDate(p, currentDate, md))
+    .filter(
+      (p) => !xiIds.has(p.id) && !suspended.has(p.id) && !isPlayerInjuredAtDate(p, currentDate, md),
+    )
     .sort((a, b) => b.rating - a.rating)
     .slice(0, 12);
 }
@@ -1817,9 +2015,7 @@ export function getBenchForTeam(
   const squad = store.getSimSquad(teamId);
   const currentDate = store.currentDate;
   const injuredIds = new Set(
-    squad
-      .filter((p) => isPlayerInjuredAtDate(p, currentDate, md))
-      .map((p) => p.id),
+    squad.filter((p) => isPlayerInjuredAtDate(p, currentDate, md)).map((p) => p.id),
   );
   const unavailable = new Set([...suspendedPlayerIds, ...injuredIds]);
 
@@ -1870,9 +2066,25 @@ function applyMatchToStats(
   // the lineup was built, allowing an expelled player to play the next match.
   let updatedSave = save;
 
-  const homeData = getStartersWithFormation(updatedSave, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: fixture.competition, matchday: fixture.matchday } });
+  const homeData = getStartersWithFormation(updatedSave, fixture.homeId, {
+    fixture: {
+      fixtureId: fixture.id,
+      opponentId: fixture.awayId,
+      isHome: true,
+      competition: fixture.competition,
+      matchday: fixture.matchday,
+    },
+  });
 
-  const awayData = getStartersWithFormation(updatedSave, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: fixture.competition, matchday: fixture.matchday } });
+  const awayData = getStartersWithFormation(updatedSave, fixture.awayId, {
+    fixture: {
+      fixtureId: fixture.id,
+      opponentId: fixture.homeId,
+      isHome: false,
+      competition: fixture.competition,
+      matchday: fixture.matchday,
+    },
+  });
   const homeXI = homeData.players;
   const awayXI = awayData.players;
 
@@ -1915,9 +2127,7 @@ function applyMatchToStats(
 
   const teamForPlayer = (playerId: string) =>
     homeXI.some((p) => p.id === playerId) ||
-    (r.substitutions ?? []).some(
-      (sub) => sub.playerInId === playerId && sub.team === "home",
-    )
+    (r.substitutions ?? []).some((sub) => sub.playerInId === playerId && sub.team === "home")
       ? fixture.homeId
       : fixture.awayId;
 
@@ -2223,11 +2433,12 @@ function applyMatchToStats(
       motmId = winnerXI[Math.floor(Math.random() * winnerXI.length)]?.id;
     }
     if (motmId) {
-      const motmTeamId = r.ratings?.find((pr) => pr.playerId === motmId)?.team === "home"
-        ? fixture.homeId
-        : r.ratings?.find((pr) => pr.playerId === motmId)?.team === "away"
-          ? fixture.awayId
-          : null;
+      const motmTeamId =
+        r.ratings?.find((pr) => pr.playerId === motmId)?.team === "home"
+          ? fixture.homeId
+          : r.ratings?.find((pr) => pr.playerId === motmId)?.team === "away"
+            ? fixture.awayId
+            : null;
       if (!skipTeamId || motmTeamId !== skipTeamId) {
         store.recordMotm(motmId, fixture.competition);
       }
@@ -2290,11 +2501,23 @@ function simulateFixtureInline(
   }
 
   const homeData = getStartersWithFormation(save, fixture.homeId, {
-    fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: fixture.competition, matchday: fixture.matchday },
+    fixture: {
+      fixtureId: fixture.id,
+      opponentId: fixture.awayId,
+      isHome: true,
+      competition: fixture.competition,
+      matchday: fixture.matchday,
+    },
   });
 
   const awayData = getStartersWithFormation(save, fixture.awayId, {
-    fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: fixture.competition, matchday: fixture.matchday },
+    fixture: {
+      fixtureId: fixture.id,
+      opponentId: fixture.homeId,
+      isHome: false,
+      competition: fixture.competition,
+      matchday: fixture.matchday,
+    },
   });
   const homeXI = homeData.players;
   const awayXI = awayData.players;
@@ -2327,18 +2550,26 @@ function simulateFixtureInline(
 
   // Use fast simulation for bulk matchdays, detailed for user's matches
 
-  const homeFormationForSim = homeData?.formation || (save.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2";
-  const awayFormationForSim = awayData?.formation || (save.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2";
+  const homeFormationForSim =
+    homeData?.formation ||
+    (save.formations[fixture.homeId] as FormationName | undefined) ||
+    "Táctica 4-4-2";
+  const awayFormationForSim =
+    awayData?.formation ||
+    (save.formations[fixture.awayId] as FormationName | undefined) ||
+    "Táctica 4-4-2";
   // National-cup simulations (including the preliminary round) must always
   // have a real bench available so AI and user cup matches can generate
   // substitutions even when an older/new save has no manually stored bench.
   // League/UCL lineup rules continue to use the normal configured bench.
-  const homeBenchForSim = fixture.competition === "cup"
-    ? getCupSimulationBench(save, fixture.homeId, homeXI, fixture.competition)
-    : getBenchForTeam(save, fixture.homeId, homeXI, fixture.competition);
-  const awayBenchForSim = fixture.competition === "cup"
-    ? getCupSimulationBench(save, fixture.awayId, awayXI, fixture.competition)
-    : getBenchForTeam(save, fixture.awayId, awayXI, fixture.competition);
+  const homeBenchForSim =
+    fixture.competition === "cup"
+      ? getCupSimulationBench(save, fixture.homeId, homeXI, fixture.competition)
+      : getBenchForTeam(save, fixture.homeId, homeXI, fixture.competition);
+  const awayBenchForSim =
+    fixture.competition === "cup"
+      ? getCupSimulationBench(save, fixture.awayId, awayXI, fixture.competition)
+      : getBenchForTeam(save, fixture.awayId, awayXI, fixture.competition);
 
   let result: any;
   try {
@@ -2372,7 +2603,10 @@ function simulateFixtureInline(
     // Última barrera de seguridad: una carrera no puede quedarse bloqueada
     // porque un dato histórico aislado esté mal formado. Reintentamos con la
     // simulación rápida y, si tampoco fuese posible, damos un 0-0 válido.
-    console.error(`[simulateFixtureInline] fallo en ${fixture.id}; reintentando en modo seguro`, error);
+    console.error(
+      `[simulateFixtureInline] fallo en ${fixture.id}; reintentando en modo seguro`,
+      error,
+    );
     try {
       result = simulateMatchFast(home, away, homeXI, awayXI, {
         homeBench: homeBenchForSim,
@@ -2383,7 +2617,10 @@ function simulateFixtureInline(
         awayFormation: awayFormationForSim,
       });
     } catch (fallbackError) {
-      console.error(`[simulateFixtureInline] fallback también falló en ${fixture.id}`, fallbackError);
+      console.error(
+        `[simulateFixtureInline] fallback también falló en ${fixture.id}`,
+        fallbackError,
+      );
       result = {
         homeGoals: 0,
         awayGoals: 0,
@@ -2434,64 +2671,48 @@ export function getMyNextFixture(save: SaveGame): Fixture | null {
 }
 
 export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
-  const seasonStart = new Date("2025-08-16T12:00:00Z");
+  const seasonStartMs = Date.parse("2025-08-16T12:00:00Z");
+  const cupStartMs = Date.parse("2025-07-07T00:00:00Z");
+  const uclStartMs = Date.parse(UCL_START + "T00:00:00Z");
+  const myTeamId = save.myTeamId;
 
-  const cupStart = new Date("2025-07-07T00:00:00Z");
+  let best: { fixture: Fixture; dateMs: number } | null = null;
+  const consider = (fixture: Fixture, dateMs: number) => {
+    if (fixture.result || (fixture.homeId !== myTeamId && fixture.awayId !== myTeamId)) return;
+    if (!best || dateMs < best.dateMs) best = { fixture, dateMs };
+  };
 
-  const allFixtures: Array<{ fixture: Fixture; dateMs: number }> = [];
-
-  // Get league fixtures
-
-  for (const lg of Object.keys(save.fixtures)) {
-    save.fixtures[lg as LeagueId].forEach((f) => {
-      if (!f.result && (f.homeId === save.myTeamId || f.awayId === save.myTeamId)) {
-        const matchdayDate = new Date(seasonStart.getTime() + (f.matchday - 1) * 7 * 86400000);
-
-        allFixtures.push({ fixture: f, dateMs: matchdayDate.getTime() });
-      }
-    });
+  // The user's league contains all league fixtures for the controlled team.
+  for (const fixture of save.fixtures[save.myLeague] ?? []) {
+    consider(fixture, seasonStartMs + (fixture.matchday - 1) * 7 * 86400000);
   }
 
-  // Get cup fixtures (use July-based dates: matchday = day offset from July 7th)
+  // Cups are stored by the primary league of the user's country. Fall back to
+  // a full scan only for legacy saves whose cup key does not follow that rule.
+  const userCountry = LEAGUES[save.myLeague]?.country;
+  const primaryCupLeague = userCountry ? getPrimaryLeagueForCountry(userCountry) : save.myLeague;
+  const primaryCupList = primaryCupLeague
+    ? save.cupFixtures[primaryCupLeague as LeagueId]
+    : undefined;
 
-  for (const lg of Object.keys(save.cupFixtures)) {
-    const cupList = save.cupFixtures[lg as LeagueId];
-    // `cupFixtures` also contains `${league}_structure` entries with the
-    // knockout-bracket metadata. Those entries are objects, not fixture lists.
-    if (!Array.isArray(cupList)) continue;
-
-    cupList.forEach((f) => {
-      if (!f.result && (f.homeId === save.myTeamId || f.awayId === save.myTeamId)) {
-        // Cup matchday = day offset from July 7th (0=Jul7, 1=Jul8, etc.)
-
-        const cupMatchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
-
-        allFixtures.push({ fixture: f, dateMs: cupMatchDate.getTime() });
+  if (Array.isArray(primaryCupList)) {
+    for (const fixture of primaryCupList) {
+      consider(fixture, cupStartMs + fixture.matchday * 86400000);
+    }
+  } else {
+    for (const list of Object.values(save.cupFixtures)) {
+      if (!Array.isArray(list)) continue;
+      for (const fixture of list) {
+        consider(fixture, cupStartMs + fixture.matchday * 86400000);
       }
-    });
+    }
   }
 
-  // Get UCL fixtures
-
-  if (save.uclFixtures) {
-    const uclStart = new Date(UCL_START + "T00:00:00Z");
-
-    save.uclFixtures.forEach((f) => {
-      if (!f.result && (f.homeId === save.myTeamId || f.awayId === save.myTeamId)) {
-        // UCL matchday = absolute day offset from UCL_START
-
-        const matchdayDate = new Date(uclStart.getTime() + f.matchday * 86400000);
-
-        allFixtures.push({ fixture: f, dateMs: matchdayDate.getTime() });
-      }
-    });
+  for (const fixture of save.uclFixtures ?? []) {
+    consider(fixture, uclStartMs + fixture.matchday * 86400000);
   }
 
-  // Sort by date and return the first one
-
-  allFixtures.sort((a, b) => a.dateMs - b.dateMs);
-
-  return allFixtures[0]?.fixture ?? null;
+  return best?.fixture ?? null;
 }
 
 export function getMyUpcomingCupFixtures(save: SaveGame): Fixture[] {
@@ -2692,8 +2913,10 @@ export function getSurvivingCupTeams(save: SaveGame, league: LeagueId): string[]
  */
 
 export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: number): SaveGame {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
+  const sourceCupFixtures = next.cupFixtures[league];
+  if (Array.isArray(sourceCupFixtures)) next.cupFixtures[league] = [...sourceCupFixtures];
   const cupFixtures = next.cupFixtures[league];
 
   if (!cupFixtures) return next;
@@ -2799,7 +3022,12 @@ export async function simulateCupMatchdayLayered(
 
     currentMatchday: { ...save.currentMatchday },
 
-    suspensions: JSON.parse(JSON.stringify(save.suspensions)),
+    suspensions: Object.fromEntries(
+      Object.entries(save.suspensions ?? {}).map(([teamId, list]) => [
+        teamId,
+        Array.isArray(list) ? list.map((item) => ({ ...item })) : [],
+      ]),
+    ),
   };
 
   for (const lg of vipCupLeagueSet) {
@@ -2855,9 +3083,25 @@ export async function simulateCupMatchdayLayered(
       if (league === userCupLeague) {
         // DEEP SIMULATION for user's own cup
 
-        const homeData = getStartersWithFormation(next, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "cup", matchday: fixture.matchday } });
+        const homeData = getStartersWithFormation(next, fixture.homeId, {
+          fixture: {
+            fixtureId: fixture.id,
+            opponentId: fixture.awayId,
+            isHome: true,
+            competition: "cup",
+            matchday: fixture.matchday,
+          },
+        });
 
-        const awayData = getStartersWithFormation(next, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "cup", matchday: fixture.matchday } });
+        const awayData = getStartersWithFormation(next, fixture.awayId, {
+          fixture: {
+            fixtureId: fixture.id,
+            opponentId: fixture.homeId,
+            isHome: false,
+            competition: "cup",
+            matchday: fixture.matchday,
+          },
+        });
         const homeXI = homeData.players;
         const awayXI = awayData.players;
 
@@ -2872,8 +3116,18 @@ export async function simulateCupMatchdayLayered(
             xgAway: 0,
           };
         } else {
-          const homeBench = getCupSimulationBench(next, fixture.homeId, homeXI, fixture.competition);
-          const awayBench = getCupSimulationBench(next, fixture.awayId, awayXI, fixture.competition);
+          const homeBench = getCupSimulationBench(
+            next,
+            fixture.homeId,
+            homeXI,
+            fixture.competition,
+          );
+          const awayBench = getCupSimulationBench(
+            next,
+            fixture.awayId,
+            awayXI,
+            fixture.competition,
+          );
 
           result = simulateCupMatch(home, away, homeXI, awayXI, {
             homeBench,
@@ -2932,9 +3186,10 @@ export async function simulateCupMatchdayLayered(
             homeTactics: loadTactics(fixture.homeId),
             awayTactics: loadTactics(fixture.awayId),
           });
-          result.substitutions = [...(result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort(
-            (a, b) => a.minute - b.minute,
-          );
+          result.substitutions = [
+            ...(result.substitutions ?? []),
+            ...(etResult.substitutions ?? []),
+          ].sort((a, b) => a.minute - b.minute);
           result.extraTime = {
             homeGoals: etResult.homeGoals,
             awayGoals: etResult.awayGoals,
@@ -2955,8 +3210,8 @@ export async function simulateCupMatchdayLayered(
                 .filter((c) => c.team === "away" && c.cardType === "red")
                 .map((c) => [c.playerId, c.minute]),
             );
-            const finalHome = (result.homeFinalLineup ?? homeXI);
-            const finalAway = (result.awayFinalLineup ?? awayXI);
+            const finalHome = result.homeFinalLineup ?? homeXI;
+            const finalAway = result.awayFinalLineup ?? awayXI;
             const penaltyHome = finalHome.filter((p) => !redHome.has(p.id));
             const penaltyAway = finalAway.filter((p) => !redAway.has(p.id));
             const penaltyResult = simulatePenaltyShootout(
@@ -3037,7 +3292,6 @@ export async function simulateCupMatchdayLayered(
 
   console.log(`simulateCupMatchdayLayered: Completed ${processed}/${totalMatches} fixtures`);
 
-
   return next;
 }
 
@@ -3095,7 +3349,14 @@ export async function simulateRemainingCupMatches(
   save: SaveGame,
   currentRound: string,
 ): Promise<SaveGame> {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
+
+  // The round simulator updates cup fixture entries in-place. Clone only the
+  // fixture arrays (not every historical fixture object) so this remains cheap
+  // even late in a season.
+  for (const [lg, list] of Object.entries(next.cupFixtures ?? {})) {
+    if (Array.isArray(list)) next.cupFixtures[lg as LeagueId] = [...list];
+  }
 
   const userLeague = next.myLeague;
 
@@ -3132,9 +3393,25 @@ export async function simulateRemainingCupMatches(
       if (isVIP) {
         // DEEP SIMULATION for VIP countries - EXACT same logic as league VIP matches
 
-        const homeData = getStartersWithFormation(next, f.homeId, { fixture: { fixtureId: f.id, opponentId: f.awayId, isHome: true, competition: "cup", matchday: f.matchday } });
+        const homeData = getStartersWithFormation(next, f.homeId, {
+          fixture: {
+            fixtureId: f.id,
+            opponentId: f.awayId,
+            isHome: true,
+            competition: "cup",
+            matchday: f.matchday,
+          },
+        });
 
-        const awayData = getStartersWithFormation(next, f.awayId, { fixture: { fixtureId: f.id, opponentId: f.homeId, isHome: false, competition: "cup", matchday: f.matchday } });
+        const awayData = getStartersWithFormation(next, f.awayId, {
+          fixture: {
+            fixtureId: f.id,
+            opponentId: f.homeId,
+            isHome: false,
+            competition: "cup",
+            matchday: f.matchday,
+          },
+        });
         const homeXI = homeData.players;
         const awayXI = awayData.players;
 
@@ -3180,7 +3457,10 @@ export async function simulateRemainingCupMatches(
               awayTactics: loadTactics(f.awayId),
             });
 
-            result.substitutions = [...(result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
+            result.substitutions = [
+              ...(result.substitutions ?? []),
+              ...(etResult.substitutions ?? []),
+            ].sort((a, b) => a.minute - b.minute);
             result.extraTime = {
               homeGoals: etResult.homeGoals,
 
@@ -3231,8 +3511,24 @@ export async function simulateRemainingCupMatches(
       } else {
         // O(1) MATH SIMULATION for background countries - EXACT same logic as league background matches
 
-        const homeData = getStartersWithFormation(next, f.homeId, { fixture: { fixtureId: f.id, opponentId: f.awayId, isHome: true, competition: "cup", matchday: f.matchday } });
-        const awayData = getStartersWithFormation(next, f.awayId, { fixture: { fixtureId: f.id, opponentId: f.homeId, isHome: false, competition: "cup", matchday: f.matchday } });
+        const homeData = getStartersWithFormation(next, f.homeId, {
+          fixture: {
+            fixtureId: f.id,
+            opponentId: f.awayId,
+            isHome: true,
+            competition: "cup",
+            matchday: f.matchday,
+          },
+        });
+        const awayData = getStartersWithFormation(next, f.awayId, {
+          fixture: {
+            fixtureId: f.id,
+            opponentId: f.homeId,
+            isHome: false,
+            competition: "cup",
+            matchday: f.matchday,
+          },
+        });
         const homeXI = homeData.players;
         const awayXI = awayData.players;
         const homeBench = getCupSimulationBench(next, f.homeId, homeXI, f.competition);
@@ -3259,7 +3555,10 @@ export async function simulateRemainingCupMatches(
             homeTactics: loadTactics(f.homeId),
             awayTactics: loadTactics(f.awayId),
           });
-          result.substitutions = [...(result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
+          result.substitutions = [
+            ...(result.substitutions ?? []),
+            ...(etResult.substitutions ?? []),
+          ].sort((a, b) => a.minute - b.minute);
           result.extraTime = {
             homeGoals: etResult.homeGoals,
             awayGoals: etResult.awayGoals,
@@ -3369,9 +3668,8 @@ function addToUserBudget(save: SaveGame, teamId: string, amount: number) {
     usePlayersStore.setState((s: any) => {
       const oldTotal = Math.max(0, Math.round(s.budget || 0));
       const nextTotal = Math.max(0, Math.round(oldTotal + amount));
-      const ratio = oldTotal > 0
-        ? Math.max(0.05, Math.min(0.30, (s.wageBudget || 0) / oldTotal))
-        : 0.2;
+      const ratio =
+        oldTotal > 0 ? Math.max(0.05, Math.min(0.3, (s.wageBudget || 0) / oldTotal)) : 0.2;
       const wageBudget = Math.round(nextTotal * ratio);
       return { budget: nextTotal, wageBudget };
     });
@@ -3393,7 +3691,9 @@ function grantUCLPrizeOnce(save: SaveGame, key: string, teamId: string, amount: 
  *  - credit league-phase prize money to the user's team when applicable
  */
 function applyUCLMatchAftermath(save: SaveGame, homeId: string, awayId: string): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  // Se llama por partido; mutamos el snapshot que ya posee el simulador en vez
+  // de serializar toda la carrera cada vez.
+  const next = save;
   for (const teamId of [homeId, awayId]) {
     // Injuries — bump injuredUntil down by 1 for players still injured per their league matchday
     const lg = teamById(teamId).league as any;
@@ -3428,7 +3728,7 @@ function applyUCLMatchAftermath(save: SaveGame, homeId: string, awayId: string):
 }
 
 export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
   console.log(
     `[simulateUCLMatchday] START - matchday: ${matchday}, total fixtures: ${next.uclFixtures?.length ?? 0}`,
@@ -3505,7 +3805,7 @@ export function playSpecificFixture(
   save: SaveGame,
   fixtureId: string,
 ): { save: SaveGame; fixture: Fixture | null } {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
   console.log("playSpecificFixture called with fixtureId:", fixtureId);
 
@@ -3517,14 +3817,17 @@ export function playSpecificFixture(
   let fixture = leagueFixtures.find((f) => f.id === fixtureId);
 
   if (fixture && !fixture.result) {
-    console.log("Found fixture in league fixtures:", fixture.id);
+    next.fixtures[next.myLeague] = [...leagueFixtures];
+    const mutableLeagueFixtures = next.fixtures[next.myLeague];
+    fixture = mutableLeagueFixtures.find((f) => f.id === fixtureId);
+    console.log("Found fixture in league fixtures:", fixture?.id);
 
-    const simmed = simulateFixtureInline(next, fixture);
+    const simmed = simulateFixtureInline(next, fixture!);
 
-    const idx = leagueFixtures.findIndex((x) => x.id === fixtureId);
+    const idx = mutableLeagueFixtures.findIndex((x) => x.id === fixtureId);
 
     if (idx >= 0) {
-      next.fixtures[next.myLeague][idx] = simmed;
+      mutableLeagueFixtures[idx] = simmed;
 
       const isUserMatch = simmed.homeId === next.myTeamId || simmed.awayId === next.myTeamId;
       // A live match is only provisional here. The manager can alter goals,
@@ -3557,18 +3860,21 @@ export function playSpecificFixture(
     fixture = cupList.find((f) => f.id === fixtureId);
 
     if (fixture && !fixture.result) {
-      console.log("Found fixture in cup fixtures:", fixture.id, "league:", lg);
+      next.cupFixtures[lg as LeagueId] = [...cupList];
+      const mutableCupList = next.cupFixtures[lg as LeagueId];
+      fixture = mutableCupList.find((f) => f.id === fixtureId);
+      console.log("Found fixture in cup fixtures:", fixture?.id, "league:", lg);
 
       // Check if this is a user match - if so, use regular simulation (no auto extra time/penalties)
 
-      const isUserMatch = fixture.homeId === next.myTeamId || fixture.awayId === next.myTeamId;
+      const isUserMatch = fixture!.homeId === next.myTeamId || fixture!.awayId === next.myTeamId;
 
-      const simmed = simulateFixtureInline(next, fixture, false, isUserMatch ? false : true);
+      const simmed = simulateFixtureInline(next, fixture!, false, isUserMatch ? false : true);
 
-      const idx = next.cupFixtures[lg as LeagueId].findIndex((x) => x.id === fixtureId);
+      const idx = mutableCupList.findIndex((x) => x.id === fixtureId);
 
       if (idx >= 0) {
-        cupList[idx] = simmed;
+        mutableCupList[idx] = simmed;
 
         // Live cup matches are also provisional until the manager finishes
         // the watched chronicle (including extra time / shootout where used).
@@ -3585,9 +3891,11 @@ export function playSpecificFixture(
     fixture = next.uclFixtures.find((f) => f.id === fixtureId);
 
     if (fixture && !fixture.result) {
-      console.log("Found fixture in UCL fixtures:", fixture.id);
+      next.uclFixtures = [...next.uclFixtures];
+      fixture = next.uclFixtures.find((f) => f.id === fixtureId);
+      console.log("Found fixture in UCL fixtures:", fixture?.id);
 
-      const simmed = simulateFixtureInline(next, fixture);
+      const simmed = simulateFixtureInline(next, fixture!);
 
       const idx = next.uclFixtures.findIndex((x) => x.id === fixtureId);
 
@@ -3633,16 +3941,18 @@ export function playSpecificFixture(
 export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, result: any): SaveGame {
   if (!result) return save;
 
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
   let fixture: Fixture | undefined;
   let competition: "league" | "cup" | "ucl" | undefined;
 
   const leagueList = next.fixtures?.[next.myLeague] ?? [];
   const leagueIndex = leagueList.findIndex((f) => f.id === fixtureId);
   if (leagueIndex >= 0) {
-    fixture = leagueList[leagueIndex];
+    next.fixtures[next.myLeague] = [...leagueList];
+    const mutableLeagueList = next.fixtures[next.myLeague];
+    fixture = mutableLeagueList[leagueIndex];
     competition = "league";
-    next.fixtures[next.myLeague][leagueIndex] = {
+    mutableLeagueList[leagueIndex] = {
       ...fixture,
       result: { ...result, liveCommitted: true },
     };
@@ -3653,9 +3963,11 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
       if (!Array.isArray(list)) continue;
       const index = list.findIndex((f) => f.id === fixtureId);
       if (index >= 0) {
-        fixture = list[index];
+        next.cupFixtures[lg as LeagueId] = [...list];
+        const mutableCupList = next.cupFixtures[lg as LeagueId];
+        fixture = mutableCupList[index];
         competition = "cup";
-        next.cupFixtures[lg as LeagueId][index] = {
+        mutableCupList[index] = {
           ...fixture,
           result: { ...result, liveCommitted: true },
         };
@@ -3724,7 +4036,7 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
  */
 
 export function playMyNextMatch(save: SaveGame): { save: SaveGame; fixture: Fixture | null } {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
   const my = getMyNextFixture(next);
 
@@ -3732,6 +4044,7 @@ export function playMyNextMatch(save: SaveGame): { save: SaveGame; fixture: Fixt
 
   const simmed = simulateFixtureInline(next, my);
 
+  next.fixtures[next.myLeague] = [...(next.fixtures[next.myLeague] ?? [])];
   const idx = next.fixtures[next.myLeague].findIndex((x) => x.id === my.id);
 
   next.fixtures[next.myLeague][idx] = simmed;
@@ -3762,19 +4075,22 @@ export function playMyNextMatch(save: SaveGame): { save: SaveGame; fixture: Fixt
  */
 
 export function playMyNextCupMatch(save: SaveGame): { save: SaveGame; fixture: Fixture | null } {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
   const myCupFixtures = getMyUpcomingCupFixtures(next).filter((f) => f.competition === "cup");
 
   if (myCupFixtures.length === 0) return { save: next, fixture: null };
 
   const my = myCupFixtures[0];
+  const targetLeague = my.league ?? next.myLeague;
+  const sourceCupList = next.cupFixtures[targetLeague] ?? [];
+  next.cupFixtures[targetLeague] = [...sourceCupList];
 
   const simmed = simulateFixtureInline(next, my, false, true);
 
-  const idx = next.cupFixtures[next.myLeague].findIndex((x) => x.id === my.id);
+  const idx = next.cupFixtures[targetLeague].findIndex((x) => x.id === my.id);
 
-  next.cupFixtures[next.myLeague][idx] = simmed;
+  if (idx >= 0) next.cupFixtures[targetLeague][idx] = simmed;
 
   next = applyMatchToStats(next, simmed);
 
@@ -3784,9 +4100,14 @@ export function playMyNextCupMatch(save: SaveGame): { save: SaveGame; fixture: F
 // Fast synchronous version for UI responsiveness - only simulates essential leagues
 
 export function finishMatchdayFast(save: SaveGame, leaguesToSim?: LeagueId[]): SaveGame {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
   const targetLeagues = leaguesToSim || [save.myLeague];
+
+  for (const lg of targetLeagues) {
+    if (Array.isArray(next.fixtures[lg])) next.fixtures[lg] = [...next.fixtures[lg]];
+    if (Array.isArray(next.standings[lg])) next.standings[lg] = [...next.standings[lg]];
+  }
 
   for (const lg of targetLeagues) {
     const md = next.currentMatchday[lg];
@@ -3809,7 +4130,6 @@ export function finishMatchdayFast(save: SaveGame, leaguesToSim?: LeagueId[]): S
 
     next.currentMatchday[lg] = md + 1;
   }
-
 
   // Advance cup for simulated leagues only
 
@@ -4013,7 +4333,9 @@ export function generateRealisticStatsForO1Leagues(
         // An injured player is unavailable for every competition, not only the
         // league of his current club.
         const selectMatchPlayers = (squad: Player[]): Player[] => {
-          const healthy = squad.filter((p) => !isPlayerInjuredAtDate(p, fixture.date || store.currentDate, md));
+          const healthy = squad.filter(
+            (p) => !isPlayerInjuredAtDate(p, fixture.date || store.currentDate, md),
+          );
           const gks = healthy.filter((p) => isGoalkeeper(p.positions)).slice(0, 1);
 
           const defs = healthy.filter((p) => isDefensive(p.positions)).slice(0, 4);
@@ -4099,18 +4421,13 @@ export function generateRealisticStatsForO1Leagues(
         const startDate = teamMatchDates.get(teamId) || store.currentDate;
         const untilDate = addDaysToIso(startDate, durationDays);
 
-        store.recordInjury(
-          victim.id,
-          md + Math.max(1, Math.ceil(durationDays / 7)),
-          reason,
-          {
-            startDate,
-            untilDate,
-            durationDays,
-            injuryType: profile.type,
-            injuryArea: profile.area,
-          },
-        );
+        store.recordInjury(victim.id, md + Math.max(1, Math.ceil(durationDays / 7)), reason, {
+          startDate,
+          untilDate,
+          durationDays,
+          injuryType: profile.type,
+          injuryArea: profile.area,
+        });
       }
 
       // Fourth pass: assign goals and assists based on fixture results
@@ -4230,7 +4547,7 @@ export async function simulateBackgroundLeaguesOnly(
   nextMatchDate?: string,
   onProgress?: (processed: number, total: number) => void,
 ): Promise<SaveGame> {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const next: SaveGame = createFastMutationSnapshot(save);
 
   const userLeague = next.myLeague;
 
@@ -4320,7 +4637,7 @@ export async function scheduleBackgroundCupsOnly(
   matchday: number,
   currentDate: string,
 ): Promise<SaveGame> {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const next: SaveGame = createFastMutationSnapshot(save);
 
   const userLeague = next.myLeague;
 
@@ -4415,7 +4732,11 @@ function recordFakeMatchStats(
   }
 
   for (const playerId of participants) {
-    store.recordAppearance(playerId, competition, minuteMap.has(playerId) ? minuteMap.get(playerId) : 90);
+    store.recordAppearance(
+      playerId,
+      competition,
+      minuteMap.has(playerId) ? minuteMap.get(playerId) : 90,
+    );
   }
 
   const isGoalEvent = (event: any) =>
@@ -4471,11 +4792,7 @@ function recordFakeMatchStats(
     creditMissing("away", awayGoals, awayPlayers);
   };
 
-  creditGoalEvents(
-    result.events ?? [],
-    result.homeGoals ?? 0,
-    result.awayGoals ?? 0,
-  );
+  creditGoalEvents(result.events ?? [], result.homeGoals ?? 0, result.awayGoals ?? 0);
 
   for (const card of result.cards ?? []) {
     if (card.cardType === "yellow") {
@@ -4548,15 +4865,12 @@ function recordFakeMatchStats(
   // Guardar también porterías a cero y MVP de los partidos simulados fuera
   // de la liga del usuario. No cambia la simulación ni crea candidatos: solo
   // registra las dos estadísticas que ya produce el resultado del partido.
-  const finalHomeGoals =
-    (result.homeGoals ?? 0) + (result.extraTime?.homeGoals ?? 0);
-  const finalAwayGoals =
-    (result.awayGoals ?? 0) + (result.extraTime?.awayGoals ?? 0);
+  const finalHomeGoals = (result.homeGoals ?? 0) + (result.extraTime?.homeGoals ?? 0);
+  const finalAwayGoals = (result.awayGoals ?? 0) + (result.extraTime?.awayGoals ?? 0);
 
   const findGoalkeeper = (team: "home" | "away", fallback: Player[]) => {
-    const lineup = team === "home"
-      ? (result.homeLineup ?? fallback)
-      : (result.awayLineup ?? fallback);
+    const lineup =
+      team === "home" ? (result.homeLineup ?? fallback) : (result.awayLineup ?? fallback);
     return lineup.find((p) => isGoalkeeper(p.positions));
   };
 
@@ -4569,7 +4883,8 @@ function recordFakeMatchStats(
     if (gk) store.recordCleanSheet(gk.id, competition);
   }
 
-  const motmId = result.mvp?.playerId ??
+  const motmId =
+    result.mvp?.playerId ??
     (result.ratings?.length
       ? result.ratings.reduce((best, cur) => (cur.rating > best.rating ? cur : best)).playerId
       : undefined);
@@ -4598,13 +4913,15 @@ function selectMatchPlayers(squad: Player[]): Player[] {
   return players.slice(0, 11);
 }
 
-
 const TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY = 5.5;
 
 function injuryChanceForLeague(teamCount: number): number {
   // Each team plays once per league matchday. One injury roll per team gives
   // an expected league average of roughly 5.5 injuries, with natural variance.
-  return Math.min(0.45, Math.max(0.12, TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY / Math.max(1, teamCount)));
+  return Math.min(
+    0.45,
+    Math.max(0.12, TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY / Math.max(1, teamCount)),
+  );
 }
 
 function generateBackgroundInjury(
@@ -4682,29 +4999,18 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
 
     const dueCups = new Set(due.filter((p) => p.isCup).map((p) => p.league));
 
-    const next: SaveGame = {
-      ...save,
-
-      fixtures: { ...save.fixtures },
-
-      standings: { ...save.standings },
-
-      cupFixtures: { ...save.cupFixtures },
-
-      currentMatchday: { ...save.currentMatchday },
-
-      pendingBackgroundSims: [...(save.pendingBackgroundSims ?? [])],
-    };
+    const next: SaveGame = createFastMutationSnapshot(save);
+    next.pendingBackgroundSims = [...(save.pendingBackgroundSims ?? [])];
 
     for (const lg of dueLeagues) {
-      if (save.fixtures[lg]) next.fixtures[lg] = save.fixtures[lg].map((f) => ({ ...f }));
+      if (save.fixtures[lg]) next.fixtures[lg] = [...save.fixtures[lg]];
 
-      if (save.standings[lg]) next.standings[lg] = save.standings[lg].map((s) => ({ ...s }));
+      if (save.standings[lg]) next.standings[lg] = [...save.standings[lg]];
     }
 
     for (const lg of dueCups) {
       if (Array.isArray(save.cupFixtures[lg])) {
-        next.cupFixtures[lg] = save.cupFixtures[lg].map((f) => ({ ...f }));
+        next.cupFixtures[lg] = [...save.cupFixtures[lg]];
       }
     }
 
@@ -4775,9 +5081,10 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
               homeTactics: loadTactics(f.homeId),
               awayTactics: loadTactics(f.awayId),
             });
-            result.substitutions = [...(result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort(
-              (a, b) => a.minute - b.minute,
-            );
+            result.substitutions = [
+              ...(result.substitutions ?? []),
+              ...(etResult.substitutions ?? []),
+            ].sort((a, b) => a.minute - b.minute);
             result.extraTime = {
               homeGoals: etResult.homeGoals,
               awayGoals: etResult.awayGoals,
@@ -4830,7 +5137,12 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
               for (const card of result.cards) {
                 const p = store.getSimPlayer(card.playerId);
                 if (card.cardType === "yellow" && p) {
-                  next = processAccumulatedYellowSuspension(next, card.playerId, p.teamId, f.competition);
+                  next = processAccumulatedYellowSuspension(
+                    next,
+                    card.playerId,
+                    p.teamId,
+                    f.competition,
+                  );
                 }
               }
             }
@@ -4859,14 +5171,26 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
 
           if (!home || !away) continue;
 
-          const homeSuspendedIds = getSuspendedPlayerIdsForCompetition(next, home.id, f.competition);
-          const awaySuspendedIds = getSuspendedPlayerIdsForCompetition(next, away.id, f.competition);
+          const homeSuspendedIds = getSuspendedPlayerIdsForCompetition(
+            next,
+            home.id,
+            f.competition,
+          );
+          const awaySuspendedIds = getSuspendedPlayerIdsForCompetition(
+            next,
+            away.id,
+            f.competition,
+          );
           allPlayersToRecord.set(
             home.id,
             selectMatchPlayers(
               store
                 .getSimSquad(home.id)
-                .filter((p) => !homeSuspendedIds.has(p.id) && !isPlayerInjuredAtDate(p, f.date || today, matchday)),
+                .filter(
+                  (p) =>
+                    !homeSuspendedIds.has(p.id) &&
+                    !isPlayerInjuredAtDate(p, f.date || today, matchday),
+                ),
             ),
           );
 
@@ -4875,7 +5199,11 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
             selectMatchPlayers(
               store
                 .getSimSquad(away.id)
-                .filter((p) => !awaySuspendedIds.has(p.id) && !isPlayerInjuredAtDate(p, f.date || today, matchday)),
+                .filter(
+                  (p) =>
+                    !awaySuspendedIds.has(p.id) &&
+                    !isPlayerInjuredAtDate(p, f.date || today, matchday),
+                ),
             ),
           );
         }
@@ -4883,7 +5211,6 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
         // Third pass: simulate and assign all player stats in one place.
         // `recordFakeMatchStats` is responsible for appearances too, so they are
         // not double-counted here.
-
 
         for (const f of fixtures) {
           const home = teamById(f.homeId);
@@ -4905,10 +5232,7 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
             generateBackgroundInjury(awayPlayers, "away", leagueTeamCount),
           ].filter((injury): injury is InjuryEvent => Boolean(injury));
 
-          result.injuries = [
-            ...(result.injuries ?? []),
-            ...backgroundInjuries,
-          ];
+          result.injuries = [...(result.injuries ?? []), ...backgroundInjuries];
 
           const idx = next.fixtures[league].findIndex((x) => x.id === f.id);
 
@@ -4935,7 +5259,12 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
               for (const card of result.cards) {
                 const p = store.getSimPlayer(card.playerId);
                 if (card.cardType === "yellow" && p) {
-                  next = processAccumulatedYellowSuspension(next, card.playerId, p.teamId, f.competition);
+                  next = processAccumulatedYellowSuspension(
+                    next,
+                    card.playerId,
+                    p.teamId,
+                    f.competition,
+                  );
                 }
               }
             }
@@ -4990,18 +5319,23 @@ export async function advanceMatchdayLayered(
 
       formations: { ...save.formations },
 
-      suspensions: JSON.parse(JSON.stringify(save.suspensions)),
+      suspensions: Object.fromEntries(
+        Object.entries(save.suspensions ?? {}).map(([teamId, list]) => [
+          teamId,
+          Array.isArray(list) ? list.map((item) => ({ ...item })) : [],
+        ]),
+      ),
 
       lineups: { ...save.lineups },
     };
 
     for (const lg of vipLeagueSet) {
-      next.fixtures[lg] = save.fixtures[lg].map((f) => ({ ...f }));
+      next.fixtures[lg] = [...(save.fixtures[lg] ?? [])];
 
-      next.standings[lg] = save.standings[lg].map((s) => ({ ...s }));
+      next.standings[lg] = [...(save.standings[lg] ?? [])];
 
       if (Array.isArray(save.cupFixtures[lg])) {
-        next.cupFixtures[lg] = save.cupFixtures[lg].map((f) => ({ ...f }));
+        next.cupFixtures[lg] = [...save.cupFixtures[lg]];
       }
     }
 
@@ -5055,9 +5389,25 @@ export async function advanceMatchdayLayered(
         if (league === userLeague) {
           // DEEP SIMULATION for user's own league
 
-          const homeData = getStartersWithFormation(next, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "league", matchday: fixture.matchday } });
+          const homeData = getStartersWithFormation(next, fixture.homeId, {
+            fixture: {
+              fixtureId: fixture.id,
+              opponentId: fixture.awayId,
+              isHome: true,
+              competition: "league",
+              matchday: fixture.matchday,
+            },
+          });
 
-          const awayData = getStartersWithFormation(next, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "league", matchday: fixture.matchday } });
+          const awayData = getStartersWithFormation(next, fixture.awayId, {
+            fixture: {
+              fixtureId: fixture.id,
+              opponentId: fixture.homeId,
+              isHome: false,
+              competition: "league",
+              matchday: fixture.matchday,
+            },
+          });
           const homeXI = homeData.players;
           const awayXI = awayData.players;
 
@@ -5087,8 +5437,24 @@ export async function advanceMatchdayLayered(
           // FAST, pero detallada: incluso los partidos de otros equipos deben
           // guardar XI, formación, goleadores, asistencias, tarjetas, paradones,
           // palos y sustituciones para que la pantalla de crónica sea completa.
-          const homeData = getStartersWithFormation(next, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "league", matchday: fixture.matchday } });
-          const awayData = getStartersWithFormation(next, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "league", matchday: fixture.matchday } });
+          const homeData = getStartersWithFormation(next, fixture.homeId, {
+            fixture: {
+              fixtureId: fixture.id,
+              opponentId: fixture.awayId,
+              isHome: true,
+              competition: "league",
+              matchday: fixture.matchday,
+            },
+          });
+          const awayData = getStartersWithFormation(next, fixture.awayId, {
+            fixture: {
+              fixtureId: fixture.id,
+              opponentId: fixture.homeId,
+              isHome: false,
+              competition: "league",
+              matchday: fixture.matchday,
+            },
+          });
           const hXI = homeData.players;
           const aXI = awayData.players;
 
@@ -5101,14 +5467,37 @@ export async function advanceMatchdayLayered(
             awayFormation: awayData.formation,
           });
 
-          recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league], "league", fixture.date);
-          next = consumeSuspensionsForFixture(next, [fixture.homeId, fixture.awayId], fixture.competition);
+          recordFakeMatchStats(
+            store,
+            hXI,
+            aXI,
+            result,
+            next.currentMatchday[league],
+            "league",
+            fixture.date,
+          );
+          next = consumeSuspensionsForFixture(
+            next,
+            [fixture.homeId, fixture.awayId],
+            fixture.competition,
+          );
           if (result.cards?.length) {
-            next = processRedCards(next, result.cards, fixture.homeId, fixture.awayId, fixture.competition);
+            next = processRedCards(
+              next,
+              result.cards,
+              fixture.homeId,
+              fixture.awayId,
+              fixture.competition,
+            );
             for (const card of result.cards) {
               const p = store.getSimPlayer(card.playerId);
               if (card.cardType === "yellow" && p) {
-                next = processAccumulatedYellowSuspension(next, card.playerId, p.teamId, fixture.competition);
+                next = processAccumulatedYellowSuspension(
+                  next,
+                  card.playerId,
+                  p.teamId,
+                  fixture.competition,
+                );
               }
             }
           }
@@ -5173,7 +5562,6 @@ export async function advanceMatchdayLayered(
         delete next.formations[teamId];
       }
     }
-
 
     // Process cup draws without simulating matches
 
@@ -5661,28 +6049,27 @@ export function isPlayerInjured(save: SaveGame, playerId: string): boolean {
 }
 
 export function setLineup(save: SaveGame, teamId: string, xi: string[]): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
-
-  next.lineups[teamId] = xi;
-
-  return next;
+  return {
+    ...save,
+    lineups: { ...(save.lineups ?? {}), [teamId]: [...xi] },
+  };
 }
 
 export function setFormation(save: SaveGame, teamId: string, formation: string): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
-
-  next.formations[teamId] = formation;
-
-  return next;
+  return {
+    ...save,
+    formations: { ...(save.formations ?? {}), [teamId]: formation },
+  };
 }
 
 export function setSubstitutes(save: SaveGame, teamId: string, substitutes: string[]): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
-
-  next.substitutes ??= {};
-  next.substitutes[teamId] = Array.from(new Set(substitutes.filter(Boolean))).slice(0, 12);
-
-  return next;
+  return {
+    ...save,
+    substitutes: {
+      ...(save.substitutes ?? {}),
+      [teamId]: Array.from(new Set(substitutes.filter(Boolean))).slice(0, 12),
+    },
+  };
 }
 
 /**
@@ -5856,7 +6243,7 @@ export function getCurrentCupRound(save: SaveGame, league: LeagueId): string | n
  */
 
 export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveGame {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
   const userLeague = next.myLeague;
 
@@ -5900,6 +6287,13 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
     let list = next.cupFixtures[primaryLeague];
 
     if (!list) continue;
+
+    // All writes in this routine are local to this country's cup. Clone the
+    // array once, rather than copying every object in every country's history.
+    if (next.cupFixtures[primaryLeague] === save.cupFixtures[primaryLeague]) {
+      next.cupFixtures[primaryLeague] = [...list];
+      list = next.cupFixtures[primaryLeague];
+    }
 
     // Always recalculate fresh cup data to avoid stale saves
 
@@ -6223,8 +6617,10 @@ export function applyCupDraw(
   round: string,
   matchups: [string, string][],
 ): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const next: SaveGame = createFastMutationSnapshot(save);
 
+  const sourceList = next.cupFixtures[league];
+  if (Array.isArray(sourceList)) next.cupFixtures[league] = [...sourceList];
   const list = next.cupFixtures[league];
 
   console.log(
@@ -6462,9 +6858,10 @@ export function applyUCLKnockoutDraw(save: SaveGame): SaveGame {
 // Simulate a UCL league matchday with proper simulation and table updates
 
 export function simulateUCLLeagueMatchday(save: SaveGame, matchday: number): SaveGame {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
   if (!next.uclFixtures || !next.ucl) return next;
+  next.uclFixtures = [...next.uclFixtures];
 
   const toSimulate = next.uclFixtures.filter(
     (f) =>
@@ -6502,9 +6899,10 @@ export function simulateUCLLeagueMatchday(save: SaveGame, matchday: number): Sav
 // Simulate a UCL knockout matchday with proper two-leg logic
 
 export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): SaveGame {
-  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  let next: SaveGame = createFastMutationSnapshot(save);
 
   if (!next.uclFixtures) return next;
+  next.uclFixtures = [...next.uclFixtures];
 
   const toSimulate = next.uclFixtures.filter((f) => f.matchday === matchday && !f.result);
 
@@ -6554,8 +6952,24 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
         if (aggHome === aggAway && !simmed.result.extraTime) {
           const home = teamById(simmed.homeId);
           const away = teamById(simmed.awayId);
-          const homeData = getStartersWithFormation(next, simmed.homeId, { fixture: { fixtureId: simmed.id, opponentId: simmed.awayId, isHome: true, competition: "ucl", matchday: simmed.matchday } });
-          const awayData = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } });
+          const homeData = getStartersWithFormation(next, simmed.homeId, {
+            fixture: {
+              fixtureId: simmed.id,
+              opponentId: simmed.awayId,
+              isHome: true,
+              competition: "ucl",
+              matchday: simmed.matchday,
+            },
+          });
+          const awayData = getStartersWithFormation(next, simmed.awayId, {
+            fixture: {
+              fixtureId: simmed.id,
+              opponentId: simmed.homeId,
+              isHome: false,
+              competition: "ucl",
+              matchday: simmed.matchday,
+            },
+          });
           const homeXI = homeData.players;
           const awayXI = awayData.players;
           const homeBench = getCupSimulationBench(next, simmed.homeId, homeXI, "ucl");
@@ -6566,7 +6980,10 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
             regularSubstitutions: simmed.result.substitutions ?? [],
             regularCards: simmed.result.cards ?? [],
           });
-          simmed.result.substitutions = [...(simmed.result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
+          simmed.result.substitutions = [
+            ...(simmed.result.substitutions ?? []),
+            ...(etResult.substitutions ?? []),
+          ].sort((a, b) => a.minute - b.minute);
           simmed.result.extraTime = {
             homeGoals: etResult.homeGoals,
             awayGoals: etResult.awayGoals,
@@ -6694,7 +7111,8 @@ export function simulateBackgroundUCLDay(
 
   const isLeagueDay = UCL_CALENDAR.leagueDay.includes(dayOffset);
   if (isLeagueDay) {
-    let onlyAi = JSON.parse(JSON.stringify(save)) as SaveGame;
+    let onlyAi = createFastMutationSnapshot(save);
+    onlyAi.uclFixtures = [...(save.uclFixtures ?? [])];
     for (const f of aiFixtures) {
       const simmed = simulateFixtureInline(onlyAi, f, false, false);
       const idx = onlyAi.uclFixtures!.findIndex((x) => x.id === f.id);
@@ -6716,7 +7134,8 @@ export function simulateBackgroundUCLDay(
     return onlyAi;
   }
 
-  let next = JSON.parse(JSON.stringify(save)) as SaveGame;
+  let next = createFastMutationSnapshot(save);
+  next.uclFixtures = [...(save.uclFixtures ?? [])];
   for (const f of aiFixtures) {
     const isUserMatch = f.homeId === next.myTeamId || f.awayId === next.myTeamId;
     const isLeg2 = f.round?.endsWith("-Leg2");
@@ -6746,8 +7165,24 @@ export function simulateBackgroundUCLDay(
           if (leg2HomeAgg === leg2AwayAgg) {
             const home = teamById(simmed.homeId);
             const away = teamById(simmed.awayId);
-            const homeXI = getStartersWithFormation(next, simmed.homeId, { fixture: { fixtureId: simmed.id, opponentId: simmed.awayId, isHome: true, competition: "ucl", matchday: simmed.matchday } }).players;
-            const awayXI = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } }).players;
+            const homeXI = getStartersWithFormation(next, simmed.homeId, {
+              fixture: {
+                fixtureId: simmed.id,
+                opponentId: simmed.awayId,
+                isHome: true,
+                competition: "ucl",
+                matchday: simmed.matchday,
+              },
+            }).players;
+            const awayXI = getStartersWithFormation(next, simmed.awayId, {
+              fixture: {
+                fixtureId: simmed.id,
+                opponentId: simmed.homeId,
+                isHome: false,
+                competition: "ucl",
+                matchday: simmed.matchday,
+              },
+            }).players;
             const homeBench = getCupSimulationBench(next, simmed.homeId, homeXI, "ucl");
             const awayBench = getCupSimulationBench(next, simmed.awayId, awayXI, "ucl");
             const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
@@ -6756,7 +7191,10 @@ export function simulateBackgroundUCLDay(
               regularSubstitutions: simmed.result.substitutions ?? [],
               regularCards: simmed.result.cards ?? [],
             });
-            simmed.result.substitutions = [...(simmed.result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
+            simmed.result.substitutions = [
+              ...(simmed.result.substitutions ?? []),
+              ...(etResult.substitutions ?? []),
+            ].sort((a, b) => a.minute - b.minute);
             simmed.result.extraTime = {
               homeGoals: etResult.homeGoals,
               awayGoals: etResult.awayGoals,
@@ -6831,7 +7269,8 @@ export function simulateUserPhaseUCLDay(
 
   const isLeagueDay = UCL_CALENDAR.leagueDay.includes(dayOffset);
   if (isLeagueDay) {
-    let next = JSON.parse(JSON.stringify(save)) as SaveGame;
+    let next = createFastMutationSnapshot(save);
+    next.uclFixtures = [...(save.uclFixtures ?? [])];
     for (const f of aiFixtures) {
       const simmed = simulateFixtureInline(next, f, false, false);
       const idx = next.uclFixtures!.findIndex((x) => x.id === f.id);
@@ -6853,7 +7292,8 @@ export function simulateUserPhaseUCLDay(
     return next;
   }
 
-  let next = JSON.parse(JSON.stringify(save)) as SaveGame;
+  let next = createFastMutationSnapshot(save);
+  next.uclFixtures = [...(save.uclFixtures ?? [])];
   for (const f of aiFixtures) {
     const isUserMatch = f.homeId === next.myTeamId || f.awayId === next.myTeamId;
     const isLeg2 = f.round?.endsWith("-Leg2");
@@ -6883,8 +7323,24 @@ export function simulateUserPhaseUCLDay(
           if (leg2HomeAgg === leg2AwayAgg) {
             const home = teamById(simmed.homeId);
             const away = teamById(simmed.awayId);
-            const homeXI = getStartersWithFormation(next, simmed.homeId, { fixture: { fixtureId: simmed.id, opponentId: simmed.awayId, isHome: true, competition: "ucl", matchday: simmed.matchday } }).players;
-            const awayXI = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } }).players;
+            const homeXI = getStartersWithFormation(next, simmed.homeId, {
+              fixture: {
+                fixtureId: simmed.id,
+                opponentId: simmed.awayId,
+                isHome: true,
+                competition: "ucl",
+                matchday: simmed.matchday,
+              },
+            }).players;
+            const awayXI = getStartersWithFormation(next, simmed.awayId, {
+              fixture: {
+                fixtureId: simmed.id,
+                opponentId: simmed.homeId,
+                isHome: false,
+                competition: "ucl",
+                matchday: simmed.matchday,
+              },
+            }).players;
             const homeBench = getCupSimulationBench(next, simmed.homeId, homeXI, "ucl");
             const awayBench = getCupSimulationBench(next, simmed.awayId, awayXI, "ucl");
             const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
@@ -6893,7 +7349,10 @@ export function simulateUserPhaseUCLDay(
               regularSubstitutions: simmed.result.substitutions ?? [],
               regularCards: simmed.result.cards ?? [],
             });
-            simmed.result.substitutions = [...(simmed.result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
+            simmed.result.substitutions = [
+              ...(simmed.result.substitutions ?? []),
+              ...(etResult.substitutions ?? []),
+            ].sort((a, b) => a.minute - b.minute);
             simmed.result.extraTime = {
               homeGoals: etResult.homeGoals,
               awayGoals: etResult.awayGoals,
@@ -6980,9 +7439,12 @@ export function simulatePendingUCLThroughDay(
 
 /** Wire winners into the bracket and advance UCL phase after results exist. */
 export function processUCLKnockoutProgress(save: SaveGame, throughOffset: number): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const next: SaveGame = createFastMutationSnapshot(save);
   if (!next.ucl || !next.uclFixtures) return save;
 
+  // Only fixture object fields (homeId/awayId) are rewritten here; clone the
+  // small UCL list without deep-cloning the whole career.
+  next.uclFixtures = next.uclFixtures.map((fixture) => ({ ...fixture }));
   const fixtures = next.uclFixtures;
 
   if (throughOffset >= UCL_CALENDAR.playoffLeg2 && allPlayoffTiesComplete(fixtures)) {

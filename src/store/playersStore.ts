@@ -52,7 +52,11 @@ import {
   applyTeamRating,
   getLeagueTier,
 } from "@/data/teams";
-import { computeTeamRatingFromSquad, finalizeTeamRating, type RatedSquadMember } from "@/lib/teamRating";
+import {
+  computeTeamRatingFromSquad,
+  finalizeTeamRating,
+  type RatedSquadMember,
+} from "@/lib/teamRating";
 
 import { defaultLineup, type Player, marketValueFor } from "@/data/players";
 import {
@@ -418,7 +422,6 @@ function syncPlayerAgesForDate(currentDate: string): void {
   SQUAD_CACHE = new Map();
 }
 
-
 const TEAM_NAME_TO_ID: Record<string, string> = Object.fromEntries(
   TEAMS.map((t) => [t.name, t.id]),
 );
@@ -466,6 +469,22 @@ let CLUB_OVERRIDES: Record<string, string> = {};
 /** Caché de plantillas ya calculadas; se invalida al cambiar los overrides. */
 let SQUAD_CACHE = new Map<string, FcPlayer[]>();
 
+// Vista de Player ya convertida para el simulador. `getSimSquad()` se llama
+// muchas veces por partido (XI, banquillo, lesiones, previews). Mientras el
+// objeto `stats` no cambie podemos reutilizar el mismo array y evitar volver a
+// mapear + ordenar toda la plantilla en cada acceso.
+let CLUB_MEMBERSHIP_VERSION = 0;
+const SIM_SQUAD_VIEW_CACHE = new Map<
+  string,
+  {
+    statsRef: object;
+    rosterRef: string[];
+    currentDate: string;
+    membershipVersion: number;
+    squad: Player[];
+  }
+>();
+
 // La partida empieza el 1/7/2025: desde aquí toda la edad se calcula por fecha de nacimiento.
 syncPlayerAgesForDate(GAME_START_DATE);
 
@@ -478,6 +497,8 @@ recomputeAllTeamRatings();
 export function setClubOverrides(next: Record<string, string>): void {
   CLUB_OVERRIDES = { ...next };
   SQUAD_CACHE = new Map();
+  CLUB_MEMBERSHIP_VERSION += 1;
+  SIM_SQUAD_VIEW_CACHE.clear();
   recomputeAllTeamRatings();
 }
 
@@ -485,6 +506,8 @@ export function setClubOverrides(next: Record<string, string>): void {
 export function resetClubOverrides(): void {
   CLUB_OVERRIDES = {};
   SQUAD_CACHE = new Map();
+  CLUB_MEMBERSHIP_VERSION += 1;
+  SIM_SQUAD_VIEW_CACHE.clear();
   recomputeAllTeamRatings();
 }
 
@@ -498,6 +521,8 @@ export function setPlayerClub(playerId: string, toClubId: string | null): void {
   const fromClubId = clubOfPlayer(playerId);
   CLUB_OVERRIDES[playerId] = toClubId ?? "";
   SQUAD_CACHE = new Map();
+  CLUB_MEMBERSHIP_VERSION += 1;
+  SIM_SQUAD_VIEW_CACHE.clear();
   // El fichaje/venta cambia la plantilla real de ambos clubes implicados, así
   // que su media (att/mid/def) debe recalcularse en el acto.
   if (fromClubId) recomputeTeamRating(fromClubId);
@@ -773,16 +798,7 @@ function fcToPlayer(
 
     teamId,
 
-    marketValue: marketValueMillions(
-      fc.OVR,
-      fc.Age,
-      fc.Position,
-      "",
-      "",
-      false,
-      75,
-      fc.potential,
-    ),
+    marketValue: marketValueMillions(fc.OVR, fc.Age, fc.Position, "", "", false, 75, fc.potential),
 
     isReal: true,
 
@@ -901,7 +917,9 @@ type PlayersState = {
   /** Sincroniza la masa salarial con los contratos reales del motor de mercado. */
   syncWageStateFromMarket: () => void;
   /** Renueva un contrato usando la fuente única de verdad del mercado. */
-  renewPlayerContract: (input: Omit<UserRenewalInput, "clubId">) => ReturnType<typeof renewUserPlayer>;
+  renewPlayerContract: (
+    input: Omit<UserRenewalInput, "clubId">,
+  ) => ReturnType<typeof renewUserPlayer>;
 
   importLegacyStats: (players: Record<string, Player>) => void;
 
@@ -939,7 +957,11 @@ type PlayersState = {
   getSimXI: (teamId: string, lineupIds: string[], leagueMatchday: number) => Player[];
 
   /** Aplica el resultado físico de un partido a los dos equipos. */
-  setTeamMatchEnergy: (teamId: string, energyByPlayer: Record<string, number>, matchDate?: string) => void;
+  setTeamMatchEnergy: (
+    teamId: string,
+    energyByPlayer: Record<string, number>,
+    matchDate?: string,
+  ) => void;
   /** Recupera energía día a día hasta la fecha indicada. */
   recoverPlayerEnergyToDate: (targetDate: string) => void;
 
@@ -1018,7 +1040,9 @@ function mutatePlayerStat(
 
 function currentDateParts(iso: string | undefined): { year: number; month: number } {
   const fallback = new Date();
-  const [y, m] = String(iso ?? "").split("-").map(Number);
+  const [y, m] = String(iso ?? "")
+    .split("-")
+    .map(Number);
   return {
     year: Number.isFinite(y) && y > 0 ? y : fallback.getFullYear(),
     month: Number.isFinite(m) && m >= 1 && m <= 12 ? m - 1 : fallback.getMonth(),
@@ -1120,7 +1144,7 @@ function estimateSquadWageBill(teamId: string, squad: FcPlayer[]): number {
 function wageAllocation(totalBudget: number, preferredRatio = 0.2): number {
   const total = Math.max(0, Math.round(totalBudget));
   if (total === 0) return 0;
-  const ratio = Math.max(0.05, Math.min(0.30, preferredRatio));
+  const ratio = Math.max(0.05, Math.min(0.3, preferredRatio));
   return Math.round(total * ratio);
 }
 
@@ -1662,7 +1686,11 @@ export const usePlayersStore = create<PlayersState>()(
             : [...homeXI, ...awayXI].map((p) => p.id);
 
           for (const playerId of participants) {
-            get().recordAppearance(playerId, f.competition, minuteMap.has(playerId) ? minuteMap.get(playerId) : 90);
+            get().recordAppearance(
+              playerId,
+              f.competition,
+              minuteMap.has(playerId) ? minuteMap.get(playerId) : 90,
+            );
           }
 
           // Persist physical energy after every simulated fixture. The method
@@ -1767,7 +1795,9 @@ export const usePlayersStore = create<PlayersState>()(
             : (team.att + team.mid + team.def) / 3;
 
         const shouldReset = opts?.resetBudget || prev.myTeamId !== teamId;
-        let totalBudget = shouldReset ? teamInitialBudget(avgOvr, team.league, team.id) : prev.budget;
+        let totalBudget = shouldReset
+          ? teamInitialBudget(avgOvr, team.league, team.id)
+          : prev.budget;
         const wageBill = getClubWageBill(teamId);
 
         totalBudget = Math.max(0, Math.round(totalBudget));
@@ -1897,9 +1927,7 @@ export const usePlayersStore = create<PlayersState>()(
         const bill = getClubWageBill(state.myTeamId);
         const total = Math.max(0, Math.round(state.budget || 0));
         const ratio =
-          total > 0
-            ? (state.wageBudget || total * 0.2) / Math.max(1, state.budget || total)
-            : 0.2;
+          total > 0 ? (state.wageBudget || total * 0.2) / Math.max(1, state.budget || total) : 0.2;
         set({
           wageBill: bill,
           wageBudget: wageAllocation(total, ratio),
@@ -2077,9 +2105,7 @@ export const usePlayersStore = create<PlayersState>()(
         // negociación y la UI sincroniza la plantilla inmediatamente.
         const nextTotal = Math.max(0, Math.round(state.budget));
         const ratio =
-          nextTotal > 0
-            ? (state.wageBudget || nextTotal * 0.20) / Math.max(1, state.budget)
-            : 0.20;
+          nextTotal > 0 ? (state.wageBudget || nextTotal * 0.2) / Math.max(1, state.budget) : 0.2;
 
         set({
           clubOverrides: { ...getClubOverrides() },
@@ -2217,23 +2243,48 @@ export const usePlayersStore = create<PlayersState>()(
       },
 
       getSimSquad: (teamId) => {
-        const posOrder: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+        const state = get();
+        const cached = SIM_SQUAD_VIEW_CACHE.get(teamId);
 
-        const squad = get().getFcSquadByTeamId(teamId);
-
-        if (!squad || squad.length === 0) {
-          console.warn(`Empty squad for team: ${teamId}`);
-
-          return [];
+        if (
+          cached &&
+          cached.statsRef === state.stats &&
+          cached.rosterRef === state.rosterIds &&
+          cached.currentDate === state.currentDate &&
+          cached.membershipVersion === CLUB_MEMBERSHIP_VERSION
+        ) {
+          return cached.squad;
         }
 
-        return squad
+        const posOrder: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+        const squad = state.getFcSquadByTeamId(teamId);
 
-          .map((fc) => get().getSimPlayer(String(fc.ID)))
+        if (!squad || squad.length === 0) {
+          const empty: Player[] = [];
+          SIM_SQUAD_VIEW_CACHE.set(teamId, {
+            statsRef: state.stats,
+            rosterRef: state.rosterIds,
+            currentDate: state.currentDate,
+            membershipVersion: CLUB_MEMBERSHIP_VERSION,
+            squad: empty,
+          });
+          return empty;
+        }
 
+        const built = squad
+          .map((fc) => state.getSimPlayer(String(fc.ID)))
           .filter((p): p is Player => !!p)
-
           .sort((a, b) => posOrder[a.position] - posOrder[b.position] || b.rating - a.rating);
+
+        SIM_SQUAD_VIEW_CACHE.set(teamId, {
+          statsRef: state.stats,
+          rosterRef: state.rosterIds,
+          currentDate: state.currentDate,
+          membershipVersion: CLUB_MEMBERSHIP_VERSION,
+          squad: built,
+        });
+
+        return built;
       },
 
       getSimXI: (teamId, lineupIds, leagueMatchday) => {
@@ -2310,7 +2361,8 @@ export const usePlayersStore = create<PlayersState>()(
             : STAMINA_START;
           const lastDate = stats.energyLastUpdatedDate || current.currentDate || GAME_START_DATE;
           const days = diffDays(lastDate, targetDate);
-          if (days <= 0 && stats.energy === energy && stats.energyLastUpdatedDate === lastDate) continue;
+          if (days <= 0 && stats.energy === energy && stats.energyLastUpdatedDate === lastDate)
+            continue;
 
           const recovered = days > 0 ? recoverStamina(energy, days) : energy;
           if (recovered !== stats.energy || stats.energyLastUpdatedDate !== targetDate) {
@@ -2355,7 +2407,10 @@ export const usePlayersStore = create<PlayersState>()(
             seasonAppearances: s.appearances,
             seasonMinutes: s.dynamicStats.seasonMinutes + safeMinutes,
           };
-          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { appearances: 1 }) };
+          return {
+            ...s,
+            dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { appearances: 1 }),
+          };
         });
         return;
       },
@@ -2397,7 +2452,10 @@ export const usePlayersStore = create<PlayersState>()(
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
           const dynamic = { ...s.dynamicStats, seasonAssists: s.assists };
-          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { assists: 1 }) };
+          return {
+            ...s,
+            dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { assists: 1 }),
+          };
         });
         return;
       },
@@ -2452,7 +2510,10 @@ export const usePlayersStore = create<PlayersState>()(
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
           const dynamic = { ...s.dynamicStats, seasonCleanSheets: s.cleanSheets };
-          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { cleanSheets: 1 }) };
+          return {
+            ...s,
+            dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { cleanSheets: 1 }),
+          };
         });
         return;
       },
@@ -2501,7 +2562,10 @@ export const usePlayersStore = create<PlayersState>()(
         mutatePlayerStat(get, set, playerId, (s) => {
           if (!s.dynamicStats) return s;
           const dynamic = { ...s.dynamicStats, seasonMVPs: s.motm };
-          return { ...s, dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { mvpCount: 1 }) };
+          return {
+            ...s,
+            dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { mvpCount: 1 }),
+          };
         });
         return;
       },
@@ -2618,7 +2682,6 @@ export const usePlayersStore = create<PlayersState>()(
           },
         } as unknown as Storage;
       }),
-
 
       merge: (persisted, current) => {
         const saved = (persisted as Partial<PlayersState>) ?? {};
@@ -3004,7 +3067,9 @@ export function isPlayerInjuredAtDate(
   fallbackMatchday?: number,
 ): boolean {
   if (player.injuredUntilDate) return currentDate < player.injuredUntilDate;
-  return typeof fallbackMatchday === "number" ? player.injuredUntil > fallbackMatchday : player.injuredUntil > 0;
+  return typeof fallbackMatchday === "number"
+    ? player.injuredUntil > fallbackMatchday
+    : player.injuredUntil > 0;
 }
 
 export function injuryRemainingDays(
@@ -3050,8 +3115,16 @@ export function selectInjuredPlayers(
   return out.sort((a, b) => {
     const aLeague = teamById(a.teamId)?.league;
     const bLeague = teamById(b.teamId)?.league;
-    const aDays = injuryRemainingDays(a, currentDate, aLeague ? matchdaysByLeague?.[aLeague] : undefined);
-    const bDays = injuryRemainingDays(b, currentDate, bLeague ? matchdaysByLeague?.[bLeague] : undefined);
+    const aDays = injuryRemainingDays(
+      a,
+      currentDate,
+      aLeague ? matchdaysByLeague?.[aLeague] : undefined,
+    );
+    const bDays = injuryRemainingDays(
+      b,
+      currentDate,
+      bLeague ? matchdaysByLeague?.[bLeague] : undefined,
+    );
     return aDays - bDays;
   });
 }
