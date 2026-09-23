@@ -1,6 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TeamLogo } from "@/components/TeamLogo";
 import { MiniPitch } from "@/components/MiniPitch";
+import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
+import { faceUrl } from "@/lib/playerFaces";
 import { teamById, LEAGUES } from "@/data/teams";
 import { usePlayersStore } from "@/store/playersStore";
 import {
@@ -213,6 +215,38 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
     [...finalHomeRatings, ...finalAwayRatings].sort((a, b) => b.rating - a.rating)[0] ??
     null;
 
+  // Resolve historical players by id first, then by name. Match chronicles may
+  // outlive a transfer, so using the current team is not reliable enough.
+  const resolveChroniclePlayer = (playerId?: string, playerName?: string) => {
+    if (playerId) {
+      const fromStore = store.getSimPlayer(playerId);
+      if (fromStore) return fromStore;
+      const fromLineups = [...homePlayers, ...awayPlayers].find((p) => p.id === playerId);
+      if (fromLineups) return fromLineups;
+      const fromRatings = [...finalHomeRatings, ...finalAwayRatings].find((r) => r.playerId === playerId);
+      if (fromRatings) return store.getSimPlayer(fromRatings.playerId);
+    }
+    if (playerName) {
+      return [...homePlayers, ...awayPlayers].find((p) => p.name === playerName);
+    }
+    return undefined;
+  };
+
+  const PlayerChronicleFace = ({ playerId, playerName, size = 30 }: { playerId?: string; playerName?: string; size?: number }) => {
+    const player = resolveChroniclePlayer(playerId, playerName);
+    const name = player?.name || playerName || "Jugador";
+    return (
+      <PlayerFace
+        name={name}
+        image={faceUrl(player?.id || playerId, player?.cardImage)}
+        role={roleFromPosition(player?.positions?.[0] || "MID")}
+        size={size}
+        showRing={false}
+        className="border border-border/60 shadow-sm"
+      />
+    );
+  };
+
   // ---- Prórroga y penaltis ------------------------------------------------
   // result.homeGoals/awayGoals son SOLO los 90 minutos. Los goles de la
   // prórroga viven en result.extraTime, y la tanda en result.penalties.
@@ -410,8 +444,8 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   // Las alineaciones guardadas contienen el XI inicial. Los ratings, en cambio,
   // también incluyen a los jugadores que entraron desde el banquillo. Separamos
   // ambos grupos por ID para que las notas no mezclen titulares y suplentes.
-  const homeStarterIds = new Set(homePlayers.slice(0, 11).map((p) => p.id));
-  const awayStarterIds = new Set(awayPlayers.slice(0, 11).map((p) => p.id));
+  const homeStarterIds = new Set<string>(homePlayers.slice(0, 11).map((p) => p.id));
+  const awayStarterIds = new Set<string>(awayPlayers.slice(0, 11).map((p) => p.id));
 
   const getSubstituteIds = (team: "home" | "away", starterIds: Set<string>) => {
     const ids = new Set<string>(
@@ -880,6 +914,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           <span
                             className={`w-5 h-3 rounded-sm shrink-0 ${card.cardType === "yellow" ? "bg-yellow-400" : "bg-red-500"}`}
                           />
+                          <PlayerChronicleFace playerId={card.playerId} playerName={card.playerName} size={30} />
                           <TeamLogo
                             teamName={cardTeam.name}
                             leagueName={getLeagueName(cardTeam.league)}
@@ -903,6 +938,10 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                         >
                           <span className="text-sm text-primary font-bold w-10">{s.minute}'</span>
                           <span className="text-base w-5 text-center shrink-0">🔄</span>
+                          <div className="flex items-center -space-x-2 shrink-0">
+                            <PlayerChronicleFace playerId={s.playerInId} playerName={s.playerInName} size={30} />
+                            <PlayerChronicleFace playerId={s.playerOutId} playerName={s.playerOutName} size={26} />
+                          </div>
                           <TeamLogo
                             teamName={subTeam.name}
                             leagueName={getLeagueName(subTeam.league)}
@@ -930,6 +969,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                             {h.minute}'
                           </span>
                           <span className="text-base w-5 text-center shrink-0">{meta.icon}</span>
+                          <PlayerChronicleFace playerId={h.playerId} playerName={h.playerName} size={30} />
                           <TeamLogo
                             teamName={hTeam.name}
                             leagueName={getLeagueName(hTeam.league)}
@@ -966,6 +1006,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                             <span className="w-3 h-3 inline-block rounded-full bg-white/80" />
                           )}
                         </span>
+                        <PlayerChronicleFace playerId={e.scorerId} playerName={e.scorerName} size={32} />
                         <TeamLogo
                           teamName={scoringTeam.name}
                           leagueName={getLeagueName(scoringTeam.league)}
@@ -1017,6 +1058,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                             <span className="text-base w-5 text-center shrink-0">
                               {shot.scored ? "✅" : "❌"}
                             </span>
+                            <PlayerChronicleFace
+                              playerId={shot.playerId}
+                              playerName={shooter?.name}
+                              size={30}
+                            />
                             <TeamLogo
                               teamName={shotTeam.name}
                               leagueName={getLeagueName(shotTeam.league)}

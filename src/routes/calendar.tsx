@@ -1241,7 +1241,7 @@ function CalendarPage() {
         />
       )}
 
-      {save.cupDrawPending && (
+      {save?.cupDrawPending && (
         <CupDrawModal
           isOpen={showCupDrawModal}
           onClose={() => {

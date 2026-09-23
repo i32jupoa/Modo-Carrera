@@ -108,7 +108,6 @@ function poisson(lambda: number): number {
   return k - 1;
 }
 
-const HOME_ADVANTAGE = 0.25;
 
 // Calculate the dynamic average OVR of exactly 11 players on the pitch
 export function calculateActiveOVR(activePlayers: Player[]): number {
@@ -159,40 +158,65 @@ export function expectedGoals(
   homeTactics?: SimTactics | null,
   awayTactics?: SimTactics | null,
 ): { lh: number; la: number } {
-  // Tactics (play style / pressure / defensive line) chosen by the manager.
+  // El resultado de una liga debe depender de forma clara de la calidad de los
+  // onces, pero sin convertir cada partido en una victoria automática del
+  // favorito. La versión anterior daba demasiado peso a pequeñas diferencias
+  // aleatorias de xG y eso podía permitir demasiados equipos inferiores arriba
+  // de la clasificación después de pocas jornadas.
   const hMod = tacticsModifiers(homeTactics ?? null);
   const aMod = tacticsModifiers(awayTactics ?? null);
 
-  // Use dynamic attack/defense strength from actual XI instead of static team ratings
-  // Apply 5% home advantage buff to home team's attack strength
-  const homeAtt = (calculateAttackStrength(homeXI) || 65) * 1.05 * hMod.attack;
-  const homeDef = (calculateDefenseStrength(homeXI) || 65) * hMod.defense;
-  const awayAtt = (calculateAttackStrength(awayXI) || 65) * aMod.attack;
-  const awayDef = (calculateDefenseStrength(awayXI) || 65) * aMod.defense;
+  const homeAttack = calculateAttackStrength(homeXI) || 65;
+  const homeDefense = calculateDefenseStrength(homeXI) || 65;
+  const awayAttack = calculateAttackStrength(awayXI) || 65;
+  const awayDefense = calculateDefenseStrength(awayXI) || 65;
 
-  const homeDiff = homeAtt - awayDef;
-  const awayDiff = awayAtt - homeDef;
-  // Keep score rates in a realistic football range. Ratings/tactics still
-  // matter a lot, but a strong XI should not automatically create 4-5 xG
-  // because of a single quadratic OVR spike. The live layer later adds
-  // current momentum and energy to individual dangerous actions.
-  const homeQualityEdge = Math.max(-0.75, Math.min(1.2, homeDiff * 0.045));
-  const awayQualityEdge = Math.max(-0.75, Math.min(1.05, awayDiff * 0.045));
+  // Fuerza de partido: mezcla el nivel ofensivo/defensivo real del XI.
+  // Usamos la misma escala de OVR que ve el usuario y mantenemos diferencias
+  // razonables entre equipos para que la calidad de plantilla se traduzca en
+  // una probabilidad claramente mayor de ganar.
+  const homeStrength = homeAttack * 0.42 + homeDefense * 0.38 + calculateActiveOVR(homeXI) * 0.20;
+  const awayStrength = awayAttack * 0.42 + awayDefense * 0.38 + calculateActiveOVR(awayXI) * 0.20;
 
-  const baseHome = 1.18 + homeQualityEdge + HOME_ADVANTAGE * 0.55;
-  const baseAway = 1.05 + awayQualityEdge;
+  // Las tácticas deben modificar el rendimiento, no sustituir la jerarquía de
+  // calidad entre plantillas.
+  const homeTacticalStrength = homeStrength * ((hMod.attack + hMod.defense) / 2);
+  const awayTacticalStrength = awayStrength * ((aMod.attack + aMod.defense) / 2);
 
-  // Mild randomness keeps realistic upsets possible without producing arcade-like
-  // scorelines every few matches.
-  const homeRandom = (rand() - 0.5) * 0.42; // ±0.21
-  const awayRandom = (rand() - 0.5) * 0.42;
+  const qualityDiff = Math.max(-22, Math.min(22, homeTacticalStrength - awayTacticalStrength));
+  const HOME_MATCH_ADVANTAGE = 2.2;
+  const effectiveDiff = qualityDiff + HOME_MATCH_ADVANTAGE;
 
-  // Clamp to a credible per-team goal expectation. Player form/morale never
-  // enter this calculation; physical energy is already embedded in XI strength.
-  const lh = Math.max(0.22, Math.min(3.05, baseHome + homeRandom));
-  const la = Math.max(0.18, Math.min(2.85, baseAway + awayRandom));
+  // Repartimos un total de xG razonable con una curva logística suave.
+  // Aproximadamente: igualdad -> 1.4/1.1; +10 OVR -> ~1.9/0.6; +15 OVR
+  // -> ~1.9/0.6. Sigue habiendo empates y sorpresas, pero un favorito claro
+  // debe imponerse con mayor frecuencia que un equipo inferior.
+  const share = 0.5 + 0.27 * Math.tanh(effectiveDiff / 8);
+  // Mantener un total de goles cercano al de un partido profesional evita que
+  // los favoritos ganen por pura inflación de xG. La diferencia de calidad se
+  // expresa principalmente en cómo se reparte ese total entre ambos equipos.
+  const totalXg = 2.50;
 
-  return { lh, la };
+  let lh = totalXg * share;
+  let la = totalXg * (1 - share);
+
+  // El estilo ofensivo/defensivo ya actúa arriba; aplicamos un pequeño ajuste
+  // final para no perder por completo el efecto táctico.
+  const styleGoalFactorHome = hMod.attack * 0.55 + hMod.defense * 0.45;
+  const styleGoalFactorAway = aMod.attack * 0.55 + aMod.defense * 0.45;
+  lh *= 1 + (styleGoalFactorHome - 1) * 0.35;
+  la *= 1 + (styleGoalFactorAway - 1) * 0.35;
+
+  // Un toque pequeño de variación por partido evita que el mismo emparejamiento
+  // se repita siempre con el mismo xG, pero la aleatoriedad ya no domina el
+  // resultado.
+  lh *= 0.97 + rand() * 0.06;
+  la *= 0.97 + rand() * 0.06;
+
+  return {
+    lh: Math.max(0.18, Math.min(3.25, lh)),
+    la: Math.max(0.14, Math.min(2.95, la)),
+  };
 }
 
 export type MatchEvent = {
@@ -293,6 +317,7 @@ export type SimResult = {
     awayGoals: number;
     events: MatchEvent[];
     highlights?: HighlightEvent[];
+    substitutions?: SubstitutionEvent[];
   };
   penalties?: {
     homeGoals: number;
@@ -393,7 +418,7 @@ export function rollInjuryDurationDays(): number {
 }
 
 
-const TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY = 5;
+const TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY = 5.5;
 
 function injuryChanceForLeague(teamCount: number): number {
   return Math.min(0.45, Math.max(0.12, TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY / Math.max(1, teamCount)));
@@ -431,8 +456,8 @@ function maybeInjury(
     };
   });
 
-  // A typical match injury is still uncommon. Once a player is below 40%
-  // energy, the match-level risk rises sharply, but it remains far from usual.
+  // A typical match injury is still uncommon, but slightly more likely than before.
+  // Once a player is below 40% energy, the match-level risk rises sharply.
   const anyVeryTired = candidates.some((c) => c.estimatedStamina < 40);
   const baseChance = injuryChanceForLeague(leagueTeamCount);
   const matchInjuryChance = Math.min(0.55, baseChance * (anyVeryTired ? 2.2 : 1));
@@ -678,6 +703,94 @@ function addSub(
   
   return true;
 }
+
+function countSubWindows(substitutions: SubstitutionEvent[], team: "home" | "away"): number {
+  return new Set(
+    substitutions
+      .filter((s) => s.team === team)
+      .map((s) => Number(s.minute) || 0),
+  ).size;
+}
+
+/**
+ * Generate the additional substitution allowance available during extra time.
+ * The regular phase allows 5 changes in 3 windows; extra time adds exactly
+ * one more change and one more window, so the remaining allowance is calculated
+ * from what each side actually used before minute 90.
+ */
+export function generateExtraTimeSubs(
+  xi: Player[],
+  bench: Player[],
+  team: "home" | "away",
+  regularSubs: SubstitutionEvent[] = [],
+  regularCards: CardEvent[] = [],
+  context?: { teamStyle?: "defensive" | "balanced" | "offensive"; teamStrength?: number; opponentStrength?: number; seed?: string },
+): SubstitutionEvent[] {
+  if (xi.length === 0 || bench.length === 0) return [];
+
+  const regularTeamSubs = regularSubs.filter((s) => s.team === team);
+  const remainingSubs = Math.max(0, 6 - regularTeamSubs.length);
+  const remainingWindows = Math.max(0, 4 - countSubWindows(regularSubs, team));
+  if (remainingSubs <= 0 || remainingWindows <= 0) return [];
+
+  const redCards = new Map<string, number>();
+  for (const card of regularCards) {
+    if (card.team === team && card.cardType === "red") redCards.set(card.playerId, card.minute);
+  }
+
+  const onPitchAt90 = activePlayersAt(xi, bench, regularSubs, redCards, team, 90);
+  const availableOut = onPitchAt90.filter((p) => !isGoalkeeper(p.positions));
+  const usedIn = new Set(regularTeamSubs.map((s) => s.playerInId));
+  const availableIn = bench.filter((p) => !usedIn.has(p.id) && !redCards.has(p.id) && !isGoalkeeper(p.positions));
+  if (availableOut.length === 0 || availableIn.length === 0) return [];
+
+  // In extra time teams commonly use the additional allowance, but not all
+  // remaining changes are mandatory. Prefer 1-2 changes, capped by the legal
+  // remaining allowance and the available players.
+  const maxPossible = Math.min(remainingSubs, availableOut.length, availableIn.length);
+  const desiredTotal = maxPossible <= 1
+    ? 1
+    : Math.random() < 0.72
+      ? 2
+      : 1;
+  const totalSubs = Math.min(maxPossible, desiredTotal);
+  if (totalSubs <= 0) return [];
+
+  const numWindows = Math.min(remainingWindows, totalSubs, totalSubs > 1 && Math.random() < 0.65 ? 2 : 1);
+  const windowMinutes = numWindows === 1
+    ? [94 + Math.floor(Math.random() * 18)]
+    : [93 + Math.floor(Math.random() * 8), 107 + Math.floor(Math.random() * 10)];
+
+  const counts = Array<number>(numWindows).fill(1);
+  let left = totalSubs - numWindows;
+  while (left > 0) {
+    counts[Math.floor(Math.random() * numWindows)] += 1;
+    left -= 1;
+  }
+
+  const seed = context?.seed ?? `${team}:extra:${xi.map((p) => p.id).join(",")}:${bench.map((p) => p.id).join(",")}`;
+  const style = context?.teamStyle ?? "balanced";
+  const strengthDiff = (context?.teamStrength ?? 75) - (context?.opponentStrength ?? 75);
+  const outPool = [...availableOut];
+  const subs: SubstitutionEvent[] = [];
+  const usedOut = new Set<string>();
+  const usedInIds = new Set<string>();
+
+  for (let w = 0; w < numWindows; w++) {
+    for (let j = 0; j < counts[w]; j++) {
+      if (!addSub(subs, windowMinutes[w], team, outPool, availableIn, usedOut, usedInIds, {
+        style,
+        strengthDiff,
+        seed,
+        windowIdx: w,
+        changeIndex: j,
+      })) break;
+    }
+  }
+
+  return subs.sort((a, b) => a.minute - b.minute);
+}
+
 /**
  * Returns the players actually on the pitch at a given minute, taking into
  * account tactical substitutions and red cards. A player who has left the
@@ -710,6 +823,25 @@ function activePlayersAt(
     const redMinute = redCards.get(p.id);
     return redMinute === undefined || redMinute > minute;
   });
+}
+
+/** Public wrapper used by tournament/store flows that need the exact players
+ * still on the pitch at a given minute (including extra-time substitutions and
+ * red cards). */
+export function getActivePlayersAtMinute(
+  xi: Player[],
+  bench: Player[],
+  substitutions: SubstitutionEvent[],
+  cards: CardEvent[],
+  team: "home" | "away",
+  minute: number,
+): Player[] {
+  const redCards = new Map<string, number>(
+    cards
+      .filter((c) => c.team === team && c.cardType === "red")
+      .map((c) => [c.playerId, c.minute]),
+  );
+  return activePlayersAt(xi, bench, substitutions, redCards, team, minute);
 }
 
 function participantsFromSubs(
@@ -2021,47 +2153,95 @@ export function simulateExtraTime(
   away: Team,
   homeXI: Player[],
   awayXI: Player[],
-): { homeGoals: number; awayGoals: number; events: MatchEvent[] } {
-  const { lh, la } = expectedGoals(home, away, homeXI, awayXI);
-  // Extra time has lower xG (players are tired)
-  const etXGHome = lh * 0.4;
-  const etXGAway = la * 0.4;
+  opts: {
+    homeBench?: Player[];
+    awayBench?: Player[];
+    regularSubstitutions?: SubstitutionEvent[];
+    regularCards?: CardEvent[];
+    homeTactics?: SimTactics | null;
+    awayTactics?: SimTactics | null;
+  } = {},
+): { homeGoals: number; awayGoals: number; events: MatchEvent[]; substitutions: SubstitutionEvent[] } {
+  const homeBench = opts.homeBench ?? [];
+  const awayBench = opts.awayBench ?? [];
+  const regularSubs = opts.regularSubstitutions ?? [];
+  const regularCards = opts.regularCards ?? [];
+  const homeRedCards = new Map<string, number>();
+  const awayRedCards = new Map<string, number>();
+  for (const card of regularCards) {
+    if (card.cardType !== "red") continue;
+    if (card.team === "home") homeRedCards.set(card.playerId, card.minute);
+    else awayRedCards.set(card.playerId, card.minute);
+  }
+
+  const homeSubs = generateExtraTimeSubs(homeXI, homeBench, "home", regularSubs, regularCards, {
+    teamStyle: opts.homeTactics?.style,
+    teamStrength: homeXI.reduce((sum, p) => sum + p.rating, 0) / Math.max(1, homeXI.length),
+    opponentStrength: awayXI.reduce((sum, p) => sum + p.rating, 0) / Math.max(1, awayXI.length),
+    seed: `et:home:${home.name}:${away.name}:${homeXI.map((p) => p.id).join(",")}`,
+  });
+  const awaySubs = generateExtraTimeSubs(awayXI, awayBench, "away", regularSubs, regularCards, {
+    teamStyle: opts.awayTactics?.style,
+    teamStrength: awayXI.reduce((sum, p) => sum + p.rating, 0) / Math.max(1, awayXI.length),
+    opponentStrength: homeXI.reduce((sum, p) => sum + p.rating, 0) / Math.max(1, homeXI.length),
+    seed: `et:away:${home.name}:${away.name}:${awayXI.map((p) => p.id).join(",")}`,
+  });
+  const substitutions = [...homeSubs, ...awaySubs].sort((a, b) => a.minute - b.minute);
+  const allSubs = [...regularSubs, ...substitutions];
+
+  const activeHome90 = activePlayersAt(homeXI, homeBench, regularSubs, homeRedCards, "home", 90);
+  const activeAway90 = activePlayersAt(awayXI, awayBench, regularSubs, awayRedCards, "away", 90);
+  const etHomeAvg = activeHome90.length
+    ? activeHome90.reduce((s, p) => s + p.rating, 0) / activeHome90.length
+    : 60;
+  const etAwayAvg = activeAway90.length
+    ? activeAway90.reduce((s, p) => s + p.rating, 0) / activeAway90.length
+    : 60;
+
+  const { lh, la } = expectedGoals(
+    home,
+    away,
+    activeHome90.map((p) => ({ ...p, rating: p.rating * 0.96 })),
+    activeAway90.map((p) => ({ ...p, rating: p.rating * 0.96 })),
+    opts.homeTactics ?? null,
+    opts.awayTactics ?? null,
+  );
+  const etXGHome = Math.max(0.03, lh * (0.34 + Math.min(0.10, activeHome90.length * 0.005) + Math.max(0, etHomeAvg - 75) * 0.001));
+  const etXGAway = Math.max(0.03, la * (0.34 + Math.min(0.10, activeAway90.length * 0.005) + Math.max(0, etAwayAvg - 75) * 0.001));
 
   const homeGoals = poisson(etXGHome);
   const awayGoals = poisson(etXGAway);
-
   const events: MatchEvent[] = [];
 
-  // Generate events for extra time (minutes 91-120)
+  const pickETScorer = (team: "home" | "away", minute: number) => {
+    const active = activePlayersAt(
+      team === "home" ? homeXI : awayXI,
+      team === "home" ? homeBench : awayBench,
+      allSubs,
+      team === "home" ? homeRedCards : awayRedCards,
+      team,
+      minute,
+    ).filter((p) => !isGoalkeeper(p.positions));
+    return active.length > 0 ? fastPickScorerWeighted(active) : (team === "home" ? homeXI[0] : awayXI[0]);
+  };
+
   for (let i = 0; i < homeGoals; i++) {
-    const scorer = pickScorer(homeXI);
-    const assister = fastPickAssister(homeXI, scorer.id);
-    events.push({
-      minute: Math.floor(rand() * 30) + 91,
-      team: "home",
-      type: "goal",
-      scorerId: scorer.id,
-      scorerName: scorer.name,
-      assistId: assister?.id,
-      assistName: assister?.name,
-    });
+    const minute = 91 + Math.floor(rand() * 30);
+    const scorer = pickETScorer("home", minute);
+    const active = activePlayersAt(homeXI, homeBench, allSubs, homeRedCards, "home", minute).filter((p) => !isGoalkeeper(p.positions));
+    const assister = active.find((p) => p.id !== scorer.id) ?? null;
+    events.push({ minute, team: "home", type: "goal", scorerId: scorer.id, scorerName: scorer.name, assistId: assister?.id, assistName: assister?.name });
   }
   for (let i = 0; i < awayGoals; i++) {
-    const scorer = pickScorer(awayXI);
-    const assister = fastPickAssister(awayXI, scorer.id);
-    events.push({
-      minute: Math.floor(rand() * 30) + 91,
-      team: "away",
-      type: "goal",
-      scorerId: scorer.id,
-      scorerName: scorer.name,
-      assistId: assister?.id,
-      assistName: assister?.name,
-    });
+    const minute = 91 + Math.floor(rand() * 30);
+    const scorer = pickETScorer("away", minute);
+    const active = activePlayersAt(awayXI, awayBench, allSubs, awayRedCards, "away", minute).filter((p) => !isGoalkeeper(p.positions));
+    const assister = active.find((p) => p.id !== scorer.id) ?? null;
+    events.push({ minute, team: "away", type: "goal", scorerId: scorer.id, scorerName: scorer.name, assistId: assister?.id, assistName: assister?.name });
   }
   events.sort((a, b) => a.minute - b.minute);
 
-  return { homeGoals, awayGoals, events };
+  return { homeGoals, awayGoals, events, substitutions };
 }
 
 // Simulate penalty shootout (ABAB format, 5 rounds, sudden death)
@@ -2176,13 +2356,26 @@ export function simulateCupMatch(
 
   // Check if it's a draw - if so, go to extra time
   if (regularResult.homeGoals === regularResult.awayGoals) {
-    const extraTimeResult = simulateExtraTime(home, away, homeXI, awayXI);
+    const regularSubstitutions = regularResult.substitutions ?? [];
+    const extraTimeResult = simulateExtraTime(home, away, homeXI, awayXI, {
+      homeBench: opts.homeBench ?? [],
+      awayBench: opts.awayBench ?? [],
+      regularSubstitutions,
+      regularCards: regularResult.cards ?? [],
+      homeTactics: opts.homeTactics ?? null,
+      awayTactics: opts.awayTactics ?? null,
+    });
     const totalHome = regularResult.homeGoals + extraTimeResult.homeGoals;
+    const combinedSubstitutions = [...regularSubstitutions, ...(extraTimeResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
+    const homeRedCarded120 = new Map<string, number>(regularResult.cards.filter((c) => c.team === "home" && c.cardType === "red").map((c) => [c.playerId, c.minute]));
+    const awayRedCarded120 = new Map<string, number>(regularResult.cards.filter((c) => c.team === "away" && c.cardType === "red").map((c) => [c.playerId, c.minute]));
+    const finalHomeLineup120 = activePlayersAt(homeXI, opts.homeBench ?? [], combinedSubstitutions, homeRedCarded120, "home", 120);
+    const finalAwayLineup120 = activePlayersAt(awayXI, opts.awayBench ?? [], combinedSubstitutions, awayRedCarded120, "away", 120);
     const totalAway = regularResult.awayGoals + extraTimeResult.awayGoals;
 
     // If still tied after extra time, go to penalties
     if (totalHome === totalAway) {
-      const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+      const penaltyResult = simulatePenaltyShootout(finalHomeLineup120, finalAwayLineup120);
 
       // Combine all results, preserving lineups/formation/ratings/mvp from regular time
       return {
@@ -2192,15 +2385,19 @@ export function simulateCupMatch(
           homeGoals: extraTimeResult.homeGoals,
           awayGoals: extraTimeResult.awayGoals,
           events: extraTimeResult.events,
+          substitutions: extraTimeResult.substitutions,
         },
+        substitutions: combinedSubstitutions,
+        homeFinalLineup: finalHomeLineup120,
+        awayFinalLineup: finalAwayLineup120,
         penalties: {
           homeGoals: penaltyResult.homeGoals,
           awayGoals: penaltyResult.awayGoals,
           shootout: penaltyResult.shootout,
         },
         energyAtEnd: {
-          ...calculateEnergyAtEnd(homeXI, opts.homeBench ?? [], regularResult.substitutions ?? [], regularResult.cards ?? [], regularResult.injuries ?? [], "home", opts.homeTactics, 120),
-          ...calculateEnergyAtEnd(awayXI, opts.awayBench ?? [], regularResult.substitutions ?? [], regularResult.cards ?? [], regularResult.injuries ?? [], "away", opts.awayTactics, 120),
+          ...calculateEnergyAtEnd(homeXI, opts.homeBench ?? [], combinedSubstitutions, regularResult.cards ?? [], regularResult.injuries ?? [], "home", opts.homeTactics, 120),
+          ...calculateEnergyAtEnd(awayXI, opts.awayBench ?? [], combinedSubstitutions, regularResult.cards ?? [], regularResult.injuries ?? [], "away", opts.awayTactics, 120),
         },
       };
     } else {
@@ -2212,10 +2409,14 @@ export function simulateCupMatch(
           homeGoals: extraTimeResult.homeGoals,
           awayGoals: extraTimeResult.awayGoals,
           events: extraTimeResult.events,
+          substitutions: extraTimeResult.substitutions,
         },
+        substitutions: combinedSubstitutions,
+        homeFinalLineup: finalHomeLineup120,
+        awayFinalLineup: finalAwayLineup120,
         energyAtEnd: {
-          ...calculateEnergyAtEnd(homeXI, opts.homeBench ?? [], regularResult.substitutions ?? [], regularResult.cards ?? [], regularResult.injuries ?? [], "home", opts.homeTactics, 120),
-          ...calculateEnergyAtEnd(awayXI, opts.awayBench ?? [], regularResult.substitutions ?? [], regularResult.cards ?? [], regularResult.injuries ?? [], "away", opts.awayTactics, 120),
+          ...calculateEnergyAtEnd(homeXI, opts.homeBench ?? [], combinedSubstitutions, regularResult.cards ?? [], regularResult.injuries ?? [], "home", opts.homeTactics, 120),
+          ...calculateEnergyAtEnd(awayXI, opts.awayBench ?? [], combinedSubstitutions, regularResult.cards ?? [], regularResult.injuries ?? [], "away", opts.awayTactics, 120),
         },
       };
     }

@@ -2199,10 +2199,14 @@ export const usePlayersStore = create<PlayersState>()(
         const teamIdOverride =
           myTeamId && rosterIds.includes(playerId) ? myTeamId : (overriddenClub ?? undefined);
 
-        // La energía física persistente es exclusiva del equipo del usuario.
+        // La energía física persistente es exclusiva de los jugadores que
+        // pertenecen a la plantilla del usuario. No inferimos esto solo por
+        // `teamIdOverride`: un movimiento/traspaso legado podría dejar un
+        // clubOverride apuntando temporalmente al equipo del usuario y hacer
+        // que un jugador CPU arrastre energía de una jornada anterior.
         // Los equipos CPU empiezan SIEMPRE cada partido con 100 y su desgaste
         // solo existe dentro de la simulación de ese encuentro.
-        const isUserControlledPlayer = !!myTeamId && teamIdOverride === myTeamId;
+        const isUserControlledPlayer = !!myTeamId && rosterIds.includes(playerId);
         const playerForGame = fcToPlayer(fc, stats, teamIdOverride);
         if (!isUserControlledPlayer) {
           playerForGame.energy = STAMINA_START;

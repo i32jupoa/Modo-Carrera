@@ -163,6 +163,7 @@ import {
   CardEvent,
   simulateExtraTime,
   simulatePenaltyShootout,
+  getActivePlayersAtMinute,
   rollInjuryDurationDays,
   rollInjuryProfile,
 } from "@/lib/simulation";
@@ -452,7 +453,7 @@ function generateCPUXI(
 
   let formation = favorite;
   if (!forcedFormation && alternatives.length > 0) {
-    const favoriteChance = context?.competition === "ucl" ? 0.82 : context?.competition === "cup" ? 0.72 : 0.64;
+    const favoriteChance = context?.competition === "ucl" ? 0.88 : context?.competition === "cup" ? 0.80 : 0.82;
     const strength = squadStrengthForSelection(squad);
     const opponent = context?.opponentId ? teamById(context.opponentId) : null;
     const opponentSquad = opponent ? usePlayersStore.getState().getSimSquad(opponent.id) : [];
@@ -479,12 +480,14 @@ function generateCPUXI(
   const oppStrength = opponentSquad.length ? squadStrengthForSelection(opponentSquad) : strength;
   const strengthDiff = strength - oppStrength;
 
-  // Rotación realista: rival claramente inferior = más posibilidades de dar
-  // descanso a una estrella; Champions/partidos de copa importantes = menos.
-  let rotationLevel = Math.max(0, Math.min(0.62, (strengthDiff - 3) / 18));
-  if (context?.competition === "ucl") rotationLevel *= 0.35;
-  else if (context?.competition === "cup") rotationLevel *= 0.65;
-  if (context?.isHome) rotationLevel *= 0.92;
+  // Rotación conservadora: los equipos fuertes deben mantener un once de
+  // nivel en la liga. Solo rotan de forma apreciable ante rivales claramente
+  // inferiores y en competiciones de menor prioridad. Así se evita que una
+  // plantilla de 88-90 OVR pierda demasiada fuerza por descansos aleatorios.
+  let rotationLevel = Math.max(0, Math.min(0.30, (strengthDiff - 6) / 24));
+  if (context?.competition === "ucl") rotationLevel *= 0.25;
+  else if (context?.competition === "cup") rotationLevel *= 0.55;
+  if (context?.isHome) rotationLevel *= 0.90;
 
   const picked = pickXIForFormationWithRotation(
     squad,
@@ -602,16 +605,21 @@ export function fixCupDraws(save: SaveGame): SaveGame {
         const homeXI = homeData.players;
         const awayXI = awayData.players;
 
-        // Simulate extra time
-
-        const etResult = simulateExtraTime(home, away, homeXI, awayXI);
-
+        // Simulate extra time with the additional legal substitution allowance.
+        const homeBench = getCupSimulationBench(next, f.homeId, homeXI, "cup");
+        const awayBench = getCupSimulationBench(next, f.awayId, awayXI, "cup");
+        const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+          homeBench,
+          awayBench,
+          regularSubstitutions: f.result.substitutions ?? [],
+          regularCards: f.result.cards ?? [],
+        });
+        f.result.substitutions = [...(f.result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
         f.result.extraTime = {
           homeGoals: etResult.homeGoals,
-
           awayGoals: etResult.awayGoals,
-
           events: etResult.events,
+          substitutions: etResult.substitutions,
         };
 
         // Check if still tied after extra time
@@ -621,9 +629,27 @@ export function fixCupDraws(save: SaveGame): SaveGame {
         const totalAway = f.result.awayGoals + etResult.awayGoals;
 
         if (totalHome === totalAway) {
-          // Simulate penalty shootout
-
-          const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+          // Use the players who are actually still on the pitch after extra time.
+          const finalHome = getActivePlayersAtMinute(
+            homeXI,
+            homeBench,
+            f.result.substitutions ?? [],
+            f.result.cards ?? [],
+            "home",
+            120,
+          );
+          const finalAway = getActivePlayersAtMinute(
+            awayXI,
+            awayBench,
+            f.result.substitutions ?? [],
+            f.result.cards ?? [],
+            "away",
+            120,
+          );
+          const penaltyResult = simulatePenaltyShootout(
+            finalHome.length ? finalHome : homeXI,
+            finalAway.length ? finalAway : awayXI,
+          );
 
           f.result.penalties = {
             homeGoals: penaltyResult.homeGoals,
@@ -651,7 +677,10 @@ export type Suspension = {
 
   playerName: string;
 
-  matchdaysRemaining: number; // Number of matchdays the suspension lasts
+  /** Competition in which the suspension must be served. */
+  competition: import("@/lib/season").Competition;
+
+  matchdaysRemaining: number; // Remaining matches in this competition
 };
 
 export type SaveGame = {
@@ -757,16 +786,23 @@ export function loadSave(): SaveGame | null {
 
     if (parsed.version !== 2) return null;
 
+    // `loadSave()` is used from render/effect paths very frequently. It must
+    // not serialize and rewrite the whole career on every read: that made
+    // buttons such as “Volver a la temporada” spend most of their time in
+    // JSON serialization instead of in the actual match simulation. Only
+    // persist when this read really performed a migration.
+    let needsMigrationSave = false;
+
     // Backward compatibility for careers created before these collections
     // became mandatory. Without this, opening /match could crash while the
     // CPU lineup/formation preview is being built.
-    parsed.formations ??= {};
-    parsed.substitutes ??= {};
-    parsed.suspensions ??= {};
-    parsed.lineups ??= {};
-    parsed.fixtures ??= {};
-    parsed.cupFixtures ??= {};
-    parsed.uclFixtures ??= [];
+    if (parsed.formations == null) { parsed.formations = {}; needsMigrationSave = true; }
+    if (parsed.substitutes == null) { parsed.substitutes = {}; needsMigrationSave = true; }
+    if (parsed.suspensions == null) { parsed.suspensions = {}; needsMigrationSave = true; }
+    if (parsed.lineups == null) { parsed.lineups = {}; needsMigrationSave = true; }
+    if (parsed.fixtures == null) { parsed.fixtures = {}; needsMigrationSave = true; }
+    if (parsed.cupFixtures == null) { parsed.cupFixtures = {}; needsMigrationSave = true; }
+    if (parsed.uclFixtures == null) { parsed.uclFixtures = []; needsMigrationSave = true; }
 
     // MIGRATION: Convert old cupFixtures structure if needed
 
@@ -774,7 +810,18 @@ export function loadSave(): SaveGame | null {
 
     // New structure: cupFixtures keyed by primary league (one cup per country)
 
-    if (parsed.cupFixtures) {
+    const primaryCupLeagues = new Set<LeagueId>();
+    for (const lg of Object.keys(LEAGUES) as LeagueId[]) {
+      const country = LEAGUES[lg]?.country;
+      if (!country || primaryCupLeagues.has(lg)) continue;
+      const primary = getPrimaryLeagueForCountry(country);
+      if (primary) primaryCupLeagues.add(primary as LeagueId);
+    }
+    const hasLegacyCupStructure = Object.keys(parsed.cupFixtures ?? {}).some(
+      (key) => !primaryCupLeagues.has(key as LeagueId),
+    );
+
+    if (parsed.cupFixtures && hasLegacyCupStructure) {
       const countriesWithLeagues = new Map<string, LeagueId[]>();
 
       for (const lg of Object.keys(LEAGUES) as LeagueId[]) {
@@ -818,11 +865,53 @@ export function loadSave(): SaveGame | null {
       parsed.cupFixtures = newCupFixtures;
 
       parsed.cupChampion = newCupChampion;
+      needsMigrationSave = true;
     }
 
     playersStoreInit();
 
-    parsed.substitutes ??= {};
+    // MIGRATION: older saves stored suspensions without a competition and, in
+    // some versions, under the team's league id instead of the team id.
+    // Normalize them now so suspensions are attached to the player/team and
+    // are only served in the competition that generated them.
+    {
+      const normalizedSuspensions: Record<string, Suspension[]> = {};
+      const playerStore = usePlayersStore.getState();
+
+      for (const [storedTeamId, list] of Object.entries(parsed.suspensions ?? {})) {
+        if (!Array.isArray(list)) continue;
+        for (const rawSuspension of list as any[]) {
+          if (!rawSuspension?.playerId) continue;
+          const player = playerStore.getSimPlayer(rawSuspension.playerId);
+          const teamId = player?.teamId || storedTeamId;
+          const competition = rawSuspension.competition === "cup" || rawSuspension.competition === "ucl"
+            ? rawSuspension.competition
+            : "league";
+          const suspension: Suspension = {
+            playerId: String(rawSuspension.playerId),
+            playerName: String(rawSuspension.playerName || player?.name || "Jugador"),
+            competition,
+            matchdaysRemaining: Math.max(1, Number(rawSuspension.matchdaysRemaining) || 1),
+          };
+          const originalTeamId = String(storedTeamId);
+          const originalCompetition = rawSuspension.competition;
+          const originalDays = Number(rawSuspension.matchdaysRemaining);
+          const originalPlayerName = rawSuspension.playerName;
+          if (
+            String(suspension.playerId) !== String(rawSuspension.playerId) ||
+            teamId !== originalTeamId ||
+            originalCompetition !== competition ||
+            originalDays !== suspension.matchdaysRemaining ||
+            originalPlayerName !== suspension.playerName
+          ) {
+            needsMigrationSave = true;
+          }
+          (normalizedSuspensions[teamId] ??= []).push(suspension);
+        }
+      }
+
+      parsed.suspensions = normalizedSuspensions;
+    }
 
     const ps = usePlayersStore.getState();
 
@@ -832,19 +921,14 @@ export function loadSave(): SaveGame | null {
       parsed.lineups = buildDefaultLineups();
 
       delete parsed.players;
-
-      const migrated = parsed as SaveGame;
-
-      saveSave(migrated);
-
-      return migrated;
+      needsMigrationSave = true;
     }
 
     const save = parsed as SaveGame;
 
-    // Save the migrated structure
-
-    saveSave(save);
+    // Persist only actual migrations. Ordinary reads must stay read-only so
+    // loading the career is cheap even when the save contains a large season.
+    if (needsMigrationSave) saveSave(save);
 
     return save;
   } catch (err) {
@@ -904,6 +988,7 @@ function slimResult(result: any, keepDetail: boolean): any {
         awayGoals: extraTime.awayGoals,
         events: extraTime.events ?? [],
         highlights: extraTime.highlights ?? [],
+        substitutions: extraTime.substitutions ?? [],
       }
     : undefined;
 
@@ -1092,6 +1177,29 @@ export function newSave(myTeamId: string): SaveGame {
 
   const lineups = buildDefaultLineups();
 
+  // Treat a newly created career as if the manager had opened Dirección de
+  // equipo and pressed "Guardar" immediately. Besides the default XI, keep
+  // the default formation and the first 12 bench players in the actual save.
+  // This is important because the match/lineup screens read these collections
+  // from SaveGame; leaving them empty made a fresh career behave differently
+  // from a career that had been manually saved once in Dirección de equipo.
+  const initialUserXI = (lineups[myTeamId] ?? []).filter(Boolean).slice(0, 11);
+  const initialUserSquad = usePlayersStore.getState().getSimSquad(myTeamId);
+  if (initialUserXI.length < 11) {
+    const missing = initialUserSquad
+      .filter((p) => !initialUserXI.includes(p.id))
+      .sort((a, b) => b.rating - a.rating)
+      .slice(0, 11 - initialUserXI.length)
+      .map((p) => p.id);
+    initialUserXI.push(...missing);
+    lineups[myTeamId] = [...initialUserXI];
+  }
+  const initialUserBench = initialUserSquad
+    .filter((p) => !initialUserXI.includes(p.id))
+    .sort((a, b) => b.rating - a.rating)
+    .slice(0, 12)
+    .map((p) => p.id);
+
   const fixtures: Record<LeagueId, Fixture[]> = {} as never;
 
   const standings: Record<LeagueId, Standing[]> = {} as never;
@@ -1187,9 +1295,15 @@ export function newSave(myTeamId: string): SaveGame {
 
     lineups,
 
-    formations,
+    formations: {
+      ...formations,
+      [myTeamId]: "Táctica 4-3-3",
+    },
 
-    substitutes,
+    substitutes: {
+      ...substitutes,
+      [myTeamId]: initialUserBench,
+    },
 
     suspensions,
 
@@ -1226,76 +1340,246 @@ export function newSave(myTeamId: string): SaveGame {
 
  * ============================================================ */
 
-// Process red cards and create suspensions
+// Discipline/suspension helpers ------------------------------------------------
+
+function suspensionAppliesToCompetition(
+  suspension: Partial<Suspension> | undefined,
+  competition: import("@/lib/season").Competition,
+): boolean {
+  // Legacy suspensions had no competition field. They were generated by the
+  // old league-based system, so treat them as league suspensions on migration.
+  return (suspension?.competition ?? "league") === competition;
+}
+
+function consumeSuspensionsForFixture(
+  save: SaveGame,
+  teamIds: string[],
+  competition: import("@/lib/season").Competition,
+): SaveGame {
+  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  next.suspensions ??= {};
+
+  for (const teamId of teamIds) {
+    const suspensions = next.suspensions[teamId] ?? [];
+    next.suspensions[teamId] = suspensions
+      .map((s: Suspension) =>
+        suspensionAppliesToCompetition(s, competition)
+          ? { ...s, competition: s.competition ?? competition, matchdaysRemaining: s.matchdaysRemaining - 1 }
+          : { ...s, competition: s.competition ?? "league" },
+      )
+      .filter((s: Suspension) => s.matchdaysRemaining > 0);
+  }
+
+  return next;
+}
+
+function addSuspension(
+  save: SaveGame,
+  teamId: string,
+  playerId: string,
+  playerName: string,
+  competition: import("@/lib/season").Competition,
+  matchdaysRemaining: number,
+): SaveGame {
+  const next = save;
+  next.suspensions ??= {};
+  const list = (next.suspensions[teamId] ??= []);
+  const normalizedLength = Math.max(1, Math.floor(matchdaysRemaining));
+  const existing = list.find(
+    (s) => s.playerId === playerId && suspensionAppliesToCompetition(s, competition),
+  );
+
+  if (existing) {
+    existing.competition = competition;
+    existing.matchdaysRemaining = Math.max(existing.matchdaysRemaining || 0, normalizedLength);
+    existing.playerName = playerName || existing.playerName;
+  } else {
+    list.push({
+      playerId,
+      playerName,
+      competition,
+      matchdaysRemaining: normalizedLength,
+    });
+  }
+
+  return next;
+}
+
+function directRedSuspensionLength(competition: import("@/lib/season").Competition): number {
+  // National cup and Champions League: every red = exactly one match.
+  if (competition === "cup" || competition === "ucl") return 1;
+
+  // League direct reds: 75% 1 match, 15% 2, 7.5% 3, 2.5% 4.
+  const roll = Math.random();
+  if (roll < 0.75) return 1;
+  if (roll < 0.90) return 2;
+  if (roll < 0.975) return 3;
+  return 4;
+}
 
 function processRedCards(
   save: SaveGame,
   cards: CardEvent[],
   homeTeamId: string,
   awayTeamId: string,
+  competition: import("@/lib/season").Competition,
 ): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const next: SaveGame = save;
 
   for (const card of cards) {
-    if (card.cardType === "red") {
-      const teamId = card.team === "home" ? homeTeamId : awayTeamId;
+    if (card.cardType !== "red") continue;
 
-      // Suspension length: 1-3 matchdays for direct red cards, 1 matchday for second yellow
+    const teamId = card.team === "home" ? homeTeamId : awayTeamId;
+    const suspensionLength = card.isSecondYellow ? 1 : directRedSuspensionLength(competition);
 
-      let suspensionLength: number;
+    addSuspension(
+      next,
+      teamId,
+      card.playerId,
+      card.playerName,
+      competition,
+      suspensionLength,
+    );
 
-      if (card.isSecondYellow) {
-        suspensionLength = 1; // 1 matchday for double yellow
-      } else {
-        // Random suspension length: 1, 2, or 3 matchdays for direct red cards
-
-        suspensionLength = Math.floor(Math.random() * 3) + 1;
-      }
-
-      const suspension: Suspension = {
-        playerId: card.playerId,
-
-        playerName: card.playerName,
-
-        matchdaysRemaining: suspensionLength,
-      };
-
-      // Add suspension to the team's suspension list
-
-      if (!next.suspensions[teamId]) {
-        next.suspensions[teamId] = [];
-      }
-
-      next.suspensions[teamId].push(suspension);
-
-      console.log(
-        `Red card for ${card.playerName} (${teamId}): ${suspensionLength} matchday suspension`,
-      );
-    }
+    console.log(
+      `Red card for ${card.playerName} (${teamId}) in ${competition}: ${suspensionLength} match suspension`,
+    );
   }
 
   return next;
 }
 
-// Decrease suspension counters for all teams (called after each matchday)
+function processAccumulatedYellowSuspension(
+  save: SaveGame,
+  playerId: string,
+  teamId: string,
+  competition: import("@/lib/season").Competition,
+): SaveGame {
+  const store = usePlayersStore.getState();
+  const stats = store.stats[playerId];
+  if (!stats || stats.accumulatedYellowCards < 5) return save;
 
-function decreaseSuspensions(save: SaveGame): SaveGame {
-  const next: SaveGame = JSON.parse(JSON.stringify(save));
+  const p = store.getSimPlayer(playerId);
+  if (!p) return save;
 
-  for (const teamId in next.suspensions) {
-    const suspensions = next.suspensions[teamId];
+  addSuspension(save, teamId, playerId, p.name, competition, 1);
+  store.resetAccumulatedYellowCards(playerId);
+  return save;
+}
 
-    if (suspensions && suspensions.length > 0) {
-      // Decrease matchdaysRemaining for each suspension
+// Kept only for compatibility with older callers. New suspension logic is
+// consumed by the competition of each completed fixture, not by global
+// matchday increments.
+export function getSuspendedPlayerIdsForCompetition(
+  save: SaveGame,
+  teamId: string,
+  competition: import("@/lib/season").Competition,
+): Set<string> {
+  const suspensions = save.suspensions?.[teamId] ?? [];
+  return new Set(
+    suspensions
+      .filter((s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, competition))
+      .map((s) => s.playerId),
+  );
+}
 
-      next.suspensions[teamId] = suspensions
+export function getSuspensionForPlayer(
+  save: SaveGame,
+  teamId: string,
+  playerId: string,
+  competition: import("@/lib/season").Competition,
+): Suspension | undefined {
+  return (save.suspensions?.[teamId] ?? []).find(
+    (s) =>
+      s.playerId === playerId &&
+      s.matchdaysRemaining > 0 &&
+      suspensionAppliesToCompetition(s, competition),
+  );
+}
 
-        .map((s) => ({ ...s, matchdaysRemaining: s.matchdaysRemaining - 1 }))
+/**
+ * Commits discipline from a live fixture without replaying the rest of the
+ * match statistics. Live matches are marked `liveCommitted`, so the normal
+ * matchday simulator intentionally skips them; therefore red-card sanctions
+ * must be committed explicitly when the live chronicle is finalized.
+ *
+ * This is idempotent through `disciplineCommitted`, which also protects older
+ * flows that may call the finalization path more than once.
+ */
+export function commitLiveFixtureDiscipline(save: SaveGame, fixtureId: string): SaveGame {
+  let next: SaveGame = JSON.parse(JSON.stringify(save));
+  next.suspensions ??= {};
 
-        .filter((s) => s.matchdaysRemaining > 0); // Remove completed suspensions
+  let target: Fixture | undefined;
+  let result: any;
+  let competition: import("@/lib/season").Competition | undefined;
+  let applyResultToFixture: ((updated: any) => void) | null = null;
+
+  const leagueList = next.fixtures?.[next.myLeague] ?? [];
+  const leagueIndex = leagueList.findIndex((f) => f.id === fixtureId);
+  if (leagueIndex >= 0) {
+    target = leagueList[leagueIndex];
+    result = target.result;
+    competition = "league";
+    applyResultToFixture = (updated) => {
+      next.fixtures[next.myLeague][leagueIndex] = { ...target!, result: updated };
+    };
+  }
+
+  if (!target) {
+    for (const [lg, list] of Object.entries(next.cupFixtures ?? {})) {
+      if (!Array.isArray(list)) continue;
+      const index = list.findIndex((f) => f.id === fixtureId);
+      if (index >= 0) {
+        target = list[index];
+        result = target.result;
+        competition = "cup";
+        applyResultToFixture = (updated) => {
+          next.cupFixtures[lg as LeagueId][index] = { ...target!, result: updated };
+        };
+        break;
+      }
     }
   }
 
+  if (!target && Array.isArray(next.uclFixtures)) {
+    const index = next.uclFixtures.findIndex((f) => f.id === fixtureId);
+    if (index >= 0) {
+      target = next.uclFixtures[index];
+      result = target.result;
+      competition = "ucl";
+      applyResultToFixture = (updated) => {
+        next.uclFixtures[index] = { ...target!, result: updated };
+      };
+    }
+  }
+
+  if (!target || !result || !competition || !applyResultToFixture) return next;
+  if (result.disciplineCommitted) return next;
+
+  const cards: CardEvent[] = Array.isArray(result.cards) ? result.cards : [];
+  if (cards.length > 0) {
+    next = processRedCards(next, cards, target.homeId, target.awayId, competition);
+
+    const playerStore = usePlayersStore.getState();
+    for (const card of cards) {
+      if (card.cardType === "yellow") {
+        playerStore.recordYellowCard(card.playerId);
+        playerStore.incrementAccumulatedYellowCards(card.playerId);
+        const player = playerStore.getSimPlayer(card.playerId);
+        if (player) {
+          next = processAccumulatedYellowSuspension(next, card.playerId, player.teamId, competition);
+        }
+      } else if (card.isSecondYellow) {
+        // A second-yellow red also counts as the player's second yellow.
+        playerStore.recordYellowCard(card.playerId);
+        playerStore.incrementAccumulatedYellowCards(card.playerId);
+      }
+      playerStore.recordRedCard(card.playerId);
+    }
+  }
+
+  applyResultToFixture({ ...result, disciplineCommitted: true });
   return next;
 }
 
@@ -1325,9 +1609,12 @@ export function getStartersWithFormation(
   const lineup = save.lineups[teamId] ?? [];
 
   const suspensions = save.suspensions[teamId] ?? [];
+  const matchCompetition = options?.fixture?.competition ?? "league";
 
   const suspendedPlayerIds = new Set(
-    suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    suspensions
+      .filter((s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, matchCompetition))
+      .map((s) => s.playerId),
   );
 
   const squad = store.getSimSquad(teamId);
@@ -1374,6 +1661,12 @@ export function getStartersWithFormation(
     const players = autoIds
       .map((id) => store.getSimPlayer(id))
       .filter((p): p is Player => !!p)
+      .map((p) => {
+        // CPU players are fresh at kickoff. Their energy drains only inside
+        // this match and is never inherited from a previous fixture.
+        p.energy = 100;
+        return p;
+      })
       .slice(0, 11);
 
     return {
@@ -1416,9 +1709,12 @@ export function getStarters(save: SaveGame, teamId: string, options?: { fixture?
   // Get suspended players for this team
 
   const suspensions = save.suspensions[teamId] ?? [];
+  const matchCompetition = options?.fixture?.competition ?? "league";
 
   const suspendedPlayerIds = new Set(
-    suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    suspensions
+      .filter((s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, matchCompetition))
+      .map((s) => s.playerId),
   );
 
   // Build unavailable set (injured + suspended)
@@ -1451,6 +1747,12 @@ export function getStarters(save: SaveGame, teamId: string, options?: { fixture?
     return autoIds
       .map((id) => store.getSimPlayer(id))
       .filter((p): p is Player => !!p)
+      .map((p) => {
+        // CPU players are fresh at kickoff. Their energy drains only inside
+        // this match and is never inherited from a previous fixture.
+        p.energy = 100;
+        return p;
+      })
       .slice(0, 11);
   }
 
@@ -1464,7 +1766,38 @@ export function getStarters(save: SaveGame, teamId: string, options?: { fixture?
  * the starting XI and not injured/suspended, best-rated first. Used so that
  * in-match substitutions bring on real players instead of inventing IDs.
  */
-export function getBenchForTeam(save: SaveGame, teamId: string, xi: Player[]): Player[] {
+function getCupSimulationBench(save: SaveGame, teamId: string, xi: Player[], competition: import("@/lib/season").Competition = "cup"): Player[] {
+  const configured = getBenchForTeam(save, teamId, xi, competition);
+  if (configured.length > 0) return configured;
+
+  // Cup simulation must still have legal substitutes even in the preliminary
+  // rounds and in older saves that never stored a manual bench. This fallback
+  // only affects the simulation engine; Dirección de equipo keeps its normal
+  // rule of not promoting Reservas automatically.
+  const store = usePlayersStore.getState();
+  const xiIds = new Set(xi.map((p) => p.id));
+  const suspensions = save.suspensions?.[teamId] ?? [];
+  const suspended = new Set(
+    suspensions
+      .filter((s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, competition))
+      .map((s) => s.playerId),
+  );
+  const team = teamById(teamId);
+  const md = team ? (save.currentMatchday[team.league] ?? 1) : 1;
+  const currentDate = store.currentDate;
+  return store
+    .getSimSquad(teamId)
+    .filter((p) => !xiIds.has(p.id) && !suspended.has(p.id) && !isPlayerInjuredAtDate(p, currentDate, md))
+    .sort((a, b) => b.rating - a.rating)
+    .slice(0, 12);
+}
+
+export function getBenchForTeam(
+  save: SaveGame,
+  teamId: string,
+  xi: Player[],
+  competition: import("@/lib/season").Competition = "league",
+): Player[] {
   const store = usePlayersStore.getState();
   store.init();
 
@@ -1476,7 +1809,9 @@ export function getBenchForTeam(save: SaveGame, teamId: string, xi: Player[]): P
 
   const suspensions = save.suspensions[teamId] ?? [];
   const suspendedPlayerIds = new Set(
-    suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+    suspensions
+      .filter((s) => s.matchdaysRemaining > 0 && suspensionAppliesToCompetition(s, competition))
+      .map((s) => s.playerId),
   );
 
   const squad = store.getSimSquad(teamId);
@@ -1530,18 +1865,34 @@ function applyMatchToStats(
 
   const store = usePlayersStore.getState();
 
-  const homeData = getStartersWithFormation(save, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "cup", matchday: fixture.matchday } });
+  // IMPORTANT: existing suspensions must still be active while selecting the
+  // XI for THIS fixture. Consuming first made a one-match ban disappear before
+  // the lineup was built, allowing an expelled player to play the next match.
+  let updatedSave = save;
 
-  const awayData = getStartersWithFormation(save, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "cup", matchday: fixture.matchday } });
+  const homeData = getStartersWithFormation(updatedSave, fixture.homeId, { fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: fixture.competition, matchday: fixture.matchday } });
+
+  const awayData = getStartersWithFormation(updatedSave, fixture.awayId, { fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: fixture.competition, matchday: fixture.matchday } });
   const homeXI = homeData.players;
   const awayXI = awayData.players;
 
-  let updatedSave = save;
-
-  // Process red cards and create suspensions
-
+  // The current fixture now serves any suspension that was already pending.
+  // Do this AFTER XI selection but BEFORE adding sanctions generated by this
+  // fixture, so today's red card is never consumed immediately.
+  updatedSave = consumeSuspensionsForFixture(
+    updatedSave,
+    [fixture.homeId, fixture.awayId],
+    fixture.competition,
+  );
+  // Process red cards and create suspensions for the same competition.
   if (r.cards && r.cards.length > 0) {
-    updatedSave = processRedCards(updatedSave, r.cards, fixture.homeId, fixture.awayId);
+    updatedSave = processRedCards(
+      updatedSave,
+      r.cards,
+      fixture.homeId,
+      fixture.awayId,
+      fixture.competition,
+    );
   }
 
   // For a match watched live by the manager, defer the manager's own
@@ -1621,30 +1972,16 @@ function applyMatchToStats(
 
       store.incrementAccumulatedYellowCards(card.playerId);
 
-      // Check if accumulated yellow cards reaches 5
-
-      const stats = store.stats[card.playerId];
-
-      if (stats && stats.accumulatedYellowCards >= 5) {
-        // Suspend player for next match
-
-        const p = store.getSimPlayer(card.playerId);
-
-        if (p) {
-          const teamLeague = teamById(p.teamId).league;
-
-          const suspension: Suspension = {
-            playerId: card.playerId,
-            playerName: p.name,
-            matchdaysRemaining: 1,
-          };
-          updatedSave.suspensions[teamLeague] ??= [];
-          updatedSave.suspensions[teamLeague].push(suspension);
-
-          // Reset accumulated yellow cards after suspension is applied
-
-          store.resetAccumulatedYellowCards(card.playerId);
-        }
+      // Keep the existing fifth-yellow suspension rule, but make it
+      // competition-specific and store it under the player's actual team.
+      const p = store.getSimPlayer(card.playerId);
+      if (p) {
+        updatedSave = processAccumulatedYellowSuspension(
+          updatedSave,
+          card.playerId,
+          p.teamId,
+          fixture.competition,
+        );
       }
     } else if (card.cardType === "red") {
       store.recordRedCard(card.playerId);
@@ -1757,8 +2094,10 @@ function applyMatchToStats(
 
         const suspensions = updatedSave.suspensions[userTeamId] || [];
 
-        const suspendedPlayerIds = new Set(
-          suspensions.filter((s) => s.matchdaysRemaining > 0).map((s) => s.playerId),
+        const suspendedPlayerIds = getSuspendedPlayerIdsForCompetition(
+          updatedSave,
+          userTeamId,
+          fixture.competition,
         );
 
         const replacement = benchPlayers.find(
@@ -1951,11 +2290,11 @@ function simulateFixtureInline(
   }
 
   const homeData = getStartersWithFormation(save, fixture.homeId, {
-    fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: isCup ? "cup" : "league", matchday: fixture.matchday },
+    fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: fixture.competition, matchday: fixture.matchday },
   });
 
   const awayData = getStartersWithFormation(save, fixture.awayId, {
-    fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: isCup ? "cup" : "league", matchday: fixture.matchday },
+    fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: fixture.competition, matchday: fixture.matchday },
   });
   const homeXI = homeData.players;
   const awayXI = awayData.players;
@@ -1990,8 +2329,16 @@ function simulateFixtureInline(
 
   const homeFormationForSim = homeData?.formation || (save.formations[fixture.homeId] as FormationName | undefined) || "Táctica 4-4-2";
   const awayFormationForSim = awayData?.formation || (save.formations[fixture.awayId] as FormationName | undefined) || "Táctica 4-4-2";
-  const homeBenchForSim = getBenchForTeam(save, fixture.homeId, homeXI);
-  const awayBenchForSim = getBenchForTeam(save, fixture.awayId, awayXI);
+  // National-cup simulations (including the preliminary round) must always
+  // have a real bench available so AI and user cup matches can generate
+  // substitutions even when an older/new save has no manually stored bench.
+  // League/UCL lineup rules continue to use the normal configured bench.
+  const homeBenchForSim = fixture.competition === "cup"
+    ? getCupSimulationBench(save, fixture.homeId, homeXI, fixture.competition)
+    : getBenchForTeam(save, fixture.homeId, homeXI, fixture.competition);
+  const awayBenchForSim = fixture.competition === "cup"
+    ? getCupSimulationBench(save, fixture.awayId, awayXI, fixture.competition)
+    : getBenchForTeam(save, fixture.awayId, awayXI, fixture.competition);
 
   let result: any;
   try {
@@ -2525,14 +2872,14 @@ export async function simulateCupMatchdayLayered(
             xgAway: 0,
           };
         } else {
-          const homeBench = getBenchForTeam(next, f.homeId, homeXI);
-          const awayBench = getBenchForTeam(next, f.awayId, awayXI);
+          const homeBench = getCupSimulationBench(next, fixture.homeId, homeXI, fixture.competition);
+          const awayBench = getCupSimulationBench(next, fixture.awayId, awayXI, fixture.competition);
 
           result = simulateCupMatch(home, away, homeXI, awayXI, {
             homeBench,
             awayBench,
-            homeTactics: loadTactics(f.homeId),
-            awayTactics: loadTactics(f.awayId),
+            homeTactics: loadTactics(fixture.homeId),
+            awayTactics: loadTactics(fixture.awayId),
             homeFormation: homeData.formation,
             awayFormation: awayData.formation,
           });
@@ -2540,31 +2887,124 @@ export async function simulateCupMatchdayLayered(
           next = applyMatchToStats(next, { ...fixture, result });
         }
       } else {
-        // FAST SIMULATION for other VIP cups + stats/injuries
+        // Other VIP cups use the fast event simulation, but still receive real
+        // benches, substitutions, cards, injuries and the same extra-time
+        // substitution allowance. This is important for national cups from
+        // the preliminary round onward and keeps their chronicles complete.
+        const homeData = getStartersWithFormation(next, fixture.homeId, {
+          fixture: {
+            fixtureId: fixture.id,
+            opponentId: fixture.awayId,
+            isHome: true,
+            competition: fixture.competition,
+            matchday: fixture.matchday,
+          },
+        });
+        const awayData = getStartersWithFormation(next, fixture.awayId, {
+          fixture: {
+            fixtureId: fixture.id,
+            opponentId: fixture.homeId,
+            isHome: false,
+            competition: fixture.competition,
+            matchday: fixture.matchday,
+          },
+        });
+        const homeXI = homeData.players;
+        const awayXI = awayData.players;
+        const homeBench = getCupSimulationBench(next, fixture.homeId, homeXI, fixture.competition);
+        const awayBench = getCupSimulationBench(next, fixture.awayId, awayXI, fixture.competition);
 
-        result = generateFakeMatchResult(home, away);
+        result = simulateMatchFast(home, away, homeXI, awayXI, {
+          homeBench,
+          awayBench,
+          homeTactics: loadTactics(fixture.homeId),
+          awayTactics: loadTactics(fixture.awayId),
+          homeFormation: homeData.formation,
+          awayFormation: awayData.formation,
+        });
 
         if (result.homeGoals === result.awayGoals) {
-          const etH = Math.random() < 0.3 ? Math.floor(Math.random() * 2) : 0;
+          const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+            homeBench,
+            awayBench,
+            regularSubstitutions: result.substitutions ?? [],
+            regularCards: result.cards ?? [],
+            homeTactics: loadTactics(fixture.homeId),
+            awayTactics: loadTactics(fixture.awayId),
+          });
+          result.substitutions = [...(result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort(
+            (a, b) => a.minute - b.minute,
+          );
+          result.extraTime = {
+            homeGoals: etResult.homeGoals,
+            awayGoals: etResult.awayGoals,
+            events: etResult.events,
+            substitutions: etResult.substitutions,
+          };
 
-          const etA = Math.random() < 0.3 ? Math.floor(Math.random() * 2) : 0;
-
-          result.extraTime = { homeGoals: etH, awayGoals: etA, events: [] };
-
-          if (result.homeGoals + etH === result.awayGoals + etA) {
+          const totalHome = result.homeGoals + etResult.homeGoals;
+          const totalAway = result.awayGoals + etResult.awayGoals;
+          if (totalHome === totalAway) {
+            const redHome = new Map<string, number>(
+              (result.cards ?? [])
+                .filter((c) => c.team === "home" && c.cardType === "red")
+                .map((c) => [c.playerId, c.minute]),
+            );
+            const redAway = new Map<string, number>(
+              (result.cards ?? [])
+                .filter((c) => c.team === "away" && c.cardType === "red")
+                .map((c) => [c.playerId, c.minute]),
+            );
+            const finalHome = (result.homeFinalLineup ?? homeXI);
+            const finalAway = (result.awayFinalLineup ?? awayXI);
+            const penaltyHome = finalHome.filter((p) => !redHome.has(p.id));
+            const penaltyAway = finalAway.filter((p) => !redAway.has(p.id));
+            const penaltyResult = simulatePenaltyShootout(
+              penaltyHome.length ? penaltyHome : homeXI,
+              penaltyAway.length ? penaltyAway : awayXI,
+            );
             result.penalties = {
-              homeGoals: Math.random() < 0.5 ? 5 : 4,
-              awayGoals: Math.random() < 0.5 ? 4 : 5,
-              shootout: [],
+              homeGoals: penaltyResult.homeGoals,
+              awayGoals: penaltyResult.awayGoals,
+              shootout: penaltyResult.shootout,
             };
           }
         }
 
-        const hXI = selectMatchPlayers(store.getSimSquad(home.id));
-
-        const aXI = selectMatchPlayers(store.getSimSquad(away.id));
-
-        recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league], "cup", fixture.date);
+        recordFakeMatchStats(
+          store,
+          homeXI,
+          awayXI,
+          result,
+          next.currentMatchday[league],
+          "cup",
+          fixture.date,
+        );
+        next = consumeSuspensionsForFixture(
+          next,
+          [fixture.homeId, fixture.awayId],
+          fixture.competition,
+        );
+        if (result.cards?.length) {
+          next = processRedCards(
+            next,
+            result.cards,
+            fixture.homeId,
+            fixture.awayId,
+            fixture.competition,
+          );
+          for (const card of result.cards) {
+            const p = store.getSimPlayer(card.playerId);
+            if (card.cardType === "yellow" && p) {
+              next = processAccumulatedYellowSuspension(
+                next,
+                card.playerId,
+                p.teamId,
+                fixture.competition,
+              );
+            }
+          }
+        }
       }
 
       // Apply result to cup fixtures
@@ -2597,9 +3037,6 @@ export async function simulateCupMatchdayLayered(
 
   console.log(`simulateCupMatchdayLayered: Completed ${processed}/${totalMatches} fixtures`);
 
-  // Decrease suspension counters after cup matchday
-
-  next = decreaseSuspensions(next);
 
   return next;
 }
@@ -2717,31 +3154,40 @@ export async function simulateRemainingCupMatches(
           };
         } else {
           result = simulateMatch(home, away, homeXI, awayXI, {
-            homeBench: getBenchForTeam(next, f.homeId, homeXI),
-            awayBench: getBenchForTeam(next, f.awayId, awayXI),
-            homeTactics: loadTactics(fixture.homeId),
-            awayTactics: loadTactics(fixture.awayId),
+            homeBench: getCupSimulationBench(next, f.homeId, homeXI, f.competition),
+            awayBench: getCupSimulationBench(next, f.awayId, awayXI, f.competition),
+            homeTactics: loadTactics(f.homeId),
+            awayTactics: loadTactics(f.awayId),
             homeFormation:
               (next.formations[f.homeId] as FormationName | undefined) || "Táctica 4-4-2",
             awayFormation:
               (next.formations[f.awayId] as FormationName | undefined) || "Táctica 4-4-2",
           });
 
-          next = applyMatchToStats(next, { ...f, result });
-
           // Handle cup draws: extra time and penalties
 
           if (result.homeGoals === result.awayGoals) {
             // Simulate extra time
 
-            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+            const homeBench = getCupSimulationBench(next, f.homeId, homeXI, f.competition);
+            const awayBench = getCupSimulationBench(next, f.awayId, awayXI, f.competition);
+            const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+              homeBench,
+              awayBench,
+              regularSubstitutions: result.substitutions ?? [],
+              regularCards: result.cards ?? [],
+              homeTactics: loadTactics(f.homeId),
+              awayTactics: loadTactics(f.awayId),
+            });
 
+            result.substitutions = [...(result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
             result.extraTime = {
               homeGoals: etResult.homeGoals,
 
               awayGoals: etResult.awayGoals,
 
               events: etResult.events,
+              substitutions: etResult.substitutions,
             };
 
             // Check if still tied after extra time
@@ -2751,9 +3197,25 @@ export async function simulateRemainingCupMatches(
             const totalAway = result.awayGoals + etResult.awayGoals;
 
             if (totalHome === totalAway) {
-              // Simulate penalty shootout
-
-              const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+              // Simulate penalties with the players who are actually still
+              // on the pitch after regular time + extra time.
+              const regularAndExtraSubs = result.substitutions ?? [];
+              const redHome = new Map<string, number>(
+                (result.cards ?? [])
+                  .filter((c) => c.team === "home" && c.cardType === "red")
+                  .map((c) => [c.playerId, c.minute]),
+              );
+              const redAway = new Map<string, number>(
+                (result.cards ?? [])
+                  .filter((c) => c.team === "away" && c.cardType === "red")
+                  .map((c) => [c.playerId, c.minute]),
+              );
+              const finalHome = homeXI.filter((p) => !redHome.has(p.id));
+              const finalAway = awayXI.filter((p) => !redAway.has(p.id));
+              const penaltyResult = simulatePenaltyShootout(
+                finalHome.length ? finalHome : homeXI,
+                finalAway.length ? finalAway : awayXI,
+              );
 
               result.penalties = {
                 homeGoals: penaltyResult.homeGoals,
@@ -2764,43 +3226,76 @@ export async function simulateRemainingCupMatches(
               };
             }
           }
+          next = applyMatchToStats(next, { ...f, result });
         }
       } else {
         // O(1) MATH SIMULATION for background countries - EXACT same logic as league background matches
 
-        result = generateFakeMatchResult(home, away);
+        const homeData = getStartersWithFormation(next, f.homeId, { fixture: { fixtureId: f.id, opponentId: f.awayId, isHome: true, competition: "cup", matchday: f.matchday } });
+        const awayData = getStartersWithFormation(next, f.awayId, { fixture: { fixtureId: f.id, opponentId: f.homeId, isHome: false, competition: "cup", matchday: f.matchday } });
+        const homeXI = homeData.players;
+        const awayXI = awayData.players;
+        const homeBench = getCupSimulationBench(next, f.homeId, homeXI, f.competition);
+        const awayBench = getCupSimulationBench(next, f.awayId, awayXI, f.competition);
+        result = simulateMatchFast(home, away, homeXI, awayXI, {
+          homeBench,
+          awayBench,
+          homeTactics: loadTactics(f.homeId),
+          awayTactics: loadTactics(f.awayId),
+          homeFormation: homeData.formation,
+          awayFormation: awayData.formation,
+        });
 
         // Handle cup draws: extra time and penalties for background countries
 
         if (result.homeGoals === result.awayGoals) {
           // Simulate extra time (simplified for background)
 
-          const etHomeGoals = Math.random() < 0.3 ? Math.floor(Math.random() * 2) : 0;
-
-          const etAwayGoals = Math.random() < 0.3 ? Math.floor(Math.random() * 2) : 0;
-
+          const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+            homeBench,
+            awayBench,
+            regularSubstitutions: result.substitutions ?? [],
+            regularCards: result.cards ?? [],
+            homeTactics: loadTactics(f.homeId),
+            awayTactics: loadTactics(f.awayId),
+          });
+          result.substitutions = [...(result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
           result.extraTime = {
-            homeGoals: etHomeGoals,
-
-            awayGoals: etAwayGoals,
-
-            events: [],
+            homeGoals: etResult.homeGoals,
+            awayGoals: etResult.awayGoals,
+            events: etResult.events,
+            substitutions: etResult.substitutions,
           };
 
           // Check if still tied after extra time
 
-          const totalHome = result.homeGoals + etHomeGoals;
+          const totalHome = result.homeGoals + etResult.homeGoals;
 
-          const totalAway = result.awayGoals + etAwayGoals;
+          const totalAway = result.awayGoals + etResult.awayGoals;
 
           if (totalHome === totalAway) {
-            // Simulate penalty shootout using the same function as VIP for consistency
-
-            const homeXI = getStartersWithFormation(next, f.homeId, { fixture: { fixtureId: f.id, opponentId: f.awayId, isHome: true, competition: "cup", matchday: f.matchday } }).players;
-
-            const awayXI = getStartersWithFormation(next, f.awayId, { fixture: { fixtureId: f.id, opponentId: f.homeId, isHome: false, competition: "cup", matchday: f.matchday } }).players;
-
-            const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+            // Use the final extra-time lineups so players who entered in ET can
+            // also take part in the shootout.
+            const finalHome = getActivePlayersAtMinute(
+              homeXI,
+              homeBench,
+              result.substitutions ?? [],
+              result.cards ?? [],
+              "home",
+              120,
+            );
+            const finalAway = getActivePlayersAtMinute(
+              awayXI,
+              awayBench,
+              result.substitutions ?? [],
+              result.cards ?? [],
+              "away",
+              120,
+            );
+            const penaltyResult = simulatePenaltyShootout(
+              finalHome.length ? finalHome : homeXI,
+              finalAway.length ? finalAway : awayXI,
+            );
 
             result.penalties = {
               homeGoals: penaltyResult.homeGoals,
@@ -2900,12 +3395,6 @@ function grantUCLPrizeOnce(save: SaveGame, key: string, teamId: string, amount: 
 function applyUCLMatchAftermath(save: SaveGame, homeId: string, awayId: string): SaveGame {
   const next: SaveGame = JSON.parse(JSON.stringify(save));
   for (const teamId of [homeId, awayId]) {
-    // Suspensions
-    if (next.suspensions && next.suspensions[teamId]?.length) {
-      next.suspensions[teamId] = next.suspensions[teamId]
-        .map((s: any) => ({ ...s, matchdaysRemaining: s.matchdaysRemaining - 1 }))
-        .filter((s: any) => s.matchdaysRemaining > 0);
-    }
     // Injuries — bump injuredUntil down by 1 for players still injured per their league matchday
     const lg = teamById(teamId).league as any;
     const md = next.currentMatchday?.[lg] ?? 0;
@@ -3050,6 +3539,15 @@ export function playSpecificFixture(
     return { save: next, fixture: simmed };
   }
 
+  // A user match can reach this function with a result already present because
+  // another calendar path produced a provisional/pre-simulated result. That
+  // result is still valid input for the live match player; returning null here
+  // used to abort `startMatch()` and leave the UI stuck at 0'.
+  if (fixture?.result && (fixture.homeId === next.myTeamId || fixture.awayId === next.myTeamId)) {
+    console.log("Using existing provisional user fixture result:", fixture.id);
+    return { save: next, fixture };
+  }
+
   // Try to find fixture in cup fixtures
 
   for (const lg of Object.keys(next.cupFixtures)) {
@@ -3115,6 +3613,11 @@ export function playSpecificFixture(
 
       return { save: next, fixture: simmed };
     }
+  }
+
+  if (fixture?.result && (fixture.homeId === next.myTeamId || fixture.awayId === next.myTeamId)) {
+    console.log("Using existing provisional user fixture result:", fixture.id);
+    return { save: next, fixture };
   }
 
   console.log("Fixture not found in any competition:", fixtureId);
@@ -3307,9 +3810,6 @@ export function finishMatchdayFast(save: SaveGame, leaguesToSim?: LeagueId[]): S
     next.currentMatchday[lg] = md + 1;
   }
 
-  // Decrease suspension counters after advancing matchday
-
-  next = decreaseSuspensions(next);
 
   // Advance cup for simulated leagues only
 
@@ -3550,7 +4050,7 @@ export function generateRealisticStatsForO1Leagues(
         }
       }
 
-      // Third pass: generate injuries. They are intentionally uncommon.
+      // Third pass: generate injuries. They are still uncommon, but a little more frequent than before.
       // Low estimated energy (<40%) substantially increases the risk while it
       // still remains unusual overall.
       for (const [teamId, players] of allPlayersToRecord) {
@@ -3980,9 +4480,13 @@ function recordFakeMatchStats(
   for (const card of result.cards ?? []) {
     if (card.cardType === "yellow") {
       store.recordYellowCard(card.playerId);
+      store.incrementAccumulatedYellowCards(card.playerId);
     } else {
       store.recordRedCard(card.playerId);
-      if (card.isSecondYellow) store.recordYellowCard(card.playerId);
+      if (card.isSecondYellow) {
+        store.recordYellowCard(card.playerId);
+        store.incrementAccumulatedYellowCards(card.playerId);
+      }
     }
   }
 
@@ -4095,11 +4599,11 @@ function selectMatchPlayers(squad: Player[]): Player[] {
 }
 
 
-const TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY = 5;
+const TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY = 5.5;
 
 function injuryChanceForLeague(teamCount: number): number {
   // Each team plays once per league matchday. One injury roll per team gives
-  // an expected league average of roughly five injuries, with natural variance.
+  // an expected league average of roughly 5.5 injuries, with natural variance.
   return Math.min(0.45, Math.max(0.12, TARGET_AVERAGE_INJURIES_PER_LEAGUE_MATCHDAY / Math.max(1, teamCount)));
 }
 
@@ -4225,36 +4729,112 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
 
         for (const f of fixtures) {
           const home = teamById(f.homeId);
-
           const away = teamById(f.awayId);
-
           if (!home || !away) continue;
 
-          const result = generateFakeMatchResult(home, away);
+          const homeData = getStartersWithFormation(next, f.homeId, {
+            fixture: {
+              fixtureId: f.id,
+              opponentId: f.awayId,
+              isHome: true,
+              competition: f.competition,
+              matchday: f.matchday,
+            },
+          });
+          const awayData = getStartersWithFormation(next, f.awayId, {
+            fixture: {
+              fixtureId: f.id,
+              opponentId: f.homeId,
+              isHome: false,
+              competition: f.competition,
+              matchday: f.matchday,
+            },
+          });
+          const homeXI = homeData.players;
+          const awayXI = awayData.players;
 
-          // Handle draws in cup: simple extra time
+          if (homeXI.length === 0 || awayXI.length === 0) continue;
+
+          const homeBench = getCupSimulationBench(next, f.homeId, homeXI, f.competition);
+          const awayBench = getCupSimulationBench(next, f.awayId, awayXI, f.competition);
+          let result = simulateMatchFast(home, away, homeXI, awayXI, {
+            homeBench,
+            awayBench,
+            homeTactics: loadTactics(f.homeId),
+            awayTactics: loadTactics(f.awayId),
+            homeFormation: homeData.formation,
+            awayFormation: awayData.formation,
+          });
 
           if (result.homeGoals === result.awayGoals) {
-            const etH = Math.random() < 0.3 ? 1 : 0;
+            const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+              homeBench,
+              awayBench,
+              regularSubstitutions: result.substitutions ?? [],
+              regularCards: result.cards ?? [],
+              homeTactics: loadTactics(f.homeId),
+              awayTactics: loadTactics(f.awayId),
+            });
+            result.substitutions = [...(result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort(
+              (a, b) => a.minute - b.minute,
+            );
+            result.extraTime = {
+              homeGoals: etResult.homeGoals,
+              awayGoals: etResult.awayGoals,
+              events: etResult.events,
+              substitutions: etResult.substitutions,
+            };
 
-            const etA = Math.random() < 0.3 ? 1 : 0;
-
-            result.extraTime = { homeGoals: etH, awayGoals: etA, events: [] };
-
-            if (result.homeGoals + etH === result.awayGoals + etA) {
+            const totalHome = result.homeGoals + etResult.homeGoals;
+            const totalAway = result.awayGoals + etResult.awayGoals;
+            if (totalHome === totalAway) {
+              const redHome = new Map<string, number>(
+                (result.cards ?? [])
+                  .filter((c) => c.team === "home" && c.cardType === "red")
+                  .map((c) => [c.playerId, c.minute]),
+              );
+              const redAway = new Map<string, number>(
+                (result.cards ?? [])
+                  .filter((c) => c.team === "away" && c.cardType === "red")
+                  .map((c) => [c.playerId, c.minute]),
+              );
+              const penaltyHome = homeXI.filter((p) => !redHome.has(p.id));
+              const penaltyAway = awayXI.filter((p) => !redAway.has(p.id));
+              const penaltyResult = simulatePenaltyShootout(
+                penaltyHome.length ? penaltyHome : homeXI,
+                penaltyAway.length ? penaltyAway : awayXI,
+              );
               result.penalties = {
-                homeGoals: Math.random() < 0.5 ? 5 : 4,
-
-                awayGoals: Math.random() < 0.5 ? 4 : 5,
-
-                shootout: [],
+                homeGoals: penaltyResult.homeGoals,
+                awayGoals: penaltyResult.awayGoals,
+                shootout: penaltyResult.shootout,
               };
             }
           }
 
-          const idx = next.cupFixtures[league].findIndex((x) => x.id === f.id);
-
-          if (idx >= 0) next.cupFixtures[league][idx] = { ...f, result };
+          const idx = list.findIndex((x) => x.id === f.id);
+          if (idx >= 0) {
+            list[idx] = { ...f, result };
+            recordFakeMatchStats(
+              store,
+              homeXI,
+              awayXI,
+              result,
+              next.currentMatchday[league],
+              "cup",
+              f.date,
+            );
+            next = consumeSuspensionsForFixture(next, [f.homeId, f.awayId], f.competition);
+            if (result.cards?.length) {
+              next = processRedCards(next, result.cards, f.homeId, f.awayId, f.competition);
+              for (const card of result.cards) {
+                const p = store.getSimPlayer(card.playerId);
+                if (card.cardType === "yellow" && p) {
+                  next = processAccumulatedYellowSuspension(next, card.playerId, p.teamId, f.competition);
+                }
+              }
+            }
+          }
         }
 
         processedKeys.add(key);
@@ -4279,12 +4859,14 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
 
           if (!home || !away) continue;
 
+          const homeSuspendedIds = getSuspendedPlayerIdsForCompetition(next, home.id, f.competition);
+          const awaySuspendedIds = getSuspendedPlayerIdsForCompetition(next, away.id, f.competition);
           allPlayersToRecord.set(
             home.id,
             selectMatchPlayers(
               store
                 .getSimSquad(home.id)
-                .filter((p) => !isPlayerInjuredAtDate(p, f.date || today, matchday)),
+                .filter((p) => !homeSuspendedIds.has(p.id) && !isPlayerInjuredAtDate(p, f.date || today, matchday)),
             ),
           );
 
@@ -4293,7 +4875,7 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
             selectMatchPlayers(
               store
                 .getSimSquad(away.id)
-                .filter((p) => !isPlayerInjuredAtDate(p, f.date || today, matchday)),
+                .filter((p) => !awaySuspendedIds.has(p.id) && !isPlayerInjuredAtDate(p, f.date || today, matchday)),
             ),
           );
         }
@@ -4347,6 +4929,16 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
               "league",
               f.date,
             );
+            next = consumeSuspensionsForFixture(next, [f.homeId, f.awayId], f.competition);
+            if (result.cards?.length) {
+              next = processRedCards(next, result.cards, f.homeId, f.awayId, f.competition);
+              for (const card of result.cards) {
+                const p = store.getSimPlayer(card.playerId);
+                if (card.cardType === "yellow" && p) {
+                  next = processAccumulatedYellowSuspension(next, card.playerId, p.teamId, f.competition);
+                }
+              }
+            }
           }
         }
 
@@ -4481,8 +5073,8 @@ export async function advanceMatchdayLayered(
             };
           } else {
             result = simulateMatch(home, away, homeXI, awayXI, {
-              homeBench: getBenchForTeam(next, fixture.homeId, homeXI),
-              awayBench: getBenchForTeam(next, fixture.awayId, awayXI),
+              homeBench: getBenchForTeam(next, fixture.homeId, homeXI, fixture.competition),
+              awayBench: getBenchForTeam(next, fixture.awayId, awayXI, fixture.competition),
               homeTactics: loadTactics(fixture.homeId),
               awayTactics: loadTactics(fixture.awayId),
               homeFormation: homeData.formation,
@@ -4501,8 +5093,8 @@ export async function advanceMatchdayLayered(
           const aXI = awayData.players;
 
           result = simulateMatchFast(home, away, hXI, aXI, {
-            homeBench: getBenchForTeam(next, fixture.homeId, hXI),
-            awayBench: getBenchForTeam(next, fixture.awayId, aXI),
+            homeBench: getBenchForTeam(next, fixture.homeId, hXI, fixture.competition),
+            awayBench: getBenchForTeam(next, fixture.awayId, aXI, fixture.competition),
             homeTactics: loadTactics(fixture.homeId),
             awayTactics: loadTactics(fixture.awayId),
             homeFormation: homeData.formation,
@@ -4510,6 +5102,16 @@ export async function advanceMatchdayLayered(
           });
 
           recordFakeMatchStats(store, hXI, aXI, result, next.currentMatchday[league], "league", fixture.date);
+          next = consumeSuspensionsForFixture(next, [fixture.homeId, fixture.awayId], fixture.competition);
+          if (result.cards?.length) {
+            next = processRedCards(next, result.cards, fixture.homeId, fixture.awayId, fixture.competition);
+            for (const card of result.cards) {
+              const p = store.getSimPlayer(card.playerId);
+              if (card.cardType === "yellow" && p) {
+                next = processAccumulatedYellowSuspension(next, card.playerId, p.teamId, fixture.competition);
+              }
+            }
+          }
         }
 
         // Apply result
@@ -4572,9 +5174,6 @@ export async function advanceMatchdayLayered(
       }
     }
 
-    // Decrease suspension counters after advancing matchday
-
-    next = decreaseSuspensions(next);
 
     // Process cup draws without simulating matches
 
@@ -4921,7 +5520,7 @@ function advanceCupForLeague(save: SaveGame, lg: LeagueId) {
 }
 
 function advanceUCL(save: SaveGame) {
-  const list = save.uclFixtures;
+  let list = save.uclFixtures;
 
   // UCL "match calendar" tied to user's league matchday (simpler)
 
@@ -4944,11 +5543,15 @@ function advanceUCL(save: SaveGame) {
 
         list[idx] = sim;
 
-        applyMatchToStats(save, sim);
+        save = applyMatchToStats(save, sim);
+        // applyMatchToStats returns a fresh SaveGame; keep the local fixture
+        // list attached to that fresh state so subsequent UCL matches and
+        // their disciplinary state are not lost.
+        list = save.uclFixtures;
       }
     }
 
-    const playedAll = list.filter((f) => f.round === step.round).every((f) => f.result);
+    const playedAll = save.uclFixtures.filter((f) => f.round === step.round).every((f) => f.result);
 
     if (playedAll) {
       const next = UCL_SCHEDULE[roundIdx + 1];
@@ -5955,14 +6558,42 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
           const awayData = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } });
           const homeXI = homeData.players;
           const awayXI = awayData.players;
-          const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+          const homeBench = getCupSimulationBench(next, simmed.homeId, homeXI, "ucl");
+          const awayBench = getCupSimulationBench(next, simmed.awayId, awayXI, "ucl");
+          const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+            homeBench,
+            awayBench,
+            regularSubstitutions: simmed.result.substitutions ?? [],
+            regularCards: simmed.result.cards ?? [],
+          });
+          simmed.result.substitutions = [...(simmed.result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
           simmed.result.extraTime = {
             homeGoals: etResult.homeGoals,
             awayGoals: etResult.awayGoals,
             events: etResult.events,
+            substitutions: etResult.substitutions,
           };
           if (aggHome + etResult.homeGoals === aggAway + etResult.awayGoals) {
-            const penResult = simulatePenaltyShootout(homeXI, awayXI);
+            const finalHome = getActivePlayersAtMinute(
+              homeXI,
+              homeBench,
+              simmed.result.substitutions ?? [],
+              simmed.result.cards ?? [],
+              "home",
+              120,
+            );
+            const finalAway = getActivePlayersAtMinute(
+              awayXI,
+              awayBench,
+              simmed.result.substitutions ?? [],
+              simmed.result.cards ?? [],
+              "away",
+              120,
+            );
+            const penResult = simulatePenaltyShootout(
+              finalHome.length ? finalHome : homeXI,
+              finalAway.length ? finalAway : awayXI,
+            );
             simmed.result.penalties = {
               homeGoals: penResult.homeGoals,
               awayGoals: penResult.awayGoals,
@@ -6117,16 +6748,40 @@ export function simulateBackgroundUCLDay(
             const away = teamById(simmed.awayId);
             const homeXI = getStartersWithFormation(next, simmed.homeId, { fixture: { fixtureId: simmed.id, opponentId: simmed.awayId, isHome: true, competition: "ucl", matchday: simmed.matchday } }).players;
             const awayXI = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } }).players;
-            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+            const homeBench = getCupSimulationBench(next, simmed.homeId, homeXI, "ucl");
+            const awayBench = getCupSimulationBench(next, simmed.awayId, awayXI, "ucl");
+            const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+              homeBench,
+              awayBench,
+              regularSubstitutions: simmed.result.substitutions ?? [],
+              regularCards: simmed.result.cards ?? [],
+            });
+            simmed.result.substitutions = [...(simmed.result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
             simmed.result.extraTime = {
               homeGoals: etResult.homeGoals,
               awayGoals: etResult.awayGoals,
               events: etResult.events,
+              substitutions: etResult.substitutions,
             };
             const etHomeAgg = leg2HomeAgg + etResult.homeGoals;
             const etAwayAgg = leg2AwayAgg + etResult.awayGoals;
             if (etHomeAgg === etAwayAgg) {
-              const penResult = simulatePenaltyShootout(homeXI, awayXI);
+              const etRedHome = new Map<string, number>(
+                (simmed.result.cards ?? [])
+                  .filter((c) => c.team === "home" && c.cardType === "red")
+                  .map((c) => [c.playerId, c.minute]),
+              );
+              const etRedAway = new Map<string, number>(
+                (simmed.result.cards ?? [])
+                  .filter((c) => c.team === "away" && c.cardType === "red")
+                  .map((c) => [c.playerId, c.minute]),
+              );
+              const etFinalHome = homeXI.filter((p) => !etRedHome.has(p.id));
+              const etFinalAway = awayXI.filter((p) => !etRedAway.has(p.id));
+              const penResult = simulatePenaltyShootout(
+                etFinalHome.length ? etFinalHome : homeXI,
+                etFinalAway.length ? etFinalAway : awayXI,
+              );
               simmed.result.penalties = {
                 homeGoals: penResult.homeGoals,
                 awayGoals: penResult.awayGoals,
@@ -6230,16 +6885,40 @@ export function simulateUserPhaseUCLDay(
             const away = teamById(simmed.awayId);
             const homeXI = getStartersWithFormation(next, simmed.homeId, { fixture: { fixtureId: simmed.id, opponentId: simmed.awayId, isHome: true, competition: "ucl", matchday: simmed.matchday } }).players;
             const awayXI = getStartersWithFormation(next, simmed.awayId, { fixture: { fixtureId: simmed.id, opponentId: simmed.homeId, isHome: false, competition: "ucl", matchday: simmed.matchday } }).players;
-            const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+            const homeBench = getCupSimulationBench(next, simmed.homeId, homeXI, "ucl");
+            const awayBench = getCupSimulationBench(next, simmed.awayId, awayXI, "ucl");
+            const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+              homeBench,
+              awayBench,
+              regularSubstitutions: simmed.result.substitutions ?? [],
+              regularCards: simmed.result.cards ?? [],
+            });
+            simmed.result.substitutions = [...(simmed.result.substitutions ?? []), ...(etResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
             simmed.result.extraTime = {
               homeGoals: etResult.homeGoals,
               awayGoals: etResult.awayGoals,
               events: etResult.events,
+              substitutions: etResult.substitutions,
             };
             const etHomeAgg = leg2HomeAgg + etResult.homeGoals;
             const etAwayAgg = leg2AwayAgg + etResult.awayGoals;
             if (etHomeAgg === etAwayAgg) {
-              const penResult = simulatePenaltyShootout(homeXI, awayXI);
+              const etRedHome = new Map<string, number>(
+                (simmed.result.cards ?? [])
+                  .filter((c) => c.team === "home" && c.cardType === "red")
+                  .map((c) => [c.playerId, c.minute]),
+              );
+              const etRedAway = new Map<string, number>(
+                (simmed.result.cards ?? [])
+                  .filter((c) => c.team === "away" && c.cardType === "red")
+                  .map((c) => [c.playerId, c.minute]),
+              );
+              const etFinalHome = homeXI.filter((p) => !etRedHome.has(p.id));
+              const etFinalAway = awayXI.filter((p) => !etRedAway.has(p.id));
+              const penResult = simulatePenaltyShootout(
+                etFinalHome.length ? etFinalHome : homeXI,
+                etFinalAway.length ? etFinalAway : awayXI,
+              );
               simmed.result.penalties = {
                 homeGoals: penResult.homeGoals,
                 awayGoals: penResult.awayGoals,

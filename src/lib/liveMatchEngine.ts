@@ -1363,6 +1363,65 @@ export function buildDangerPreludeFromHighlight({
   };
 }
 
+
+/**
+ * Prelude neutral: the title describes the build-up, never the outcome.
+ * The live match decides afterwards whether the chance becomes a goal, a save
+ * or a miss. This prevents the notification itself from revealing the result.
+ */
+export function buildOpenChancePrelude({
+  playerName,
+  playerId,
+  teamName,
+  teamSide,
+  minute,
+}: {
+  playerName: string;
+  playerId?: string;
+  teamName: string;
+  teamSide: "home" | "away";
+  minute: number;
+}): LiveMoment {
+  const player = playerName || "El atacante";
+  const titles = [
+    "OCASIÓN",
+    "SE PREPARA EL REMATE",
+    "LA JUGADA SE ABRE",
+    "ÚLTIMO TOQUE",
+    "LLEGA LA DEFINICIÓN",
+    "OPORTUNIDAD EN EL ÁREA",
+  ];
+  const kickers = [
+    "Jugada de peligro",
+    "Ocasión en ataque",
+    "Últimos metros",
+    "Momento de definición",
+  ];
+  const bodies = [
+    `${player} recibe con espacio y se prepara para terminar la jugada. Todo queda abierto para el último toque.`,
+    `La combinación deja a ${player} en zona de remate. El defensor llega, pero todavía hay una ventana para finalizar.`,
+    `${player} ataca el espacio y entra en zona de definición. El siguiente gesto decidirá la jugada.`,
+    `El balón llega a ${player} en una posición prometedora. La defensa intenta cerrar y el guardameta ajusta su colocación.`,
+    `${player} gana un metro dentro del área. La ocasión está preparada y nadie sabe todavía cómo terminará.`,
+    `Una transición rápida deja a ${player} frente a una defensa que retrocede. Hay tiempo para un último toque antes del desenlace.`,
+  ];
+  return {
+    id: `prelude-open-chance-${teamSide}-${minute}-${playerId ?? player}`,
+    type: "open_chance",
+    minute,
+    kicker: pickNarrativeVariant(kickers, `${minute}:${player}:open:kicker`),
+    title: pickNarrativeVariant(titles, `${minute}:${player}:open:title`),
+    body: pickNarrativeVariant(bodies, `${minute}:${player}:open:body`),
+    playerName: player,
+    playerId,
+    teamName,
+    teamSide,
+    emoji: "",
+    detail: "El desenlace está por decidir.",
+    hardPause: true,
+  };
+}
+
 export function buildMomentFromHighlight({
   highlight,
   homeName,

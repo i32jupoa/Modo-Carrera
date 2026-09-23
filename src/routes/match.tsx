@@ -21,6 +21,9 @@ import {
   advanceMatchdayLayered,
   simulateCupMatchdayLayered,
   getStartersWithFormation,
+  getSuspendedPlayerIdsForCompetition,
+  getSuspensionForPlayer,
+  commitLiveFixtureDiscipline,
   simulateUserPhaseUCLDay,
   processUCLKnockoutProgress,
 } from "@/lib/store";
@@ -72,6 +75,7 @@ import {
 } from "@/components/match/matchUi";
 import { Pause, Play, FastForward, ClipboardList } from "lucide-react";
 import { isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
+import { addDaysToIso } from "@/lib/transferWindows";
 import { getPlayerShootingStats } from "@/data/players";
 import { MiniPitch } from "@/components/MiniPitch";
 import { PlayerFace } from "@/components/PlayerFace";
@@ -93,6 +97,7 @@ import {
   buildMomentFromHighlight,
   buildGoalPrelude,
   buildSavePrelude,
+  buildOpenChancePrelude,
   buildDangerPreludeFromHighlight,
   buildMissDetail,
   buildNarrativeCommentary,
@@ -139,7 +144,9 @@ function MatchPage() {
   const allEventsRef = useRef<MatchEvent[]>([]);
   const allCardsRef = useRef<CardEvent[]>([]);
   const extraTimeEventsRef = useRef<MatchEvent[]>([]);
+  const extraTimeSubsRef = useRef<any[]>([]);
   const fixtureRef = useRef<Fixture | null>(null);
+
   const clockTimeoutRef = useRef<number | null>(null);
   const extraTimeHomeScoreRef = useRef(0);
   const extraTimeAwayScoreRef = useRef(0);
@@ -151,6 +158,11 @@ function MatchPage() {
   const [isCupMatch, setIsCupMatch] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [matchType, setMatchType] = useState<"LEAGUE" | "CUP" | "UCL">("LEAGUE");
+  const currentMatchCompetition = () => {
+    const fixtureCompetition = fixtureRef.current?.competition;
+    if (fixtureCompetition) return fixtureCompetition;
+    return matchType === "CUP" ? "cup" : matchType === "UCL" ? "ucl" : "league";
+  };
   const [cupRound, setCupRound] = useState<string | undefined>(undefined);
   const [returningFromLineupEdit, setReturningFromLineupEdit] = useState(false);
   const [penaltyShootoutIndex, setPenaltyShootoutIndex] = useState(0);
@@ -480,18 +492,27 @@ function MatchPage() {
 
     for (const inj of result.injuries || []) {
       if (inj.team === myTeam) {
-        toast.error(
-          `${inj.playerName} se ha lesionado (${inj.reason}) — ${inj.weeks} partido${inj.weeks > 1 ? "s" : ""} de baja`,
-        );
+        toast.error(`${inj.playerName} se ha lesionado (${inj.reason})`);
       }
     }
 
     for (const card of result.cards || []) {
       if (card.cardType === "red" && card.team === myTeam) {
-        const susp = save.suspensions?.[myTeamId]?.find((s) => s.playerId === card.playerId);
+        const susp = getSuspensionForPlayer(
+          save,
+          myTeamId,
+          card.playerId,
+          currentMatchCompetition(),
+        );
         const matchdays = susp?.matchdaysRemaining ?? 1;
+        const competitionLabel =
+          currentMatchCompetition() === "cup"
+            ? "Copa"
+            : currentMatchCompetition() === "ucl"
+              ? "Champions"
+              : "Liga";
         toast.error(
-          `${card.playerName} expulsado — suspensión de ${matchdays} partido${matchdays > 1 ? "s" : ""}`,
+          `${card.playerName} expulsado — suspensión de ${matchdays} partido${matchdays > 1 ? "s" : ""} en ${competitionLabel}`,
         );
       }
     }
@@ -598,14 +619,52 @@ function MatchPage() {
     const away = teamById(fixture.awayId);
     if (!home || !away) return;
 
-    // Get lineups
-    const homeXI = getSimSquad(fixture.homeId);
-    const awayXI = getSimSquad(fixture.awayId);
+    // Use the actual lineups currently on the pitch. The user's side keeps
+    // manual control of its extra-time changes; the CPU side receives its
+    // additional simulation allowance automatically.
+    const userId = myTeamIdRef.current || save.myTeamId;
+    const userIsHome = fixture.homeId === userId;
+    const homeXI = userIsHome ? (myXIRef.current.length ? myXIRef.current.map((id) => playerById(id)).filter(Boolean) : getSimSquad(fixture.homeId)) : oppXIRef.current;
+    const awayXI = userIsHome ? oppXIRef.current : (myXIRef.current.length ? myXIRef.current.map((id) => playerById(id)).filter(Boolean) : getSimSquad(fixture.awayId));
+    const homeBench = userIsHome
+      ? []
+      : oppBenchRef.current;
+    const awayBench = userIsHome
+      ? oppBenchRef.current
+      : [];
+    const regularSubstitutions = [
+      ...subsRef.current.map((s: any) => ({
+        minute: Number(s.minute) || 0,
+        team: userIsHome ? "home" : "away",
+        playerOutId: s.outId ?? s.playerOutId,
+        playerOutName: s.outName ?? s.playerOutName,
+        playerInId: s.inId ?? s.playerInId,
+        playerInName: s.inName ?? s.playerInName,
+      })),
+      ...oppSubsDoneRef.current.map((s: any) => ({
+        minute: Number(s.minute) || 0,
+        team: userIsHome ? "away" : "home",
+        playerOutId: s.outId ?? s.playerOutId,
+        playerOutName: s.outName ?? s.playerOutName,
+        playerInId: s.inId ?? s.playerInId,
+        playerInName: s.inName ?? s.playerInName,
+      })),
+    ];
+    const regularCards = playedCardsRef.current.length > 0
+      ? playedCardsRef.current
+      : (fixture.result?.cards || []);
 
-    // Simulate extra time
-    const etResult = simulateExtraTime(home, away, homeXI, awayXI);
+    const etResult = simulateExtraTime(home, away, homeXI as any[], awayXI as any[], {
+      homeBench,
+      awayBench,
+      regularSubstitutions,
+      regularCards,
+    });
 
-    // Store extra time events for playback
+    // Store only the CPU side's preplanned extra-time substitutions. The user
+    // can make the additional change(s) manually through Dirección de equipo.
+    const cpuSide = userIsHome ? "away" : "home";
+    extraTimeSubsRef.current = (etResult.substitutions || []).filter((s: any) => s.team === cpuSide);
     extraTimeEventsRef.current = etResult.events;
 
     // Reset minute to 90 for extra time playback
@@ -636,6 +695,39 @@ function MatchPage() {
       m += 1;
       setMinute(m);
       minuteRef.current = m;
+
+      // Apply the CPU's extra-time substitutions at their planned minutes.
+      const etSubsAtMinute = extraTimeSubsRef.current.filter((s: any) => Number(s.minute) === m);
+      if (etSubsAtMinute.length > 0) {
+        const fx = fixtureRef.current;
+        const userId = myTeamIdRef.current || save?.myTeamId;
+        const cpuSide = fx && fx.homeId === userId ? "away" : "home";
+        const xi = [...oppXIRef.current];
+        const made: any[] = [];
+        for (const s of etSubsAtMinute) {
+          if (s.team !== cpuSide) continue;
+          const outIndex = xi.findIndex((p: any) => p?.id === (s.playerOutId ?? s.outId));
+          const incoming = oppBenchRef.current.find((p: any) => p?.id === (s.playerInId ?? s.inId));
+          if (outIndex < 0 || !incoming) continue;
+          const outgoing = xi[outIndex];
+          xi[outIndex] = incoming;
+          oppBenchRef.current = oppBenchRef.current.filter((p: any) => p.id !== incoming.id);
+          const entry = {
+            minute: m,
+            team: cpuSide,
+            inName: incoming.name,
+            outName: outgoing.name,
+            playerInId: incoming.id,
+            playerOutId: outgoing.id,
+          };
+          made.push(entry);
+        }
+        if (made.length > 0) {
+          oppXIRef.current = xi;
+          oppSubsDoneRef.current = [...oppSubsDoneRef.current, ...made];
+          setSubFeed((prev) => [...made.slice().reverse(), ...prev]);
+        }
+      }
 
       // Check for events at this minute
       const eventsAtMinute = extraTimeEventsRef.current.filter((e) => e.minute === m);
@@ -737,12 +829,18 @@ function MatchPage() {
     if (!save || !fixtureRef.current) return;
 
     const fixture = fixtureRef.current;
-    const homeXI = getSimSquad(fixture.homeId);
-    const awayXI = getSimSquad(fixture.awayId);
+    const userId = myTeamIdRef.current || save.myTeamId;
+    const userIsHome = fixture.homeId === userId;
+    const homeXI = userIsHome
+      ? (myXIRef.current.length ? myXIRef.current.map((id) => playerById(id)).filter(Boolean) : getSimSquad(fixture.homeId))
+      : oppXIRef.current;
+    const awayXI = userIsHome
+      ? oppXIRef.current
+      : (myXIRef.current.length ? myXIRef.current.map((id) => playerById(id)).filter(Boolean) : getSimSquad(fixture.awayId));
 
     // Store XIs in refs for use in skipPenaltyShootoutToEnd
-    homeXIRef.current = homeXI;
-    awayXIRef.current = awayXI;
+    homeXIRef.current = homeXI as any[];
+    awayXIRef.current = awayXI as any[];
 
     // Simulate penalty shootout data
     const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
@@ -1088,7 +1186,7 @@ function MatchPage() {
           awayGoals: awayScore - (extraTimeData?.awayGoals || 0),
           events: allEventsRef.current,
           cards: allCardsRef.current,
-          injuries: [],
+          injuries: fx?.result?.injuries ?? [],
           xgHome: 0,
           xgAway: 0,
         };
@@ -1121,6 +1219,7 @@ function MatchPage() {
         }
 
         console.log("Final result to save:", result);
+        commitLiveInjuriesToPlayersStore(fx, result);
 
         const updated = s.uclFixtures.map((f) => (f.id === fixtureId ? { ...f, result } : f));
         const newSave = { ...s, uclFixtures: updated };
@@ -1145,7 +1244,7 @@ function MatchPage() {
           awayGoals: awayScore - (extraTimeData?.awayGoals || 0),
           events: allEventsRef.current,
           cards: allCardsRef.current,
-          injuries: [],
+          injuries: cupFx?.result?.injuries ?? [],
           xgHome: 0,
           xgAway: 0,
         };
@@ -1178,6 +1277,7 @@ function MatchPage() {
         }
 
         console.log("Final result to save:", result);
+        commitLiveInjuriesToPlayersStore(cupFx, result);
 
         // Find the fixture to determine which league it belongs to
         let fixtureLeague = s.myLeague;
@@ -1512,12 +1612,17 @@ function MatchPage() {
 
     initLiveMatch();
     if (oppPlanRef.current.length === 0) planOpponentSubs();
-    setPhase("playing");
-    runClock();
+
     if (shouldSkipToEnd) {
-      // Simulating to the end: the assistant makes my substitutions and the
-      // rival performs his planned ones.
+      // Do NOT start the real-time clock before fast-forwarding. Starting a
+      // timeout here created a race with `skipToEnd()` and could leave the match
+      // visually parked at 0' while the scheduled clock was immediately
+      // cancelled. Fast-forward now owns the whole resolution path.
+      setPhase("playing");
       skipToEnd(true);
+    } else {
+      setPhase("playing");
+      runClock();
     }
   }
 
@@ -1549,10 +1654,10 @@ function MatchPage() {
     const configuredSubstitutes = Array.isArray(s.substitutes?.[s.myTeamId])
       ? s.substitutes[s.myTeamId]
       : [];
-    const suspendedIds = new Set(
-      (s.suspensions?.[s.myTeamId] ?? [])
-        .filter((susp: any) => Number(susp.matchdaysRemaining ?? 0) > 0)
-        .map((susp: any) => susp.playerId),
+    const suspendedIds = getSuspendedPlayerIdsForCompetition(
+      s,
+      s.myTeamId,
+      currentMatchCompetition(),
     );
     const matchDate = (fixtureRef.current as any)?.date ?? usePlayersStore.getState().currentDate;
     const matchday = Number((fixtureRef.current as any)?.matchday ?? 1);
@@ -1878,6 +1983,12 @@ function MatchPage() {
     );
     if (!inj) return false;
     handledInjuriesRef.current = [...handledInjuriesRef.current, inj.playerId];
+
+    // Registrar la lesión en el estado persistente en el mismo instante en que
+    // ocurre. Así el jugador queda bloqueado también si el entrenador entra en
+    // el editor de alineación durante la pausa por lesión. Al terminar el
+    // encuentro se vuelve a confirmar y se guarda el snapshot definitivo.
+    commitLiveInjuriesToPlayersStore(fx, fx.result);
     const currentIndex = myXIRef.current.indexOf(inj.playerId);
     if (currentIndex < 0) return false;
 
@@ -1918,15 +2029,15 @@ function MatchPage() {
       kicker: "🚑 Lesión",
       title: "LESIÓN",
       body: canReplaceNow
-        ? `${inj.playerName} sale del campo por lesión. Debes sustituirlo antes de continuar.`
-        : `${inj.playerName} sale del campo por lesión y no quedan cambios disponibles. El equipo seguirá con uno menos.`,
+        ? `${inj.playerName} sale del campo por lesión. Puedes sustituirlo o reorganizar el hueco antes de continuar.`
+        : `${inj.playerName} sale del campo por lesión y el equipo seguirá con uno menos.`,
       playerName: inj.playerName,
       playerId: inj.playerId,
       teamName: mySide === "home" ? home.name : away.name,
       teamSide: mySide,
       teamLeagueName: getLeagueName(mySide === "home" ? home.league : away.league),
       emoji: "🚑",
-      detail: `${inj.reason || "Lesión"}${inj.weeks ? ` · ${inj.weeks} jornada${inj.weeks > 1 ? "s" : ""} de baja` : ""}`,
+      detail: inj.reason || "Lesión",
       forceLineupEdit: canReplaceNow,
       hardPause: true,
     } as any;
@@ -2063,11 +2174,83 @@ function MatchPage() {
     return [...mine, ...opp].sort((a, b) => a.minute - b.minute);
   }
 
+  /**
+   * The live match engine generates injury events up front, but they are only
+   * match-result data until we commit the result. Earlier live matches forgot
+   * this second step, so the injury disappeared from Dirección de equipo and
+   * Lesiones as soon as the user returned to the season.
+   *
+   * Commit every injury for both teams. The operation is idempotent because
+   * `recordInjury` stores the same absolute recovery date instead of adding a
+   * new injury on top of an existing one.
+   */
+  function commitLiveInjuriesToPlayersStore(fixture: any, result: any) {
+    if (!fixture || !result) return;
+    const injuries = Array.isArray(result.injuries) ? result.injuries : [];
+    if (injuries.length === 0) return;
+
+    const playerStore = usePlayersStore.getState();
+    const rawMatchDate = fixture.date || playerStore.currentDate;
+    const matchDate = typeof rawMatchDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawMatchDate)
+      ? rawMatchDate
+      : playerStore.currentDate;
+
+    for (const injury of injuries) {
+      try {
+        const playerId = injury?.playerId ? String(injury.playerId) : "";
+        if (!playerId) continue;
+
+        // `getSimPlayer` resolves the current club (including transfers), so the
+        // injury is attached to the same player record that Dirección de equipo
+        // and Lesiones read afterwards.
+        const player = playerStore.getSimPlayer(playerId);
+        if (!player) {
+          console.warn(`[injuries] jugador no encontrado al cerrar ${fixture.id}: ${playerId}`);
+          continue;
+        }
+
+        const requestedDays = Number(injury.durationDays);
+        const requestedWeeks = Number(injury.weeks);
+        const durationDays = Math.min(180,
+          Number.isFinite(requestedDays) && requestedDays > 0
+            ? requestedDays
+            : Math.max(7, Number.isFinite(requestedWeeks) && requestedWeeks > 0 ? requestedWeeks * 7 : 7),
+        );
+        const safeDuration = Number.isFinite(durationDays) && durationDays > 0 ? durationDays : 7;
+        const untilDate = addDaysToIso(matchDate, safeDuration);
+        const teamLeague = teamById(player.teamId)?.league;
+        const currentLeagueMd = teamLeague
+          ? (save?.currentMatchday?.[teamLeague] ?? 1)
+          : 1;
+        const fallbackWeeks = Math.max(1, Math.ceil(safeDuration / 7));
+
+        playerStore.recordInjury(
+          playerId,
+          currentLeagueMd + (Number.isFinite(requestedWeeks) && requestedWeeks > 0
+            ? Math.ceil(requestedWeeks)
+            : fallbackWeeks),
+          injury.reason || injury.diagnosis || "Lesión",
+          {
+            startDate: matchDate,
+            untilDate,
+            durationDays: safeDuration,
+            injuryType: injury.injuryType ?? injury.diagnosis,
+            injuryArea: injury.bodyPart,
+          },
+        );
+      } catch (error) {
+        // Nunca dejes que un registro médico mal formado bloquee el cierre del
+        // partido ni el guardado del resultado.
+        console.error(`[injuries] no se pudo registrar una lesión en ${fixture.id}:`, error);
+      }
+    }
+  }
+
   function persistResultToSave(fixtureId: string, result: any) {
     const s = loadSave();
     if (!s) return;
 
-    const next: any = { ...s };
+    let next: any = { ...s };
     let changed = false;
     let matchedFixture: any = null;
     let competition: "league" | "cup" | "ucl" | null = null;
@@ -2114,6 +2297,13 @@ function MatchPage() {
     }
 
     if (!changed || !matchedFixture) return;
+
+    // Live fixtures are marked `liveCommitted`, so the normal matchday
+    // simulator deliberately skips them. Commit cards/suspensions explicitly
+    // now; otherwise a red card from the watched match never creates the ban
+    // for the next eligible match. This is idempotent per fixture.
+    const disciplined = commitLiveFixtureDiscipline(next, fixtureId);
+    next = disciplined;
 
     // `advanceMatchdayLayered` only processes fixtures with `!f.result`.
     // Therefore the user's watched league fixture must have its table row
@@ -2403,8 +2593,6 @@ function MatchPage() {
       const opponentTactics = loadTactics(opponentTeamId) || {};
       const opponentPressure = opponentTactics.pressure || "medium";
       const opponentStaminaMultiplier = tacticsModifiers(opponentTactics).stamina;
-      const enteredAt = new Map<string, number>();
-      for (const sub of opponentSubstitutions) enteredAt.set(sub.playerInId, sub.minute);
 
       const opponentEnergy: Record<string, number> = {};
       for (const player of opponentInitial) {
@@ -2413,9 +2601,11 @@ function MatchPage() {
           opponentEnergy[player.id] = STAMINA_START;
           continue;
         }
-        const startEnergy = enteredAt.has(player.id)
-          ? STAMINA_START
-          : Math.max(0, Math.min(100, Number(player.energy ?? STAMINA_START)));
+        // The opponent is CPU-controlled: every player starts this match
+        // fully fresh, regardless of the energy stored on the player object.
+        // CPU fatigue is only an in-match effect and is never carried into
+        // their next fixture.
+        const startEnergy = STAMINA_START;
         const drain = drainPerMinute(
           player.positions?.[0] ?? "MC",
           opponentPressure as "low" | "medium" | "high",
@@ -2542,6 +2732,7 @@ function MatchPage() {
       : nextResult;
 
     fixtureRef.current = { ...fx, result: finalResult } as any;
+    commitLiveInjuriesToPlayersStore(fx, finalResult);
     persistResultToSave(fx.id, finalResult);
   }
 
@@ -2689,8 +2880,31 @@ function MatchPage() {
 
     if (scene?.kind === "prelude") {
       const source = scene.source || {};
-      setLiveMoment(null);
-      resolveDangerScene(source);
+      try {
+        const resolved = resolveDangerScene(source);
+        if (!resolved) {
+          // Never leave the match in a permanent `moment` pause if a stale or
+          // legacy chance no longer has enough source data to resolve.
+          pendingSceneRef.current = null;
+          setLiveMoment(null);
+          pausedRef.current = false;
+          pauseReasonRef.current = null;
+          setIsPaused(false);
+          setPauseReason(null);
+          persistLive();
+          restartLiveClock();
+        }
+      } catch (error) {
+        console.error("Error resolving live chance:", error);
+        pendingSceneRef.current = null;
+        setLiveMoment(null);
+        pausedRef.current = false;
+        pauseReasonRef.current = null;
+        setIsPaused(false);
+        setPauseReason(null);
+        persistLive();
+        restartLiveClock();
+      }
       return;
     }
 
@@ -3901,9 +4115,174 @@ function MatchPage() {
     });
   }
 
-  function resolveDangerScene(source: any) {
+  function removeRawChanceArtifacts(rawGoal: any, sourceHighlight: any) {
+    const sameGoal = (ev: any) =>
+      rawGoal &&
+      ev &&
+      Number(ev.minute) === Number(rawGoal.minute) &&
+      ev.team === rawGoal.team &&
+      ev.type === rawGoal.type &&
+      (ev.scorerId === rawGoal.scorerId || ev.scorerName === rawGoal.scorerName);
+
+    if (rawGoal) {
+      allEventsRef.current = (allEventsRef.current || []).filter((ev: any) => !sameGoal(ev));
+      playedEventsRef.current = playedEventsRef.current.filter((ev: any) => !sameGoal(ev));
+      setFeed((prev) => prev.filter((ev: any) => !sameGoal(ev)));
+    }
+
+    if (sourceHighlight) {
+      const sameHighlight = (h: any) =>
+        h &&
+        Number(h.minute) === Number(sourceHighlight.minute) &&
+        h.team === sourceHighlight.team &&
+        h.type === sourceHighlight.type &&
+        h.playerId === sourceHighlight.playerId;
+      allHighlightsRef.current = (allHighlightsRef.current || []).filter((h: any) => !sameHighlight(h));
+      playedHighlightsRef.current = playedHighlightsRef.current.filter((h: any) => !sameHighlight(h));
+      setHighlightFeed((prev) => prev.filter((h: any) => !sameHighlight(h)));
+    }
+  }
+
+  function chooseOpenChanceOutcome({
+    sourceType,
+    attackingSide,
+    minute,
+    attacker,
+    defender,
+    keeper,
+  }: {
+    sourceType: string;
+    attackingSide: "home" | "away";
+    minute: number;
+    attacker: any;
+    defender: any;
+    keeper: any;
+  }): "goal" | "save" | "miss" {
+    const defendingSide = attackingSide === "home" ? "away" : "home";
+    const attackPlayers = (getCurrentPitchPlayers(attackingSide) as any[]).filter(Boolean);
+    const defendPlayers = (getCurrentPitchPlayers(defendingSide) as any[]).filter(Boolean);
+    const attackRating = averageNumbers([
+      ...attackPlayers.map((p) => Number(p.rating ?? p.overall ?? 70)),
+      Number(attacker?.rating ?? attacker?.overall ?? 70),
+    ].filter(Number.isFinite));
+    const defenseRating = averageNumbers([
+      ...defendPlayers.map((p) => Number(p.rating ?? p.overall ?? 70)),
+      Number(defender?.rating ?? defender?.overall ?? 70),
+    ].filter(Number.isFinite));
+    const attackEnergy = currentSideStamina(attackingSide, minute);
+    const defenseEnergy = currentSideStamina(defendingSide, minute);
     const fx = fixtureRef.current;
-    if (!fx) return;
+    const teamId = attackingSide === "home" ? fx?.homeId : fx?.awayId;
+    const tactics = teamId ? loadTactics(teamId) : null;
+    const mods = tacticsModifiers(tactics);
+    const momentum = attackingSide === mySideOf(fx) ? momentumRef.current : 100 - momentumRef.current;
+    const qualityEdge = (attackRating - defenseRating) * 0.006;
+    const energyEdge = (attackEnergy - defenseEnergy) * 0.002;
+    const momentumEdge = (momentum - 50) * 0.0018;
+    const tacticalEdge = (mods.attack - mods.defense) * 0.22;
+
+    const sourceBias: Record<string, { goal: number; save: number; miss: number }> = {
+      goal: { goal: 1.85, save: 0.72, miss: 0.55 },
+      free_kick_goal: { goal: 1.65, save: 0.85, miss: 0.62 },
+      big_chance: { goal: 1.2, save: 1.0, miss: 0.88 },
+      save: { goal: 0.72, save: 1.35, miss: 0.95 },
+      woodwork: { goal: 0.68, save: 0.78, miss: 1.35 },
+    }[sourceType] ?? { goal: 1, save: 1, miss: 1 };
+
+    // The quality model shifts the three outcomes, but none can ever become
+    // impossible. The source only acts as a prior; it never dictates the result.
+    const goalWeight = Math.max(
+      0.08,
+      sourceBias.goal * (1 + qualityEdge + energyEdge + momentumEdge + tacticalEdge),
+    );
+    const saveWeight = Math.max(
+      0.08,
+      sourceBias.save * (1 - qualityEdge * 0.55 - energyEdge * 0.35),
+    );
+    const missWeight = Math.max(
+      0.08,
+      sourceBias.miss * (1 - qualityEdge * 0.35 + energyEdge * 0.15),
+    );
+
+    const total = goalWeight + saveWeight + missWeight;
+    const roll = Math.random() * total;
+    if (roll < goalWeight) return "goal";
+    if (roll < goalWeight + saveWeight) return "save";
+    return "miss";
+  }
+
+  function chooseOpenChanceScorer(
+    attackingSide: "home" | "away",
+    dangerAttacker: any,
+    originalGoalScorerId?: string,
+  ) {
+    const players = (getCurrentPitchPlayers(attackingSide) as any[]).filter(
+      (p) => p && !isGoalkeeperForDanger(p),
+    );
+    if (!players.length) return dangerAttacker ?? null;
+
+    const danger = dangerAttacker && players.find((p: any) => p.id === dangerAttacker.id);
+    const original = originalGoalScorerId
+      ? players.find((p: any) => p.id === originalGoalScorerId)
+      : null;
+
+    // Most finishes come from the protagonist, but a meaningful share are
+    // completed by a teammate. This is what lets a Mbappé chance become a goal
+    // by another player while correctly crediting Mbappé with the assist.
+    if (danger && players.length > 1 && Math.random() < 0.28) {
+      const teammates = players.filter((p: any) => p.id !== danger.id);
+      if (teammates.length) {
+        const weighted = teammates.map((p: any) => {
+          const rating = Number(p.rating ?? p.overall ?? 70);
+          const role = dangerRoleWeight(p);
+          return {
+            p,
+            weight: Math.max(0.05, (0.8 + role * 0.2) * (0.75 + Math.max(0, Math.min(1, (rating - 45) / 55)) * 0.5)),
+          };
+        });
+        const total = weighted.reduce((sum, x) => sum + x.weight, 0);
+        let roll = Math.random() * total;
+        for (const entry of weighted) {
+          roll -= entry.weight;
+          if (roll <= 0) return entry.p;
+        }
+        return weighted[weighted.length - 1]?.p ?? danger;
+      }
+    }
+
+    return danger ?? original ?? pickWeightedDangerPlayer(players, dangerRoleWeight) ?? players[0];
+  }
+
+  function chooseOpenChanceAssist(
+    attackingSide: "home" | "away",
+    scorer: any,
+    dangerAttacker: any,
+    originalAssistId?: string,
+  ) {
+    const players = (getCurrentPitchPlayers(attackingSide) as any[]).filter(
+      (p) => p && !isGoalkeeperForDanger(p),
+    );
+    if (!scorer || players.length < 2) return { assistId: undefined, assistName: undefined };
+
+    if (dangerAttacker && dangerAttacker.id !== scorer.id && players.some((p: any) => p.id === dangerAttacker.id)) {
+      return { assistId: dangerAttacker.id, assistName: dangerAttacker.name };
+    }
+
+    const originalAssist = originalAssistId
+      ? players.find((p: any) => p.id === originalAssistId && p.id !== scorer.id)
+      : null;
+    if (originalAssist) {
+      return { assistId: originalAssist.id, assistName: originalAssist.name };
+    }
+
+    const candidates = players.filter((p: any) => p.id !== scorer.id);
+    const fallback = pickWeightedDangerPlayer(candidates, (p) => dangerRoleWeight(p)) ?? candidates[0];
+    return { assistId: fallback?.id, assistName: fallback?.name };
+  }
+
+  function resolveDangerScene(source: any): boolean {
+    const fx = fixtureRef.current;
+    if (!fx) return false;
     const minute = Number(source.minute) || minuteRef.current;
     const rawGoal = source.rawEvents?.find((e: any) =>
       ["goal", "free_kick_goal", "own_goal", "penalty_goal"].includes(e.type),
@@ -3913,6 +4292,183 @@ function MatchPage() {
       ["save", "woodwork", "big_chance", "penalty_awarded"].includes(h.type),
     );
     const varDecisionRaw = source.rawHighlights?.find((h: any) => h.type === "var_disallowed");
+
+    // Every regular attacking chance is intentionally unresolved in advance.
+    // The notification is only the build-up; the actual result is decided now,
+    // so a scene that looked like a save can still become a goal, and a scene
+    // that looked like a goal can still end in a save or a miss.
+    if (source.chanceKind === "open") {
+      const isOwnGoal = goal?.type === "own_goal";
+      const isPenalty = goal?.type === "penalty_goal" || keyHighlight?.type === "penalty_awarded";
+      if (!isOwnGoal && !isPenalty) {
+        // A live open-chance prelude must ALWAYS produce a concrete resolution.
+        // Some older/generated fixtures can reach the notification without the
+        // raw goal/highlight payload still being present. In that case we use the
+        // stored attacking side/player and resolve the chance as a fresh action
+        // instead of silently resuming with no gol/parada/fallo.
+        const attackingSide = (
+          source.attackingSide ??
+          goal?.team ??
+          (keyHighlight?.type === "save"
+            ? keyHighlight.team === "home" ? "away" : "home"
+            : keyHighlight?.team)
+        ) as "home" | "away";
+        const preferredAttackerId =
+          source.dangerPlayerId ??
+          goal?.scorerId ??
+          (keyHighlight?.type === "save" ? undefined : keyHighlight?.playerId);
+        const attacker = getDangerAttacker(attackingSide, preferredAttackerId);
+        const defendingSide = attackingSide === "home" ? "away" : "home";
+        const defender = getDangerDefender(
+          defendingSide,
+          undefined,
+          attacker ? [attacker.id] : [],
+        );
+        const keeper = getDangerKeeper(defendingSide);
+        const outcome = chooseOpenChanceOutcome({
+          sourceType: goal?.type ?? keyHighlight?.type ?? "big_chance",
+          attackingSide,
+          minute,
+          attacker,
+          defender,
+          keeper,
+        });
+
+        removeRawChanceArtifacts(goal, keyHighlight);
+
+        let resolutionMoment: LiveMoment;
+        let appliedEvents: any[] = [];
+        let appliedHighlights: any[] = [];
+        let finalGoal: any = null;
+
+        if (outcome === "goal") {
+          const scorer = chooseOpenChanceScorer(
+            attackingSide,
+            attacker,
+            goal?.scorerId,
+          ) ?? { id: goal?.scorerId, name: goal?.scorerName };
+          const assist = chooseOpenChanceAssist(
+            attackingSide,
+            scorer,
+            attacker,
+            goal?.assistId,
+          );
+          finalGoal = {
+            minute,
+            team: attackingSide,
+            type: "goal",
+            scorerId: scorer.id,
+            scorerName: scorer.name,
+            assistId: assist.assistId,
+            assistName: assist.assistName,
+            detail: goal?.detail,
+          };
+          const nextEvents = [...(allEventsRef.current || []), finalGoal].sort(
+            (a: any, b: any) => Number(a.minute) - Number(b.minute),
+          );
+          allEventsRef.current = nextEvents;
+          if (fixtureRef.current?.result) {
+            fixtureRef.current = {
+              ...fixtureRef.current,
+              result: {
+                ...fixtureRef.current.result,
+                homeGoals: allEventsRef.current.filter((e: any) => e.team === "home" && ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(e.type)).length,
+                awayGoals: allEventsRef.current.filter((e: any) => e.team === "away" && ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(e.type)).length,
+                events: allEventsRef.current,
+                highlights: allHighlightsRef.current,
+              },
+            } as any;
+          }
+          const applied = applyMinuteOutcome(minute, [finalGoal], source.rawCards || [], []);
+          appliedEvents = applied.events;
+          // applyMinuteOutcome is the single source of truth for the live
+          // scoreboard; do not increment the score a second time here.
+          resolutionMoment = buildMomentFromEvent({
+            event: appliedEvents[0] ?? finalGoal,
+            homeName: home.name,
+            awayName: away.name,
+          });
+        } else if (outcome === "save") {
+          const saveHighlight = {
+            minute,
+            team: defendingSide,
+            type: "save",
+            playerId: keeper?.id ?? "keeper",
+            playerName: keeper?.name ?? "El portero",
+            detail: buildSaveDetail(keeper ?? { name: "El portero" }, attacker ?? undefined),
+          };
+          const applied = applyMinuteOutcome(minute, [], source.rawCards || [], [saveHighlight]);
+          appliedHighlights = applied.hls;
+          applyLiveMomentumForResolvedAction(minute, applied.events, applied.cards, applied.hls);
+          resolutionMoment = buildMomentFromHighlight({
+            highlight: applied.hls[0] ?? saveHighlight,
+            homeName: home.name,
+            awayName: away.name,
+          });
+        } else {
+          const missHighlight = {
+            minute,
+            team: attackingSide,
+            type: "big_chance",
+            playerId: attacker?.id ?? goal?.scorerId ?? keyHighlight?.playerId ?? "attacker",
+            playerName: attacker?.name ?? goal?.scorerName ?? keyHighlight?.playerName ?? "El atacante",
+            detail: buildMissDetail({
+              attackerName: attacker?.name ?? goal?.scorerName ?? keyHighlight?.playerName ?? "El atacante",
+              defenderName: defender?.name,
+              minute,
+              eventType: goal?.type ?? "goal",
+            }),
+          };
+          const applied = applyMinuteOutcome(minute, [], source.rawCards || [], [missHighlight]);
+          appliedHighlights = applied.hls;
+          applyLiveMomentumForResolvedAction(minute, applied.events, applied.cards, applied.hls);
+          resolutionMoment = buildMomentFromHighlight({
+            highlight: applied.hls[0] ?? missHighlight,
+            homeName: home.name,
+            awayName: away.name,
+          });
+        }
+
+        if (fixtureRef.current?.result) {
+          fixtureRef.current = {
+            ...fixtureRef.current,
+            result: {
+              ...fixtureRef.current.result,
+              homeGoals: homeScoreRef.current,
+              awayGoals: awayScoreRef.current,
+              events: allEventsRef.current,
+              highlights: allHighlightsRef.current,
+            },
+          } as any;
+        }
+
+        const nextVar = outcome === "goal" && varDecisionRaw && finalGoal
+          ? {
+              ...varDecisionRaw,
+              team: finalGoal.team,
+              playerId: finalGoal.scorerId,
+              playerName: finalGoal.scorerName,
+              detail: varDecisionRaw.detail || `Gol de ${finalGoal.scorerName} anulado por VAR`,
+            }
+          : undefined;
+
+        pendingSceneRef.current = {
+          kind: "resolution",
+          moment: resolutionMoment,
+          source: {
+            minute,
+            resolvedGoal: finalGoal,
+            nextVar,
+            cards: source.rawCards || [],
+            events: appliedEvents,
+            highlights: appliedHighlights,
+          },
+        };
+        setLiveMoment(resolutionMoment);
+        persistLive();
+        return true;
+      }
+    }
 
     if (goal) {
       // A normal goal belongs to an attacker from goal.team. An own goal is
@@ -3998,7 +4554,7 @@ function MatchPage() {
         pendingSceneRef.current = { kind: "resolution", moment: resolution, source: { minute } };
         setLiveMoment(resolution);
         persistLive();
-        return;
+        return true;
       }
 
       if (rawGoal && fixtureRef.current?.result) {
@@ -4042,13 +4598,13 @@ function MatchPage() {
       };
       setLiveMoment(resolution);
       persistLive();
-      return;
+      return true;
     }
 
     if (keyHighlight) {
       if (keyHighlight.type === "penalty_awarded") {
         queueInteractivePenalty({ ...keyHighlight, type: "penalty_awarded" });
-        return;
+        return true;
       }
       const applied = applyMinuteOutcome(minute, [], source.rawCards || [], [keyHighlight]);
       applyLiveMomentumForResolvedAction(minute, applied.events, applied.cards, applied.hls);
@@ -4065,7 +4621,7 @@ function MatchPage() {
       };
       setLiveMoment(resolution);
       persistLive();
-      return;
+      return true;
     }
 
     // No resolvable action: continue the regular match clock.
@@ -4076,6 +4632,7 @@ function MatchPage() {
     setPauseReason(null);
     persistLive();
     restartLiveClock();
+    return false;
   }
 
   function stageDangerBeforeResolution(
@@ -4110,11 +4667,25 @@ function MatchPage() {
         : keyHighlight?.team)) as "home" | "away";
 
     let dangerBase: any;
-    if (goal) {
-      // The danger prelude needs an attacking protagonist from the team that
-      // receives the goal. With an own goal, however, the actual scorer is a
-      // player from the opposite team, so that player is only revealed in the
-      // resolution and must never replace the attacking protagonist here.
+    const isRegularOpenChance =
+      (!!goal && !["own_goal", "penalty_goal"].includes(goal.type)) ||
+      (!!keyHighlight && keyHighlight.type !== "penalty_awarded");
+
+    if (isRegularOpenChance) {
+      // The prelude protagonist is selected once and is kept for the resolution
+      // so the same player can receive the assist if a teammate finishes the move.
+      const attacker = getDangerAttacker(
+        attackingSide,
+        goal?.type === "own_goal" ? undefined : goal?.scorerId,
+      );
+      dangerBase = buildOpenChancePrelude({
+        playerName: attacker?.name ?? keyHighlight?.playerName ?? goal?.scorerName ?? "El atacante",
+        playerId: attacker?.id ?? keyHighlight?.playerId ?? goal?.scorerId,
+        teamName: attackingSide === "home" ? home.name : away.name,
+        teamSide: attackingSide,
+        minute: m,
+      });
+    } else if (goal) {
       const attacker = getDangerAttacker(goal.team, goal.type === "own_goal" ? undefined : goal.scorerId);
       const presentedGoal = attacker
         ? {
@@ -4127,43 +4698,27 @@ function MatchPage() {
                 : goal.detail,
           }
         : goal;
-      dangerBase = buildGoalPrelude({
-        event: presentedGoal,
-        homeName: home.name,
-        awayName: away.name,
-      });
+      dangerBase = buildGoalPrelude({ event: presentedGoal, homeName: home.name, awayName: away.name });
     } else if (keyHighlight?.type === "save") {
       const attacker = getDangerAttacker(attackingSide);
       const presentedHighlight = attacker
         ? { ...keyHighlight, playerId: attacker.id, playerName: attacker.name, team: attackingSide }
         : { ...keyHighlight, team: attackingSide };
-      dangerBase = buildSavePrelude({
-        highlight: presentedHighlight,
-        homeName: home.name,
-        awayName: away.name,
-      });
+      dangerBase = buildSavePrelude({ highlight: presentedHighlight, homeName: home.name, awayName: away.name });
     } else {
-      // The highlight was generated from the pre-match simulation, but the
-      // live match may have a different XI because the manager changed the
-      // lineup or a substitution already happened. Re-anchor every visible
-      // protagonist to a player who is actually on the pitch at this minute.
       const presentedHighlight = keyHighlight
         ? remapHighlightToPitch({ ...keyHighlight, team: attackingSide })
         : keyHighlight;
-      dangerBase = buildDangerPreludeFromHighlight({
-        highlight: presentedHighlight,
-        homeName: home.name,
-        awayName: away.name,
-      });
+      dangerBase = buildDangerPreludeFromHighlight({ highlight: presentedHighlight, homeName: home.name, awayName: away.name });
     }
 
     const dangerTeamName = attackingSide === "home" ? home.name : away.name;
     const attacking = attackingSide === mySideOf(fx);
     const danger = {
       ...dangerBase,
-      type: goal ? "goal_prelude" : dangerBase.type,
-      kicker: "🚨 Jugada en directo",
-      title: goal ? "¡PELIGRO!" : dangerBase.title,
+      type: dangerBase.type,
+      kicker: dangerBase.kicker || "Jugada en directo",
+      title: dangerBase.title,
       body: attacking
         ? dangerBase.body
         : `${dangerBase.body} Tu defensa intenta cerrar el último pase y obligar al atacante a decidir con prisa.`,
@@ -4191,7 +4746,17 @@ function MatchPage() {
     pendingSceneRef.current = {
       kind: "prelude",
       moment: danger,
-      source: { rawEvents: stagedEvents, rawCards, rawHighlights, minute: m },
+      source: {
+        rawEvents: stagedEvents,
+        rawCards,
+        rawHighlights,
+        minute: m,
+        chanceKind: isRegularOpenChance ? "open" : undefined,
+        dangerPlayerId: dangerBase.playerId,
+        dangerPlayerName: dangerBase.playerName,
+        attackingSide,
+        originalGoalId: goal?.scorerId,
+      },
     };
     if (m === 45) halftimePendingAfterMomentRef.current = true;
     drainStamina();
@@ -4299,11 +4864,34 @@ function MatchPage() {
       // Major highlights are also generated before the live XI can change.
       // Never build a player-facing notification from a stale bench player.
       const liveHighlight = remapHighlightToPitch(highlight);
-      const baseMoment = buildMomentFromHighlight({
-        highlight: liveHighlight,
-        homeName: home.name,
-        awayName: away.name,
-      });
+      const openChanceTypes = ["save", "big_chance", "woodwork"];
+      const baseMoment = openChanceTypes.includes(liveHighlight.type)
+        ? buildOpenChancePrelude({
+            playerName:
+              liveHighlight.type === "save"
+                ? getDangerAttacker(liveHighlight.team === "home" ? "away" : "home")?.name ?? "El atacante"
+                : liveHighlight.playerName,
+            playerId:
+              liveHighlight.type === "save"
+                ? getDangerAttacker(liveHighlight.team === "home" ? "away" : "home")?.id
+                : liveHighlight.playerId,
+            teamName:
+              (liveHighlight.type === "save"
+                ? liveHighlight.team === "home" ? "away" : "home"
+                : liveHighlight.team) === "home"
+                ? home.name
+                : away.name,
+            teamSide:
+              (liveHighlight.type === "save"
+                ? liveHighlight.team === "home" ? "away" : "home"
+                : liveHighlight.team) as "home" | "away",
+            minute,
+          })
+        : buildMomentFromHighlight({
+            highlight: liveHighlight,
+            homeName: home.name,
+            awayName: away.name,
+          });
       const userTeamMoment = liveHighlight.team === mySideOf(fixtureRef.current);
       const looksLikeCounter =
         liveHighlight.type === "big_chance" && userTeamMoment && momentumRef.current >= 67;
@@ -4318,6 +4906,31 @@ function MatchPage() {
             emoji: "⚡",
           }
         : baseMoment;
+
+      // Keep the visible prelude and its resolution source together. This is a
+      // defensive fallback for legacy/edge-case highlights that reached this
+      // selector without being staged by stageDangerBeforeResolution().
+      if (baseMoment.type === "open_chance" || baseMoment.type === "counter") {
+        const attackingSide = (baseMoment.teamSide || liveHighlight.team) as "home" | "away";
+        const originalGoal = rawEvents.find((e: any) =>
+          ["goal", "free_kick_goal", "own_goal", "penalty_goal"].includes(e.type),
+        );
+        pendingSceneRef.current = {
+          kind: "prelude",
+          moment,
+          source: {
+            rawEvents,
+            rawCards,
+            rawHighlights,
+            minute,
+            chanceKind: "open",
+            dangerPlayerId: baseMoment.playerId,
+            dangerPlayerName: baseMoment.playerName,
+            attackingSide,
+            originalGoalId: originalGoal?.scorerId,
+          },
+        };
+      }
       return { moment, emergency };
     };
     const tick = () => {
@@ -4751,7 +5364,18 @@ function MatchPage() {
     pauseReasonRef.current = "manual";
 
     const fx = fixtureRef.current;
-    if (!fx?.result) return;
+    if (!fx) return;
+
+    // `Saltar al final` always requires an authoritative simulated result.
+    // Older saves can arrive here without one; finish safely instead of leaving
+    // a half-initialised live match running at 0'.
+    if (!fx.result) {
+      console.error("skipToEnd: fixture has no simulated result", fx.id);
+      setMinute(90);
+      minuteRef.current = 90;
+      setPhase("done");
+      return;
+    }
 
     const currentMinute = Math.max(0, Math.min(90, minuteRef.current));
 
@@ -4864,6 +5488,16 @@ function MatchPage() {
         .sort((a: any, b: any) => a.minute - b.minute)
         .reverse(),
     );
+
+    // The stored final score is authoritative. This also protects legacy or
+    // provisional results whose event list did not contain every goal.
+    const finalHome = Number(fx.result.homeGoals);
+    const finalAway = Number(fx.result.awayGoals);
+    if (Number.isFinite(finalHome)) homeScoreRef.current = finalHome;
+    if (Number.isFinite(finalAway)) awayScoreRef.current = finalAway;
+    setHomeScore(homeScoreRef.current);
+    setAwayScore(awayScoreRef.current);
+
     setMinute(90);
     minuteRef.current = 90;
     setPhase("done");
@@ -4923,6 +5557,41 @@ function MatchPage() {
     if (clockTimeoutRef.current !== null) {
       window.clearTimeout(clockTimeoutRef.current);
       clockTimeoutRef.current = null;
+    }
+
+    // Apply all CPU extra-time substitutions immediately when fast-forwarding.
+    const fx = fixtureRef.current;
+    const userId = myTeamIdRef.current || save?.myTeamId;
+    const cpuSide = fx && fx.homeId === userId ? "away" : "home";
+    const pendingCpuSubs = extraTimeSubsRef.current.filter((s: any) => s.team === cpuSide);
+    if (pendingCpuSubs.length > 0) {
+      const xi = [...oppXIRef.current];
+      const made: any[] = [];
+      for (const s of pendingCpuSubs) {
+        const outIndex = xi.findIndex((p: any) => p?.id === (s.playerOutId ?? s.outId));
+        const incoming = oppBenchRef.current.find((p: any) => p?.id === (s.playerInId ?? s.inId));
+        if (outIndex < 0 || !incoming) continue;
+        const outgoing = xi[outIndex];
+        xi[outIndex] = incoming;
+        oppBenchRef.current = oppBenchRef.current.filter((p: any) => p.id !== incoming.id);
+        made.push({
+          minute: Number(s.minute) || 0,
+          team: cpuSide,
+          inName: incoming.name,
+          outName: outgoing.name,
+          playerInId: incoming.id,
+          playerOutId: outgoing.id,
+        });
+      }
+      if (made.length > 0) {
+        oppXIRef.current = xi;
+        const existingKeys = new Set((oppSubsDoneRef.current || []).map((s: any) => `${s.minute}|${s.playerOutId ?? s.outId}|${s.playerInId ?? s.inId}`));
+        oppSubsDoneRef.current = [
+          ...(oppSubsDoneRef.current || []),
+          ...made.filter((s) => !existingKeys.has(`${s.minute}|${s.playerOutId}|${s.playerInId}`)),
+        ];
+        setSubFeed((prev) => [...made.slice().reverse(), ...prev]);
+      }
     }
 
     // Add all extra time events to feed
@@ -5786,8 +6455,7 @@ function MatchPage() {
                           <span className="font-bold">{inj.playerName}</span>
                           <span className="text-muted-foreground">
                             {" "}
-                            ({team.short}) — {inj.reason}, baja {inj.weeks}{" "}
-                            {inj.weeks === 1 ? "jornada" : "jornadas"}
+                            ({team.short}) — {inj.reason}
                           </span>
                         </div>
                       );
