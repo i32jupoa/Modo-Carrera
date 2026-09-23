@@ -182,24 +182,72 @@ export function addSaveToMultiple(save: SaveGame) {
   saveMultipleSaves(saves);
 }
 
-export function deleteSave(id: string) {
-  if (typeof window === "undefined") return;
+function clearSaveScopedLocalStorage(id: string): void {
+  if (typeof window === "undefined" || !id) return;
+
+  const exactKeys = [
+    `fcsim:scouting:v1:${id}`,
+    `fcsim:scouting:v2:${id}`,
+    `fcsim:scouting-notifications:v2:${id}`,
+    `fcsim:scouting-catalog-event:v1:${id}`,
+    `fcsim:market-notifications:v1:${id}`,
+    `fcsim:generated_stats:${id}`,
+    `modo-carrera:pos-history:${id}`,
+  ];
+
+  for (const key of exactKeys) localStorage.removeItem(key);
+
+  // Claves con sub-secciones (por ejemplo badges y planes tácticos).
+  const prefixes = [
+    `fcsim:market-badges:v1:${id}:`,
+    `modo-carrera:tactics:${id}:`,
+    `modo-carrera:tactic-plans:${id}:`,
+  ];
+
+  for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+    const key = localStorage.key(i);
+    if (key && prefixes.some((prefix) => key.startsWith(prefix))) {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
+export async function deleteSave(id: string): Promise<void> {
+  if (typeof window === "undefined" || !id) return;
+
+  // Primero eliminamos TODA la información persistente asociada al id.
+  // Esperamos al borrado del mercado para que no exista una ventana en la que
+  // otro código pueda volver a leer sus ofertas/rumeros antes de eliminarlo.
   removeSaveItem(saveKeyFor(id));
-  localStorage.removeItem(`fcsim:scouting:v1:${id}`);
-  // Borra también el mercado de esa partida (import perezoso para evitar un
-  // ciclo de módulos: Persistence.ts ya importa `getCurrentSaveId` de aquí).
-  import("@/lib/transfers/Persistence")
-    .then(({ clearTransferSaveFor }) => clearTransferSaveFor(id))
-    .catch(() => {
-      /* si falla la importación no bloqueamos el borrado de la partida */
-    });
+  clearSaveScopedLocalStorage(id);
+
+  try {
+    const { clearTransferSaveFor } = await import("@/lib/transfers/Persistence");
+    await clearTransferSaveFor(id);
+  } catch (error) {
+    console.warn("No se pudo limpiar inmediatamente el mercado de la partida eliminada:", error);
+  }
+
   const saves = loadAllSaves().filter((s) => s.id !== id);
   saveMultipleSaves(saves);
-  // Si era la partida activa, desactivarla y limpiar estado en memoria
+
+  // Si era la partida activa, desactivarla y vaciar también el estado en memoria.
   if (getCurrentSaveId() === id) {
     setCurrentSaveId(null);
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(PLAYERS_PERSIST_KEY);
+    try {
+      usePlayersStore.getState().clear();
+      usePlayersStore.getState().resetAllStats();
+    } catch {
+      /* no crítico */
+    }
+    try {
+      const { resetTransferSystem } = await import("@/lib/transfers");
+      resetTransferSystem();
+    } catch {
+      /* no crítico */
+    }
   }
 }
 

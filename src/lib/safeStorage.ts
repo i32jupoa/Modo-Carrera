@@ -24,6 +24,10 @@ const CURRENT_SAVE_ID_KEY = "fcsim:save:current";
 const SAVES_LIST_KEY = "fcsim:saves:v2";
 const SAVE_KEY_PREFIX = "fcsim:save:v2:";
 const NOTIFICATIONS_PREFIX = "fcsim:market-notifications:v1:";
+const GENERATED_STATS_PREFIX = "fcsim:generated_stats:";
+const POSITION_HISTORY_PREFIX = "modo-carrera:pos-history:";
+const LEGACY_GENERATED_STATS_KEY = "fcsim:generated_stats";
+const LEGACY_POSITION_HISTORY_KEY = "modo-carrera:pos-history";
 /** Marca de los archivos de mercado ya cerrados: `...:{saveId}:w:{ventana}`. */
 export const MARKET_ARCHIVE_MARKER = ":w:";
 
@@ -106,6 +110,11 @@ export function cleanupOrphanedStorage(): void {
   if (!hasStorage()) return;
   try {
     const valid = validSaveIds();
+    // Restos globales de versiones antiguas: ya no pueden representar una
+    // partida concreta y, por tanto, nunca deben volver a entrar en una carrera.
+    localStorage.removeItem(LEGACY_GENERATED_STATS_KEY);
+    localStorage.removeItem(LEGACY_POSITION_HISTORY_KEY);
+
     for (const key of allKeys()) {
       let id: string | null = null;
       if (key.startsWith(SAVE_KEY_PREFIX)) {
@@ -114,6 +123,10 @@ export function cleanupOrphanedStorage(): void {
         id = key.slice(MARKET_PREFIX.length + 1).split(MARKET_ARCHIVE_MARKER)[0] ?? null;
       } else if (key.startsWith(NOTIFICATIONS_PREFIX)) {
         id = key.slice(NOTIFICATIONS_PREFIX.length);
+      } else if (key.startsWith(GENERATED_STATS_PREFIX)) {
+        id = key.slice(GENERATED_STATS_PREFIX.length);
+      } else if (key.startsWith(POSITION_HISTORY_PREFIX)) {
+        id = key.slice(POSITION_HISTORY_PREFIX.length);
       }
       if (id && !valid.has(id)) {
         try {

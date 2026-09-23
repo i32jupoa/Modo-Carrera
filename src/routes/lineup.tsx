@@ -794,6 +794,11 @@ function LineupPage() {
       } else if (bench.includes(selectedPlayer)) {
         // Bench player selected, pitch player clicked - swap
         handleBenchToPitchSwap(selectedPlayer, playerId);
+      } else if (!liveMode && reservePlayers.some((p) => p.id === selectedPlayer)) {
+        // Reserve player selected, pitch player clicked - direct exchange.
+        // This is only allowed in Dirección de equipo; reserves never become
+        // live-match substitutes through this interaction.
+        handleReserveToPitchSwap(selectedPlayer, playerId);
       } else {
         // Pitch player selected, pitch player clicked - just change selection
         setSelectedPlayer(playerId);
@@ -1284,6 +1289,56 @@ function LineupPage() {
     setSelectedPlayer(null);
   }
 
+  function handleReserveToPitchSwap(reservePlayerId: string, pitchPlayerId: string) {
+    if (liveMode) return;
+
+    const reservePlayer = squad.find((p) => p.id === reservePlayerId);
+    const pitchPlayer = squad.find((p) => p.id === pitchPlayerId);
+    if (!reservePlayer || !pitchPlayer || !startingXI.includes(pitchPlayerId)) {
+      setSelectedPlayer(null);
+      return;
+    }
+
+    if (isCurrentlyInjured(reservePlayer)) {
+      toast.error(`${reservePlayer.name} está lesionado y no puede entrar en el 11.`);
+      setSelectedPlayer(null);
+      return;
+    }
+
+    const suspensions = save?.suspensions[save.myTeamId] ?? [];
+    const suspended = suspensions.some(
+      (s) => s.playerId === reservePlayerId && s.matchdaysRemaining > 0,
+    );
+    if (suspended) {
+      const suspension = suspensions.find((s) => s.playerId === reservePlayerId);
+      const matchdays = suspension?.matchdaysRemaining || 0;
+      toast.error(
+        `${reservePlayer.name} está suspendido por ${matchdays} partido${matchdays > 1 ? "s" : ""} y no puede jugar.`,
+      );
+      setSelectedPlayer(null);
+      return;
+    }
+
+    const posKey = getPlayerPositionKey(pitchPlayerId);
+    if (!posKey) {
+      setSelectedPlayer(null);
+      return;
+    }
+
+    const requiredSlot = getSlotCodeForKey(posKey);
+    if (!canPlayInSlot(reservePlayer, requiredSlot)) {
+      toast.error(invalidPositionMessage(reservePlayer, requiredSlot));
+      setSelectedPlayer(null);
+      return;
+    }
+
+    // The reserve takes exactly the starter's slot. The former starter becomes
+    // a reserve automatically because the reserve list is derived from the
+    // squad minus XI and substitutes. The substitutes list is untouched.
+    setStartingXI((prev) => prev.map((id) => (id === pitchPlayerId ? reservePlayerId : id)));
+    setSelectedPlayer(null);
+  }
+
   function handleCallUpPlayer(playerId: string) {
     if (liveMode || bench.length >= 12) return;
 
@@ -1346,6 +1401,12 @@ function LineupPage() {
       // reservas ocupa exactamente su plaza de suplente.
       setBench((prev) => prev.map((id) => (id === selectedBenchId ? playerId : id)));
       setSelectedPlayer(null);
+      return;
+    }
+
+    if (startingXI.includes(selectedPlayer)) {
+      // Direct exchange between a starter and a reserve.
+      handleReserveToPitchSwap(playerId, selectedPlayer);
       return;
     }
 
@@ -1945,8 +2006,8 @@ function LineupPage() {
                   <div>
                     <p className="text-xs font-black">Reservas</p>
                     <p className="text-[0.6rem] text-muted-foreground">
-                      No están convocados. Pulsa un suplente y después una reserva para
-                      intercambiarlos.
+                      No están convocados. Pulsa un titular o un suplente y después una reserva para
+                      intercambiarlos directamente.
                     </p>
                   </div>
                   <span className="rounded-full border border-border/60 bg-card px-2 py-1 text-[0.6rem] font-black text-muted-foreground">

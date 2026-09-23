@@ -62,9 +62,9 @@ export default function SavedGamesModal({
     setDeleteConfirmOpen(true);
   }
 
-  function confirmDeleteGame() {
+  async function confirmDeleteGame() {
     if (deleteTargetId) {
-      deleteSave(deleteTargetId);
+      await deleteSave(deleteTargetId);
       setSaves(loadAllSaves());
       onDeleteGame?.();
     }

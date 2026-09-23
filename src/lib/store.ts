@@ -1493,16 +1493,18 @@ export function getBenchForTeam(save: SaveGame, teamId: string, xi: Player[]): P
 
   // A configured bench is authoritative, even when it contains fewer than 12
   // players: the rest of the roster stays in "Reservas" and is not eligible
-  // for in-match substitutions.
-  if (Array.isArray(configured)) {
-    return configured
+  // for in-match substitutions. For the user's team, an absent/empty bench is
+  // also authoritative: NEVER promote Reservas automatically. CPU teams keep
+  // the fallback below because they do not manage a manual convocatoria here.
+  if (teamId === save.myTeamId || Array.isArray(configured)) {
+    return (Array.isArray(configured) ? configured : [])
       .map((id) => squad.find((p) => p.id === id))
       .filter((p): p is Player => !!p)
       .filter((p) => !xiIds.has(p.id) && !unavailable.has(p.id))
       .slice(0, 12);
   }
 
-  // Backward-compatible default for old saves and CPU teams.
+  // CPU teams: generate a realistic bench from their current squad.
   return squad
     .filter((p) => !xiIds.has(p.id) && !unavailable.has(p.id))
     .sort((a, b) => b.rating - a.rating)

@@ -153,22 +153,31 @@ function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
 
 // Track which matchdays have already generated stats to avoid duplicates
 
-const GENERATED_STATS_KEY = "fcsim:generated_stats";
+const GENERATED_STATS_KEY_PREFIX = "fcsim:generated_stats:";
+
+function generatedStatsKey(): string | null {
+  const saveId = getCurrentSaveId();
+  return saveId ? `${GENERATED_STATS_KEY_PREFIX}${saveId}` : null;
+}
 
 function getGeneratedMatchdays(): Record<string, number> {
+  const key = generatedStatsKey();
+  if (!key) return {};
   try {
-    return JSON.parse(localStorage.getItem(GENERATED_STATS_KEY) || "{}");
+    return JSON.parse(localStorage.getItem(key) || "{}");
   } catch {
     return {};
   }
 }
 
 function setGeneratedMatchday(leagueId: LeagueId, matchday: number) {
+  const key = generatedStatsKey();
+  if (!key) return;
   const current = getGeneratedMatchdays();
 
   current[leagueId] = Math.max(current[leagueId] || 0, matchday);
 
-  localStorage.setItem(GENERATED_STATS_KEY, JSON.stringify(current));
+  localStorage.setItem(key, JSON.stringify(current));
 }
 
 function hasGeneratedMatchday(leagueId: LeagueId, matchday: number): boolean {
@@ -177,10 +186,11 @@ function hasGeneratedMatchday(leagueId: LeagueId, matchday: number): boolean {
   return (current[leagueId] || 0) >= matchday;
 }
 
-// Clear the tracker to force regeneration
+// Clear the tracker for the active career to force regeneration
 
 export function clearGeneratedStatsTracker() {
-  localStorage.removeItem(GENERATED_STATS_KEY);
+  const key = generatedStatsKey();
+  if (key) localStorage.removeItem(key);
 }
 
 // Generate stats on-demand for a specific league if it's O(1

@@ -9,7 +9,7 @@ import {
   restorePlayersStoreState,
   setCurrentSaveId,
 } from "@/lib/savedGames";
-import { resetTransferSystem, clearAllTransferSaves } from "@/lib/transfers";
+import { resetTransferSystem } from "@/lib/transfers";
 import { resetMarketIndex } from "@/lib/transfers/PlayerIndex";
 import { resetSquadReports } from "@/lib/transfers/SquadAnalyzer";
 import { resetClubOverrides } from "@/store/playersStore";
@@ -79,12 +79,9 @@ function Index() {
     setLoaderTeamId(id);
     setLoading(true);
     try {
-      // Primero borrar cualquier dato persistente del mercado (vive en
-      // IndexedDB, ver Persistence.ts) ANTES de limpiar el saveId, para
-      // borrar TODOS los mercados guardados. Es async pero no bloquea: opera
-      // sobre ids de partidas que ya no se van a usar, así que no hay
-      // conflicto con la partida nueva que se crea a continuación.
-      void clearAllTransferSaves();
+      // IMPORTANTE: crear una partida nueva NO debe borrar ni tocar los datos
+      // de las demás carreras. Cada sistema persistente está ligado al id de
+      // esta carrera y el mercado se reseteará en memoria al cambiar de id.
 
       // Limpiar el estado persistente del playersStore para evitar estado compartido
       localStorage.removeItem("fcsim:players:v1");

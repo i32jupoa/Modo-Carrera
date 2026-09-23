@@ -66,9 +66,9 @@ export const MARKET_ARCHIVE_MARKER = ":w:";
 /**
  * Clave de almacenamiento del mercado para la partida actualmente activa.
  */
-function storageKeyForActiveSave(): string {
+function storageKeyForActiveSave(): string | null {
   const saveId = getCurrentSaveId();
-  return saveId ? `${STORAGE_KEY_PREFIX}:${saveId}` : LEGACY_GLOBAL_STORAGE_KEY;
+  return saveId ? `${STORAGE_KEY_PREFIX}:${saveId}` : null;
 }
 
 /** Clave del archivo de una ventana de fichajes concreta. */
@@ -180,7 +180,10 @@ export async function migrateAllMarketDataFromLocalStorage(): Promise<void> {
     const legacyKeys: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const k = window.localStorage.key(i);
-      if (k && k.startsWith(STORAGE_KEY_PREFIX)) legacyKeys.push(k);
+      // Solo migramos mercados que ya pertenecen a una partida concreta.
+      // La clave global antigua no tiene forma fiable de saber a qué partida
+      // pertenecía, así que jamás debe pasar a una carrera nueva.
+      if (k && k.startsWith(`${STORAGE_KEY_PREFIX}:`)) legacyKeys.push(k);
     }
     for (const key of legacyKeys) {
       const value = window.localStorage.getItem(key);
@@ -193,8 +196,20 @@ export async function migrateAllMarketDataFromLocalStorage(): Promise<void> {
         /* no crítico */
       }
     }
+
+    // El mercado global de la versión antigua queda invalidado de forma
+    // definitiva. Mantenerlo permitiría que una implementación antigua o una
+    // migración parcial lo reinyectase en una partida distinta.
+    await idbRemoveItem(LEGACY_GLOBAL_STORAGE_KEY);
+    const oldArchiveKeys = await idbListKeys(`${LEGACY_GLOBAL_STORAGE_KEY}${MARKET_ARCHIVE_MARKER}`);
+    for (const key of oldArchiveKeys) await idbRemoveItem(key);
+    try {
+      window.localStorage.removeItem(LEGACY_GLOBAL_STORAGE_KEY);
+    } catch {
+      /* no crítico */
+    }
   } catch (e) {
-    console.warn("[transfers] no se pudo migrar el mercado antiguo de localStorage:", e);
+    console.warn("[transfers] no se pudo migrar/limpiar el mercado antiguo:", e);
   }
 }
 
@@ -248,8 +263,9 @@ function groupByWindow<T extends { date: string }>(items: readonly T[]): Map<str
  */
 export async function saveTransferSystem(): Promise<boolean> {
   try {
-    const snapshot = snapshotTransferSystem();
     const baseKey = storageKeyForActiveSave();
+    if (!baseKey) return false;
+    const snapshot = snapshotTransferSystem();
     const currentWindow = snapshot.simulation?.windowKey ?? null;
 
     const historyByWindow = groupByWindow(snapshot.history);
@@ -301,22 +317,14 @@ export async function saveTransferSystem(): Promise<boolean> {
 export async function loadTransferSave(): Promise<TransferSaveData | null> {
   try {
     const key = storageKeyForActiveSave();
+    // Sin id de partida no existe ningún mercado válido que cargar.
+    // Esto evita que una carrera nueva pueda heredar el mercado de otra.
+    if (!key) return null;
+
     await migrateKeyFromLocalStorage(key);
-    if (key !== LEGACY_GLOBAL_STORAGE_KEY)
-      await migrateKeyFromLocalStorage(LEGACY_GLOBAL_STORAGE_KEY);
-
-    let raw = await idbGetItem(key);
-
-    if (!raw && key !== LEGACY_GLOBAL_STORAGE_KEY) {
-      const legacy = await idbGetItem(LEGACY_GLOBAL_STORAGE_KEY);
-      if (legacy) {
-        await idbSetItem(key, legacy);
-        await idbRemoveItem(LEGACY_GLOBAL_STORAGE_KEY);
-        raw = legacy;
-      }
-    }
-
+    const raw = await idbGetItem(key);
     if (!raw) return null;
+
     const parsed = JSON.parse(raw) as TransferSaveData;
     if (parsed?.version !== VERSION) return null;
 
@@ -376,7 +384,9 @@ async function removeKeysWithPrefix(prefix: string): Promise<void> {
 /** Borra el mercado guardado de la partida activa (incluidos sus archivos). */
 export async function clearTransferSave(): Promise<void> {
   try {
-    await removeKeysWithPrefix(storageKeyForActiveSave());
+    const key = storageKeyForActiveSave();
+    if (!key) return;
+    await removeKeysWithPrefix(key);
   } catch {
     /* sin espacio o modo privado: no pasa nada */
   }

@@ -1565,24 +1565,10 @@ function MatchPage() {
       .slice(0, 12)
       .map((p) => p.id);
 
-    // Backwards compatibility for saves created before the automatic lineup
-    // checkpoint existed: if no convocados were persisted, create a legal
-    // bench from the current squad and persist it immediately. Reservas remain
-    // outside the match because only these 12 become convocados.
-    if (benchIds.length === 0) {
-      benchIds = squad
-        .filter((p) => !ids.includes(p.id))
-        .filter((p) => !suspendedIds.has(p.id) && !isPlayerInjuredAtDate(p, matchDate, matchday))
-        .sort((a, b) => b.rating - a.rating)
-        .slice(0, 12)
-        .map((p) => p.id);
-
-      let checkpoint = s;
-      checkpoint = setLineup(checkpoint, s.myTeamId, ids);
-      checkpoint = setSubstitutes(checkpoint, s.myTeamId, benchIds);
-      saveSaveWithRetry(checkpoint);
-      setSave(checkpoint);
-    }
+    // IMPORTANT: an empty/forkless substitute list means there are NO legal
+    // in-match substitutes. Never promote players from Reservas here. Only
+    // players explicitly saved in `substitutes[myTeamId]` can appear on the
+    // match bench and enter the field.
     const st: Record<string, number> = {};
     const startingSet = new Set(ids);
     squad.forEach((p) => {

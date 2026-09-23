@@ -1,4 +1,5 @@
 import type { Fixture } from "@/lib/season";
+import { getCurrentSaveId } from "@/lib/savedGames";
 
 // ---------- Seeded RNG ----------
 export function hashStr(s: string): number {
@@ -69,20 +70,29 @@ export function weatherFor(fixtureId: string) {
 }
 
 // ---------- Position history ----------
-const POS_KEY = "modo-carrera:pos-history";
+const POS_KEY_PREFIX = "modo-carrera:pos-history:";
+
+function positionHistoryKey(): string | null {
+  const saveId = getCurrentSaveId();
+  return saveId ? `${POS_KEY_PREFIX}${saveId}` : null;
+}
 type PosHistory = Record<string, { matchday: number; pos: number }[]>;
 
 function readHist(): PosHistory {
   if (typeof localStorage === "undefined") return {};
+  const key = positionHistoryKey();
+  if (!key) return {};
   try {
-    return JSON.parse(localStorage.getItem(POS_KEY) || "{}");
+    return JSON.parse(localStorage.getItem(key) || "{}");
   } catch {
     return {};
   }
 }
 function writeHist(h: PosHistory) {
+  const key = positionHistoryKey();
+  if (!key) return;
   try {
-    localStorage.setItem(POS_KEY, JSON.stringify(h));
+    localStorage.setItem(key, JSON.stringify(h));
   } catch {}
 }
 export function trackPosition(league: string, teamId: string, matchday: number, pos: number) {
