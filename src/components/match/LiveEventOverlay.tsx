@@ -144,104 +144,34 @@ const eventTone: Record<
   },
 };
 
-function EventDiagram({ type }: { type: string }) {
-  if (
-    ![
-      "goal",
-      "goal_prelude",
-      "danger_chance",
-      "danger_save",
-      "counter",
-      "big_chance",
-      "woodwork",
-      "save",
-      "dangerous_free_kick",
-    ].includes(type)
-  ) {
-    return null;
-  }
+function EventVisual({ type }: { type: string }) {
+  const visualByType: Record<string, { src: string; alt: string }> = {
+    goal: { src: "/match-events/gol.png", alt: "Visualización de gol" },
+    penalty_goal: { src: "/match-events/gol.png", alt: "Visualización de gol de penalti" },
+    free_kick_goal: { src: "/match-events/gol.png", alt: "Visualización de gol de falta" },
+    own_goal: { src: "/match-events/gol.png", alt: "Visualización de gol en propia puerta" },
+    goal_prelude: { src: "/match-events/peligro.png", alt: "Visualización de peligro" },
+    danger_chance: { src: "/match-events/peligro.png", alt: "Visualización de peligro" },
+    danger_save: { src: "/match-events/peligro.png", alt: "Visualización de peligro" },
+    counter: { src: "/match-events/peligro.png", alt: "Visualización de peligro" },
+    dangerous_free_kick: { src: "/match-events/peligro.png", alt: "Visualización de peligro" },
+    save: { src: "/match-events/parada.png", alt: "Visualización de parada" },
+    woodwork: { src: "/match-events/palo.png", alt: "Visualización de tiro al palo" },
+    big_chance: { src: "/match-events/fallo.png", alt: "Visualización de fallo" },
+    penalty_missed: { src: "/match-events/fallo.png", alt: "Visualización de fallo de penalti" },
+  };
 
-  const danger = type === "save" || type === "danger_save" ? "#60a5fa" : "#fb7185";
-  const primary = "#67e8f9";
+  const visual = visualByType[type];
+  if (!visual) return null;
 
   return (
-    <div className="mx-auto mt-4 w-full max-w-2xl overflow-hidden rounded-2xl border border-white/8 bg-black/10 p-2">
-      <svg viewBox="0 0 360 92" className="w-full" aria-hidden>
-        <defs>
-          <linearGradient id="event-path" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor={primary} stopOpacity=".25" />
-            <stop offset="60%" stopColor={primary} />
-            <stop offset="100%" stopColor={danger} />
-          </linearGradient>
-        </defs>
-        <rect
-          x="1"
-          y="1"
-          width="358"
-          height="90"
-          rx="14"
-          fill="none"
-          stroke="white"
-          strokeOpacity=".08"
-        />
-        <path
-          d="M278 12V80M278 28H349M278 64H349"
-          stroke="white"
-          strokeOpacity=".09"
-          strokeWidth="2"
-        />
-        <motion.circle
-          cx="68"
-          cy="60"
-          r="7"
-          fill={primary}
-          initial={{ scale: 0.5, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-        />
-        <motion.path
-          d="M84 59 C148 29, 214 28, 298 42"
-          fill="none"
-          stroke="url(#event-path)"
-          strokeWidth="4"
-          strokeDasharray="8 8"
-          initial={{ pathLength: 0 }}
-          animate={{ pathLength: 1 }}
-          transition={{ duration: 0.65 }}
-        />
-        <motion.circle
-          cx="298"
-          cy="42"
-          r="10"
-          fill="none"
-          stroke={danger}
-          strokeWidth="3"
-          initial={{ scale: 0.65, opacity: 0.35 }}
-          animate={{ scale: [0.8, 1.18, 0.95], opacity: [0.35, 1, 0.7] }}
-          transition={{ duration: 0.7 }}
-        />
-        <motion.circle
-          cx="298"
-          cy="42"
-          r="3"
-          fill={danger}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: [0.25, 1, 0.4] }}
-          transition={{ duration: 0.7 }}
-        />
-        {type === "woodwork" && (
-          <motion.line
-            x1="320"
-            y1="18"
-            x2="350"
-            y2="18"
-            stroke="#a78bfa"
-            strokeWidth="5"
-            initial={{ opacity: 0.2 }}
-            animate={{ opacity: [0.2, 1, 0.2] }}
-            transition={{ duration: 0.55 }}
-          />
-        )}
-      </svg>
+    <div className="mx-auto mt-5 w-full max-w-3xl overflow-hidden rounded-3xl border border-white/10 bg-[#080c12] shadow-[0_18px_55px_rgba(0,0,0,.35)]">
+      <img
+        src={visual.src}
+        alt={visual.alt}
+        className="block h-auto w-full select-none object-cover"
+        draggable={false}
+      />
     </div>
   );
 }
@@ -329,11 +259,27 @@ export function LiveEventOverlay({
                     {hasChoices && <span className="opacity-65">· Decide tú</span>}
                   </div>
                 </div>
-                <div
-                  className={`shrink-0 rounded-2xl border border-white/8 ${tone.soft} px-4 py-3 text-3xl shadow-inner`}
-                >
-                  {eventIcon}
-                </div>
+                {![
+                  "goal",
+                  "penalty_goal",
+                  "free_kick_goal",
+                  "own_goal",
+                  "goal_prelude",
+                  "danger_chance",
+                  "danger_save",
+                  "counter",
+                  "dangerous_free_kick",
+                  "save",
+                  "woodwork",
+                  "big_chance",
+                  "penalty_missed",
+                ].includes(event.type) && (
+                  <div
+                    className={`shrink-0 rounded-2xl border border-white/8 ${tone.soft} px-4 py-3 text-3xl shadow-inner`}
+                  >
+                    {eventIcon}
+                  </div>
+                )}
               </div>
 
               <div className="relative mt-5 grid gap-4 md:grid-cols-[7.5rem_minmax(0,1fr)] md:items-center">
@@ -435,7 +381,7 @@ export function LiveEventOverlay({
             </div>
 
             <div className="px-5 py-5 md:px-8 md:py-6">
-              <EventDiagram type={event.type} />
+              <EventVisual type={event.type} />
 
               {event.detail && !hasChoices && (
                 <div className="mx-auto mt-4 max-w-2xl rounded-2xl border border-white/8 bg-white/[0.025] px-4 py-3 text-center text-[0.68rem] font-semibold leading-5 text-white/45">

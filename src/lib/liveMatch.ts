@@ -183,15 +183,16 @@ export function staminaPerformanceMultiplier(stamina: number): number {
   return 0.15 + e * 0.01;
 }
 
-/** Recuperación determinista diaria: cuanto más baja la energía, más fácil es recuperar. */
+/** Recuperación determinista diaria: cada día de descanso suma exactamente 5 de energía, con tope en 100. */
 export function recoverStamina(stamina: number, days: number): number {
   let value = Math.max(0, Math.min(100, Number(stamina) || 0));
   const safeDays = Math.max(0, Math.floor(Number(days) || 0));
+
   for (let i = 0; i < safeDays && value < 100; i++) {
-    const gain = value >= 97 ? 1.5 : value >= 90 ? 2.5 : value >= 75 ? 4 : value >= 55 ? 5 : value >= 35 ? 6 : 7;
-    value = Math.min(100, value + gain);
+    value = Math.min(100, value + 5);
   }
-  return Math.round(value * 10) / 10;
+
+  return Math.round(value);
 }
 
 export function fatigueInjuryRisk(stamina: number): number {
