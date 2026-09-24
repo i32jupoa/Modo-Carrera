@@ -145,6 +145,12 @@ function LineupPage() {
   const cupRound = routerState?.cupRound as string | undefined;
   const fixtureId = routerState?.fixtureId as string | undefined;
   const returningFromLineupEdit = routerState?.returningFromLineupEdit === true;
+  const europeanCompetition = useMemo(() => {
+    if (!save || !fixtureId) return undefined as "uel" | "uecl" | undefined;
+    if (Array.isArray((save as any).uelFixtures) && (save as any).uelFixtures.some((f: any) => f.id === fixtureId)) return "uel" as const;
+    if (Array.isArray((save as any).ueclFixtures) && (save as any).ueclFixtures.some((f: any) => f.id === fixtureId)) return "uecl" as const;
+    return undefined;
+  }, [save, fixtureId]);
   // Live mode: the match is paused and we must come back to the exact minute.
   const liveMode = routerState?.liveMatch === true;
   const activeCompetition = matchType
@@ -2655,6 +2661,7 @@ function LineupPage() {
                   cupRound,
                   fixtureId,
                   returningFromLineupEdit: returningFromLineupEdit,
+                  europeanCompetition,
                 } as any,
               });
             }}

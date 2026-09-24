@@ -53,6 +53,11 @@ export type LiveMatchState = {
   playedEvents?: any[];
   playedCards?: any[];
   playedHighlights?: any[];
+  /** Rival live state, persisted so returning from the lineup editor never regenerates a European opponent. */
+  opponentXI?: any[];
+  opponentBench?: any[];
+  opponentFormation?: string;
+  opponentPlan?: { minute: number; outId: string; inId: string }[];
   /** Rival substitutions already executed, so resume/fast-forward never repeats them. */
   opponentSubsDone?: any[];
   /** Small tactical bias carried by the live layer into upcoming events. */
@@ -76,14 +81,115 @@ export function saveLive(state: LiveMatchState) {
   }
 }
 
+function safeArray(value: any): any[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function safeIdList(value: any): string[] {
+  return safeArray(value)
+    .map((item: any) => (typeof item === "string" ? item : item?.id))
+    .filter(Boolean)
+    .map(String);
+}
+
+function sanitizeLoadedLiveState(raw: any): LiveMatchState {
+  const result = raw?.result && typeof raw.result === "object" ? { ...raw.result } : {};
+
+  result.events = safeArray(result.events);
+  result.cards = safeArray(result.cards);
+  result.highlights = safeArray(result.highlights);
+  result.substitutions = safeArray(result.substitutions);
+  result.injuries = safeArray(result.injuries);
+  result.homeLineup = safeArray(result.homeLineup);
+  result.awayLineup = safeArray(result.awayLineup);
+
+  if (result.extraTime && typeof result.extraTime === "object") {
+    result.extraTime = {
+      ...result.extraTime,
+      events: safeArray(result.extraTime.events),
+      substitutions: safeArray(result.extraTime.substitutions),
+    };
+  }
+
+  if (result.penalties && typeof result.penalties === "object") {
+    result.penalties = {
+      ...result.penalties,
+      shootout: safeArray(result.penalties.shootout),
+    };
+  }
+
+  const lineup = safeIdList(raw?.lineup).slice(0, 11);
+  const bench = safeIdList(raw?.bench)
+    .filter((id: string) => !lineup.includes(id))
+    .slice(0, 12);
+
+  const stamina =
+    raw?.stamina && typeof raw.stamina === "object" && !Array.isArray(raw.stamina)
+      ? raw.stamina
+      : {};
+
+  return {
+    ...raw,
+    v: Number(raw?.v) || LIVE_VERSION,
+    fixtureId: String(raw?.fixtureId ?? ""),
+    minute: Math.max(0, Number(raw?.minute) || 0),
+    phase: raw?.phase || "playing",
+    homeScore: Number(raw?.homeScore) || 0,
+    awayScore: Number(raw?.awayScore) || 0,
+    result,
+    feed: safeArray(raw?.feed),
+    cardFeed: safeArray(raw?.cardFeed),
+    highlightFeed: safeArray(raw?.highlightFeed),
+    lineup,
+    bench,
+    formation: typeof raw?.formation === "string" ? raw.formation : "Táctica 4-4-2",
+    gone: safeIdList(raw?.gone),
+    goneSlotIndexes:
+      raw?.goneSlotIndexes && typeof raw.goneSlotIndexes === "object"
+        ? raw.goneSlotIndexes
+        : {},
+    pendingForcedInjurySlots:
+      raw?.pendingForcedInjurySlots && typeof raw.pendingForcedInjurySlots === "object"
+        ? raw.pendingForcedInjurySlots
+        : {},
+    subsUsed: Number(raw?.subsUsed) || 0,
+    windowsUsed: Number(raw?.windowsUsed) || 0,
+    subs: safeArray(raw?.subs),
+    stamina,
+    isExtraTime: !!raw?.isExtraTime,
+    matchType: raw?.matchType === "CUP" ? "CUP" : raw?.matchType === "UCL" ? "UCL" : "LEAGUE",
+    cupRound: raw?.cupRound,
+    handledInjuries: safeIdList(raw?.handledInjuries),
+    momentum: Number.isFinite(Number(raw?.momentum)) ? Number(raw.momentum) : 50,
+    momentumHistory: safeArray(raw?.momentumHistory),
+    managerEffects:
+      raw?.managerEffects && typeof raw.managerEffects === "object"
+        ? raw.managerEffects
+        : undefined,
+    narrative: safeArray(raw?.narrative),
+    keyMoments: safeArray(raw?.keyMoments),
+    playedEvents: safeArray(raw?.playedEvents),
+    playedCards: safeArray(raw?.playedCards),
+    playedHighlights: safeArray(raw?.playedHighlights),
+    opponentXI: safeArray(raw?.opponentXI),
+    opponentBench: safeArray(raw?.opponentBench),
+    opponentFormation:
+      typeof raw?.opponentFormation === "string" ? raw.opponentFormation : "Táctica 4-4-2",
+    opponentPlan: safeArray(raw?.opponentPlan),
+    opponentSubsDone: safeArray(raw?.opponentSubsDone),
+    outcomeBias: Number.isFinite(Number(raw?.outcomeBias)) ? Number(raw.outcomeBias) : 0,
+    scene: raw?.scene && typeof raw.scene === "object" ? raw.scene : null,
+  } as LiveMatchState;
+}
+
 export function loadLive(fixtureId?: string): LiveMatchState | null {
   try {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
-    const st = JSON.parse(raw) as LiveMatchState;
-    if (st.v !== LIVE_VERSION && st.v !== 5 && st.v !== 4 && st.v !== 3) return null;
-    if (fixtureId && st.fixtureId !== fixtureId) return null;
-    return st;
+    const parsed = JSON.parse(raw) as any;
+    if (parsed?.v !== LIVE_VERSION && parsed?.v !== 5 && parsed?.v !== 4 && parsed?.v !== 3) return null;
+    if (fixtureId && parsed.fixtureId !== fixtureId) return null;
+    return sanitizeLoadedLiveState(parsed);
   } catch {
     return null;
   }

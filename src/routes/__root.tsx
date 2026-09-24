@@ -49,7 +49,13 @@ function NotFoundComponent() {
 }
 
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
-  console.error(error);
+  console.error("[RouteError]", {
+    name: (error as any)?.name,
+    message: (error as any)?.message,
+    stack: (error as any)?.stack,
+    cause: (error as any)?.cause,
+    raw: error,
+  });
   const router = useRouter();
 
   return (
