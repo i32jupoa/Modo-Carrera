@@ -321,7 +321,17 @@ function SeasonPage() {
       } else if (competitionType === "ucl") {
         next = simulateUCLMatchday(save, lastPlayedFixture?.matchday || save.currentMatchday[save.myLeague]);
       } else if (competitionType === "uel" || competitionType === "uecl") {
-        next = simulateEuropeanLeagueMatchday(save, competitionType, lastPlayedFixture?.matchday || save.currentMatchday[save.myLeague]);
+        const absoluteEuropeanDay = Number(
+          lastPlayedFixture?.matchday ?? save.currentMatchday[save.myLeague],
+        );
+        const { simulatePendingEuropeanThroughDay, processEuropeanKnockoutProgress } = await import("@/lib/store");
+        next = simulatePendingEuropeanThroughDay(
+          save,
+          competitionType,
+          absoluteEuropeanDay,
+          save.myTeamId,
+        );
+        next = processEuropeanKnockoutProgress(next, competitionType, absoluteEuropeanDay);
       } else {
         // Simulate league fixtures
         next = await advanceMatchdayLayered(save, (done, total) => {

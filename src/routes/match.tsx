@@ -26,8 +26,9 @@ import {
   commitLiveFixtureDiscipline,
   simulateUserPhaseUCLDay,
   processUCLKnockoutProgress,
+  commitLiveFixtureResult,
 } from "@/lib/store";
-import { uclDayOffset } from "@/data/ucl";
+import { uclDayOffset, isUCLLeaguePhaseFixture } from "@/data/ucl";
 import { EUROPEAN_START } from "@/data/europeanCompetitions";
 import { applyResult, Fixture } from "@/lib/season";
 import { FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
@@ -136,6 +137,15 @@ function findFixtureInEuropeanCompetitions(save: any, fixtureId: string): any | 
     if (found) return { ...found, europeanCompetition: competition };
   }
   return null;
+}
+
+function europeanCompetitionOf(fixture: any): "uel" | "uecl" | undefined {
+  const value = fixture?.europeanCompetition;
+  return value === "uel" || value === "uecl" ? value : undefined;
+}
+
+function isEuropeanFixture(fixture: any): boolean {
+  return !!europeanCompetitionOf(fixture);
 }
 
 type Phase = "preview" | "playing" | "done" | "extra_time" | "penalties";
@@ -581,16 +591,34 @@ function MatchPage() {
         next = await simulateCupMatchdayLayered(latestSave, fixture.matchday, (done, total) => {
           console.log(`Cup matches: ${done}/${total}`);
         });
+      } else if (isEuropeanFixture(fixture)) {
+        const europeanCompetition = europeanCompetitionOf(fixture)!;
+        const { processEuropeanKnockoutProgress } = await import("@/lib/store");
+        // The fixture matchday is already the absolute UEFA calendar offset
+        // (e.g. 78 for UEL MD1). Do not derive it from the current date: after
+        // a browser refresh the two can temporarily differ by one day.
+        // Same behaviour as Champions League when the user returns from a
+        // watched match: simulate the OTHER fixtures of this exact European
+        // matchday, while keeping the user's already-committed result intact.
+        // The previous code used simulatePendingEuropeanThroughDay(), whose
+        // background path intentionally skips AI matches whenever the user
+        // participates in the competition. That is correct for calendar
+        // catch-up, but wrong immediately after the user's match.
+        const { simulateEuropeanUserPhaseDay } = await import("@/lib/store");
+        next = simulateEuropeanUserPhaseDay(
+          latestSave,
+          europeanCompetition,
+          Number(fixture.matchday),
+          latestSave.myTeamId,
+        );
+        next = processEuropeanKnockoutProgress(
+          next,
+          europeanCompetition,
+          Number(fixture.matchday),
+        );
       } else if (matchType === "UCL") {
-        const europeanCompetition = fixture.europeanCompetition as "uel" | "uecl" | undefined;
-        if (europeanCompetition) {
-          const { simulateEuropeanUserPhaseDay, processEuropeanKnockoutProgress } = await import("@/lib/store");
-          next = simulateEuropeanUserPhaseDay(latestSave, europeanCompetition, fixture.matchday, latestSave.myTeamId);
-          next = processEuropeanKnockoutProgress(next, europeanCompetition, uclDayOffset(usePlayersStore.getState().currentDate));
-        } else {
-          next = simulateUserPhaseUCLDay(latestSave, fixture.matchday, latestSave.myTeamId);
-          next = processUCLKnockoutProgress(next, uclDayOffset(usePlayersStore.getState().currentDate));
-        }
+        next = simulateUserPhaseUCLDay(latestSave, fixture.matchday, latestSave.myTeamId);
+        next = processUCLKnockoutProgress(next, uclDayOffset(usePlayersStore.getState().currentDate));
       } else {
         // LEAGUE: Execute the league matchday simulation
         console.log("Post-match: Simulating LEAGUE matches");
@@ -966,14 +994,14 @@ function MatchPage() {
       true,
       { homeGoals: extraTimeHomeScoreRef.current, awayGoals: extraTimeAwayScoreRef.current },
       { homeGoals: finalHomePenaltyScore, awayGoals: finalAwayPenaltyScore },
-      matchType === "UCL",
+      matchType === "UCL" || isEuropeanFixture(fixture),
     );
 
     // Reload the fixture from save to get updated result
     const s = loadSave();
     if (s) {
       let found = null;
-      if (matchType === "UCL" && fixture.europeanCompetition) {
+      if (isEuropeanFixture(fixture)) {
         found = findFixtureInEuropeanCompetitions(s, fixture.id);
         if (found) { fixtureRef.current = found; console.log("Reloaded European fixture with result after penalties:", found.result); }
       } else if (matchType === "UCL" && s.uclFixtures) {
@@ -1041,14 +1069,14 @@ function MatchPage() {
       true,
       { homeGoals: extraTimeHomeScoreRef.current, awayGoals: extraTimeAwayScoreRef.current },
       undefined,
-      matchType === "UCL",
+      matchType === "UCL" || isEuropeanFixture(fixture),
     );
 
     // Reload the fixture from save to get updated result
     const s = loadSave();
     if (s) {
       let found = null;
-      if (matchType === "UCL" && fixture.europeanCompetition) {
+      if (isEuropeanFixture(fixture)) {
         found = findFixtureInEuropeanCompetitions(s, fixture.id);
         if (found) { fixtureRef.current = found; console.log("Reloaded European fixture with result:", found.result); }
       } else if (matchType === "UCL" && s.uclFixtures) {
@@ -1204,13 +1232,19 @@ function MatchPage() {
         // For UCL matches, homeGoals and awayGoals should be regular time only
         // extraTime.homeGoals and extraTime.awayGoals are the additional goals in extra time
         const result: any = {
+          // Keep the original simulation payload (especially match statistics)
+          // and replace only the parts that the live chronicle actually changed.
+          // playSpecificFixture() pre-simulates the fixture once, so its stats
+          // are already coherent and should not disappear when the manager
+          // chooses "Saltar al final" or finishes the live match.
+          ...(fx?.result ?? {}),
           homeGoals: homeScore - (extraTimeData?.homeGoals || 0),
           awayGoals: awayScore - (extraTimeData?.awayGoals || 0),
           events: allEventsRef.current,
           cards: allCardsRef.current,
           injuries: fx?.result?.injuries ?? [],
-          xgHome: 0,
-          xgAway: 0,
+          xgHome: Number.isFinite(fx?.result?.xgHome) ? fx.result.xgHome : 0,
+          xgAway: Number.isFinite(fx?.result?.xgAway) ? fx.result.xgAway : 0,
         };
 
         if (fx) {
@@ -1605,8 +1639,21 @@ function MatchPage() {
           isCupMatch,
           undefined,
           undefined,
-          matchType === "UCL",
+          matchType === "UCL" || isEuropeanFixture(fixture),
         );
+
+        // The European save path is isolated from `uclFixtures`. Reload the
+        // exact fixture we just committed so the live route cannot continue
+        // with a stale pre-match result object.
+        const committed = loadSave();
+        if (committed) {
+          const comp = europeanCompetitionOf(fixture);
+          const committedFixture = comp
+            ? findFixtureInEuropeanCompetitions(committed, fixture.id)
+            : committed.uclFixtures?.find((f) => f.id === fixture.id);
+          if (committedFixture) fixtureRef.current = committedFixture;
+          setSave(committed);
+        }
       }
 
       // Clear pending match after simulation
@@ -1649,7 +1696,21 @@ function MatchPage() {
       // visually parked at 0' while the scheduled clock was immediately
       // cancelled. Fast-forward now owns the whole resolution path.
       setPhase("playing");
-      skipToEnd(true);
+      try {
+        skipToEnd(true);
+      } catch (error) {
+        // "Saltar al final" is allowed to recover from malformed legacy match
+        // data. Never leave the route in an unfinished state or reject the
+        // async startMatch promise.
+        console.error("startMatch: skipToEnd failed", error);
+        const current = fixtureRef.current;
+        if (current?.result) {
+          persistResultToSave(current.id, current.result);
+        }
+        setMinute(90);
+        minuteRef.current = 90;
+        setPhase("done");
+      }
     } else {
       setPhase("playing");
       runClock();
@@ -2287,103 +2348,16 @@ function MatchPage() {
   }
 
   function persistResultToSave(fixtureId: string, result: any) {
-    const s = loadSave();
-    if (!s) return;
+    const current = loadSave();
+    if (!current || !result) return current ?? null;
 
-    let next: any = { ...s };
-    let changed = false;
-    let matchedFixture: any = null;
-    let competition: "league" | "cup" | "ucl" | "european" | null = null;
-    let europeanCompetition: "uel" | "uecl" | null = null;
-
-    // The live chronicle is provisional while it is being played. At this
-    // point it becomes official. Mark it so this transition is idempotent and
-    // so later code can distinguish it from the provisional simulation.
-    const officialResult = { ...result, liveCommitted: true };
-
-    const patchList = (list: any[], kind: "league" | "cup") =>
-      list.map((f: any) => {
-        if (f.id !== fixtureId) return f;
-        matchedFixture = f;
-        competition = kind;
-        changed = true;
-        return { ...f, result: officialResult };
-      });
-
-    if (next.fixtures) {
-      const fixturesNext: any = {};
-      for (const lg of Object.keys(next.fixtures)) {
-        fixturesNext[lg] = patchList(next.fixtures[lg] || [], "league");
-      }
-      next.fixtures = fixturesNext;
-    }
-
-    if (next.cupFixtures) {
-      const cupNext: any = {};
-      for (const lg of Object.keys(next.cupFixtures || {})) {
-        const list = next.cupFixtures[lg];
-        cupNext[lg] = Array.isArray(list) ? patchList(list, "cup") : list;
-      }
-      next.cupFixtures = cupNext;
-    }
-
-    if (next.uclFixtures) {
-      next.uclFixtures = next.uclFixtures.map((f: any) => {
-        if (f.id !== fixtureId) return f;
-        matchedFixture = f;
-        competition = "ucl";
-        changed = true;
-        return { ...f, result: officialResult };
-      });
-    }
-    for (const comp of ["uel", "uecl"] as const) {
-      const key = comp === "uel" ? "uelFixtures" : "ueclFixtures";
-      if (!Array.isArray((next as any)[key])) continue;
-      (next as any)[key] = (next as any)[key].map((f: any) => {
-        if (f.id !== fixtureId) return f;
-        matchedFixture = f;
-        competition = "european";
-        europeanCompetition = comp;
-        changed = true;
-        return { ...f, result: officialResult, europeanCompetition: comp };
-      });
-    }
-
-    if (!changed || !matchedFixture) return;
-
-    // Live fixtures are marked `liveCommitted`, so the normal matchday
-    // simulator deliberately skips them. Commit cards/suspensions explicitly
-    // now; otherwise a red card from the watched match never creates the ban
-    // for the next eligible match. This is idempotent per fixture.
-    const disciplined = commitLiveFixtureDiscipline(next, fixtureId);
-    next = disciplined;
-
-    // `advanceMatchdayLayered` only processes fixtures with `!f.result`.
-    // Therefore the user's watched league fixture must have its table row
-    // updated here, otherwise it is skipped later and the win/draw points
-    // are never added. We only do this when the previous fixture was still
-    // provisional, so the points cannot be duplicated by a second commit.
-    if (competition === "league" && !matchedFixture.result?.liveCommitted) {
-      const officialFixture = { ...matchedFixture, result: officialResult };
-      next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], officialFixture);
-    } else if (competition === "european" && europeanCompetition) {
-      const officialFixture = { ...matchedFixture, result: officialResult, europeanCompetition };
-      next = runEuropeanEngine(next, europeanCompetition, (engine) => {
-        if (engine.ucl && isUCLLeaguePhaseFixture(officialFixture.round)) {
-          engine.ucl.table = applyUCLTableResult(
-            engine.ucl.table,
-            officialFixture.homeId,
-            officialFixture.awayId,
-            officialFixture.result.homeGoals,
-            officialFixture.result.awayGoals,
-          );
-        }
-        return applyUCLMatchAftermath(engine, officialFixture.homeId, officialFixture.awayId);
-      });
-    }
-
-    saveSaveWithRetry(next);
+    // Todas las competiciones usan una única ruta de commit. Esto evita que
+    // la vista de partido dependa de helpers internos del motor europeo y,
+    // sobre todo, impide errores como `runEuropeanEngine is not defined` al
+    // cerrar un partido de Europa League/Conference.
+    const next = commitLiveFixtureResult(current, fixtureId, result);
     setSave(next);
+    return next;
   }
 
   /**
@@ -5122,9 +5096,65 @@ function MatchPage() {
       setSubFeed((prev) => [...madeWhileSkipping.slice().reverse(), ...prev]);
     }
 
+    // Some older European saves contain a valid final score but an incomplete
+    // events array. Never let that turn "Saltar al final" into "only changes":
+    // reconstruct the missing goal entries from the final score before closing
+    // the chronicle.
+    {
+      const ensureGoalEvents = (team: "home" | "away", expectedGoals: number) => {
+        if (expectedGoals <= 0) return;
+        const current = playedEventsRef.current.filter(
+          (e: any) =>
+            e.team === team &&
+            ["goal", "own_goal", "free_kick_goal", "penalty_goal"].includes(e.type),
+        ).length;
+        let missing = expectedGoals - current;
+        if (missing <= 0) return;
+        const sideXI = team === "home" ? homeXIRef.current : awayXIRef.current;
+        const candidates = sideXI.filter(Boolean);
+        if (candidates.length === 0) return;
+        for (let i = 0; i < missing; i++) {
+          const p = candidates[(current + i) % candidates.length];
+          const minute = Math.min(90, Math.max(1, 5 + Math.floor((84 * (i + 1)) / (missing + 1))));
+          playedEventsRef.current.push({
+            minute,
+            team,
+            type: "goal",
+            scorerId: p.id,
+            scorerName: p.name,
+            detail: "Gol generado al cerrar la simulación",
+          });
+        }
+      };
+      ensureGoalEvents("home", Number(fx.result.homeGoals) || 0);
+      ensureGoalEvents("away", Number(fx.result.awayGoals) || 0);
+
+      // Once missing events have been restored, derive the regular-time score
+      // from the chronicle itself. This prevents finalizePlayedChronicle() from
+      // persisting 0-0 merely because the live loop had no goal event for an
+      // older European fixture.
+      const chronicleGoals = (team: "home" | "away") =>
+        playedEventsRef.current.filter(
+          (e: any) =>
+            e.team === team &&
+            ["goal", "own_goal", "free_kick_goal", "penalty_goal"].includes(e.type),
+        ).length;
+      homeScoreRef.current = chronicleGoals("home");
+      awayScoreRef.current = chronicleGoals("away");
+    }
+
     // From this point on there is only one authoritative timeline: what has
     // actually been resolved. The future pre-simulation is never displayed.
-    finalizePlayedChronicle();
+    try {
+      finalizePlayedChronicle();
+    } catch (error) {
+      // A malformed historical stat must never leave the match route without
+      // a finish button. Preserve the authoritative fixture result and close
+      // the live session even if an optional post-match stat pass fails.
+      console.error("skipToEnd: error closing chronicle", error);
+      fixtureRef.current = { ...fx, result: { ...fx.result } } as any;
+      persistResultToSave(fx.id, fx.result);
+    }
     setHomeScore(homeScoreRef.current);
     setAwayScore(awayScoreRef.current);
     setFeed(
@@ -5419,13 +5449,29 @@ function MatchPage() {
     Final: "Final",
   };
 
-  // Determine header text based on match type
+  // Determine header text based on match type. In Europa/Conference,
+  // `fixture.matchday` is the absolute UEFA calendar offset (e.g. 78), not
+  // the competition round. The public label must use md1..md8 / playoff /
+  // knockout instead of exposing that internal day counter.
+  const europeanRoundLabel = (round: string | undefined, fallback: number | undefined) => {
+    const md = String(round ?? "").match(/^md(\d+)$/i);
+    if (md) return `Jornada ${md[1]}`;
+    if (round?.startsWith("Playoff")) return "Playoff";
+    if (round?.startsWith("R16")) return "Octavos";
+    if (round?.startsWith("QF")) return "Cuartos";
+    if (round?.startsWith("SF")) return "Semifinal";
+    if (round === "Final") return "Final";
+    return typeof fallback === "number" ? `Jornada ${fallback}` : "";
+  };
+
   const headerText =
     matchType === "CUP"
       ? `Copa Nacional · ${cupRound || fixture.round || ""}`
-      : matchType === "UCL"
-        ? `Champions League · Jornada ${fixture.matchday}`
-        : `Liga · Jornada ${fixture.matchday}`;
+      : isEuropeanFixture(fixture)
+        ? `${europeanCompetitionOf(fixture) === "uel" ? "Europa League" : "Conference League"} · ${europeanRoundLabel(fixture.round, fixture.matchday)}`
+        : matchType === "UCL"
+          ? `Champions League · Jornada ${fixture.matchday}`
+          : `Liga · Jornada ${fixture.matchday}`;
 
   const liveMinuteLabel =
     phase === "preview"
@@ -5701,7 +5747,7 @@ function MatchPage() {
                 <>
                   {(() => {
                     const isUCLKnockout =
-                      matchType === "UCL" &&
+                      (matchType === "UCL" || isEuropeanFixture(fixture)) &&
                       fixture?.round &&
                       (fixture.round === "Final" ||
                         fixture.round.includes("Playoff") ||

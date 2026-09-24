@@ -1181,6 +1181,33 @@ export function simulateMatchFast(
     });
   }
 
+  // Keep the scoreboard and chronicle coherent even if a player becomes
+  // unavailable between the Poisson score draw and scorer selection.
+  const ensureFastGoalEvents = (team: "home" | "away", expectedGoals: number) => {
+    if (expectedGoals <= 0) return;
+    const count = events.filter(
+      (e) =>
+        e.team === team &&
+        ["goal", "own_goal", "free_kick_goal", "penalty_goal"].includes(e.type),
+    ).length;
+    let missing = expectedGoals - count;
+    if (missing <= 0) return;
+    const pool = (team === "home" ? homeXI : awayXI).filter((p) => !isGoalkeeper(p.positions));
+    const candidates = pool.length > 0 ? pool : team === "home" ? homeXI : awayXI;
+    if (candidates.length === 0) return;
+    for (let i = 0; i < missing; i++) {
+      const scorer = candidates[(count + i) % candidates.length];
+      events.push({
+        minute: Math.min(90, Math.max(1, 8 + Math.floor((80 * (i + 1)) / (missing + 1)))),
+        team,
+        type: "goal",
+        scorerId: scorer.id,
+        scorerName: scorer.name,
+      });
+    }
+  };
+  ensureFastGoalEvents("home", homeGoals);
+  ensureFastGoalEvents("away", awayGoals);
   events.sort((a, b) => a.minute - b.minute);
 
   // Lightweight cards for fast/background matches. This engine is used by
