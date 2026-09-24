@@ -513,9 +513,9 @@ function generateCPUXI(
   // nivel en la liga. Solo rotan de forma apreciable ante rivales claramente
   // inferiores y en competiciones de menor prioridad. Así se evita que una
   // plantilla de 88-90 OVR pierda demasiada fuerza por descansos aleatorios.
-  let rotationLevel = Math.max(0, Math.min(0.3, (strengthDiff - 6) / 24));
-  if (context?.competition === "ucl") rotationLevel *= 0.25;
-  else if (context?.competition === "cup") rotationLevel *= 0.55;
+  let rotationLevel = Math.max(0, Math.min(0.12, (strengthDiff - 9) / 30));
+  if (context?.competition === "ucl") rotationLevel *= 0.2;
+  else if (context?.competition === "cup") rotationLevel *= 0.45;
   if (context?.isHome) rotationLevel *= 0.9;
 
   const picked = pickXIForFormationWithRotation(

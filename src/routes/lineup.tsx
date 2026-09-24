@@ -81,6 +81,11 @@ function posLabelOf(player: { positions?: any; position?: string }): string {
   return formatPositions(posCodesOf(player));
 }
 
+function playerOverall(player: any): number {
+  const value = Number(player?.rating ?? player?.OVR ?? player?.overall ?? player?.overallRating);
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+}
+
 /** ¿Puede este jugador ocupar un hueco que pide `slot`? */
 function canPlayInSlot(player: { positions?: any; position?: string }, slot: PosCode): boolean {
   return canPlayPosition(posCodesOf(player), slot);
@@ -229,25 +234,45 @@ function LineupPage() {
     const active = state.plans.find((plan) => plan.id === state.activeId) ?? state.plans[0];
     if (!active) return;
 
-    setTacticPlanState(state);
-    setSelectedFormation(
-      (active.formation || save.formations[save.myTeamId] || "Táctica 4-3-3") as FormationName,
+    // SaveGame is the source of truth for the active plan. Older versions could
+    // leave the local tactic-plan copy one edit behind (por ejemplo, un
+    // Reserva -> Suplente que sí se guardaba en SaveGame). On re-entry that
+    // stale local copy then overwrote the visible bench again. Reconcile the
+    // active plan with the saved XI/substitutes before rendering it.
+    const savedXI = (save.lineups[save.myTeamId] ?? []).slice(0, 11);
+    const hasSavedSubs = Object.prototype.hasOwnProperty.call(
+      save.substitutes ?? {},
+      save.myTeamId,
     );
-    setStartingXI(
-      active.lineup.length > 0
-        ? active.lineup.slice(0, 11)
-        : (save.lineups[save.myTeamId] ?? []).slice(0, 11),
-    );
-    setBench(
-      (active.substitutes.length > 0
-        ? active.substitutes
-        : (save.substitutes?.[save.myTeamId] ?? [])
-      ).slice(0, 12),
-    );
-    setTactics(active.tactics);
+    const savedSubs = hasSavedSubs
+      ? (save.substitutes?.[save.myTeamId] ?? []).slice(0, 12)
+      : active.substitutes.slice(0, 12);
+    const useSavedXI = savedXI.length > 0;
+    const reconciledActive = {
+      ...active,
+      lineup: useSavedXI ? savedXI : active.lineup.slice(0, 11),
+      substitutes: savedSubs,
+      formation: save.formations[save.myTeamId] ?? active.formation ?? "Táctica 4-3-3",
+    };
+    const reconciledState: TacticPlanState = {
+      activeId: active.id,
+      plans: state.plans.map((plan) => (plan.id === active.id ? reconciledActive : plan)),
+    };
 
-    if (!loaded) {
-      saveTacticPlans(save.myTeamId, state);
+    setTacticPlanState(reconciledState);
+    setSelectedFormation(reconciledActive.formation as FormationName);
+    setStartingXI(reconciledActive.lineup);
+    setBench(reconciledActive.substitutes);
+    setTactics(reconciledActive.tactics);
+
+    const plansNeedSync =
+      reconciledActive.lineup.some((id, i) => id !== active.lineup[i]) ||
+      reconciledActive.lineup.length !== active.lineup.length ||
+      reconciledActive.substitutes.some((id, i) => id !== active.substitutes[i]) ||
+      reconciledActive.substitutes.length !== active.substitutes.length ||
+      reconciledActive.formation !== active.formation;
+    if (!loaded || plansNeedSync) {
+      saveTacticPlans(save.myTeamId, reconciledState);
     }
 
     initializedPlanTeamRef.current = save.myTeamId;
@@ -520,6 +545,49 @@ function LineupPage() {
 
   // ---- Tácticas / planes de juego ---------------------------------------
   const [tactics, setTactics] = useState<TeamTactics>(() => loadTactics(save?.myTeamId ?? ""));
+
+  /**
+   * Commit the exact XI + substitutes currently visible in Dirección de equipo.
+   * Normal lineup edits are persisted immediately, so there is never a second
+   * source of truth that can resurrect an older bench after navigating away.
+   * Match-only edits keep using the temporary router/live state and are not
+   * written into the career save here.
+   */
+  function commitVisibleConvocation(nextXI: string[], nextBench: string[]) {
+    if (!save || liveMode || fromMatch || fromSeason) return;
+
+    const cleanXI = nextXI.filter(Boolean).slice(0, 11);
+    const cleanBench = Array.from(
+      new Set(nextBench.filter((id) => id && !cleanXI.includes(id))),
+    ).slice(0, 12);
+
+    let nextSave = setLineup(save, save.myTeamId, cleanXI);
+    nextSave = setFormation(nextSave, save.myTeamId, selectedFormation);
+    nextSave = setSubstitutes(nextSave, save.myTeamId, cleanBench);
+
+    // Update both persistence layers from the exact same snapshot.
+    saveSave(nextSave);
+    setSave(nextSave);
+
+    if (tacticPlanState) {
+      const nextPlanState: TacticPlanState = {
+        activeId: tacticPlanState.activeId,
+        plans: tacticPlanState.plans.map((plan) =>
+          plan.id === tacticPlanState.activeId
+            ? {
+                ...plan,
+                formation: selectedFormation,
+                lineup: [...cleanXI],
+                substitutes: [...cleanBench],
+                tactics: { ...tactics },
+              }
+            : plan,
+        ),
+      };
+      setTacticPlanState(nextPlanState);
+      saveTacticPlans(save.myTeamId, nextPlanState);
+    }
+  }
 
   function persistCurrentPlan(commitSave = true) {
     if (!save || !tacticPlanState) {
@@ -881,9 +949,13 @@ function LineupPage() {
       // Pitch player selected, bench player clicked - swap
       handlePitchToBenchSwap(selectedPlayer, playerId);
     } else if (reservePlayers.some((p) => p.id === selectedPlayer)) {
-      // Reserve player selected, bench player clicked - direct exchange.
+      // Reserva -> Suplente: Camavinga ocupa exactamente la plaza de Güler y
+      // Güler pasa a Reservas. Persistimos el resultado inmediatamente para
+      // que el cambio no pueda perderse al volver a entrar en la pantalla.
       const reserveId = selectedPlayer;
-      setBench((prev) => prev.map((id) => (id === playerId ? reserveId : id)));
+      const nextBench = bench.map((id) => (id === playerId ? reserveId : id));
+      setBench(nextBench);
+      commitVisibleConvocation(startingXI, nextBench);
       setSelectedPlayer(null);
     } else {
       // Both are on the bench - swap their order.
@@ -1068,26 +1140,42 @@ function LineupPage() {
    * bench -> XI move once there are no changes/windows left. A player who has
    * already been substituted off can never return to the pitch.
    */
-  function liveSubBlocked(benchPlayerId: string): boolean {
+  function liveSubBlocked(benchPlayerId: string, pitchPlayerId?: string): boolean {
     if (!liveMode || !live) return false;
     if (liveGoneIds().has(benchPlayerId)) {
       toast.error("Ese jugador ya ha sido sustituido y no puede volver al campo.");
       setSelectedPlayer(null);
       return true;
     }
+
+    // Calculate the substitution count AFTER the proposed swap. This matters
+    // when the manager undoes a pending change (e.g. Mbappé → Güler → Mbappé):
+    // the temporary change must return to zero instead of consuming another
+    // substitution or window.
+    const currentOut = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
+    const currentIn = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
+    const currentChanges = Math.min(currentOut.length, currentIn.length);
+    const nextXI = pitchPlayerId
+      ? startingXI.map((id) => (id === pitchPlayerId ? benchPlayerId : id))
+      : startingXI;
+    const nextOut = liveBaseXIRef.current.filter((id) => !nextXI.includes(id));
+    const nextIn = nextXI.filter((id) => !liveBaseXIRef.current.includes(id));
+    const nextChanges = Math.min(nextOut.length, nextIn.length);
+
     const limits = subLimits(live.isExtraTime);
     const free = isFreeWindow(live.phase);
-    const inIds = startingXI.filter((id) => !liveBaseXIRef.current.includes(id));
-    const outIds = liveBaseXIRef.current.filter((id) => !startingXI.includes(id));
-    const changes = Math.min(outIds.length, inIds.length);
-    if (live.subsUsed + changes + 1 > limits.maxSubs) {
+    if (live.subsUsed + nextChanges > limits.maxSubs) {
       toast.error(
-        `No te quedan cambios disponibles (${live.subsUsed + changes}/${limits.maxSubs}).`,
+        `No te quedan cambios disponibles (${live.subsUsed + nextChanges}/${limits.maxSubs}).`,
       );
       setSelectedPlayer(null);
       return true;
     }
-    if (!free && changes === 0 && live.windowsUsed >= limits.maxWindows) {
+
+    // A pending edit that already created a window can keep being edited inside
+    // that same window. Only a transition from 0 pending changes to >0 consumes
+    // a new window. Returning to the base XI therefore always remains legal.
+    if (!free && nextChanges > 0 && currentChanges === 0 && live.windowsUsed >= limits.maxWindows) {
       toast.error(`No te quedan ventanas de cambio (${live.windowsUsed}/${limits.maxWindows}).`);
       setSelectedPlayer(null);
       return true;
@@ -1100,7 +1188,7 @@ function LineupPage() {
     const benchPlayer = squad.find((p) => p.id === benchPlayerId);
 
     if (!pitchPlayer || !benchPlayer) return;
-    if (liveSubBlocked(benchPlayerId)) return;
+    if (liveSubBlocked(benchPlayerId, pitchPlayerId)) return;
 
     // Check if bench player is injured
     if (isCurrentlyInjured(benchPlayer)) {
@@ -1506,9 +1594,11 @@ function LineupPage() {
 
     if (bench.includes(selectedPlayer)) {
       const selectedBenchId = selectedPlayer;
-      // Intercambio directo: el suplente pasa a reservas y el jugador de
-      // reservas ocupa exactamente su plaza de suplente.
-      setBench((prev) => prev.map((id) => (id === selectedBenchId ? playerId : id)));
+      // Suplente -> Reserva: el jugador de Reservas ocupa exactamente la plaza
+      // del suplente y el suplente anterior vuelve a Reservas.
+      const nextBench = bench.map((id) => (id === selectedBenchId ? playerId : id));
+      setBench(nextBench);
+      commitVisibleConvocation(startingXI, nextBench);
       setSelectedPlayer(null);
       return;
     }
@@ -1559,32 +1649,9 @@ function LineupPage() {
       ),
     ).slice(0, 12);
 
-    let next = setLineup(save, save.myTeamId, filteredStartingXI);
-    next = setFormation(next, save.myTeamId, selectedFormation);
-    next = setSubstitutes(next, save.myTeamId, selectedSubstitutes);
-    saveSave(next);
-    setSave(next);
+    commitVisibleConvocation(filteredStartingXI, selectedSubstitutes);
     setSelectedEmptySlot(null);
     setSelectedPlayer(null);
-
-    if (tacticPlanState) {
-      const nextPlanState: TacticPlanState = {
-        activeId: tacticPlanState.activeId,
-        plans: tacticPlanState.plans.map((plan) =>
-          plan.id === tacticPlanState.activeId
-            ? {
-                ...plan,
-                formation: selectedFormation,
-                lineup: [...filteredStartingXI],
-                substitutes: selectedSubstitutes,
-                tactics: { ...tactics },
-              }
-            : plan,
-        ),
-      };
-      saveTacticPlans(save.myTeamId, nextPlanState);
-      setTacticPlanState(nextPlanState);
-    }
 
     toast.success("Plan de juego guardado correctamente");
   }
@@ -2120,7 +2187,7 @@ function LineupPage() {
                       className="bg-secondary shadow"
                     />
                     <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
-                      {player.rating}
+                      {playerOverall(player) || "—"}
                     </span>
                     {isForcedOut && (
                       <span
@@ -2216,6 +2283,9 @@ function LineupPage() {
                           showRing={false}
                           className="bg-secondary shadow"
                         />
+                        <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
+                          {playerOverall(player) || "—"}
+                        </span>
                         {isInjured && (
                           <span className="absolute -right-1 -bottom-1 grid h-5 w-5 place-items-center rounded-full border border-destructive/30 bg-background text-[0.65rem] shadow">
                             🔒
@@ -2232,7 +2302,7 @@ function LineupPage() {
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {posLabelOf(player)} · {player.age}a · OVR {player.rating}
+                          {posLabelOf(player)} · {player.age}a · {player.goals}G {player.assists}A
                         </p>
                         <div className="mt-1">
                           <span className={`inline-flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[0.55rem] font-black ${

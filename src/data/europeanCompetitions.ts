@@ -1,4 +1,4 @@
-import { getAllTeams, teamById, type Team } from "@/data/teams";
+import { findTeamByName, getAllTeams, type Team } from "@/data/teams";
 import { UCL_CALENDAR, UCL_START, type UCLState } from "@/data/ucl";
 
 type EuropeanCompetitionId = "uel" | "uecl";
@@ -31,7 +31,7 @@ const CONFERENCE_NAMES = [
   "Sevilla", "Celta", "Valencia", "FC Twente", "FC Utrecht", "sc Heerenveen",
   "Başakşehir", "Göztepe", "Konyaspor", "Arouca", "Casa Pia", "Nacional",
   "Lech Poznań", "Raków", "GKS Katowice", "Hearts", "Hibernian", "Sturm Graz",
-  "SK Rapid", "Hammarby", "Djurgården", "Viking FK", "Universitatea Cluj", "KV Cortrijk",
+  "SK Rapid", "Hammarby", "Djurgården", "Viking FK", "Universitatea Cluj", "KAA Gent",
 ];
 
 // A few clubs are represented in the in-game database under a localized/legacy name.
@@ -42,18 +42,26 @@ const NAME_ALIASES: Record<string, string[]> = {
   "Eintracht Frankfurt": ["Frankfurt", "Eintracht Frankfurt"],
   Freiburg: ["SC Freiburg", "Freiburg"],
   Lille: ["LOSC Lille", "Lille"],
-  Lyon: ["OL", "Lyon", "Olympique Lyon"],
-  Nice: ["OGC Nice", "Nice", "OGC Niza"],
+  Lyon: ["OL", "Olympique Lyon", "Lyon"],
+  Nice: ["OGC Nice", "OGC Niza", "Nice"],
   Villarreal: ["Villarreal CF", "Villarreal"],
   "Real Betis": ["Real Betis", "Betis"],
+  Benfica: ["SL Benfica", "Benfica"],
+  Braga: ["SC Braga", "Braga"],
+  Estoril: ["Estoril Praia", "Estoril"],
+  Rennes: ["Stade Rennais FC", "Rennes"],
+  "Çorum FK": ["Çorum Futbol Kulübü", "Çorum FK"],
+  "AZ Alkmaar": ["AZ", "AZ Alkmaar"],
   "Universitatea Craiova": ["Univ. Craiova", "Universitatea Craiova"],
+  "Universitatea Cluj": ["FC Univ. Cluj", "Universitatea Cluj"],
+  Genk: ["KRC Genk", "Genk"],
+  Anderlecht: ["RSC Anderlecht", "Anderlecht"],
   Mainz: ["1. FSV Mainz 05", "Mainz"],
   Hoffenheim: ["TSG Hoffenheim", "Hoffenheim"],
   "Werder Bremen": ["SV Werder Bremen", "Werder Bremen"],
   Celta: ["Celta", "RC Celta", "Celta de Vigo"],
   Sevilla: ["Sevilla FC", "Sevilla"],
   Valencia: ["Valencia CF", "Valencia"],
-  "KV Cortrijk": ["KV Kortrijk", "KV Cortrijk"],
   "Casa Pia": ["Casa Pia AC", "Casa Pia"],
   "Sturm Graz": ["SK Sturm Graz", "Sturm Graz"],
   Djurgården: ["Djurgårdens IF", "Djurgården"],
@@ -62,31 +70,10 @@ const NAME_ALIASES: Record<string, string[]> = {
   "FC Utrecht": ["FC Utrecht", "Utrecht"],
   "sc Heerenveen": ["sc Heerenveen", "Heerenveen"],
   Raków: ["Raków", "Raków Częstochowa"],
-  Genk: ["KRC Genk", "Genk"],
   "Standard Lieja": ["Standard Liège", "Standard Lieja", "Standard de Liege"],
-  Anderlecht: ["RSC Anderlecht", "Anderlecht"],
-  "LASK": ["LASK"],
   "F.C. København": ["F.C. København", "FC København", "København"],
-  "Çorum FK": ["Çorum FK", "Çorum Futbol Kulübü"],
 };
 
-const PLACEHOLDER_TEAMS: Record<string, Omit<Team, "id">> = {
-  "Benfica": { name: "Benfica", short: "SLB", city: "Lisboa", league: "ligaportugal", att: 78, mid: 78, def: 76, stars: [], color: "#e60012" },
-  "Braga": { name: "Braga", short: "SCB", city: "Braga", league: "ligaportugal", att: 72, mid: 72, def: 70, stars: [], color: "#d71920" },
-  "Estoril": { name: "Estoril", short: "EST", city: "Estoril", league: "ligaportugal", att: 66, mid: 67, def: 65, stars: [], color: "#f5d000" },
-  "Rennes": { name: "Rennes", short: "REN", city: "Rennes", league: "ligue1", att: 73, mid: 73, def: 71, stars: [], color: "#e11d48" },  "AZ Alkmaar": {
-    name: "AZ Alkmaar", short: "AZ", city: "Alkmaar", league: "eredivisie", att: 73, mid: 73, def: 72,
-    stars: [], color: "#D2122E",
-  },
-  "Universitatea Cluj": {
-    name: "Universitatea Cluj", short: "UCL", city: "Cluj-Napoca", league: "superliga", att: 68, mid: 68, def: 67,
-    stars: [], color: "#111827",
-  },
-  "KV Cortrijk": {
-    name: "KV Cortrijk", short: "KOR", city: "Kortrijk", league: "1aproleague", att: 67, mid: 67, def: 66,
-    stars: [], color: "#E30613",
-  },
-};
 
 function normalize(value: string): string {
   return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
@@ -95,41 +82,45 @@ function normalize(value: string): string {
 function resolveByName(name: string): string | null {
   const all = getAllTeams();
   const candidates = [name, ...(NAME_ALIASES[name] ?? [])];
+
+  // 1) Primero buscamos coincidencias exactas en el registro real de equipos.
   for (const candidate of candidates) {
     const key = normalize(candidate);
     const exact = all.find((team) => normalize(team.name) === key || normalize(team.id) === key);
     if (exact) return exact.id;
   }
+
+  // 2) Como segunda capa usamos el resolver central de clubes, que conoce los
+  // alias históricos del dataset (p. ej. Rennes -> Stade Rennais FC).
+  for (const candidate of candidates) {
+    const resolved = findTeamByName(candidate);
+    if (resolved) return resolved.id;
+  }
+
   return null;
 }
 
-function ensurePlaceholder(name: string): string | null {
-  const existing = resolveByName(name);
-  if (existing) return existing;
-  const placeholder = PLACEHOLDER_TEAMS[name];
-  return placeholder ? normalize(name) : null;
-}
-
 export function ensureEuropeanTeam(name: string): string {
-  const resolved = resolveByName(name) ?? ensurePlaceholder(name);
-  if (!resolved) throw new Error(`Equipo europeo no encontrado: ${name}`);
+  const resolved = resolveByName(name);
+  if (!resolved) {
+    throw new Error(`Equipo europeo sin plantilla/equipo real: ${name}`);
+  }
   return resolved;
 }
 
 export function getEuropeanTeam(name: string): Team {
   const id = ensureEuropeanTeam(name);
   const existing = getAllTeams().find((team) => team.id === id);
-  if (existing) return existing;
-  const placeholder = PLACEHOLDER_TEAMS[name];
-  return { id, ...placeholder } as Team;
+  if (!existing) throw new Error(`Equipo europeo no encontrado en el registro: ${name}`);
+  return existing;
 }
 
+/**
+ * Compatibilidad con saves/código antiguo. Ya no inyecta clubes ficticios:
+ * el registro europeo debe contener exclusivamente equipos reales.
+ */
 export function injectEuropeanPlaceholders(teams: Team[]): Team[] {
-  const existing = new Set(teams.map((team) => team.id));
-  const extra = Object.entries(PLACEHOLDER_TEAMS)
-    .map(([name, team]) => ({ id: normalize(name), ...team }))
-    .filter((team) => !existing.has(team.id));
-  return [...teams, ...extra];
+  return [...teams];
 }
 
 function buildParticipantIds(names: string[]): string[] {

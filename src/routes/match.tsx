@@ -1681,9 +1681,11 @@ function MatchPage() {
     // IMPORTANT: only players explicitly registered as substitutes can enter
     // during this match. Everyone else remains in "Reservas" and is never
     // eligible for an automatic or manual in-match change.
-    const configuredSubstitutes = Array.isArray(s.substitutes?.[s.myTeamId])
-      ? s.substitutes[s.myTeamId]
-      : [];
+    const configuredSubstitutes = Array.isArray(routerState?.matchSubstitutes)
+      ? routerState.matchSubstitutes
+      : Array.isArray(s.substitutes?.[s.myTeamId])
+        ? s.substitutes[s.myTeamId]
+        : [];
     const suspendedIds = getSuspendedPlayerIdsForCompetition(
       s,
       s.myTeamId,
@@ -2104,7 +2106,15 @@ function MatchPage() {
     myXIRef.current = nextXI;
     setMyXI(nextXI);
 
-    myBenchRef.current = myBenchRef.current.filter((id) => id !== playerId);
+    // Keep players who have left the pitch visible in the match bench.
+    // They are still blocked by `liveGoneIds()`, so they cannot return, but
+    // they must not visually disappear from the substitutes panel.
+    myBenchRef.current = Array.from(
+      new Set([
+        ...myBenchRef.current.filter((id) => id !== playerId),
+        playerId,
+      ]),
+    );
     setMyBench(myBenchRef.current);
 
     goneRef.current = Array.from(new Set([...goneRef.current, playerId]));
@@ -4788,7 +4798,12 @@ function MatchPage() {
     xi[targetIndex] = playerIn.id;
     myXIRef.current = xi;
     setMyXI(xi);
-    myBenchRef.current = myBenchRef.current.filter((id) => id !== playerIn.id);
+    myBenchRef.current = Array.from(
+      new Set([
+        ...myBenchRef.current.filter((id) => id !== playerIn.id),
+        injury.playerId,
+      ]),
+    );
     setMyBench(myBenchRef.current);
     staminaRef.current = { ...staminaRef.current, [playerIn.id]: STAMINA_START };
     setStamina(staminaRef.current);
@@ -4949,8 +4964,15 @@ function MatchPage() {
     xi[outIndex] = playerIn.id;
     myXIRef.current = xi;
     setMyXI(xi);
-    myBenchRef.current = myBenchRef.current.filter((id) => id !== playerIn.id && id !== worst.id);
+    myBenchRef.current = Array.from(
+      new Set([
+        ...myBenchRef.current.filter((id) => id !== playerIn.id && id !== worst.id),
+        worst.id,
+      ]),
+    );
     setMyBench(myBenchRef.current);
+    goneRef.current = Array.from(new Set([...goneRef.current, worst.id]));
+    setGoneIds(goneRef.current);
     staminaRef.current = { ...staminaRef.current, [playerIn.id]: STAMINA_START };
     setStamina(staminaRef.current);
     subsUsedRef.current += 1;

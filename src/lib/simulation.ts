@@ -124,11 +124,13 @@ function calculateAttackStrength(xi: Player[]): number {
   const defenders = xi.filter((p) => isDefensive(p.positions));
 
   // Attack is heavily weighted by forwards (70%), midfielders (25%), defenders (5%)
+  const overallAvg = calculateActiveOVR(xi);
   const fwdAvg =
-    forwards.length > 0 ? forwards.reduce((s, p) => s + effectivePlayerRating(p), 0) / forwards.length : 0;
-  const midAvg = mids.length > 0 ? mids.reduce((s, p) => s + effectivePlayerRating(p), 0) / mids.length : 0;
+    forwards.length > 0 ? forwards.reduce((s, p) => s + effectivePlayerRating(p), 0) / forwards.length : overallAvg;
+  const midAvg =
+    mids.length > 0 ? mids.reduce((s, p) => s + effectivePlayerRating(p), 0) / mids.length : overallAvg;
   const defAvg =
-    defenders.length > 0 ? defenders.reduce((s, p) => s + effectivePlayerRating(p), 0) / defenders.length : 0;
+    defenders.length > 0 ? defenders.reduce((s, p) => s + effectivePlayerRating(p), 0) / defenders.length : overallAvg;
 
   return fwdAvg * 0.7 + midAvg * 0.25 + defAvg * 0.05;
 }
@@ -141,11 +143,13 @@ function calculateDefenseStrength(xi: Player[]): number {
   const mids = xi.filter((p) => isMidfield(p.positions));
 
   // Defense is heavily weighted by defenders (60%), goalkeepers (25%), midfielders (15%)
+  const overallAvg = calculateActiveOVR(xi);
   const gkAvg =
-    goalkeepers.length > 0 ? goalkeepers.reduce((s, p) => s + effectivePlayerRating(p), 0) / goalkeepers.length : 0;
+    goalkeepers.length > 0 ? goalkeepers.reduce((s, p) => s + effectivePlayerRating(p), 0) / goalkeepers.length : overallAvg;
   const defAvg =
-    defenders.length > 0 ? defenders.reduce((s, p) => s + effectivePlayerRating(p), 0) / defenders.length : 0;
-  const midAvg = mids.length > 0 ? mids.reduce((s, p) => s + effectivePlayerRating(p), 0) / mids.length : 0;
+    defenders.length > 0 ? defenders.reduce((s, p) => s + effectivePlayerRating(p), 0) / defenders.length : overallAvg;
+  const midAvg =
+    mids.length > 0 ? mids.reduce((s, p) => s + effectivePlayerRating(p), 0) / mids.length : overallAvg;
 
   return defAvg * 0.6 + gkAvg * 0.25 + midAvg * 0.15;
 }
@@ -171,31 +175,44 @@ export function expectedGoals(
   const awayAttack = calculateAttackStrength(awayXI) || 65;
   const awayDefense = calculateDefenseStrength(awayXI) || 65;
 
-  // Fuerza de partido: mezcla el nivel ofensivo/defensivo real del XI.
-  // Usamos la misma escala de OVR que ve el usuario y mantenemos diferencias
-  // razonables entre equipos para que la calidad de plantilla se traduzca en
-  // una probabilidad claramente mayor de ganar.
-  const homeStrength = homeAttack * 0.42 + homeDefense * 0.38 + calculateActiveOVR(homeXI) * 0.20;
-  const awayStrength = awayAttack * 0.42 + awayDefense * 0.38 + calculateActiveOVR(awayXI) * 0.20;
+  // Fuerza de partido: el XI real es la señal principal, mientras que la media
+  // dinámica del club actúa como estabilizador. Así un equipo de 86 no puede
+  // convertirse en un 76 por una alineación CPU mala o por una formación poco
+  // afortunada durante unas pocas jornadas.
+  const homeXIOverall = calculateActiveOVR(homeXI);
+  const awayXIOverall = calculateActiveOVR(awayXI);
+  const homeListedOverall = (Number(home.att) + Number(home.mid) + Number(home.def)) / 3;
+  const awayListedOverall = (Number(away.att) + Number(away.mid) + Number(away.def)) / 3;
 
-  // Las tácticas deben modificar el rendimiento, no sustituir la jerarquía de
-  // calidad entre plantillas.
+  const homeStrength =
+    homeXIOverall * 0.62 +
+    homeListedOverall * 0.18 +
+    homeAttack * 0.12 +
+    homeDefense * 0.08;
+  const awayStrength =
+    awayXIOverall * 0.62 +
+    awayListedOverall * 0.18 +
+    awayAttack * 0.12 +
+    awayDefense * 0.08;
+
+  // Las tácticas modifican el rendimiento sin borrar la jerarquía de calidad.
   const homeTacticalStrength = homeStrength * ((hMod.attack + hMod.defense) / 2);
   const awayTacticalStrength = awayStrength * ((aMod.attack + aMod.defense) / 2);
 
-  const qualityDiff = Math.max(-22, Math.min(22, homeTacticalStrength - awayTacticalStrength));
-  const HOME_MATCH_ADVANTAGE = 2.2;
+  // Una diferencia de calidad debe notarse claramente tras varias jornadas:
+  // equipos 5-10 puntos mejores generan bastante más xG, pero siguen existiendo
+  // empates y sorpresas puntuales.
+  const qualityDiff = Math.max(-28, Math.min(28, homeTacticalStrength - awayTacticalStrength));
+  const HOME_MATCH_ADVANTAGE = 2.0;
   const effectiveDiff = qualityDiff + HOME_MATCH_ADVANTAGE;
 
-  // Repartimos un total de xG razonable con una curva logística suave.
-  // Aproximadamente: igualdad -> 1.4/1.1; +10 OVR -> ~1.9/0.6; +15 OVR
-  // -> ~1.9/0.6. Sigue habiendo empates y sorpresas, pero un favorito claro
-  // debe imponerse con mayor frecuencia que un equipo inferior.
-  const share = 0.5 + 0.27 * Math.tanh(effectiveDiff / 8);
+  // Curva logística más marcada que antes. Esto reduce que plantillas muy
+  // inferiores se mantengan sistemáticamente arriba por azar acumulado.
+  const share = 0.5 + 0.32 * Math.tanh(effectiveDiff / 7.5);
   // Mantener un total de goles cercano al de un partido profesional evita que
   // los favoritos ganen por pura inflación de xG. La diferencia de calidad se
   // expresa principalmente en cómo se reparte ese total entre ambos equipos.
-  const totalXg = 2.50;
+  const totalXg = 2.55;
 
   let lh = totalXg * share;
   let la = totalXg * (1 - share);
