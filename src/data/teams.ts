@@ -1682,6 +1682,15 @@ function generateDynamicTeams(): Team[] {
   });
 }
 
+const UEFA_PLACEHOLDER_TEAMS: Team[] = [
+  { id: "benfica", name: "Benfica", short: "SLB", city: "Lisboa", league: "ligaportugal", att: 78, mid: 78, def: 76, stars: [], color: "#e60012" },
+  { id: "braga", name: "Braga", short: "SCB", city: "Braga", league: "ligaportugal", att: 72, mid: 72, def: 70, stars: [], color: "#d71920" },
+  { id: "estoril", name: "Estoril", short: "EST", city: "Estoril", league: "ligaportugal", att: 66, mid: 67, def: 65, stars: [], color: "#f5d000" },
+  { id: "rennes", name: "Rennes", short: "REN", city: "Rennes", league: "ligue1", att: 73, mid: 73, def: 71, stars: [], color: "#e11d48" },  { id: "azalkmaar", name: "AZ Alkmaar", short: "AZ", city: "Alkmaar", league: "eredivisie", att: 73, mid: 73, def: 72, stars: [], color: "#D2122E" },
+  { id: "universitateacluj", name: "Universitatea Cluj", short: "UCL", city: "Cluj-Napoca", league: "superliga", att: 68, mid: 68, def: 67, stars: [], color: "#111827" },
+  { id: "kvcortrijk", name: "KV Cortrijk", short: "KOR", city: "Kortrijk", league: "1aproleague", att: 67, mid: 67, def: 66, stars: [], color: "#E30613" },
+];
+
 let _dynamicTeams: Team[] | null = null;
 function getDynamicTeams(): Team[] {
   if (!_dynamicTeams) {
@@ -1697,7 +1706,7 @@ function getDynamicTeams(): Team[] {
 
 let _allTeamsMap: Map<string, Team> | null = null;
 export function getAllTeams(): Team[] {
-  return [...TEAMS, ...getDynamicTeams()];
+  return [...TEAMS, ...getDynamicTeams(), ...UEFA_PLACEHOLDER_TEAMS];
 }
 
 function getTeamsMap(): Map<string, Team> {
@@ -1705,6 +1714,7 @@ function getTeamsMap(): Map<string, Team> {
     _allTeamsMap = new Map();
     for (const t of TEAMS) _allTeamsMap.set(t.id.toLowerCase(), t);
     for (const t of getDynamicTeams()) _allTeamsMap.set(t.id.toLowerCase(), t);
+    for (const t of UEFA_PLACEHOLDER_TEAMS) _allTeamsMap.set(t.id.toLowerCase(), t);
   }
   return _allTeamsMap;
 }

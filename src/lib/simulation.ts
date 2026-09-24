@@ -54,7 +54,7 @@ function penaltyTakerScore(player: Player): number {
     (stats.shotPower * 0.05) + (stats.volleys * 0.03) + (stats.longShots * 0.02);
 }
 
-function fastPickScorerWeighted(xi: Player[]): Player {
+function fastPickScorerWeighted(xi: Player[]): Player | undefined {
   const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   if (candidates.length === 0) return xi[0];
 
@@ -1023,6 +1023,34 @@ export function simulateMatchFast(
   const homeFormation = opts.homeFormation ?? "Táctica 4-4-2";
   const awayFormation = opts.awayFormation ?? "Táctica 4-4-2";
 
+  // A legacy/incomplete save can temporarily produce an empty XI (for example
+  // when every available player is suspended or injured). A fast simulation
+  // must still complete the matchday instead of dereferencing scorer.id.
+  if (homeXI.length === 0 || awayXI.length === 0) {
+    return {
+      homeGoals: 0,
+      awayGoals: 0,
+      events: [],
+      cards: [],
+      injuries: [],
+      xgHome: 0,
+      xgAway: 0,
+      highlights: [],
+      ratings: [],
+      mvp: null,
+      homeLineup: homeXI,
+      awayLineup: awayXI,
+      homeStartingLineup: homeXI,
+      awayStartingLineup: awayXI,
+      homeFinalLineup: homeXI,
+      awayFinalLineup: awayXI,
+      homeFormation,
+      awayFormation,
+      substitutions: [],
+      energyAtEnd: {},
+    };
+  }
+
   // Generate substitutions before any match event so every later event uses
   // the correct players actually on the pitch.
   const substitutions = [
@@ -1103,6 +1131,7 @@ export function simulateMatchFast(
     const minute = goalMinute();
     const active = activePlayersAt(homeXI, homeBench, substitutions, new Map(), "home", minute);
     const scorer = fastPickScorerWeighted(active);
+    if (!scorer) continue;
     const assister = fastPickAssister(active, scorer.id);
 
     events.push({
@@ -1121,6 +1150,7 @@ export function simulateMatchFast(
     const minute = goalMinute();
     const active = activePlayersAt(awayXI, awayBench, substitutions, new Map(), "away", minute);
     const scorer = fastPickScorerWeighted(active);
+    if (!scorer) continue;
     const assister = fastPickAssister(active, scorer.id);
 
     events.push({
@@ -1152,7 +1182,9 @@ export function simulateMatchFast(
   const RED_REASONS = ["entrada muy dura", "mano en el área", "última falta", "conducta violenta"];
 
   function simulateTeamCardsFast(xi: Player[], bench: Player[], team: "home" | "away") {
-    const aggression = (team === "home" ? homeTactics?.aggression : awayTactics?.aggression) ?? 1;
+    const homeAggression = (homeTactics as SimTactics & { aggression?: number } | null)?.aggression;
+    const awayAggression = (awayTactics as SimTactics & { aggression?: number } | null)?.aggression;
+    const aggression = (team === "home" ? homeAggression : awayAggression) ?? 1;
 
     for (const player of [...xi, ...bench]) {
       const base =
@@ -1300,6 +1332,7 @@ export function simulateMatchFast(
     if (active.length === 0) continue;
 
     const scorer = fastPickScorerWeighted(active);
+    if (!scorer) continue;
     const assister = fastPickAssister(active, scorer.id);
     event.scorerId = scorer.id;
     event.scorerName = scorer.name;
@@ -2228,6 +2261,7 @@ export function simulateExtraTime(
   for (let i = 0; i < homeGoals; i++) {
     const minute = 91 + Math.floor(rand() * 30);
     const scorer = pickETScorer("home", minute);
+    if (!scorer) continue;
     const active = activePlayersAt(homeXI, homeBench, allSubs, homeRedCards, "home", minute).filter((p) => !isGoalkeeper(p.positions));
     const assister = active.find((p) => p.id !== scorer.id) ?? null;
     events.push({ minute, team: "home", type: "goal", scorerId: scorer.id, scorerName: scorer.name, assistId: assister?.id, assistName: assister?.name });
@@ -2235,6 +2269,7 @@ export function simulateExtraTime(
   for (let i = 0; i < awayGoals; i++) {
     const minute = 91 + Math.floor(rand() * 30);
     const scorer = pickETScorer("away", minute);
+    if (!scorer) continue;
     const active = activePlayersAt(awayXI, awayBench, allSubs, awayRedCards, "away", minute).filter((p) => !isGoalkeeper(p.positions));
     const assister = active.find((p) => p.id !== scorer.id) ?? null;
     events.push({ minute, team: "away", type: "goal", scorerId: scorer.id, scorerName: scorer.name, assistId: assister?.id, assistName: assister?.name });

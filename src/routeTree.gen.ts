@@ -13,7 +13,9 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssistsRouteImport } from './routes/assists'
 import { Route as AwardsRouteImport } from './routes/awards'
 import { Route as CalendarRouteImport } from './routes/calendar'
+import { Route as ConferenceLeagueRouteImport } from './routes/conference-league'
 import { Route as CupRouteImport } from './routes/cup'
+import { Route as EuropaLeagueRouteImport } from './routes/europa-league'
 import { Route as FixturesRouteImport } from './routes/fixtures'
 import { Route as InjuriesRouteImport } from './routes/injuries'
 import { Route as LineupRouteImport } from './routes/lineup'
@@ -48,9 +50,19 @@ const CalendarRoute = CalendarRouteImport.update({
   path: '/calendar',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConferenceLeagueRoute = ConferenceLeagueRouteImport.update({
+  id: '/conference-league',
+  path: '/conference-league',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CupRoute = CupRouteImport.update({
   id: '/cup',
   path: '/cup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EuropaLeagueRoute = EuropaLeagueRouteImport.update({
+  id: '/europa-league',
+  path: '/europa-league',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FixturesRoute = FixturesRouteImport.update({
@@ -124,7 +136,9 @@ export interface FileRoutesByFullPath {
   '/assists': typeof AssistsRoute
   '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
+  '/conference-league': typeof ConferenceLeagueRoute
   '/cup': typeof CupRoute
+  '/europa-league': typeof EuropaLeagueRoute
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
   '/lineup': typeof LineupRoute
@@ -144,7 +158,9 @@ export interface FileRoutesByTo {
   '/assists': typeof AssistsRoute
   '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
+  '/conference-league': typeof ConferenceLeagueRoute
   '/cup': typeof CupRoute
+  '/europa-league': typeof EuropaLeagueRoute
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
   '/lineup': typeof LineupRoute
@@ -165,7 +181,9 @@ export interface FileRoutesById {
   '/assists': typeof AssistsRoute
   '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
+  '/conference-league': typeof ConferenceLeagueRoute
   '/cup': typeof CupRoute
+  '/europa-league': typeof EuropaLeagueRoute
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
   '/lineup': typeof LineupRoute
@@ -187,7 +205,9 @@ export interface FileRouteTypes {
     | '/assists'
     | '/awards'
     | '/calendar'
+    | '/conference-league'
     | '/cup'
+    | '/europa-league'
     | '/fixtures'
     | '/injuries'
     | '/lineup'
@@ -207,7 +227,9 @@ export interface FileRouteTypes {
     | '/assists'
     | '/awards'
     | '/calendar'
+    | '/conference-league'
     | '/cup'
+    | '/europa-league'
     | '/fixtures'
     | '/injuries'
     | '/lineup'
@@ -227,7 +249,9 @@ export interface FileRouteTypes {
     | '/assists'
     | '/awards'
     | '/calendar'
+    | '/conference-league'
     | '/cup'
+    | '/europa-league'
     | '/fixtures'
     | '/injuries'
     | '/lineup'
@@ -248,7 +272,9 @@ export interface RootRouteChildren {
   AssistsRoute: typeof AssistsRoute
   AwardsRoute: typeof AwardsRoute
   CalendarRoute: typeof CalendarRoute
+  ConferenceLeagueRoute: typeof ConferenceLeagueRoute
   CupRoute: typeof CupRoute
+  EuropaLeagueRoute: typeof EuropaLeagueRoute
   FixturesRoute: typeof FixturesRoute
   InjuriesRoute: typeof InjuriesRoute
   LineupRoute: typeof LineupRoute
@@ -294,11 +320,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CalendarRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/conference-league': {
+      id: '/conference-league'
+      path: '/conference-league'
+      fullPath: '/conference-league'
+      preLoaderRoute: typeof ConferenceLeagueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/cup': {
       id: '/cup'
       path: '/cup'
       fullPath: '/cup'
       preLoaderRoute: typeof CupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/europa-league': {
+      id: '/europa-league'
+      path: '/europa-league'
+      fullPath: '/europa-league'
+      preLoaderRoute: typeof EuropaLeagueRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fixtures': {
@@ -400,7 +440,9 @@ const rootRouteChildren: RootRouteChildren = {
   AssistsRoute: AssistsRoute,
   AwardsRoute: AwardsRoute,
   CalendarRoute: CalendarRoute,
+  ConferenceLeagueRoute: ConferenceLeagueRoute,
   CupRoute: CupRoute,
+  EuropaLeagueRoute: EuropaLeagueRoute,
   FixturesRoute: FixturesRoute,
   InjuriesRoute: InjuriesRoute,
   LineupRoute: LineupRoute,

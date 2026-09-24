@@ -57,6 +57,8 @@ const COMPETICIONES: Item[] = [
   { title: "Liga", url: "/standings", icon: Trophy },
   { title: "Copa", url: "/cup", icon: Shield },
   { title: "Champions League", url: "/ucl", icon: Award },
+  { title: "Europa League", url: "/europa-league", icon: Award },
+  { title: "Conference League", url: "/conference-league", icon: Award },
 ];
 
 const MUNDO: Item[] = [

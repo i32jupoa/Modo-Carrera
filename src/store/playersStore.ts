@@ -106,6 +106,10 @@ import {
   simulateBackgroundUCLDay,
   simulatePendingUCLThroughDay,
   applyUCLPlayoffDraw,
+  initializeEuropeanCompetition,
+  applyEuropeanPlayoffDraw,
+  applyEuropeanKnockoutDraw,
+  simulatePendingEuropeanThroughDay,
   type SaveGame,
 } from "@/lib/store";
 
@@ -122,6 +126,7 @@ import {
 } from "@/data/ucl";
 
 import { runSwissDraw, assignmentsToFixtures } from "@/lib/uclDraw";
+import { EUROPEAN_CONFIGS, europeanCalendar, EUROPEAN_START, isEuropeanCompetition } from "@/data/europeanCompetitions";
 
 import { LEAGUES, getPrimaryLeagueForCountry } from "@/data/teams";
 import { getClubProfile, estimateFinancialPower } from "@/lib/transfers/ClubStrategy";
@@ -877,7 +882,7 @@ type PlayersState = {
 
   /** Sorteo UCL pendiente */
 
-  pendingUclDraw: "league" | "playoff" | "knockout" | null;
+  pendingUclDraw: "league" | "playoff" | "knockout" | "uel-league" | "uel-playoff" | "uel-knockout" | "uecl-league" | "uecl-playoff" | "uecl-knockout" | null;
 
   init: () => void;
 
@@ -1654,6 +1659,57 @@ export const usePlayersStore = create<PlayersState>()(
                 if (synced.uclChampion) rawSave.uclChampion = synced.uclChampion;
                 saveSave(rawSave);
               }
+            }
+          }
+        }
+
+        // --- Europa League + Conference League: mismo motor que UCL, siempre +1 día ---
+        {
+          const rawSave = loadSave();
+          if (rawSave) {
+            const nextDate = addDaysToIso(state.currentDate, 1);
+            const start = new Date(`${EUROPEAN_START}T00:00:00Z`);
+            const offset = Math.floor((new Date(`${nextDate}T00:00:00Z`).getTime() - start.getTime()) / 86400000);
+            const calendar = europeanCalendar();
+
+            for (const comp of ["uel", "uecl"] as const) {
+              if (!rawSave[comp] && offset >= calendar.leagueDraw) {
+                const initialized = initializeEuropeanCompetition(rawSave, comp);
+                Object.assign(rawSave, initialized);
+              }
+            }
+            saveSave(rawSave);
+
+            const maybeTrigger = (comp: "uel" | "uecl") => {
+              const eu = rawSave[comp];
+              if (!eu) return null;
+              if (offset === calendar.leagueDraw && !eu.drawState.leagueDone) return `${comp}-league` as const;
+              if (offset === calendar.playoffDraw && eu.drawState.leagueDone && !eu.drawState.playoffDone) {
+                const drawn = applyEuropeanPlayoffDraw(rawSave, comp);
+                Object.assign(rawSave, drawn);
+                saveSave(rawSave);
+                return `${comp}-playoff` as const;
+              }
+              if (offset === calendar.knockoutDraw && !eu.drawState.knockoutDone) {
+                const drawn = applyEuropeanKnockoutDraw(rawSave, comp);
+                Object.assign(rawSave, drawn);
+                saveSave(rawSave);
+                return `${comp}-knockout` as const;
+              }
+              if (eu.drawState.leagueDone && offset >= calendar.leagueDay[0]) {
+                const synced = simulatePendingEuropeanThroughDay(rawSave, comp, offset, rawSave.myTeamId);
+                Object.assign(rawSave, synced);
+                saveSave(rawSave);
+              }
+              return null;
+            };
+
+            // UEL first; the calendar modal will immediately queue UECL on the same day.
+            const pending = maybeTrigger("uel") || maybeTrigger("uecl");
+            if (pending) {
+              syncPlayerAgesForDate(nextDate);
+              set({ currentDate: nextDate, pendingUclDraw: pending });
+              return 1;
             }
           }
         }

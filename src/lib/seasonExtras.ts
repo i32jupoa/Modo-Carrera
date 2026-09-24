@@ -197,7 +197,7 @@ export function buildNews(teamName: string, seed: string): NewsItem[] {
 
 // ---------- Theme ----------
 export type CentralTheme = {
-  id: "default" | "ucl" | "cup";
+  id: "default" | "ucl" | "uel" | "uecl" | "cup";
   label: string;
   ring: string;
   accent: string;
@@ -228,6 +228,26 @@ export const THEMES: Record<CentralTheme["id"], CentralTheme> = {
     cardBorder: "border-blue-500/30",
     primaryBtn: "bg-gradient-to-r from-blue-600 to-indigo-600 text-white",
   },
+  uel: {
+    id: "uel",
+    label: "Europa League",
+    ring: "ring-orange-400/40",
+    accent: "text-orange-300",
+    badge: "bg-orange-500/15 text-orange-200 border-orange-400/40",
+    bgOverlay: "bg-[radial-gradient(ellipse_at_top,_rgba(249,115,22,0.18),_transparent_60%)]",
+    cardBorder: "border-orange-500/30",
+    primaryBtn: "bg-gradient-to-r from-orange-500 to-orange-700 text-white",
+  },
+  uecl: {
+    id: "uecl",
+    label: "Conference League",
+    ring: "ring-green-400/40",
+    accent: "text-green-300",
+    badge: "bg-green-500/15 text-green-200 border-green-400/40",
+    bgOverlay: "bg-[radial-gradient(ellipse_at_top,_rgba(34,197,94,0.18),_transparent_60%)]",
+    cardBorder: "border-green-500/30",
+    primaryBtn: "bg-gradient-to-r from-green-500 to-green-700 text-white",
+  },
   cup: {
     id: "cup",
     label: "Copa",
@@ -242,6 +262,8 @@ export const THEMES: Record<CentralTheme["id"], CentralTheme> = {
 
 export function themeForFixture(f: Fixture | null | undefined): CentralTheme {
   if (!f) return THEMES.default;
+  if (f.europeanCompetition === "uel") return THEMES.uel;
+  if (f.europeanCompetition === "uecl") return THEMES.uecl;
   if (f.competition === "ucl") return THEMES.ucl;
   if (f.competition === "cup") return THEMES.cup;
   return THEMES.default;

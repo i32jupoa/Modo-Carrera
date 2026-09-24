@@ -56,7 +56,6 @@ import {
 } from "@/lib/season";
 
 import { addDaysToIso } from "@/lib/transferWindows";
-import { applyMonthlyProgressionToAll } from "@/lib/monthlyProgression";
 import { applySeasonEndProgressionToAll } from "@/lib/seasonEndProgression";
 import { applySeasonEndProgressionToPlayer } from "@/lib/progressionHelper";
 import { applyMonthlyProgressionToPlayer } from "@/lib/progressionHelper";
@@ -77,32 +76,38 @@ function parseSeasonNumber(season: string): number {
  */
 function applySeasonEndProgressionToAllPlayers(seasonNumber: number): void {
   const store = usePlayersStore.getState();
-  const allStats = store.stats;
+  const allStats = store.stats ?? {};
+  const nextStats: Record<string, any> = { ...allStats };
+  let changed = false;
 
-  // Apply season-end progression to each player's dynamic stats
+  // Update the Zustand stats map once. `mutatePlayerStat` is an internal
+  // closure of playersStore and is not exposed on `getState()`.
   for (const [playerId, stats] of Object.entries(allStats)) {
     if (!stats.dynamicStats) continue;
 
-    // Get player info for age and positions
     const player = store.getSimPlayer(playerId);
     if (!player) continue;
 
-    const { updatedStats, newOVR } = applySeasonEndProgressionToPlayer(
+    const { updatedStats } = applySeasonEndProgressionToPlayer(
       player,
       stats.dynamicStats,
       seasonNumber,
     );
 
-    // Update the stats with the modified dynamic stats
-    store.mutatePlayerStat(playerId, (s) => ({
-      ...s,
+    nextStats[playerId] = {
+      ...stats,
       dynamicStats: updatedStats,
-    }));
+    };
+    changed = true;
   }
 
-  // Invalidate squads cache so new ratings are used when squads are regenerated
+  if (changed) {
+    usePlayersStore.setState({ stats: nextStats });
+  }
+
   invalidateSquadsCache();
 }
+
 
 /**
  * Apply monthly progression to all players in the players store
@@ -110,16 +115,18 @@ function applySeasonEndProgressionToAllPlayers(seasonNumber: number): void {
 function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: number): void {
   const store = usePlayersStore.getState();
   const allStats = store.stats ?? {};
+  const nextStats: Record<string, any> = { ...allStats };
+  let changed = false;
 
-  // Una partida puede contener jugadores creados antes de que existiese
-  // `monthlyStats`, `formHistory` u otros campos del bloque dinámico.
-  // Normalizamos cada registro y aislamos los errores por jugador para que un
-  // dato corrupto nunca bloquee el inicio de una jornada completa.
+  // Mutate the Zustand stats map once instead of calling a non-public
+  // `store.mutatePlayerStat` method once per player. The previous implementation
+  // generated hundreds of exceptions for every monthly progression pass and
+  // could make a match appear frozen while the browser flooded the console.
   for (const [playerId, stats] of Object.entries(allStats)) {
-    try {
-      const player = store.getSimPlayer(playerId);
-      if (!player) continue;
+    const player = store.getSimPlayer(playerId);
+    if (!player) continue;
 
+    try {
       const safeDynamicStats = normalizeDynamicStats(
         stats?.dynamicStats,
         Number(player.rating) || 70,
@@ -132,10 +139,11 @@ function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: 
         currentYear,
       );
 
-      store.mutatePlayerStat(playerId, (s) => ({
-        ...s,
+      nextStats[playerId] = {
+        ...stats,
         dynamicStats: updatedStats,
-      }));
+      };
+      changed = true;
     } catch (error) {
       console.warn(
         `[monthly progression] jugador ${playerId} omitido para mantener la jornada jugable`,
@@ -144,13 +152,14 @@ function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: 
     }
   }
 
+  if (changed) {
+    usePlayersStore.setState({ stats: nextStats });
+  }
+
   invalidateSquadsCache();
 
-  // Recalcular una vez con el estado YA actualizado. Si el recálculo de caché
-  // fallase por un dato externo, la jornada puede seguir simulándose.
   try {
-    const currentStats = usePlayersStore.getState().stats ?? {};
-    generateAllSquads(currentStats);
+    generateAllSquads(usePlayersStore.getState().stats ?? {});
   } catch (error) {
     console.warn(
       "[monthly progression] no se pudo regenerar la caché de plantillas; se continúa la simulación",
@@ -207,6 +216,13 @@ import {
   updateBracketWithWinners,
 } from "@/lib/uclDraw";
 import { UCL_SIMULATION_DAYS } from "@/data/ucl";
+import {
+  EUROPEAN_CONFIGS,
+  EUROPEAN_START,
+  europeanCalendar,
+  type EuropeanStateKey,
+  type EuropeanCompetitionConfig,
+} from "@/data/europeanCompetitions";
 
 import {
   ALL_FORMATIONS,
@@ -780,6 +796,16 @@ export type SaveGame = {
   // UCL Swiss format (new)
 
   ucl: import("@/data/ucl").UCLState | null;
+
+  // UEFA Europa League / Conference League (same Swiss/bracket engine as UCL)
+  uelFixtures: Fixture[];
+  ueclFixtures: Fixture[];
+  uelChampion: string | null;
+  ueclChampion: string | null;
+  uelPrizesAwarded?: string[];
+  ueclPrizesAwarded?: string[];
+  uel: import("@/data/ucl").UCLState | null;
+  uecl: import("@/data/ucl").UCLState | null;
 };
 
 const STORAGE_KEY = "fcsim:save:v2";
@@ -883,6 +909,14 @@ export function loadSave(): SaveGame | null {
       parsed.uclFixtures = [];
       needsMigrationSave = true;
     }
+    if (parsed.uelFixtures == null) { parsed.uelFixtures = []; needsMigrationSave = true; }
+    if (parsed.ueclFixtures == null) { parsed.ueclFixtures = []; needsMigrationSave = true; }
+    if (parsed.uelChampion === undefined) { parsed.uelChampion = null; needsMigrationSave = true; }
+    if (parsed.ueclChampion === undefined) { parsed.ueclChampion = null; needsMigrationSave = true; }
+    if (parsed.uelPrizesAwarded == null) { parsed.uelPrizesAwarded = []; needsMigrationSave = true; }
+    if (parsed.ueclPrizesAwarded == null) { parsed.ueclPrizesAwarded = []; needsMigrationSave = true; }
+    if (parsed.uel === undefined) { parsed.uel = null; needsMigrationSave = true; }
+    if (parsed.uecl === undefined) { parsed.uecl = null; needsMigrationSave = true; }
 
     // MIGRATION: Convert old cupFixtures structure if needed
 
@@ -1446,6 +1480,15 @@ export function newSave(myTeamId: string): SaveGame {
     uclChampion: null,
 
     ucl: null,
+
+    uelFixtures: [],
+    ueclFixtures: [],
+    uelChampion: null,
+    ueclChampion: null,
+    uelPrizesAwarded: [],
+    ueclPrizesAwarded: [],
+    uel: null,
+    uecl: null,
   };
 }
 
@@ -1639,6 +1682,10 @@ function createFastMutationSnapshot(save: SaveGame): SaveGame {
     standings: { ...save.standings },
     cupFixtures: { ...save.cupFixtures },
     uclFixtures: Array.isArray(save.uclFixtures) ? [...save.uclFixtures] : [],
+    uelFixtures: Array.isArray(save.uelFixtures) ? [...save.uelFixtures] : [],
+    ueclFixtures: Array.isArray(save.ueclFixtures) ? [...save.ueclFixtures] : [],
+    uelPrizesAwarded: Array.isArray(save.uelPrizesAwarded) ? [...save.uelPrizesAwarded] : [],
+    ueclPrizesAwarded: Array.isArray(save.ueclPrizesAwarded) ? [...save.ueclPrizesAwarded] : [],
     currentMatchday: { ...save.currentMatchday },
     formations: { ...(save.formations ?? {}) },
     lineups: { ...(save.lineups ?? {}) },
@@ -1657,6 +1704,8 @@ function createFastMutationSnapshot(save: SaveGame): SaveGame {
             : save.ucl.table,
         }
       : save.ucl,
+    uel: save.uel ? { ...save.uel, table: Array.isArray(save.uel.table) ? save.uel.table.map((e) => ({ ...e })) : save.uel.table, bracket: (save.uel.bracket ?? []).map((b) => ({ ...b })) } : save.uel,
+    uecl: save.uecl ? { ...save.uecl, table: Array.isArray(save.uecl.table) ? save.uecl.table.map((e) => ({ ...e })) : save.uecl.table, bracket: (save.uecl.bracket ?? []).map((b) => ({ ...b })) } : save.uecl,
   };
 }
 
@@ -2709,6 +2758,12 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
   }
 
   for (const fixture of save.uclFixtures ?? []) {
+    consider(fixture, uclStartMs + fixture.matchday * 86400000);
+  }
+  for (const fixture of save.uelFixtures ?? []) {
+    consider(fixture, uclStartMs + fixture.matchday * 86400000);
+  }
+  for (const fixture of save.ueclFixtures ?? []) {
     consider(fixture, uclStartMs + fixture.matchday * 86400000);
   }
 
@@ -3928,6 +3983,42 @@ export function playSpecificFixture(
     return { save: next, fixture };
   }
 
+  // Try to find fixture in the isolated Europa League / Conference League
+  // stores. These competitions reuse the Champions engine internally, but
+  // their fixtures must remain completely isolated from `uclFixtures`.
+  for (const comp of ["uel", "uecl"] as const) {
+    const key = comp === "uel" ? "uelFixtures" : "ueclFixtures";
+    const europeanList = Array.isArray((next as any)[key]) ? (next as any)[key] : [];
+    fixture = europeanList.find((f: Fixture) => f.id === fixtureId);
+
+    if (fixture && !fixture.result) {
+      (next as any)[key] = [...europeanList];
+      const mutableEuropeanList = (next as any)[key] as Fixture[];
+      fixture = mutableEuropeanList.find((f) => f.id === fixtureId);
+      if (!fixture) break;
+
+      const simmed = {
+        ...simulateFixtureInline(next, { ...fixture, europeanCompetition: comp } as Fixture),
+        europeanCompetition: comp,
+      };
+
+      const idx = mutableEuropeanList.findIndex((x) => x.id === fixtureId);
+      if (idx >= 0) {
+        mutableEuropeanList[idx] = simmed;
+      }
+
+      console.log(`Found fixture in ${comp === "uel" ? "Europa League" : "Conference League"} fixtures:`, fixture.id);
+      return { save: next, fixture: simmed };
+    }
+
+    if (fixture?.result && (fixture.homeId === next.myTeamId || fixture.awayId === next.myTeamId)) {
+      return {
+        save: next,
+        fixture: { ...fixture, europeanCompetition: comp },
+      };
+    }
+  }
+
   console.log("Fixture not found in any competition:", fixtureId);
 
   return { save: next, fixture: null };
@@ -3943,7 +4034,8 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
 
   let next: SaveGame = createFastMutationSnapshot(save);
   let fixture: Fixture | undefined;
-  let competition: "league" | "cup" | "ucl" | undefined;
+  let competition: "league" | "cup" | "ucl" | "european" | undefined;
+  let europeanCompetition: "uel" | "uecl" | undefined;
 
   const leagueList = next.fixtures?.[next.myLeague] ?? [];
   const leagueIndex = leagueList.findIndex((f) => f.id === fixtureId);
@@ -3988,6 +4080,28 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
     }
   }
 
+  if (!fixture) {
+    for (const comp of ["uel", "uecl"] as const) {
+      const key = comp === "uel" ? "uelFixtures" : "ueclFixtures";
+      const list = Array.isArray((next as any)[key]) ? (next as any)[key] as Fixture[] : [];
+      const index = list.findIndex((f) => f.id === fixtureId);
+      if (index >= 0) {
+        (next as any)[key] = [...list];
+        const mutableList = (next as any)[key] as Fixture[];
+        fixture = mutableList[index];
+        europeanCompetition = comp;
+        competition = "european";
+        mutableList[index] = {
+          ...fixture,
+          result: { ...result, liveCommitted: true },
+          europeanCompetition: comp,
+        };
+        fixture = mutableList[index];
+        break;
+      }
+    }
+  }
+
   if (!fixture || !competition) return save;
 
   if (!result.liveCommitted) {
@@ -3998,6 +4112,20 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
       next = applyMatchToStats(next, officialFixture);
     } else if (competition === "cup") {
       next = applyMatchToStats(next, officialFixture);
+    } else if (competition === "european" && europeanCompetition) {
+      next = applyMatchToStats(next, officialFixture);
+      next = runEuropeanEngine(next, europeanCompetition, (engine) => {
+        if (officialFixture.result && engine.ucl && isUCLLeaguePhaseFixture(officialFixture.round)) {
+          engine.ucl.table = applyUCLTableResult(
+            engine.ucl.table,
+            officialFixture.homeId,
+            officialFixture.awayId,
+            officialFixture.result.homeGoals,
+            officialFixture.result.awayGoals,
+          );
+        }
+        return applyUCLMatchAftermath(engine, officialFixture.homeId, officialFixture.awayId);
+      });
     } else {
       next = applyMatchToStats(next, officialFixture);
       if (officialFixture.result && next.ucl && isUCLLeaguePhaseFixture(officialFixture.round)) {
@@ -4999,7 +5127,7 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
 
     const dueCups = new Set(due.filter((p) => p.isCup).map((p) => p.league));
 
-    const next: SaveGame = createFastMutationSnapshot(save);
+    let next: SaveGame = createFastMutationSnapshot(save);
     next.pendingBackgroundSims = [...(save.pendingBackgroundSims ?? [])];
 
     for (const lg of dueLeagues) {
@@ -7563,8 +7691,195 @@ export function processUCLKnockoutProgress(save: SaveGame, throughOffset: number
     if (!progressionKeys.includes(progressionKey)) {
       applySeasonEndProgressionToAllPlayers(seasonNumber);
       next.uclPrizesAwarded = [...progressionKeys, progressionKey];
+      // The season-end progression is a global season event, not a separate
+      // reward for finishing each UEFA competition. Mirror the guard across
+      // all three European ledgers so it can only run once per season.
+      const syncProgressionLedger = (ledger: unknown): string[] =>
+        Array.isArray(ledger)
+          ? Array.from(new Set([...ledger, progressionKey]))
+          : [progressionKey];
+      next.uelPrizesAwarded = syncProgressionLedger(next.uelPrizesAwarded);
+      next.ueclPrizesAwarded = syncProgressionLedger(next.ueclPrizesAwarded);
     }
   }
 
   return next;
+}
+
+
+// ============================================================
+// EUROPEAN COMPETITIONS — UEL / UECL
+// Reuses the Champions League Swiss/bracket engine with isolated state.
+// ============================================================
+
+type EuropeanFixtureKey = "uelFixtures" | "ueclFixtures";
+
+type EuropeanFixtureId = "uel" | "uecl";
+
+function europeanFixtureKey(comp: EuropeanStateKey): EuropeanFixtureKey {
+  return comp === "uel" ? "uelFixtures" : "ueclFixtures";
+}
+
+function europeanIdPrefix(comp: EuropeanStateKey): string {
+  return `${comp}-`;
+}
+
+function mapEuropeanFixtureId(id: string, comp: EuropeanStateKey, toUcl: boolean): string {
+  const prefix = europeanIdPrefix(comp);
+  if (toUcl) return id.startsWith(prefix) ? `ucl-${id.slice(prefix.length)}` : id;
+  return id.startsWith("ucl-") ? `${comp}-${id.slice(4)}` : id;
+}
+
+function shiftEuropeanState(state: any, delta: number): any {
+  if (!state) return state;
+  return {
+    ...state,
+    participants: [...(state.participants ?? [])],
+    table: (state.table ?? []).map((e: any) => ({ ...e })),
+    leaguePhaseTable: state.leaguePhaseTable ? state.leaguePhaseTable.map((e: any) => ({ ...e })) : state.leaguePhaseTable,
+    drawState: state.drawState ? { ...state.drawState } : state.drawState,
+    bracket: (state.bracket ?? []).map((slot: any) => ({
+      ...slot,
+      legOneMatchday: slot.legOneMatchday == null ? slot.legOneMatchday : slot.legOneMatchday + delta,
+      legTwoMatchday: slot.legTwoMatchday == null ? slot.legTwoMatchday : slot.legTwoMatchday + delta,
+    })),
+  };
+}
+
+function toEuropeanEngineSave(save: SaveGame, comp: EuropeanStateKey): SaveGame {
+  const key = europeanFixtureKey(comp);
+  const targetFixtures = Array.isArray((save as any)[key]) ? (save as any)[key] : [];
+  const mappedFixtures = targetFixtures.map((f: any) => ({
+    ...f,
+    id: mapEuropeanFixtureId(f.id, comp, true),
+    matchday: typeof f.matchday === "number" ? f.matchday - 1 : f.matchday,
+    europeanCompetition: comp,
+  }));
+  const targetLedger = Array.isArray((save as any)[`${comp}PrizesAwarded`])
+    ? [...(save as any)[`${comp}PrizesAwarded`]]
+    : [];
+  const progressionKey = `seasonEndProgression-${save.season}`;
+  const globalProgressionDone = [save.uclPrizesAwarded, save.uelPrizesAwarded, save.ueclPrizesAwarded]
+    .some((ledger: unknown) => Array.isArray(ledger) && ledger.includes(progressionKey));
+  if (globalProgressionDone && !targetLedger.includes(progressionKey)) {
+    targetLedger.push(progressionKey);
+  }
+  return {
+    ...save,
+    uclFixtures: mappedFixtures,
+    ucl: shiftEuropeanState((save as any)[comp], -1),
+    uclChampion: (save as any)[`${comp}Champion`] ?? null,
+    uclPrizesAwarded: targetLedger,
+  } as SaveGame;
+}
+
+function fromEuropeanEngineSave(save: SaveGame, comp: EuropeanStateKey): SaveGame {
+  const key = europeanFixtureKey(comp);
+  const mappedFixtures = (save.uclFixtures ?? []).map((f: any) => ({
+    ...f,
+    id: mapEuropeanFixtureId(f.id, comp, false),
+    matchday: typeof f.matchday === "number" ? f.matchday + 1 : f.matchday,
+    europeanCompetition: comp,
+  }));
+  const next = {
+    ...save,
+    [key]: mappedFixtures,
+    [`${comp}Champion`]: save.uclChampion ?? null,
+    [`${comp}PrizesAwarded`]: Array.isArray(save.uclPrizesAwarded) ? [...save.uclPrizesAwarded] : [],
+    [comp]: shiftEuropeanState(save.ucl, +1),
+  } as SaveGame;
+  // Restore Champions fields from the caller's original object is done by the public
+  // wrappers below; their temporary engine save never escapes this function.
+  return next;
+}
+
+function initializeEuropeanState(save: SaveGame, comp: EuropeanStateKey): SaveGame {
+  const cfg = EUROPEAN_CONFIGS[comp];
+  const existing = (save as any)[comp];
+  if (existing) return save;
+  return {
+    ...save,
+    [comp]: {
+      phase: "league",
+      seasonNumber: Number((save.season ?? "2025").slice(0, 4)) - 2024,
+      participants: [...cfg.participants],
+      table: cfg.participants.map((teamId) => emptyTableEntry(teamId)),
+      drawState: { leagueDone: false, playoffDone: false, knockoutDone: false },
+      leaguePhaseTable: null,
+      bracket: [],
+    },
+    [europeanFixtureKey(comp)]: Array.isArray((save as any)[europeanFixtureKey(comp)]) ? (save as any)[europeanFixtureKey(comp)] : [],
+  } as SaveGame;
+}
+
+export function initializeEuropeanCompetition(save: SaveGame, comp: EuropeanStateKey): SaveGame {
+  return initializeEuropeanState(save, comp);
+}
+
+function runEuropeanEngine(
+  save: SaveGame,
+  comp: EuropeanStateKey,
+  fn: (engineSave: SaveGame) => SaveGame,
+): SaveGame {
+  const initialized = initializeEuropeanState(save, comp);
+  const engine = toEuropeanEngineSave(initialized, comp);
+  const result = fn(engine);
+  const restored = fromEuropeanEngineSave(result, comp);
+  return {
+    ...save,
+    ...restored,
+    // Never leak the temporary mapped Champions state/fixtures into the real UCL.
+    uclFixtures: save.uclFixtures,
+    ucl: save.ucl,
+    uclChampion: save.uclChampion,
+    uclPrizesAwarded: save.uclPrizesAwarded,
+    // Keep target copies only.
+    [europeanFixtureKey(comp)]: restored[europeanFixtureKey(comp)],
+    [comp]: restored[comp],
+    [`${comp}Champion`]: restored[`${comp}Champion`],
+  } as SaveGame;
+}
+
+function europeanPreDraw(
+  save: SaveGame,
+  comp: EuropeanStateKey,
+  preCalculatedDraw?: { assignments: Map<string, Opponent[]>; matrix: boolean[][]; teamIndex: Map<string, number> },
+): SaveGame {
+  return runEuropeanEngine(save, comp, (engine) => applyUCLLeagueDraw(engine, preCalculatedDraw));
+}
+
+export function applyEuropeanLeagueDraw(
+  save: SaveGame,
+  comp: EuropeanStateKey,
+  preCalculatedDraw?: { assignments: Map<string, Opponent[]>; matrix: boolean[][]; teamIndex: Map<string, number> },
+): SaveGame {
+  return europeanPreDraw(save, comp, preCalculatedDraw);
+}
+
+export function applyEuropeanPlayoffDraw(save: SaveGame, comp: EuropeanStateKey): SaveGame {
+  return runEuropeanEngine(save, comp, (engine) => applyUCLPlayoffDraw(engine));
+}
+
+export function applyEuropeanKnockoutDraw(save: SaveGame, comp: EuropeanStateKey): SaveGame {
+  return runEuropeanEngine(save, comp, (engine) => applyUCLKnockoutDraw(engine));
+}
+
+export function simulateEuropeanLeagueMatchday(save: SaveGame, comp: EuropeanStateKey, matchday: number): SaveGame {
+  return runEuropeanEngine(save, comp, (engine) => simulateUCLLeagueMatchday(engine, matchday - 1));
+}
+
+export function simulateEuropeanKnockoutMatchday(save: SaveGame, comp: EuropeanStateKey, matchday: number): SaveGame {
+  return runEuropeanEngine(save, comp, (engine) => simulateUCLKnockoutMatchday(engine, matchday - 1));
+}
+
+export function simulateEuropeanUserPhaseDay(save: SaveGame, comp: EuropeanStateKey, dayOffset: number, userTeamId: string): SaveGame {
+  return runEuropeanEngine(save, comp, (engine) => simulateUserPhaseUCLDay(engine, dayOffset - 1, userTeamId));
+}
+
+export function simulatePendingEuropeanThroughDay(save: SaveGame, comp: EuropeanStateKey, throughOffset: number, userTeamId: string): SaveGame {
+  return runEuropeanEngine(save, comp, (engine) => simulatePendingUCLThroughDay(engine, throughOffset - 1, userTeamId));
+}
+
+export function processEuropeanKnockoutProgress(save: SaveGame, comp: EuropeanStateKey, throughOffset: number): SaveGame {
+  return runEuropeanEngine(save, comp, (engine) => processUCLKnockoutProgress(engine, throughOffset - 1));
 }

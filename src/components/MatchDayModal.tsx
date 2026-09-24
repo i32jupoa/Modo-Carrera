@@ -20,6 +20,7 @@ import {
 import { Zap } from "lucide-react";
 import { loadSave, type SaveGame } from "@/lib/store";
 import { UCL_START } from "@/data/ucl";
+import { EUROPEAN_START } from "@/data/europeanCompetitions";
 import { toDateOnly } from "@/lib/transferWindows";
 
 // Helper to get league name from league ID
@@ -125,6 +126,39 @@ export function MatchDayModal() {
                 competition: "ucl" as const,
                 matchday: f.matchday,
               },
+              lastUserMatchResult: null,
+            });
+            return;
+          }
+        }
+      }
+
+
+      // Check Europa League / Conference League fixtures
+      const europeanStart = new Date(EUROPEAN_START + "T00:00:00Z");
+      const europeanCompetitions = [
+        ["uel", save.uelFixtures ?? []] as const,
+        ["uecl", save.ueclFixtures ?? []] as const,
+      ];
+      for (const [competition, europeanFixtures] of europeanCompetitions) {
+        for (const f of europeanFixtures) {
+          if (f.result) continue;
+          if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
+          const matchDate = new Date(europeanStart.getTime() + f.matchday * 86400000);
+          if (toDateOnly(matchDate) === currentDate && !dismissedMatchIds.includes(f.id)) {
+            usePlayersStore.setState({
+              pendingUserMatch: {
+                id: f.id,
+                date: currentDate,
+                homeTeam: f.homeId,
+                awayTeam: f.awayId,
+                isPlayed: false,
+                homeScore: null,
+                awayScore: null,
+                competition: "ucl" as const,
+                matchday: f.matchday,
+                europeanCompetition: competition,
+              } as any,
               lastUserMatchResult: null,
             });
             return;

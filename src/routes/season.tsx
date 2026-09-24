@@ -16,6 +16,7 @@ import {
   getTeamRecentResults,
   simulateCupMatchday,
   simulateUCLMatchday,
+  simulateEuropeanLeagueMatchday,
   saveSaveWithRetry,
   setLineup,
   setFormation,
@@ -262,7 +263,7 @@ function SeasonPage() {
 
       // Find the last played match to determine competition type
       let lastPlayedFixture: Fixture | null = null;
-      let competitionType: "league" | "cup" | "ucl" | null = null;
+      let competitionType: "league" | "cup" | "ucl" | "uel" | "uecl" | null = null;
 
       // Check league fixtures
       const leagueFixtures = save.fixtures[save.myLeague].filter(
@@ -287,16 +288,20 @@ function SeasonPage() {
         }
       }
 
-      // Check UCL fixtures
-      if (save.uclFixtures) {
-        const uclFixtures = save.uclFixtures.filter(
+      // Check European fixtures (Champions, Europa, Conference)
+      for (const [comp, list] of [
+        ["ucl", save.uclFixtures],
+        ["uel", save.uelFixtures],
+        ["uecl", save.ueclFixtures],
+      ] as const) {
+        const europeanFixtures = (list ?? []).filter(
           (f) => f.result && (f.homeId === save.myTeamId || f.awayId === save.myTeamId),
         );
-        if (uclFixtures.length > 0) {
-          const lastUCLFixture = uclFixtures[uclFixtures.length - 1];
-          if (!lastPlayedFixture || lastUCLFixture.matchday > lastPlayedFixture.matchday) {
-            lastPlayedFixture = lastUCLFixture;
-            competitionType = "ucl";
+        if (europeanFixtures.length > 0) {
+          const lastEuropeanFixture = europeanFixtures[europeanFixtures.length - 1];
+          if (!lastPlayedFixture || lastEuropeanFixture.matchday > lastPlayedFixture.matchday) {
+            lastPlayedFixture = lastEuropeanFixture;
+            competitionType = comp as any;
           }
         }
       }
@@ -314,11 +319,9 @@ function SeasonPage() {
           lastPlayedFixture?.matchday || save.currentMatchday[save.myLeague],
         );
       } else if (competitionType === "ucl") {
-        // Simulate UCL fixtures for the matchday ONLY
-        next = simulateUCLMatchday(
-          save,
-          lastPlayedFixture?.matchday || save.currentMatchday[save.myLeague],
-        );
+        next = simulateUCLMatchday(save, lastPlayedFixture?.matchday || save.currentMatchday[save.myLeague]);
+      } else if (competitionType === "uel" || competitionType === "uecl") {
+        next = simulateEuropeanLeagueMatchday(save, competitionType, lastPlayedFixture?.matchday || save.currentMatchday[save.myLeague]);
       } else {
         // Simulate league fixtures
         next = await advanceMatchdayLayered(save, (done, total) => {
@@ -635,7 +638,12 @@ function NextMatchCard({
   if (fixture.competition === "cup") {
     headerText = `Copa Nacional · ${roundNames[fixture.round || ""] || fixture.round || ""}`;
   } else if (fixture.competition === "ucl") {
-    headerText = `Champions League · ${fixture.round || "Fase de Liga"}`;
+    const europeanName = fixture.europeanCompetition === "uel"
+      ? "Europa League"
+      : fixture.europeanCompetition === "uecl"
+        ? "Conference League"
+        : "Champions League";
+    headerText = `${europeanName} · ${fixture.round || "Fase de Liga"}`;
   } else {
     headerText = `Liga · Jornada ${fixture.matchday}`;
   }
@@ -1151,11 +1159,17 @@ function NotificationsBar({
     });
   }
   if (nextFixture?.competition === "ucl") {
-    items.push({
-      icon: Bell,
-      text: "Próximo: Champions League — partido especial",
-      tone: "text-blue-200 border-blue-400/40 bg-blue-500/10",
-    });
+    const name = nextFixture.europeanCompetition === "uel"
+      ? "Europa League"
+      : nextFixture.europeanCompetition === "uecl"
+        ? "Conference League"
+        : "Champions League";
+    const tone = nextFixture.europeanCompetition === "uel"
+      ? "text-orange-200 border-orange-400/40 bg-orange-500/10"
+      : nextFixture.europeanCompetition === "uecl"
+        ? "text-green-200 border-green-400/40 bg-green-500/10"
+        : "text-blue-200 border-blue-400/40 bg-blue-500/10";
+    items.push({ icon: Bell, text: `Próximo: ${name} — partido especial`, tone });
   } else if (nextFixture?.competition === "cup") {
     items.push({
       icon: Bell,

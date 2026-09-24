@@ -4,6 +4,8 @@ import { simulateMatch, SimResult } from "@/lib/simulation";
 
 export type Competition = "league" | "cup" | "ucl";
 
+export type EuropeanCompetition = "ucl" | "uel" | "uecl";
+
 export type Fixture = {
   id: string;
   competition: Competition;
@@ -13,6 +15,8 @@ export type Fixture = {
   homeId: string;
   awayId: string;
   result?: SimResult;
+  /** European cup identity while reusing the Champions League match engine. */
+  europeanCompetition?: EuropeanCompetition;
 };
 
 export type Standing = {

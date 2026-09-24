@@ -24,10 +24,10 @@ export function GameDayBar() {
       {pendingUclDraw && (
         <Link
           to="/calendar"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 text-xs font-semibold hover:bg-blue-500/25 transition"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${pendingUclDraw.startsWith("uel-") ? "bg-orange-500/15 border border-orange-500/40 text-orange-400 hover:bg-orange-500/25" : pendingUclDraw.startsWith("uecl-") ? "bg-green-500/15 border border-green-500/40 text-green-400 hover:bg-green-500/25" : "bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25"}`}
         >
           <Trophy className="h-3.5 w-3.5 shrink-0" />
-          Sorteo UCL · Ir al Calendario
+          {pendingUclDraw.startsWith("uel-") ? "Sorteo Europa League" : pendingUclDraw.startsWith("uecl-") ? "Sorteo Conference League" : "Sorteo UCL"} · Ir al Calendario
         </Link>
       )}
       {pendingCupDraw && (

@@ -22,6 +22,7 @@ import {
   applyUCLPlayoffDraw,
   applyUCLKnockoutDraw,
   simulatePendingUCLThroughDay,
+  simulatePendingEuropeanThroughDay,
 } from "@/lib/store";
 
 import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
@@ -39,9 +40,11 @@ import { TeamLogo } from "@/components/TeamLogo";
 import { CupDrawModal } from "@/components/CupDrawModal";
 
 import { UCLDrawModal } from "@/components/UCLDrawModal";
+import { EuropeanDrawModal } from "@/components/EuropeanDrawModal";
 import { Trophy } from "lucide-react";
 
 import { UCL_START, UCL_CALENDAR, uclDayOffset } from "@/data/ucl";
+import { EUROPEAN_CONFIGS, europeanCalendar, EUROPEAN_START } from "@/data/europeanCompetitions";
 
 import { teamById, LEAGUES, getPrimaryLeagueForCountry, type LeagueId } from "@/data/teams";
 
@@ -689,6 +692,42 @@ function CalendarPage() {
     return map;
   }, [uclMyFixtures]);
 
+  const europeanCalendars = europeanCalendar();
+  const uelMyFixtures = useMemo(() =>
+    (save?.uelFixtures ?? []).filter((f) => f.homeId === save!.myTeamId || f.awayId === save!.myTeamId),
+    [save?.uelFixtures, save?.myTeamId],
+  );
+  const ueclMyFixtures = useMemo(() =>
+    (save?.ueclFixtures ?? []).filter((f) => f.homeId === save!.myTeamId || f.awayId === save!.myTeamId),
+    [save?.ueclFixtures, save?.myTeamId],
+  );
+  const makeEuropeanMatchDays = (list: typeof uelMyFixtures) => {
+    const map = new Map<string, typeof uelMyFixtures>();
+    const start = new Date(EUROPEAN_START + "T00:00:00Z");
+    for (const f of list) {
+      const iso = toDateOnly(new Date(start.getTime() + f.matchday * 86400000));
+      const group = map.get(iso) ?? [];
+      group.push(f);
+      map.set(iso, group);
+    }
+    return map;
+  };
+  const uelMatchDays = useMemo(() => makeEuropeanMatchDays(uelMyFixtures), [uelMyFixtures]);
+  const ueclMatchDays = useMemo(() => makeEuropeanMatchDays(ueclMyFixtures), [ueclMyFixtures]);
+  const europeanDrawDays = useMemo(() => {
+    const days = new Map<string, string[]>();
+    const start = new Date(EUROPEAN_START + "T00:00:00Z");
+    for (const [comp, cfg] of Object.entries(EUROPEAN_CONFIGS)) {
+      for (const key of ["leagueDraw", "playoffDraw", "knockoutDraw"] as const) {
+        const iso = toDateOnly(new Date(start.getTime() + europeanCalendars[key] * 86400000));
+        const names = days.get(iso) ?? [];
+        names.push(`${cfg.shortName} · ${key === "leagueDraw" ? "Liga" : key === "playoffDraw" ? "Play-off" : "Octavos"}`);
+        days.set(iso, names);
+      }
+    }
+    return days;
+  }, [europeanCalendars]);
+
   function prevMonth() {
     if (viewMonth === 0) {
       setBrowseMonth({ year: viewYear - 1, month: 11 });
@@ -1091,6 +1130,32 @@ function CalendarPage() {
                       })
                       .filter(Boolean)}
 
+                  {inMonth && uelMatchDays.has(iso) && uelMatchDays.get(iso)!.map((f) => {
+                    const isHome = f.homeId === myTeamId;
+                    const opponentId = isHome ? f.awayId : f.homeId;
+                    const opponent = teamById(opponentId);
+                    const mine = teamById(myTeamId!);
+                    return opponent ? (
+                      <div key={f.id} className="flex items-center justify-center gap-1 w-full text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded bg-orange-600/90 text-white" title={`Europa League - ${isHome ? "Local" : "Visitante"}`}>
+                        <TeamLogo teamName={(isHome ? mine : opponent).name} leagueName={getLeagueName((isHome ? mine : opponent).league)} size={12} />
+                        <span>UEL</span>
+                      </div>
+                    ) : null;
+                  })}
+
+                  {inMonth && ueclMatchDays.has(iso) && ueclMatchDays.get(iso)!.map((f) => {
+                    const isHome = f.homeId === myTeamId;
+                    const opponentId = isHome ? f.awayId : f.homeId;
+                    const opponent = teamById(opponentId);
+                    const mine = teamById(myTeamId!);
+                    return opponent ? (
+                      <div key={f.id} className="flex items-center justify-center gap-1 w-full text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded bg-green-600/90 text-white" title={`Conference League - ${isHome ? "Local" : "Visitante"}`}>
+                        <TeamLogo teamName={(isHome ? mine : opponent).name} leagueName={getLeagueName((isHome ? mine : opponent).league)} size={12} />
+                        <span>UECL</span>
+                      </div>
+                    ) : null;
+                  })}
+
                   {windowHighlight && inMonth && !isToday && dayFixtures.length === 0 && (
                     <span
                       className="mx-auto w-1.5 h-1.5 rounded-full bg-emerald-400/80"
@@ -1112,6 +1177,19 @@ function CalendarPage() {
                       <span className="text-[0.35rem] font-bold text-blue-300 uppercase">
                         UCL Draw
                       </span>
+                    </div>
+                  )}
+
+                  {inMonth && europeanDrawDays.has(iso) && (
+                    <div className="flex flex-wrap justify-center gap-1">
+                      {europeanDrawDays.get(iso)!.map((label) => (
+                        <div key={label} className={`mx-auto flex items-center gap-1 px-1.5 py-0.5 rounded-full border ${label.startsWith("Europa") ? "bg-orange-500/20 border-orange-500/40" : "bg-green-500/20 border-green-500/40"}`}>
+                          <Trophy className={`h-2.5 w-2.5 ${label.startsWith("Europa") ? "text-orange-300" : "text-green-300"}`} />
+                          <span className={`text-[0.32rem] font-bold uppercase ${label.startsWith("Europa") ? "text-orange-300" : "text-green-300"}`}>
+                            {label}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -1213,32 +1291,60 @@ function CalendarPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400/80" />
             Sorteo UCL
           </span>
+
+          <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded bg-orange-600/90" /> Europa League</span>
+          <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded bg-green-600/90" /> Conference League</span>
         </div>
       </div>
 
       {showUclDrawModal && pendingUclDraw && (
-        <UCLDrawModal
-          type={pendingUclDraw}
-          save={save!}
-          onClose={() => {
-            setShowUclDrawModal(false);
+        pendingUclDraw.startsWith("uel-") || pendingUclDraw.startsWith("uecl-") ? (
+          <EuropeanDrawModal
+            type={pendingUclDraw.split("-")[1] as "league" | "playoff" | "knockout"}
+            competition={pendingUclDraw.startsWith("uel-") ? "uel" : "uecl"}
+            save={save!}
+            onClose={() => {
+              setShowUclDrawModal(false);
+              clearPendingUclDraw();
+              setSave(loadSave());
+            }}
+            onComplete={(updated) => {
+              const comp = pendingUclDraw.startsWith("uel-") ? "uel" : "uecl";
+              const offset = uclDayOffset(usePlayersStore.getState().currentDate);
+              const synced = simulatePendingEuropeanThroughDay(updated, comp, offset, updated.myTeamId);
+              saveSave(synced);
+              setSave(loadSave());
+              setShowUclDrawModal(false);
+              clearPendingUclDraw();
 
-            clearPendingUclDraw();
-
-            setSave(loadSave());
-          }}
-          onComplete={(updated) => {
-            const offset = uclDayOffset(usePlayersStore.getState().currentDate);
-            const synced = simulatePendingUCLThroughDay(updated, offset, updated.myTeamId);
-            saveSave(synced);
-
-            setSave(loadSave());
-
-            setShowUclDrawModal(false);
-
-            clearPendingUclDraw();
-          }}
-        />
+              // UEL and UECL share the exact same calendar day. Queue the second draw immediately.
+              const type = pendingUclDraw.split("-")[1] as "league" | "playoff" | "knockout";
+              const other = comp === "uel" ? "uecl" : "uel";
+              const otherState = synced[other];
+              const cal = europeanCalendar();
+              const currentOffset = uclDayOffset(usePlayersStore.getState().currentDate);
+              const relevantKey = type === "league" ? "leagueDraw" : type === "playoff" ? "playoffDraw" : "knockoutDraw";
+              if (otherState && currentOffset === cal[relevantKey]) {
+                const done = relevantKey === "leagueDraw" ? otherState.drawState.leagueDone : relevantKey === "playoffDraw" ? otherState.drawState.playoffDone : otherState.drawState.knockoutDone;
+                if (!done) {
+                  usePlayersStore.setState({ pendingUclDraw: `${other}-${type}` });
+                  return;
+                }
+              }
+            }}
+          />
+        ) : (
+          <UCLDrawModal
+            type={pendingUclDraw}
+            save={save!}
+            onClose={() => { setShowUclDrawModal(false); clearPendingUclDraw(); setSave(loadSave()); }}
+            onComplete={(updated) => {
+              const offset = uclDayOffset(usePlayersStore.getState().currentDate);
+              const synced = simulatePendingUCLThroughDay(updated, offset, updated.myTeamId);
+              saveSave(synced); setSave(loadSave()); setShowUclDrawModal(false); clearPendingUclDraw();
+            }}
+          />
+        )
       )}
 
       {save?.cupDrawPending && (

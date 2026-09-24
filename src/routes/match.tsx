@@ -28,6 +28,7 @@ import {
   processUCLKnockoutProgress,
 } from "@/lib/store";
 import { uclDayOffset } from "@/data/ucl";
+import { EUROPEAN_START } from "@/data/europeanCompetitions";
 import { applyResult, Fixture } from "@/lib/season";
 import { FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
@@ -121,6 +122,21 @@ function normalizeFormation(value: unknown): FormationName {
 }
 
 export const Route = createFileRoute("/match")({ component: MatchPage });
+
+function getEuropeanFixtureList(save: any, competition?: string): any[] {
+  if (competition === "uel") return Array.isArray(save?.uelFixtures) ? save.uelFixtures : [];
+  if (competition === "uecl") return Array.isArray(save?.ueclFixtures) ? save.ueclFixtures : [];
+  return [];
+}
+
+function findFixtureInEuropeanCompetitions(save: any, fixtureId: string): any | null {
+  for (const [competition, list] of [["uel", save?.uelFixtures], ["uecl", save?.ueclFixtures]] as const) {
+    if (!Array.isArray(list)) continue;
+    const found = list.find((f: any) => f.id === fixtureId);
+    if (found) return { ...found, europeanCompetition: competition };
+  }
+  return null;
+}
 
 type Phase = "preview" | "playing" | "done" | "extra_time" | "penalties";
 
@@ -309,6 +325,7 @@ function MatchPage() {
       }
     }
     if (!fx) fx = (s.uclFixtures || []).find((f: any) => f.id === st.fixtureId);
+    if (!fx) fx = findFixtureInEuropeanCompetitions(s, st.fixtureId);
     if (!fx) return;
     restoredRef.current = true;
 
@@ -565,12 +582,15 @@ function MatchPage() {
           console.log(`Cup matches: ${done}/${total}`);
         });
       } else if (matchType === "UCL") {
-        // UCL: Simulate AI matches in user's phase on return to season
-        console.log("Post-match: Simulating AI UCL matches for matchday:", fixture.matchday);
-        next = simulateUserPhaseUCLDay(latestSave, fixture.matchday, latestSave.myTeamId);
-        // Process knockout progression if needed
-        const offset = uclDayOffset(usePlayersStore.getState().currentDate);
-        next = processUCLKnockoutProgress(next, offset);
+        const europeanCompetition = fixture.europeanCompetition as "uel" | "uecl" | undefined;
+        if (europeanCompetition) {
+          const { simulateEuropeanUserPhaseDay, processEuropeanKnockoutProgress } = await import("@/lib/store");
+          next = simulateEuropeanUserPhaseDay(latestSave, europeanCompetition, fixture.matchday, latestSave.myTeamId);
+          next = processEuropeanKnockoutProgress(next, europeanCompetition, uclDayOffset(usePlayersStore.getState().currentDate));
+        } else {
+          next = simulateUserPhaseUCLDay(latestSave, fixture.matchday, latestSave.myTeamId);
+          next = processUCLKnockoutProgress(next, uclDayOffset(usePlayersStore.getState().currentDate));
+        }
       } else {
         // LEAGUE: Execute the league matchday simulation
         console.log("Post-match: Simulating LEAGUE matches");
@@ -796,8 +816,11 @@ function MatchPage() {
     // Check if aggregate is tied for UCL two-legged ties
     let aggregateTied = totalHomeScore === totalAwayScore;
     const isLeg2 = fixtureRef.current?.round?.endsWith("-Leg2");
-    if (isLeg2 && save?.uclFixtures) {
-      const leg1 = save.uclFixtures.find(
+    if (isLeg2) {
+      const aggregateFixtures = fixtureRef.current?.europeanCompetition
+        ? getEuropeanFixtureList(save, fixtureRef.current.europeanCompetition)
+        : (save?.uclFixtures ?? []);
+      const leg1 = aggregateFixtures.find(
         (l) =>
           l.round === fixtureRef.current!.round!.replace("Leg2", "Leg1") &&
           ((l.homeId === fixtureRef.current!.awayId && l.awayId === fixtureRef.current!.homeId) ||
@@ -950,13 +973,12 @@ function MatchPage() {
     const s = loadSave();
     if (s) {
       let found = null;
-      // Check UCL fixtures first if it's a UCL match
-      if (matchType === "UCL" && s.uclFixtures) {
+      if (matchType === "UCL" && fixture.europeanCompetition) {
+        found = findFixtureInEuropeanCompetitions(s, fixture.id);
+        if (found) { fixtureRef.current = found; console.log("Reloaded European fixture with result after penalties:", found.result); }
+      } else if (matchType === "UCL" && s.uclFixtures) {
         found = s.uclFixtures.find((f) => f.id === fixture.id);
-        if (found) {
-          fixtureRef.current = found;
-          console.log("Reloaded UCL fixture with result after penalties:", found.result);
-        }
+        if (found) { fixtureRef.current = found; console.log("Reloaded UCL fixture with result after penalties:", found.result); }
       }
       // If not found in UCL, check cup fixtures
       if (!found) {
@@ -1026,13 +1048,12 @@ function MatchPage() {
     const s = loadSave();
     if (s) {
       let found = null;
-      // Check UCL fixtures first if it's a UCL match
-      if (matchType === "UCL" && s.uclFixtures) {
+      if (matchType === "UCL" && fixture.europeanCompetition) {
+        found = findFixtureInEuropeanCompetitions(s, fixture.id);
+        if (found) { fixtureRef.current = found; console.log("Reloaded European fixture with result:", found.result); }
+      } else if (matchType === "UCL" && s.uclFixtures) {
         found = s.uclFixtures.find((f) => f.id === fixture.id);
-        if (found) {
-          fixtureRef.current = found;
-          console.log("Reloaded UCL fixture with result:", found.result);
-        }
+        if (found) { fixtureRef.current = found; console.log("Reloaded UCL fixture with result:", found.result); }
       }
       // If not found in UCL, check cup fixtures
       if (!found) {
@@ -1176,8 +1197,10 @@ function MatchPage() {
 
     if (isUCL) {
       const s = loadSave();
-      if (s && s.uclFixtures) {
-        const fx = s.uclFixtures.find((f) => f.id === fixtureId);
+      const europeanCompetition = fixtureRef.current?.europeanCompetition as "uel" | "uecl" | undefined;
+      const fixtureList = europeanCompetition ? getEuropeanFixtureList(s, europeanCompetition) : (s?.uclFixtures ?? []);
+      if (s && fixtureList) {
+        const fx = fixtureList.find((f) => f.id === fixtureId);
         // For UCL matches, homeGoals and awayGoals should be regular time only
         // extraTime.homeGoals and extraTime.awayGoals are the additional goals in extra time
         const result: any = {
@@ -1220,10 +1243,12 @@ function MatchPage() {
         console.log("Final result to save:", result);
         commitLiveInjuriesToPlayersStore(fx, result);
 
-        const updated = s.uclFixtures.map((f) => (f.id === fixtureId ? { ...f, result } : f));
-        const newSave = { ...s, uclFixtures: updated };
-        saveSaveWithRetry(newSave);
-        console.log("UCL result saved successfully");
+        const updated = fixtureList.map((f) => (f.id === fixtureId ? { ...f, result, europeanCompetition: europeanCompetition ?? f.europeanCompetition } : f));
+        const newSave = europeanCompetition
+          ? { ...s, [europeanCompetition === "uel" ? "uelFixtures" : "ueclFixtures"]: updated }
+          : { ...s, uclFixtures: updated };
+        saveSaveWithRetry(newSave as any);
+        console.log(europeanCompetition ? `${europeanCompetition} result saved successfully` : "UCL result saved successfully");
       }
     } else if (isCup) {
       const s = loadSave();
@@ -1439,6 +1464,9 @@ function MatchPage() {
         if (!foundFixture) {
           foundFixture = saveToUse.uclFixtures?.find((f) => f.id === fixtureId);
         }
+        if (!foundFixture) {
+          foundFixture = findFixtureInEuropeanCompetitions(saveToUse, fixtureId);
+        }
 
         fixtureRef.current = foundFixture || null;
       } else {
@@ -1575,6 +1603,9 @@ function MatchPage() {
           fixture.result.homeGoals,
           fixture.result.awayGoals,
           isCupMatch,
+          undefined,
+          undefined,
+          matchType === "UCL",
         );
       }
 
@@ -2252,7 +2283,8 @@ function MatchPage() {
     let next: any = { ...s };
     let changed = false;
     let matchedFixture: any = null;
-    let competition: "league" | "cup" | "ucl" | null = null;
+    let competition: "league" | "cup" | "ucl" | "european" | null = null;
+    let europeanCompetition: "uel" | "uecl" | null = null;
 
     // The live chronicle is provisional while it is being played. At this
     // point it becomes official. Mark it so this transition is idempotent and
@@ -2294,6 +2326,18 @@ function MatchPage() {
         return { ...f, result: officialResult };
       });
     }
+    for (const comp of ["uel", "uecl"] as const) {
+      const key = comp === "uel" ? "uelFixtures" : "ueclFixtures";
+      if (!Array.isArray((next as any)[key])) continue;
+      (next as any)[key] = (next as any)[key].map((f: any) => {
+        if (f.id !== fixtureId) return f;
+        matchedFixture = f;
+        competition = "european";
+        europeanCompetition = comp;
+        changed = true;
+        return { ...f, result: officialResult, europeanCompetition: comp };
+      });
+    }
 
     if (!changed || !matchedFixture) return;
 
@@ -2312,6 +2356,20 @@ function MatchPage() {
     if (competition === "league" && !matchedFixture.result?.liveCommitted) {
       const officialFixture = { ...matchedFixture, result: officialResult };
       next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], officialFixture);
+    } else if (competition === "european" && europeanCompetition) {
+      const officialFixture = { ...matchedFixture, result: officialResult, europeanCompetition };
+      next = runEuropeanEngine(next, europeanCompetition, (engine) => {
+        if (engine.ucl && isUCLLeaguePhaseFixture(officialFixture.round)) {
+          engine.ucl.table = applyUCLTableResult(
+            engine.ucl.table,
+            officialFixture.homeId,
+            officialFixture.awayId,
+            officialFixture.result.homeGoals,
+            officialFixture.result.awayGoals,
+          );
+        }
+        return applyUCLMatchAftermath(engine, officialFixture.homeId, officialFixture.awayId);
+      });
     }
 
     saveSaveWithRetry(next);
@@ -5634,8 +5692,11 @@ function MatchPage() {
 
                     // Check if aggregate is tied for two-legged ties
                     let aggregateTied = false;
-                    if (isLeg2 && save?.uclFixtures) {
-                      const leg1 = save.uclFixtures.find(
+                    if (isLeg2) {
+                      const aggregateFixtures = fixtureRef.current?.europeanCompetition
+                        ? getEuropeanFixtureList(save, fixtureRef.current.europeanCompetition)
+                        : (save?.uclFixtures ?? []);
+                      const leg1 = aggregateFixtures.find(
                         (l) =>
                           l.round === fixture.round!.replace("Leg2", "Leg1") &&
                           ((l.homeId === fixture.awayId && l.awayId === fixture.homeId) ||
