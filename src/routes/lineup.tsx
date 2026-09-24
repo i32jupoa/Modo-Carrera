@@ -194,12 +194,25 @@ function LineupPage() {
     }
 
     // Initialize lineup from save
-    const savedLineup = s.lineups[s.myTeamId] ?? [];
+    const savedLineup = (s.lineups[s.myTeamId] ?? []).slice(0, 11);
     if (savedLineup.length > 0) {
-      setStartingXI(savedLineup.slice(0, 11));
-      const squad = getSimSquad(s.myTeamId);
-      const benchPlayers = squad.filter((p) => !savedLineup.includes(p.id)).map((p) => p.id);
-      setBench(benchPlayers);
+      setStartingXI(savedLineup);
+
+      // IMPORTANT: the saved substitutes collection is the only source used
+      // to hydrate the convocated bench. Older code rebuilt the bench as
+      // "all squad minus XI", which immediately destroyed a valid
+      // Reserva -> Suplente change when the page was reopened.
+      const savedSubstitutes = Array.from(
+        new Set(
+          (s.substitutes?.[s.myTeamId] ?? []).filter(
+            (id) => id && !savedLineup.includes(id),
+          ),
+        ),
+      ).slice(0, 12);
+      setBench(savedSubstitutes);
+    } else {
+      setStartingXI([]);
+      setBench([]);
     }
 
     // Initialize formation from save
@@ -244,9 +257,16 @@ function LineupPage() {
       save.substitutes ?? {},
       save.myTeamId,
     );
-    const savedSubs = hasSavedSubs
-      ? (save.substitutes?.[save.myTeamId] ?? []).slice(0, 12)
-      : active.substitutes.slice(0, 12);
+    const rawSavedSubs = hasSavedSubs
+      ? (save.substitutes?.[save.myTeamId] ?? [])
+      : [];
+    // A few older careers contain `substitutes[teamId] = []` even though the
+    // active tactic plan already has the real 12-man bench. Treat an empty
+    // saved array as "not configured" and recover from the active plan instead
+    // of wiping a valid bench on every re-entry.
+    const savedSubs = (rawSavedSubs.length > 0 ? rawSavedSubs : active.substitutes)
+      .filter((id) => id && !savedXI.includes(id))
+      .slice(0, 12);
     const useSavedXI = savedXI.length > 0;
     const reconciledActive = {
       ...active,
@@ -291,7 +311,10 @@ function LineupPage() {
   // futbolista en ese mismo render, sin esperar a avanzar días. El hueco que
   // deja en el once queda libre a propósito.
   useEffect(() => {
-    if (liveMode || !save || !ready || squad.length === 0) return;
+    // Wait until the active tactic plan has hydrated the saved XI/bench.
+    // Without this guard, the first render after navigation still carried the
+    // old "all squad minus XI" bench and overwrote the just-loaded saved bench.
+    if (liveMode || !save || !ready || squad.length === 0 || !tacticPlanState) return;
     const available = new Set(squad.map((player) => player.id));
 
     // Un jugador que ya no está en la plantilla deja su hueco VACÍO en la
@@ -2302,7 +2325,7 @@ function LineupPage() {
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {posLabelOf(player)} · {player.age}a · {player.goals}G {player.assists}A
+                          OVR {playerOverall(player) || "—"} · {posLabelOf(player)} · {player.age}a · {player.goals}G {player.assists}A
                         </p>
                         <div className="mt-1">
                           <span className={`inline-flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[0.55rem] font-black ${
