@@ -299,6 +299,18 @@ function activeShare(state: MarketSimulationState): number {
   const base = state.deadlineDay
     ? MARKET_TIMING.deadlineActiveClubShare
     : MARKET_TIMING.dailyActiveClubShare;
+
+  // Fuera de las ventanas de fichajes sólo se mantienen renovaciones puntuales.
+  // Antes seguía entrando ~6% de los clubes cada día (por el `max(..., 0.2)`),
+  // y cada club ejecutaba además una revisión completa de plantilla. Eso hacía
+  // especialmente caros los pasos diarios de septiembre a junio aunque no
+  // hubiese operaciones de mercado que resolver. Una rotación pequeña mantiene
+  // el comportamiento vivo sin convertir el avance de fecha en un cuello de
+  // botella.
+  if (state.window === "closed") {
+    return Math.min(0.02, base * 0.2);
+  }
+
   return clamp(base * Math.max(state.intensity, 0.2), 0, 1);
 }
 
@@ -440,8 +452,14 @@ function runClubDay(
   const profile = getClubProfile(clubId);
 
   // 1. Contratos: renovaciones y revisión de la lista de transferibles.
+  // Fuera de mercado sólo mantenemos renovaciones puntuales; la revisión
+  // completa de transferibles se difiere al próximo mercado abierto.
   if (seededUnit(clubId, date, "contracts") < 0.5) {
-    const contracts = runClubContractCycle(clubId, { date });
+    const contracts = runClubContractCycle(clubId, {
+      date,
+      maxRenewals: state.window === "closed" ? 1 : 2,
+      reviewList: state.window !== "closed",
+    });
     for (const renewal of contracts.renewals) {
       if (renewal.renewed) result.renewals += 1;
     }

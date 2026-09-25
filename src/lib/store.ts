@@ -4760,67 +4760,127 @@ export async function simulateBackgroundLeaguesOnly(
   return next;
 }
 
+/**
+ * Schedule foreign national cups in small, predictable daily batches.
+ *
+ * The user's country is always handled by the normal cup flow. Every other
+ * country gets its cup round assigned to a nearby day so advancing the
+ * calendar never has to simulate all national cups at once.
+ *
+ * Batch pattern (country/cup order is stable):
+ *   -1 day: 3 cups
+ *    0 day: 2 cups
+ *   +1 day: 3 cups
+ *   -2 day: 3 cups
+ *   +2 day: 3 cups
+ *   ...and so on.
+ *
+ * This keeps the simulation logic intact but caps the amount of cup work done
+ * by a single calendar advance.
+ */
+const FOREIGN_CUP_BATCH_OFFSETS = [
+  -1, -1, -1,
+   0,  0,
+   1,  1,  1,
+   2,  2,  2,
+   3,  3,  3,
+   4,  4,  4,
+   5,  5,  5,
+   6,  6,  6,
+];
+
+function getForeignCupBatchOffset(index: number): number {
+  if (index < FOREIGN_CUP_BATCH_OFFSETS.length) {
+    return FOREIGN_CUP_BATCH_OFFSETS[index];
+  }
+
+  // Keep all remaining cups on future days so the expensive date around the
+  // user's cup is never hit again by a later "catch-up" batch.
+  const extraIndex = index - FOREIGN_CUP_BATCH_OFFSETS.length;
+  return 7 + Math.floor(extraIndex / 3);
+}
+
+function getForeignCupLeagues(save: SaveGame): LeagueId[] {
+  const userCountry = LEAGUES[save.myLeague]?.country;
+  const seenCountries = new Set<string>();
+
+  return (Object.keys(save.cupFixtures) as LeagueId[])
+    .filter((lg) => {
+      if (!Array.isArray(save.cupFixtures[lg])) return false;
+      const country = LEAGUES[lg]?.country;
+      if (!country || country === userCountry || seenCountries.has(country)) return false;
+      const primary = getPrimaryLeagueForCountry(country);
+      if (!primary || primary !== lg) return false;
+      seenCountries.add(country);
+      return true;
+    })
+    .sort((a, b) => a.localeCompare(b));
+}
+
 export async function scheduleBackgroundCupsOnly(
   save: SaveGame,
-  matchday: number,
+  _matchday: number,
   currentDate: string,
 ): Promise<SaveGame> {
   const next: SaveGame = createFastMutationSnapshot(save);
+  const foreignCupLeagues = getForeignCupLeagues(next);
 
-  const userLeague = next.myLeague;
-
-  const backgroundCupLeagues: LeagueId[] = [];
-
-  // Collect background cup leagues that have fixtures to simulate
-
-  for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
-    const cupFixtures = next.cupFixtures[lg];
-
-    if (!Array.isArray(cupFixtures)) continue;
-
-    const isVIP = isVIPLeague(lg, userLeague);
-
-    const fixtures = cupFixtures.filter((f) => f.matchday === matchday && !f.result);
-
-    if (!isVIP && fixtures.length > 0) backgroundCupLeagues.push(lg);
-  }
-
-  if (backgroundCupLeagues.length === 0) return save;
-
-  // If there are already pending cup sims not yet processed, skip re-scheduling
-
-  const existingCupPending = (next.pendingBackgroundSims || []).filter((s) => s.isCup);
-
-  if (existingCupPending.length > 0) return save;
-
-  // Distribution: 5 countries the day BEFORE the cup event, rest the day AFTER
-
-  // For N=11: 5 before, 6 after. For N=10: 5 before, 5 after.
+  if (foreignCupLeagues.length === 0) return save;
 
   const newScheduledSims = [...(next.pendingBackgroundSims || [])];
+  const CUP_START = '2025-07-07';
 
-  const BEFORE_COUNT = 5;
+  for (let index = 0; index < foreignCupLeagues.length; index++) {
+    const lg = foreignCupLeagues[index];
+    const cupFixtures = next.cupFixtures[lg];
+    if (!Array.isArray(cupFixtures)) continue;
 
-  let countBefore = 0;
+    const country = LEAGUES[lg]?.country;
+    if (!country) continue;
 
-  for (const lg of backgroundCupLeagues) {
-    const alreadyScheduled = newScheduledSims.some(
-      (s) => s.league === lg && s.matchday === matchday && s.isCup,
+    const structure =
+      (next.cupFixtures as any)[`${lg}_structure`] || getCupStructureForCountry(country);
+    const schedule = structure.schedule || [];
+
+    // Only schedule the first round that still has unplayed fixtures. This is
+    // enough to keep the queue small and lets the next round be created only
+    // after its predecessor has actually finished.
+    const activeStep = schedule.find((step: any) =>
+      cupFixtures.some((f) => f.round === step.round && !f.result),
     );
 
-    if (!alreadyScheduled) {
-      const offset = countBefore < BEFORE_COUNT ? -1 : 1;
+    if (!activeStep) continue;
 
-      const scheduledDate = addDaysToIso(currentDate, offset);
+    const activeFixtures = cupFixtures.filter(
+      (f) => f.round === activeStep.round && !f.result,
+    );
+    if (activeFixtures.length === 0) continue;
 
-      newScheduledSims.push({ league: lg, matchday, isCup: true, date: scheduledDate });
+    const alreadyScheduled = newScheduledSims.some(
+      (s) =>
+        s.isCup &&
+        s.league === lg &&
+        s.matchday === activeStep.matchday,
+    );
+    if (alreadyScheduled) continue;
 
-      countBefore++;
-    }
+    const offset = getForeignCupBatchOffset(index);
+    const roundDate = addDaysToIso(CUP_START, activeStep.matchday);
+    let scheduledDate = addDaysToIso(roundDate, offset);
+
+    // If an old save is already past the target date, process it on the next
+    // advance instead of leaving a pending entry stranded in the past.
+    if (scheduledDate < currentDate) scheduledDate = currentDate;
+
+    newScheduledSims.push({
+      league: lg,
+      matchday: activeStep.matchday,
+      isCup: true,
+      date: scheduledDate,
+    });
   }
 
   next.pendingBackgroundSims = newScheduledSims;
-
   return next;
 }
 
@@ -6385,19 +6445,13 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
 
   const cupDayOffset = Math.floor((todayDate.getTime() - CUP_START.getTime()) / 86400000);
 
-  // Get all VIP leagues (Big 5 + Belgium + Netherlands + Portugal + Turkey)
+  // All foreign national cups are now managed by the background scheduler.
+  // This function is responsible only for creating/drawing the brackets so
+  // that match simulation itself can be spread across several days.
 
-  const vipLeagues = [...BIG5_LEAGUES, ...IMPORTANT_LEAGUES] as LeagueId[];
+  const foreignCupLeagues = getForeignCupLeagues(next);
 
-  // Filter out leagues from the user's country (we handle that interactively)
-
-  const foreignVipLeagues = vipLeagues.filter((lg) => {
-    const country = LEAGUES[lg]?.country;
-
-    return country && country !== userCountry;
-  });
-
-  for (const lg of foreignVipLeagues) {
+  for (const lg of foreignCupLeagues) {
     const country = LEAGUES[lg]?.country;
 
     if (!country) continue;
@@ -6522,71 +6576,14 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
             }
           }
 
-          // Simulate all preliminary fixtures
-
-          const simulatedPrelimFixtures: Fixture[] = [];
-
-          for (const f of preliminaryFixtures) {
-            const simmed = simulateFixtureInline(next, f, false, true);
-
-            simulatedPrelimFixtures.push(simmed);
-
-            next = applyMatchToStats(next, simmed);
-          }
-
-          // Re-sync list after applyMatchToStats reassigned next
+          // IMPORTANT: do not simulate the preliminary round here.
+          // The fixtures are merely created on draw day; the background cup
+          // scheduler will spread the actual matches over several days.
 
           list = next.cupFixtures[primaryLeague]!;
 
-          for (const simmed of simulatedPrelimFixtures) {
-            const idx = list.findIndex((x) => x.id === simmed.id);
-
-            if (idx >= 0) {
-              list[idx] = simmed;
-            } else {
-              list.push(simmed);
-            }
-          }
-
-          // Get winners for next round from the simulated fixtures in list
-
-          const winners = preliminaryFixtures.map((f) => {
-            const simmed = list.find((x) => x.id === f.id);
-
-            if (!simmed || !simmed.result) return f.homeId;
-
-            return getCupMatchWinner(simmed.result) === "home" ? simmed.homeId : simmed.awayId;
-          });
-
-          // Auto-create next round fixtures
-
-          const nextStep = cupSchedule[1];
-
-          if (nextStep) {
-            // Combine winners with main bracket participants
-
-            const mainBracketTeams = cupData.participants.filter(
-              (id) => !preliminaryTeams.includes(id),
-            );
-
-            const drawTeams = [...winners, ...mainBracketTeams];
-
-            const nextStepWithDraw = {
-              matchday: nextStep.matchday,
-              round: nextStep.round,
-              drawMatchday: nextStep.drawMatchday,
-            };
-
-            const built = buildNextRound(
-              "cup",
-              primaryLeague,
-              firstRound.round,
-              drawTeams,
-              nextStepWithDraw,
-              1,
-            );
-
-            list.push(...built);
+          for (const f of preliminaryFixtures) {
+            if (!list.some((existing) => existing.id === f.id)) list.push(f);
           }
         } else {
           // No preliminary round, create first round fixtures directly
@@ -6710,29 +6707,8 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
         list.push(...built);
       }
 
-      // Simulate unplayed fixtures in current round
-
-      if (!playedAll && cupDayOffset >= step.matchday) {
-        for (const f of roundFixtures) {
-          if (!f.result) {
-            const simmed = simulateFixtureInline(next, f, false, true);
-
-            next = applyMatchToStats(next, simmed);
-
-            // Re-sync list after applyMatchToStats reassigns next
-
-            list = next.cupFixtures[primaryLeague]!;
-
-            const idx = list.findIndex((x) => x.id === f.id);
-
-            if (idx >= 0) {
-              list[idx] = simmed;
-            } else {
-              list.push(simmed);
-            }
-          }
-        }
-      }
+      // Match simulation is intentionally NOT performed here.
+      // processScheduledBackgroundSims() handles a small batch each day.
     }
   }
 

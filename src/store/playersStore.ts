@@ -1716,7 +1716,15 @@ export const usePlayersStore = create<PlayersState>()(
 
         let date = state.currentDate;
 
-        let fixtures = state.fixtures;
+        // Se trabaja sobre una única copia del calendario durante todo el avance.
+        // Antes `applyFixtureResult()` hacía un `.map()` sobre TODOS los partidos
+        // por cada encuentro simulado, convirtiendo un día con N partidos en un
+        // coste O(N²). Marcar el fixture por índice mantiene el coste lineal.
+        let fixtures = [...state.fixtures];
+        const fixtureIndex = new Map<string, number>();
+        for (let index = 0; index < fixtures.length; index += 1) {
+          fixtureIndex.set(fixtures[index].id, index);
+        }
 
         let advanced = 0;
 
@@ -1727,19 +1735,21 @@ export const usePlayersStore = create<PlayersState>()(
             get().getSimXI(teamId, [], md),
           );
 
-          // Record stats from simulation events
-
-          const homeXI = get().getSimXI(f.homeTeam, [], f.matchday);
-
-          const awayXI = get().getSimXI(f.awayTeam, [], f.matchday);
-
-          // Record the real participation/minutes produced by the simulation.
+          // `ratings` ya contiene la participación real del encuentro. Evitamos
+          // volver a construir dos XI completos sólo para registrar estadísticas;
+          // sólo usamos el XI como fallback para resultados legacy sin ratings.
           const minuteMap = new Map(
             (result.ratings ?? []).map((r: any) => [r.playerId, Number(r.minutes) || 0]),
           );
-          const participants = result.ratings?.length
+          let participants = result.ratings?.length
             ? result.ratings.map((r: any) => r.playerId)
-            : [...homeXI, ...awayXI].map((p) => p.id);
+            : [];
+
+          if (participants.length === 0) {
+            const homeXI = get().getSimXI(f.homeTeam, [], f.matchday);
+            const awayXI = get().getSimXI(f.awayTeam, [], f.matchday);
+            participants = [...homeXI, ...awayXI].map((player) => player.id);
+          }
 
           for (const playerId of participants) {
             get().recordAppearance(
@@ -1749,30 +1759,24 @@ export const usePlayersStore = create<PlayersState>()(
             );
           }
 
-          // Persist physical energy after every simulated fixture. The method
-          // also resets unused bench/reserve players to 100 as required.
-          if (result.energyAtEnd) {
-            get().setTeamMatchEnergy(f.homeTeam, result.energyAtEnd, f.date);
-            get().setTeamMatchEnergy(f.awayTeam, result.energyAtEnd, f.date);
-          }
-
-          // Record goals and assists from events
-
+          // Estos fixtures nunca incluyen al equipo del usuario (se filtra antes
+          // de entrar aquí), por lo que no hace falta recalcular su energía.
+          // La persistencia de energía se reserva al partido del usuario.
           for (const ev of result.events) {
-            if (ev.type === "goal") {
-              get().recordGoal(ev.scorerId);
-
-              if (ev.assistId) {
-                get().recordAssist(ev.assistId);
-              }
-            }
+            if (ev.type !== "goal") continue;
+            get().recordGoal(ev.scorerId);
+            if (ev.assistId) get().recordAssist(ev.assistId);
           }
 
-          fixtures = applyFixtureResult(fixtures, f.id, {
-            homeScore: result.homeGoals,
-
-            awayScore: result.awayGoals,
-          });
+          const index = fixtureIndex.get(f.id);
+          if (index !== undefined) {
+            fixtures[index] = {
+              ...fixtures[index],
+              isPlayed: true,
+              homeScore: result.homeGoals,
+              awayScore: result.awayGoals,
+            };
+          }
         };
 
         for (let d = 0; d < days; d++) {
@@ -1786,23 +1790,25 @@ export const usePlayersStore = create<PlayersState>()(
           const userMatch = onDay.find((f) => involvesTeam(f, state.myTeamId!));
 
           if (userMatch) {
-            for (const f of onDay) {
-              if (f.id !== userMatch.id) simFixture(f);
-            }
+            // Todas las estadísticas del resto de la jornada se publican en un
+            // único update de Zustand en lugar de uno por jugador/acción.
+            withPlayerStatsBatch(() => {
+              for (const f of onDay) {
+                if (f.id !== userMatch.id) simFixture(f);
+              }
+            });
 
             date = nextDate;
-
             advanced++;
-
             pendingUserMatch = fixtures.find((f) => f.id === userMatch.id) ?? userMatch;
-
             break;
           }
 
-          for (const f of onDay) simFixture(f);
+          withPlayerStatsBatch(() => {
+            for (const f of onDay) simFixture(f);
+          });
 
           date = nextDate;
-
           advanced++;
         }
 

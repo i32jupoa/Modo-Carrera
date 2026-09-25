@@ -355,7 +355,7 @@ export interface ContractCycleResult {
  */
 export function runClubContractCycle(
   clubId: string,
-  options: { date: string; maxRenewals?: number },
+  options: { date: string; maxRenewals?: number; reviewList?: boolean },
 ): ContractCycleResult {
   const cacheKey = options.date;
   const maxRenewals = options.maxRenewals ?? 2;
@@ -371,7 +371,12 @@ export function runClubContractCycle(
     result.renewals.push(attemptRenewal(clubId, player.id, cacheKey));
   }
 
-  result.listed = reviewTransferList(clubId, cacheKey);
+  // Fuera de la ventana de fichajes no hace falta recalcular la lista completa
+  // de transferibles todos los días: se volverá a revisar al abrir el mercado.
+  if (options.reviewList !== false) {
+    result.listed = reviewTransferList(clubId, cacheKey);
+  }
+
   return result;
 }
 
