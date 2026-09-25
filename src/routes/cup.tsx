@@ -24,6 +24,7 @@ import { LeagueLogo } from "@/components/LeagueLogo";
 import { MatchStatsModal } from "@/components/MatchStatsModal";
 
 import { getCupStructureForCountry } from "@/lib/cups";
+import { NATIONAL_CUP_START } from "@/lib/calendarRules";
 import type { Fixture } from "@/lib/season";
 
 // Helper to get league name from league ID
@@ -339,6 +340,18 @@ function CupPage() {
   );
 }
 
+function formatCupMatchDate(matchday: number): string {
+  const start = new Date(`${NATIONAL_CUP_START}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate() + matchday);
+
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(start);
+}
+
 function RoundBlock({
   label,
   matchday,
@@ -353,7 +366,7 @@ function RoundBlock({
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-bold uppercase tracking-wider">{label}</h2>
 
-        <span className="text-xs text-muted-foreground">Jornada {matchday}</span>
+        <span className="text-xs text-muted-foreground">{formatCupMatchDate(matchday)}</span>
       </div>
 
       <div className="panel">{children}</div>
