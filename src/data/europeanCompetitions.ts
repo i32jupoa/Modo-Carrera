@@ -157,21 +157,39 @@ export const EUROPEAN_CONFIGS: Record<EuropeanCompetitionId, EuropeanCompetition
 export const EUROPEAN_START = UCL_START;
 
 // Exact Champions calendar, shifted one day for both competitions.
+function nextThursdayOffset(offset: number): number {
+  const start = new Date(`${UCL_START}T00:00:00Z`);
+  const date = new Date(start.getTime() + offset * 86400000);
+  const day = date.getUTCDay();
+  const delta = (4 - day + 7) % 7;
+  return offset + (delta === 0 ? 7 : delta);
+}
+
+// Champions stays on Tuesday/Wednesday. Europa League and Conference League
+// always use the Thursday of the same UEFA match week.
 export function europeanCalendar() {
+  const leagueDays = UCL_CALENDAR.leagueDay.map(nextThursdayOffset);
+  const playoffLeg1 = nextThursdayOffset(UCL_CALENDAR.playoffLeg1);
+  const playoffLeg2 = nextThursdayOffset(UCL_CALENDAR.playoffLeg2);
+
   return {
+    // Initial Swiss draw stays aligned with the Champions draw. The later
+    // draws are deliberately derived from the last match of the previous
+    // round: +2 days when possible and never closer than 14 days to the next
+    // European match.
     leagueDraw: UCL_CALENDAR.leagueDraw + 1,
-    leagueDay: UCL_CALENDAR.leagueDay.map((d) => d + 1),
-    playoffDraw: UCL_CALENDAR.playoffDraw + 1,
-    playoffLeg1: UCL_CALENDAR.playoffLeg1 + 1,
-    playoffLeg2: UCL_CALENDAR.playoffLeg2 + 1,
-    knockoutDraw: UCL_CALENDAR.knockoutDraw + 1,
-    r16Leg1: UCL_CALENDAR.r16Leg1 + 1,
-    r16Leg2: UCL_CALENDAR.r16Leg2 + 1,
-    qfLeg1: UCL_CALENDAR.qfLeg1 + 1,
-    qfLeg2: UCL_CALENDAR.qfLeg2 + 1,
-    sfLeg1: UCL_CALENDAR.sfLeg1 + 1,
-    sfLeg2: UCL_CALENDAR.sfLeg2 + 1,
-    final: UCL_CALENDAR.final + 1,
+    leagueDay: leagueDays,
+    playoffDraw: leagueDays[leagueDays.length - 1] + 2,
+    playoffLeg1,
+    playoffLeg2,
+    knockoutDraw: playoffLeg2 + 2,
+    r16Leg1: nextThursdayOffset(UCL_CALENDAR.r16Leg1),
+    r16Leg2: nextThursdayOffset(UCL_CALENDAR.r16Leg2),
+    qfLeg1: nextThursdayOffset(UCL_CALENDAR.qfLeg1),
+    qfLeg2: nextThursdayOffset(UCL_CALENDAR.qfLeg2),
+    sfLeg1: nextThursdayOffset(UCL_CALENDAR.sfLeg1),
+    sfLeg2: nextThursdayOffset(UCL_CALENDAR.sfLeg2),
+    final: nextThursdayOffset(UCL_CALENDAR.final),
   } as const;
 }
 

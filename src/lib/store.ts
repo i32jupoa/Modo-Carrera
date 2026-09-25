@@ -56,6 +56,10 @@ import {
 } from "@/lib/season";
 
 import { addDaysToIso } from "@/lib/transferWindows";
+import {
+  NATIONAL_CUP_START,
+  getSafeNationalCupDatesBetween,
+} from "@/lib/calendarRules";
 import { applySeasonEndProgressionToAll } from "@/lib/seasonEndProgression";
 import { applySeasonEndProgressionToPlayer } from "@/lib/progressionHelper";
 import { applyMonthlyProgressionToPlayer } from "@/lib/progressionHelper";
@@ -193,6 +197,7 @@ import {
   initUCL,
   UCL_SCHEDULE,
   getCupStructureForCountry,
+  getGlobalCupScheduleForCountry,
 } from "@/lib/cups";
 
 import {
@@ -585,24 +590,49 @@ export function fixCupDraws(save: SaveGame): SaveGame {
 
   let fixed = false;
 
-  // Detect stale cup fixtures generated with old offsets (pre-league-anchored schedule).
-
-  // New schedule: Preliminar matchday=63, R32 matchday=98. Old schedule had matchday<=20.
-
-  // If any fixture has matchday < 63, the league's cup data is outdated → reset.
-
+  // Migrate old cup calendars. The current system aligns every country to a
+  // shared set of round slots, so old fixture dates are no longer compatible.
+  // Reset only cups whose existing fixture dates disagree with the new schedule.
   for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
     const list = next.cupFixtures[lg];
+    const country = LEAGUES[lg]?.country;
+    if (!country) continue;
+
+    const expectedSchedule = getGlobalCupScheduleForCountry(country);
+    const expected = new Map(expectedSchedule.map((step) => [step.round, step.matchday]));
+    const storedStructure = (next.cupFixtures as any)[`${lg}_structure`];
+    const storedSchedule = Array.isArray(storedStructure?.schedule) ? storedStructure.schedule : null;
+
+    const staleStructure =
+      storedSchedule &&
+      (storedSchedule.length !== expectedSchedule.length ||
+        storedSchedule.some((step: any) =>
+          expected.get(step.round) !== undefined && Number(step.matchday) !== expected.get(step.round),
+        ));
+
+    if (staleStructure) {
+      // Keep progress from older saves but replace the schedule metadata with
+      // the current synchronized calendar.
+      (next.cupFixtures as any)[`${lg}_structure`] = {
+        schedule: expectedSchedule,
+        preliminaryTeams: getCupStructureForCountry(country).preliminaryTeams,
+        mainBracketSize: getCupStructureForCountry(country).mainBracketSize,
+      };
+    }
 
     if (!Array.isArray(list) || list.length === 0) continue;
 
-    const stale = list.some((f: any) => (f.matchday as number) < 63);
+    let listChanged = false;
+    const migratedList = list.map((f: any) => {
+      const expectedMatchday = expected.get(f.round);
+      if (expectedMatchday === undefined || Number(f.matchday) === expectedMatchday || f.result) {
+        return f;
+      }
+      listChanged = true;
+      return { ...f, matchday: expectedMatchday };
+    });
 
-    if (stale) {
-      next.cupFixtures[lg] = [];
-
-      delete (next.cupFixtures as any)[`${lg}_structure`];
-    }
+    if (listChanged) next.cupFixtures[lg] = migratedList;
   }
 
   for (const lg of Object.keys(next.cupFixtures) as LeagueId[]) {
@@ -3043,6 +3073,7 @@ export async function simulateCupMatchdayLayered(
   save: SaveGame,
   matchday: number,
   onProgress?: (processed: number, total: number) => void,
+  onlyLeague?: LeagueId,
 ): Promise<SaveGame> {
   const BATCH_SIZE = 100;
 
@@ -3060,7 +3091,10 @@ export async function simulateCupMatchdayLayered(
 
   const vipCupLeagueSet = new Set(
     (Object.keys(save.cupFixtures) as LeagueId[]).filter(
-      (lg) => Array.isArray(save.cupFixtures[lg]) && isVIPLeague(lg, userLeague),
+      (lg) =>
+        Array.isArray(save.cupFixtures[lg]) &&
+        isVIPLeague(lg, userLeague) &&
+        (!onlyLeague || lg === onlyLeague),
     ),
   );
 
@@ -4767,39 +4801,14 @@ export async function simulateBackgroundLeaguesOnly(
  * country gets its cup round assigned to a nearby day so advancing the
  * calendar never has to simulate all national cups at once.
  *
- * Batch pattern (country/cup order is stable):
- *   -1 day: 3 cups
- *    0 day: 2 cups
- *   +1 day: 3 cups
- *   -2 day: 3 cups
- *   +2 day: 3 cups
- *   ...and so on.
- *
- * This keeps the simulation logic intact but caps the amount of cup work done
- * by a single calendar advance.
+ * Countries are assigned to safe Tue/Wed/Thu dates inside the current round
+ * window. The batch size is calculated from the number of safe dates available,
+ * so normal rounds use small batches while compressed UEFA weeks still finish
+ * before the global draw gate.
  */
-const FOREIGN_CUP_BATCH_OFFSETS = [
-  -1, -1, -1,
-   0,  0,
-   1,  1,  1,
-   2,  2,  2,
-   3,  3,  3,
-   4,  4,  4,
-   5,  5,  5,
-   6,  6,  6,
-];
-
-function getForeignCupBatchOffset(index: number): number {
-  if (index < FOREIGN_CUP_BATCH_OFFSETS.length) {
-    return FOREIGN_CUP_BATCH_OFFSETS[index];
-  }
-
-  // Keep all remaining cups on future days so the expensive date around the
-  // user's cup is never hit again by a later "catch-up" batch.
-  const extraIndex = index - FOREIGN_CUP_BATCH_OFFSETS.length;
-  return 7 + Math.floor(extraIndex / 3);
-}
-
+// Foreign cups share the same round slot globally, but their actual simulations
+// are spread over the 14-day match window. Two countries per day means even a
+// 28-country season finishes the whole wave before the next draw at +14 days.
 function getForeignCupLeagues(save: SaveGame): LeagueId[] {
   const userCountry = LEAGUES[save.myLeague]?.country;
   const seenCountries = new Set<string>();
@@ -4808,13 +4817,77 @@ function getForeignCupLeagues(save: SaveGame): LeagueId[] {
     .filter((lg) => {
       if (!Array.isArray(save.cupFixtures[lg])) return false;
       const country = LEAGUES[lg]?.country;
-      if (!country || country === userCountry || seenCountries.has(country)) return false;
+      if (!country || seenCountries.has(country)) return false;
       const primary = getPrimaryLeagueForCountry(country);
       if (!primary || primary !== lg) return false;
+
+      // La copa del país del usuario también entra en la cola de simulación
+      // cuando la ronda activa NO contiene a su equipo (por ejemplo, una
+      // ronda previa en la que el Villarreal tiene bye). Si el usuario tiene
+      // un partido en esa ronda, se deja fuera para que se resuelva mediante
+      // el flujo de "volver a la temporada".
+      if (country === userCountry) {
+        const structure =
+          (save.cupFixtures as any)[`${primary}_structure`] ||
+          getCupStructureForCountry(country);
+        const schedule = structure?.schedule || [];
+        const cupFixtures = save.cupFixtures[primary] || [];
+        const activeStep = schedule.find((step: any) =>
+          cupFixtures.some((f: any) => f.round === step.round && !f.result),
+        );
+
+        if (!activeStep) return false;
+
+        const userHasActiveFixture = cupFixtures.some(
+          (f: any) =>
+            f.round === activeStep.round &&
+            !f.result &&
+            (f.homeId === save.myTeamId || f.awayId === save.myTeamId),
+        );
+
+        if (userHasActiveFixture) return false;
+      }
+
       seenCountries.add(country);
       return true;
     })
     .sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Returns true only when every country that participates in the given global
+ * cup slot has finished that slot's round. This is the gate for the NEXT draw.
+ */
+export function isGlobalNationalCupRoundComplete(save: SaveGame, globalSlot: number): boolean {
+  const userCountry = LEAGUES[save.myLeague]?.country;
+  const countries = new Set<string>();
+
+  for (const lg of Object.keys(LEAGUES) as LeagueId[]) {
+    const country = LEAGUES[lg]?.country;
+    if (country) countries.add(country);
+  }
+
+  for (const country of countries) {
+    const primaryLeague = getPrimaryLeagueForCountry(country) as LeagueId | undefined;
+    if (!primaryLeague) continue;
+
+    const schedule = getGlobalCupScheduleForCountry(country);
+    const step = schedule.find((s: any) => s.globalSlot === globalSlot);
+    if (!step) continue; // This country joined the common calendar later.
+
+    const fixtures = save.cupFixtures[primaryLeague];
+
+    // The round must have been drawn and every match must be resolved before
+    // the common draw for the following slot is allowed.
+    if (!Array.isArray(fixtures)) return false;
+
+    const roundFixtures = fixtures.filter((f: any) => f.round === step.round);
+    if (roundFixtures.length === 0) return false;
+
+    if (!roundFixtures.every((f: any) => !!f.result)) return false;
+  }
+
+  return true;
 }
 
 export async function scheduleBackgroundCupsOnly(
@@ -4828,8 +4901,6 @@ export async function scheduleBackgroundCupsOnly(
   if (foreignCupLeagues.length === 0) return save;
 
   const newScheduledSims = [...(next.pendingBackgroundSims || [])];
-  const CUP_START = '2025-07-07';
-
   for (let index = 0; index < foreignCupLeagues.length; index++) {
     const lg = foreignCupLeagues[index];
     const cupFixtures = next.cupFixtures[lg];
@@ -4842,35 +4913,48 @@ export async function scheduleBackgroundCupsOnly(
       (next.cupFixtures as any)[`${lg}_structure`] || getCupStructureForCountry(country);
     const schedule = structure.schedule || [];
 
-    // Only schedule the first round that still has unplayed fixtures. This is
-    // enough to keep the queue small and lets the next round be created only
-    // after its predecessor has actually finished.
+    // Only schedule the first round that still has unplayed fixtures. The next
+    // round is not created until the global draw gate is reached.
     const activeStep = schedule.find((step: any) =>
-      cupFixtures.some((f) => f.round === step.round && !f.result),
+      cupFixtures.some((f: any) => f.round === step.round && !f.result),
     );
 
     if (!activeStep) continue;
 
     const activeFixtures = cupFixtures.filter(
-      (f) => f.round === activeStep.round && !f.result,
+      (f: any) => f.round === activeStep.round && !f.result,
     );
     if (activeFixtures.length === 0) continue;
 
     const alreadyScheduled = newScheduledSims.some(
-      (s) =>
-        s.isCup &&
-        s.league === lg &&
-        s.matchday === activeStep.matchday,
+      (s) => s.isCup && s.league === lg && s.matchday === activeStep.matchday,
     );
     if (alreadyScheduled) continue;
 
-    const offset = getForeignCupBatchOffset(index);
-    const roundDate = addDaysToIso(CUP_START, activeStep.matchday);
-    let scheduledDate = addDaysToIso(roundDate, offset);
+    // National-cup matches may only use Tue/Wed/Thu and never a week containing
+    // Champions/Europa/Conference fixtures. Spread countries across the safe
+    // days of the round window (3 countries/day) so one advance never processes
+    // every national cup at once.
+    const roundDate = addDaysToIso(NATIONAL_CUP_START, activeStep.matchday);
+    const nextStep = schedule.find(
+      (step: any) => step.globalSlot === activeStep.globalSlot + 1,
+    );
+    const nextDrawDate = nextStep
+      ? addDaysToIso(NATIONAL_CUP_START, nextStep.drawMatchday)
+      : addDaysToIso(roundDate, 21);
+    const safeDates = getSafeNationalCupDatesBetween(
+      roundDate,
+      addDaysToIso(nextDrawDate, -1),
+    );
 
-    // If an old save is already past the target date, process it on the next
-    // advance instead of leaving a pending entry stranded in the past.
-    if (scheduledDate < currentDate) scheduledDate = currentDate;
+    const batchSize = Math.max(1, Math.ceil(foreignCupLeagues.length / Math.max(1, safeDates.length)));
+    const batchIndex = Math.floor(index / batchSize);
+    let scheduledDate = safeDates[Math.min(batchIndex, Math.max(0, safeDates.length - 1))] ?? roundDate;
+
+    if (scheduledDate < currentDate) {
+      scheduledDate =
+        safeDates.find((d) => d >= currentDate) ?? safeDates[safeDates.length - 1] ?? roundDate;
+    }
 
     newScheduledSims.push({
       league: lg,
@@ -5868,7 +5952,13 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
 
       if (!schedule) return null;
 
-      return { matchday: schedule.matchday, round, size: 0, drawMatchday: schedule.drawMatchday };
+      return {
+        matchday: schedule.matchday,
+        round,
+        size: 0,
+        drawMatchday: schedule.drawMatchday,
+        globalSlot: schedule.globalSlot,
+      };
     })
     .filter(Boolean) as Array<{
     matchday: number;
@@ -5895,7 +5985,11 @@ function processCupDrawsOnly(save: SaveGame, lg: LeagueId) {
 
       // Skip draw for Final - auto-assign the final matchup
 
-      if (nextStep.round === "Final" && leagueMd >= nextStep.drawMatchday) {
+      if (
+        nextStep.round === "Final" &&
+        leagueMd >= nextStep.drawMatchday &&
+        isGlobalNationalCupRoundComplete(save, step.globalSlot)
+      ) {
         const winners = roundFixtures.map((f) => {
           if (!f.result) return f.homeId;
 
@@ -6385,7 +6479,7 @@ export function getCurrentCupRound(save: SaveGame, league: LeagueId): string | n
 
   if (!list || list.length === 0) return null;
 
-  const roundOrder = ["R32", "R16", "QF", "SF", "Final"];
+  const roundOrder = ["Preliminar", "R32", "R16", "Octavos", "QF", "SF", "Final"];
 
   const existingRounds = [...new Set(list.map((f) => f.round).filter((r): r is string => !!r))];
 
@@ -6623,7 +6717,13 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
 
         if (!schedule) return null;
 
-        return { matchday: schedule.matchday, round, size: 0, drawMatchday: schedule.drawMatchday };
+        return {
+          matchday: schedule.matchday,
+          round,
+          size: 0,
+          drawMatchday: schedule.drawMatchday,
+          globalSlot: schedule.globalSlot,
+        };
       })
       .filter(Boolean) as Array<{
       matchday: number;
@@ -6663,7 +6763,8 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
         playedAll &&
         nextStepFull &&
         !nextRoundAlreadyExists &&
-        cupDayOffset >= nextStepFull.drawMatchday
+        cupDayOffset >= nextStepFull.drawMatchday &&
+        isGlobalNationalCupRoundComplete(next, step.globalSlot)
       ) {
         // Collect winners from this round
 
@@ -6709,6 +6810,53 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
 
       // Match simulation is intentionally NOT performed here.
       // processScheduledBackgroundSims() handles a small batch each day.
+    }
+  }
+
+  // The user's country follows exactly the same preliminary-round lifecycle.
+  // A bye for the controlled team must NOT skip the national cup's preliminary
+  // round for everyone else. Create that round when its draw date arrives, but
+  // do not create the first main round here; that still waits for the global
+  // completion gate and (when relevant) the user's draw UI.
+  if (userCountry) {
+    const primaryLeague = getPrimaryLeagueForCountry(userCountry) as LeagueId | undefined;
+    if (primaryLeague) {
+      const country = userCountry;
+      const freshCupData = initCup(country);
+      const freshSchedule = getCupStructureForCountry(country).schedule;
+      const firstRound = freshSchedule[0];
+      if (firstRound?.round === "Preliminar") {
+        let list = next.cupFixtures[primaryLeague];
+        if (!Array.isArray(list)) {
+          next.cupFixtures[primaryLeague] = [];
+          list = next.cupFixtures[primaryLeague];
+        }
+
+        const prelimFixtures = list.filter((f) => f.round === "Preliminar");
+        if (
+          cupDayOffset >= firstRound.drawMatchday &&
+          prelimFixtures.length === 0
+        ) {
+          const preliminaryTeams = freshCupData.preliminaryParticipants || [];
+          const clonedList = next.cupFixtures[primaryLeague] === save.cupFixtures[primaryLeague]
+            ? [...list]
+            : list;
+          next.cupFixtures[primaryLeague] = clonedList;
+
+          for (let i = 0; i < preliminaryTeams.length; i += 2) {
+            if (i + 1 >= preliminaryTeams.length) continue;
+            clonedList.push({
+              id: `cup-${primaryLeague}-prelim-${i}`,
+              competition: "cup",
+              league: primaryLeague,
+              matchday: firstRound.matchday,
+              round: "Preliminar",
+              homeId: preliminaryTeams[i],
+              awayId: preliminaryTeams[i + 1],
+            });
+          }
+        }
+      }
     }
   }
 
@@ -7186,6 +7334,239 @@ function isUserParticipatingInUCLPhase(
   return false;
 }
 
+/**
+ * Fast European background fixture simulation.
+ *
+ * European AI matches do not need the full match chronicle that the player's
+ * watched matches use. We still use the game's real fast simulator, preserve
+ * goals/cards/subs/injuries/ratings, and keep knockout extra-time/penalties.
+ * The important optimization is that lineups are resolved once and stats are
+ * recorded through the batched background-stats path instead of re-running the
+ * full `applyMatchToStats` pipeline for every fixture.
+ */
+function simulateEuropeanFixtureFast(
+  save: SaveGame,
+  fixture: Fixture,
+): { fixture: Fixture; homeXI: Player[]; awayXI: Player[] } {
+  const home = teamById(fixture.homeId);
+  const away = teamById(fixture.awayId);
+
+  if (!home || !away || !isRealTeamId(fixture.homeId) || !isRealTeamId(fixture.awayId)) {
+    return {
+      fixture: {
+        ...fixture,
+        result: {
+          homeGoals: 0,
+          awayGoals: 0,
+          events: [],
+          cards: [],
+          injuries: [],
+          substitutions: [],
+          xgHome: 0,
+          xgAway: 0,
+        },
+      },
+      homeXI: [],
+      awayXI: [],
+    };
+  }
+
+  const homeData = getStartersWithFormation(save, fixture.homeId, {
+    fixture: {
+      fixtureId: fixture.id,
+      opponentId: fixture.awayId,
+      isHome: true,
+      competition: "ucl",
+      matchday: fixture.matchday,
+    },
+  });
+  const awayData = getStartersWithFormation(save, fixture.awayId, {
+    fixture: {
+      fixtureId: fixture.id,
+      opponentId: fixture.homeId,
+      isHome: false,
+      competition: "ucl",
+      matchday: fixture.matchday,
+    },
+  });
+
+  const homeXI = homeData.players;
+  const awayXI = awayData.players;
+
+  if (homeXI.length === 0 || awayXI.length === 0) {
+    return {
+      fixture: {
+        ...fixture,
+        result: {
+          homeGoals: 0,
+          awayGoals: 0,
+          events: [],
+          cards: [],
+          injuries: [],
+          substitutions: [],
+          xgHome: 0,
+          xgAway: 0,
+        },
+      },
+      homeXI,
+      awayXI,
+    };
+  }
+
+  const homeBench = getBenchForTeam(save, fixture.homeId, homeXI, "ucl");
+  const awayBench = getBenchForTeam(save, fixture.awayId, awayXI, "ucl");
+
+  let result = simulateMatchFast(home, away, homeXI, awayXI, {
+    homeBench,
+    awayBench,
+    homeTactics: loadTactics(fixture.homeId),
+    awayTactics: loadTactics(fixture.awayId),
+    homeFormation: homeData.formation,
+    awayFormation: awayData.formation,
+  });
+
+  const isLeg2 = fixture.round?.endsWith("-Leg2");
+  const isFinal = fixture.round === "Final";
+  let needsExtraTime = isFinal && result.homeGoals === result.awayGoals;
+
+  if (isLeg2 && result.homeGoals !== undefined && result.awayGoals !== undefined) {
+    const leg1 = (save.uclFixtures ?? []).find(
+      (l) =>
+        l.round === fixture.round!.replace("Leg2", "Leg1") &&
+        ((l.homeId === fixture.awayId && l.awayId === fixture.homeId) ||
+          (l.homeId === fixture.homeId && l.awayId === fixture.awayId)),
+    );
+    if (leg1?.result) {
+      const aggregateHome = result.homeGoals + leg1.result.awayGoals;
+      const aggregateAway = result.awayGoals + leg1.result.homeGoals;
+      needsExtraTime = aggregateHome === aggregateAway;
+    }
+  }
+
+  if (needsExtraTime) {
+    const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
+      homeBench,
+      awayBench,
+      regularSubstitutions: result.substitutions ?? [],
+      regularCards: result.cards ?? [],
+      homeTactics: loadTactics(fixture.homeId),
+      awayTactics: loadTactics(fixture.awayId),
+    });
+
+    result.substitutions = [
+      ...(result.substitutions ?? []),
+      ...(etResult.substitutions ?? []),
+    ].sort((a, b) => a.minute - b.minute);
+    result.extraTime = {
+      homeGoals: etResult.homeGoals,
+      awayGoals: etResult.awayGoals,
+      events: etResult.events,
+      substitutions: etResult.substitutions,
+    };
+
+    let totalHome = result.homeGoals + etResult.homeGoals;
+    let totalAway = result.awayGoals + etResult.awayGoals;
+
+    if (isLeg2) {
+      const leg1 = (save.uclFixtures ?? []).find(
+        (l) =>
+          l.round === fixture.round!.replace("Leg2", "Leg1") &&
+          ((l.homeId === fixture.awayId && l.awayId === fixture.homeId) ||
+            (l.homeId === fixture.homeId && l.awayId === fixture.awayId)),
+      );
+      if (leg1?.result) {
+        totalHome += leg1.result.awayGoals;
+        totalAway += leg1.result.homeGoals;
+      }
+    }
+
+    if (totalHome === totalAway) {
+      const redHome = new Set(
+        (result.cards ?? [])
+          .filter((c) => c.team === "home" && c.cardType === "red")
+          .map((c) => c.playerId),
+      );
+      const redAway = new Set(
+        (result.cards ?? [])
+          .filter((c) => c.team === "away" && c.cardType === "red")
+          .map((c) => c.playerId),
+      );
+      const finalHome = homeXI.filter((p) => !redHome.has(p.id));
+      const finalAway = awayXI.filter((p) => !redAway.has(p.id));
+      const penResult = simulatePenaltyShootout(
+        finalHome.length ? finalHome : homeXI,
+        finalAway.length ? finalAway : awayXI,
+      );
+      result.penalties = {
+        homeGoals: penResult.homeGoals,
+        awayGoals: penResult.awayGoals,
+        shootout: penResult.shootout,
+      };
+    }
+  }
+
+  return { fixture: { ...fixture, result }, homeXI, awayXI };
+}
+
+function applyEuropeanFastResult(
+  save: SaveGame,
+  simmed: Fixture,
+  homeXI: Player[],
+  awayXI: Player[],
+): SaveGame {
+  let next = save;
+  const idx = next.uclFixtures?.findIndex((x) => x.id === simmed.id) ?? -1;
+  if (idx < 0 || !simmed.result) return next;
+
+  next.uclFixtures![idx] = simmed;
+  const store = usePlayersStore.getState();
+
+  // Batch-friendly stat recording: unlike applyMatchToStats, this does not
+  // resolve both lineups a second time for the same fixture.
+  recordFakeMatchStats(
+    store,
+    homeXI,
+    awayXI,
+    simmed.result,
+    simmed.matchday,
+    "ucl",
+    simmed.date,
+  );
+
+  next.currentMatchday = { ...next.currentMatchday };
+  next = consumeSuspensionsForFixture(next, [simmed.homeId, simmed.awayId], "ucl");
+  if (simmed.result.cards?.length) {
+    next = processRedCards(
+      next,
+      simmed.result.cards,
+      simmed.homeId,
+      simmed.awayId,
+      "ucl",
+    );
+    for (const card of simmed.result.cards) {
+      if (card.cardType !== "yellow") continue;
+      const p = store.getSimPlayer(card.playerId);
+      if (p) {
+        next = processAccumulatedYellowSuspension(next, card.playerId, p.teamId, "ucl");
+      }
+    }
+  }
+
+  next = applyUCLMatchAftermath(next, simmed.homeId, simmed.awayId);
+
+  if (next.ucl && isUCLLeaguePhaseFixture(simmed.round)) {
+    next.ucl.table = applyUCLTableResult(
+      next.ucl.table,
+      simmed.homeId,
+      simmed.awayId,
+      simmed.result.homeGoals,
+      simmed.result.awayGoals,
+    );
+  }
+
+  return next;
+}
+
 /** Simulate UCL fixtures on a calendar day that do not involve the user's team. */
 export function simulateBackgroundUCLDay(
   save: SaveGame,
@@ -7202,148 +7583,22 @@ export function simulateBackgroundUCLDay(
   );
   if (aiFixtures.length === 0) return save;
 
-  // Skip simulation if user is participating in this phase
   const userParticipating = aiFixtures.some((f) =>
     isUserParticipatingInUCLPhase(save, userTeamId, f.round || ""),
   );
-  if (userParticipating) {
-    console.log(
-      `[simulateBackgroundUCLDay] Skipping AI matches on day ${dayOffset} - user is participating in this phase`,
-    );
-    return save;
-  }
+  if (userParticipating) return save;
 
-  const isLeagueDay = UCL_CALENDAR.leagueDay.includes(dayOffset);
-  if (isLeagueDay) {
-    let onlyAi = createFastMutationSnapshot(save);
-    onlyAi.uclFixtures = [...(save.uclFixtures ?? [])];
+  return withPlayerStatsBatch(() => {
+    let next = createFastMutationSnapshot(save);
+    next.uclFixtures = [...(save.uclFixtures ?? [])];
+
     for (const f of aiFixtures) {
-      const simmed = simulateFixtureInline(onlyAi, f, false, false);
-      const idx = onlyAi.uclFixtures!.findIndex((x) => x.id === f.id);
-      if (idx >= 0 && simmed.result) {
-        onlyAi.uclFixtures![idx] = simmed;
-        onlyAi = applyMatchToStats(onlyAi, simmed);
-        onlyAi = applyUCLMatchAftermath(onlyAi, simmed.homeId, simmed.awayId);
-        if (onlyAi.ucl && isUCLLeaguePhaseFixture(simmed.round)) {
-          onlyAi.ucl.table = applyUCLTableResult(
-            onlyAi.ucl.table,
-            simmed.homeId,
-            simmed.awayId,
-            simmed.result.homeGoals,
-            simmed.result.awayGoals,
-          );
-        }
-      }
+      const sim = simulateEuropeanFixtureFast(next, f);
+      next = applyEuropeanFastResult(next, sim.fixture, sim.homeXI, sim.awayXI);
     }
-    return onlyAi;
-  }
 
-  let next = createFastMutationSnapshot(save);
-  next.uclFixtures = [...(save.uclFixtures ?? [])];
-  for (const f of aiFixtures) {
-    const isUserMatch = f.homeId === next.myTeamId || f.awayId === next.myTeamId;
-    const isLeg2 = f.round?.endsWith("-Leg2");
-    const isFinal = f.round === "Final";
-    const isKnockout =
-      isFinal ||
-      isLeg2 ||
-      f.round?.includes("Playoff") ||
-      f.round?.includes("R16") ||
-      f.round?.includes("QF") ||
-      f.round?.includes("SF");
-    let simmed: Fixture;
-    if (isFinal) {
-      simmed = simulateFixtureInline(next, f, false, true);
-    } else if (isLeg2) {
-      simmed = simulateFixtureInline(next, f, false, false);
-      if (simmed.result) {
-        const leg1 = next.uclFixtures!.find(
-          (l) =>
-            l.round === f.round!.replace("Leg2", "Leg1") &&
-            ((l.homeId === f.awayId && l.awayId === f.homeId) ||
-              (l.homeId === f.homeId && l.awayId === f.awayId)),
-        );
-        if (leg1?.result) {
-          const leg2HomeAgg = simmed.result.homeGoals + leg1.result.awayGoals;
-          const leg2AwayAgg = simmed.result.awayGoals + leg1.result.homeGoals;
-          if (leg2HomeAgg === leg2AwayAgg) {
-            const home = teamById(simmed.homeId);
-            const away = teamById(simmed.awayId);
-            const homeXI = getStartersWithFormation(next, simmed.homeId, {
-              fixture: {
-                fixtureId: simmed.id,
-                opponentId: simmed.awayId,
-                isHome: true,
-                competition: "ucl",
-                matchday: simmed.matchday,
-              },
-            }).players;
-            const awayXI = getStartersWithFormation(next, simmed.awayId, {
-              fixture: {
-                fixtureId: simmed.id,
-                opponentId: simmed.homeId,
-                isHome: false,
-                competition: "ucl",
-                matchday: simmed.matchday,
-              },
-            }).players;
-            const homeBench = getCupSimulationBench(next, simmed.homeId, homeXI, "ucl");
-            const awayBench = getCupSimulationBench(next, simmed.awayId, awayXI, "ucl");
-            const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
-              homeBench,
-              awayBench,
-              regularSubstitutions: simmed.result.substitutions ?? [],
-              regularCards: simmed.result.cards ?? [],
-            });
-            simmed.result.substitutions = [
-              ...(simmed.result.substitutions ?? []),
-              ...(etResult.substitutions ?? []),
-            ].sort((a, b) => a.minute - b.minute);
-            simmed.result.extraTime = {
-              homeGoals: etResult.homeGoals,
-              awayGoals: etResult.awayGoals,
-              events: etResult.events,
-              substitutions: etResult.substitutions,
-            };
-            const etHomeAgg = leg2HomeAgg + etResult.homeGoals;
-            const etAwayAgg = leg2AwayAgg + etResult.awayGoals;
-            if (etHomeAgg === etAwayAgg) {
-              const etRedHome = new Map<string, number>(
-                (simmed.result.cards ?? [])
-                  .filter((c) => c.team === "home" && c.cardType === "red")
-                  .map((c) => [c.playerId, c.minute]),
-              );
-              const etRedAway = new Map<string, number>(
-                (simmed.result.cards ?? [])
-                  .filter((c) => c.team === "away" && c.cardType === "red")
-                  .map((c) => [c.playerId, c.minute]),
-              );
-              const etFinalHome = homeXI.filter((p) => !etRedHome.has(p.id));
-              const etFinalAway = awayXI.filter((p) => !etRedAway.has(p.id));
-              const penResult = simulatePenaltyShootout(
-                etFinalHome.length ? etFinalHome : homeXI,
-                etFinalAway.length ? etFinalAway : awayXI,
-              );
-              simmed.result.penalties = {
-                homeGoals: penResult.homeGoals,
-                awayGoals: penResult.awayGoals,
-                shootout: penResult.shootout,
-              };
-            }
-          }
-        }
-      }
-    } else {
-      simmed = simulateFixtureInline(next, f, false, false);
-    }
-    const idx = next.uclFixtures!.findIndex((x) => x.id === f.id);
-    if (idx >= 0) {
-      next.uclFixtures![idx] = simmed;
-      next = applyMatchToStats(next, simmed);
-      next = applyUCLMatchAftermath(next, simmed.homeId, simmed.awayId);
-    }
-  }
-  return next;
+    return next;
+  });
 }
 
 /** Simulate UCL AI fixtures on a calendar day where user is participating (called on "return to season"). */
@@ -7362,152 +7617,22 @@ export function simulateUserPhaseUCLDay(
   );
   if (aiFixtures.length === 0) return save;
 
-  // Only simulate if user is participating in this phase
   const userParticipating = aiFixtures.some((f) =>
     isUserParticipatingInUCLPhase(save, userTeamId, f.round || ""),
   );
-  if (!userParticipating) {
-    console.log(`[simulateUserPhaseUCLDay] Skipping - user is not participating in this phase`);
-    return save;
-  }
+  if (!userParticipating) return save;
 
-  const isLeagueDay = UCL_CALENDAR.leagueDay.includes(dayOffset);
-  if (isLeagueDay) {
+  return withPlayerStatsBatch(() => {
     let next = createFastMutationSnapshot(save);
     next.uclFixtures = [...(save.uclFixtures ?? [])];
+
     for (const f of aiFixtures) {
-      const simmed = simulateFixtureInline(next, f, false, false);
-      const idx = next.uclFixtures!.findIndex((x) => x.id === f.id);
-      if (idx >= 0 && simmed.result) {
-        next.uclFixtures![idx] = simmed;
-        next = applyMatchToStats(next, simmed);
-        next = applyUCLMatchAftermath(next, simmed.homeId, simmed.awayId);
-        if (next.ucl && isUCLLeaguePhaseFixture(simmed.round)) {
-          next.ucl.table = applyUCLTableResult(
-            next.ucl.table,
-            simmed.homeId,
-            simmed.awayId,
-            simmed.result.homeGoals,
-            simmed.result.awayGoals,
-          );
-        }
-      }
+      const sim = simulateEuropeanFixtureFast(next, f);
+      next = applyEuropeanFastResult(next, sim.fixture, sim.homeXI, sim.awayXI);
     }
+
     return next;
-  }
-
-  let next = createFastMutationSnapshot(save);
-  next.uclFixtures = [...(save.uclFixtures ?? [])];
-  for (const f of aiFixtures) {
-    const isUserMatch = f.homeId === next.myTeamId || f.awayId === next.myTeamId;
-    const isLeg2 = f.round?.endsWith("-Leg2");
-    const isFinal = f.round === "Final";
-    const isKnockout =
-      isFinal ||
-      isLeg2 ||
-      f.round?.includes("Playoff") ||
-      f.round?.includes("R16") ||
-      f.round?.includes("QF") ||
-      f.round?.includes("SF");
-    let simmed: Fixture;
-    if (isFinal) {
-      simmed = simulateFixtureInline(next, f, false, true);
-    } else if (isLeg2) {
-      simmed = simulateFixtureInline(next, f, false, false);
-      if (simmed.result) {
-        const leg1 = next.uclFixtures!.find(
-          (l) =>
-            l.round === f.round!.replace("Leg2", "Leg1") &&
-            ((l.homeId === f.awayId && l.awayId === f.homeId) ||
-              (l.homeId === f.homeId && l.awayId === f.awayId)),
-        );
-        if (leg1?.result) {
-          const leg2HomeAgg = simmed.result.homeGoals + leg1.result.awayGoals;
-          const leg2AwayAgg = simmed.result.awayGoals + leg1.result.homeGoals;
-          if (leg2HomeAgg === leg2AwayAgg) {
-            const home = teamById(simmed.homeId);
-            const away = teamById(simmed.awayId);
-            const homeXI = getStartersWithFormation(next, simmed.homeId, {
-              fixture: {
-                fixtureId: simmed.id,
-                opponentId: simmed.awayId,
-                isHome: true,
-                competition: "ucl",
-                matchday: simmed.matchday,
-              },
-            }).players;
-            const awayXI = getStartersWithFormation(next, simmed.awayId, {
-              fixture: {
-                fixtureId: simmed.id,
-                opponentId: simmed.homeId,
-                isHome: false,
-                competition: "ucl",
-                matchday: simmed.matchday,
-              },
-            }).players;
-            const homeBench = getCupSimulationBench(next, simmed.homeId, homeXI, "ucl");
-            const awayBench = getCupSimulationBench(next, simmed.awayId, awayXI, "ucl");
-            const etResult = simulateExtraTime(home, away, homeXI, awayXI, {
-              homeBench,
-              awayBench,
-              regularSubstitutions: simmed.result.substitutions ?? [],
-              regularCards: simmed.result.cards ?? [],
-            });
-            simmed.result.substitutions = [
-              ...(simmed.result.substitutions ?? []),
-              ...(etResult.substitutions ?? []),
-            ].sort((a, b) => a.minute - b.minute);
-            simmed.result.extraTime = {
-              homeGoals: etResult.homeGoals,
-              awayGoals: etResult.awayGoals,
-              events: etResult.events,
-              substitutions: etResult.substitutions,
-            };
-            const etHomeAgg = leg2HomeAgg + etResult.homeGoals;
-            const etAwayAgg = leg2AwayAgg + etResult.awayGoals;
-            if (etHomeAgg === etAwayAgg) {
-              const etRedHome = new Map<string, number>(
-                (simmed.result.cards ?? [])
-                  .filter((c) => c.team === "home" && c.cardType === "red")
-                  .map((c) => [c.playerId, c.minute]),
-              );
-              const etRedAway = new Map<string, number>(
-                (simmed.result.cards ?? [])
-                  .filter((c) => c.team === "away" && c.cardType === "red")
-                  .map((c) => [c.playerId, c.minute]),
-              );
-              const etFinalHome = homeXI.filter((p) => !etRedHome.has(p.id));
-              const etFinalAway = awayXI.filter((p) => !etRedAway.has(p.id));
-              const penResult = simulatePenaltyShootout(
-                etFinalHome.length ? etFinalHome : homeXI,
-                etFinalAway.length ? etFinalAway : awayXI,
-              );
-              simmed.result.penalties = {
-                homeGoals: penResult.homeGoals,
-                awayGoals: penResult.awayGoals,
-                shootout: penResult.shootout,
-              };
-            }
-          }
-        }
-      }
-    } else {
-      simmed = simulateFixtureInline(next, f, false, false);
-    }
-
-    console.log(
-      `[simulateUserPhaseUCLDay] simulated ${f.id} (${f.round}): ${simmed.result?.homeGoals}-${simmed.result?.awayGoals}`,
-    );
-
-    const idx = next.uclFixtures.findIndex((x) => x.id === f.id);
-    if (idx >= 0) {
-      next.uclFixtures[idx] = simmed;
-      next = applyMatchToStats(next, simmed);
-      next = applyUCLMatchAftermath(next, simmed.homeId, simmed.awayId);
-    }
-  }
-
-  return next;
+  });
 }
 
 function allPlayoffTiesComplete(fixtures: Fixture[]): boolean {
@@ -7533,12 +7658,22 @@ export function simulatePendingUCLThroughDay(
   throughOffset: number,
   userTeamId: string,
 ): SaveGame {
-  let next = save;
-  for (const md of UCL_SIMULATION_DAYS) {
-    if (md > throughOffset) break;
-    next = simulateBackgroundUCLDay(next, md, userTeamId);
-  }
-  return processUCLKnockoutProgress(next, throughOffset);
+  const pendingMatchdays = new Set(
+    (save.uclFixtures ?? [])
+      .filter((f) => !f.result && f.matchday <= throughOffset)
+      .map((f) => f.matchday),
+  );
+
+  if (pendingMatchdays.size === 0) return save;
+
+  return withPlayerStatsBatch(() => {
+    let next = save;
+    const ordered = [...pendingMatchdays].sort((a, b) => a - b);
+    for (const md of ordered) {
+      next = simulateBackgroundUCLDay(next, md, userTeamId);
+    }
+    return processUCLKnockoutProgress(next, throughOffset);
+  });
 }
 
 /** Wire winners into the bracket and advance UCL phase after results exist. */
@@ -7853,7 +7988,15 @@ export function simulateEuropeanUserPhaseDay(save: SaveGame, comp: EuropeanState
 }
 
 export function simulatePendingEuropeanThroughDay(save: SaveGame, comp: EuropeanStateKey, throughOffset: number, userTeamId: string): SaveGame {
-  return runEuropeanEngine(save, comp, (engine) => simulatePendingUCLThroughDay(engine, throughOffset - 1, userTeamId));
+  const key = europeanFixtureKey(comp);
+  const fixtures = Array.isArray((save as any)[key]) ? ((save as any)[key] as Fixture[]) : [];
+  const engineOffset = throughOffset - 1;
+  const hasPending = fixtures.some((f) => !f.result && f.matchday <= engineOffset);
+  if (!hasPending) return save;
+
+  return runEuropeanEngine(save, comp, (engine) =>
+    simulatePendingUCLThroughDay(engine, engineOffset, userTeamId),
+  );
 }
 
 export function processEuropeanKnockoutProgress(save: SaveGame, comp: EuropeanStateKey, throughOffset: number): SaveGame {

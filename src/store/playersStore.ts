@@ -68,6 +68,7 @@ import {
 import type { DynamicPlayerStats } from "@/types/playerStats";
 
 import { addDaysToIso, GAME_START_DATE, isMarketOpenForIso } from "@/lib/transferWindows";
+import { NATIONAL_CUP_START } from "@/lib/calendarRules";
 import { recoverStamina, STAMINA_START } from "@/lib/liveMatch";
 
 import {
@@ -77,7 +78,10 @@ import {
   type ScheduleFixture,
 } from "@/lib/leagueSchedule";
 
-import { rescheduleUnplayedFixtures } from "@/lib/fixtureScheduler";
+import {
+  rescheduleUnplayedFixtures,
+  rescheduleLeagueAroundSpecialFixtures,
+} from "@/lib/fixtureScheduler";
 
 import { generateLeagueFixtures } from "@/lib/season";
 
@@ -101,6 +105,7 @@ import {
   scheduleBackgroundCupsOnly,
   processScheduledBackgroundSims,
   fixCupDraws,
+  isGlobalNationalCupRoundComplete,
   simulateUCLKnockoutMatchday,
   simulateUCLLeagueMatchday,
   simulateBackgroundUCLDay,
@@ -696,24 +701,37 @@ export function marketValueEuros(
   leagueId = "",
   teamAvgRating = 75,
 ): number {
-  const isStar = fc.OVR >= 82;
+  // Las partidas antiguas pueden contener un id de jugador que ya no existe
+  // en la base actual. El valor de mercado no debe romper el avance del día
+  // por un registro inválido.
+  if (!fc) return 0;
+
+  const ovr = Number(fc.OVR);
+  const age = Number(fc.Age);
+  if (!Number.isFinite(ovr) || !Number.isFinite(age)) return 0;
+
+  const isStar = ovr >= 82;
 
   // If leagueId not provided, get it from player's league name
-
   const effectiveLeagueId = leagueId || leagueIdFromName(fc.League || "");
 
-  return Math.round(
-    marketValueMillions(
-      fc.OVR,
-      fc.Age,
-      fc.Position,
-      teamId,
-      effectiveLeagueId,
-      isStar,
-      teamAvgRating,
-      fc.potential,
-    ) * 1_000_000,
-  );
+  try {
+    return Math.round(
+      marketValueMillions(
+        ovr,
+        age,
+        fc.Position,
+        teamId,
+        effectiveLeagueId,
+        isStar,
+        Number.isFinite(Number(teamAvgRating)) ? Number(teamAvgRating) : 75,
+        fc.potential,
+      ) * 1_000_000,
+    );
+  } catch (err) {
+    console.warn("[marketValueEuros] registro inválido; usando 0:", err);
+    return 0;
+  }
 }
 
 export function teamInitialBudget(avgOvr: number, leagueId = "", clubId = ""): number {
@@ -1043,6 +1061,58 @@ function mutatePlayerStat(
   else set({ stats: next });
 }
 
+function buildProtectedCompetitionDates(
+  save: SaveGame | null,
+  league: LeagueId,
+): Map<string, Set<string>> {
+  const protectedDates = new Map<string, Set<string>>();
+  if (!save) return protectedDates;
+
+  const add = (teamId: string, dateIso: string) => {
+    const team = teamById(teamId);
+    if (!team || team.league !== league) return;
+    const set = protectedDates.get(teamId) ?? new Set<string>();
+    set.add(dateIso);
+    protectedDates.set(teamId, set);
+  };
+
+  const cupStart = new Date(`${NATIONAL_CUP_START}T00:00:00Z`).getTime();
+  for (const list of Object.values(save.cupFixtures ?? {})) {
+    if (!Array.isArray(list)) continue;
+    for (const fixture of list as any[]) {
+      if (fixture.result || fixture.homeId == null || fixture.awayId == null) continue;
+      const dateIso = new Date(
+        cupStart + Number(fixture.matchday || 0) * 86400000,
+      )
+        .toISOString()
+        .slice(0, 10);
+      add(fixture.homeId, dateIso);
+      add(fixture.awayId, dateIso);
+    }
+  }
+
+  const addEuropean = (list: any[]) => {
+    if (!Array.isArray(list)) return;
+    const start = new Date(`${UCL_START}T00:00:00Z`).getTime();
+    for (const fixture of list) {
+      if (fixture.result || fixture.homeId == null || fixture.awayId == null) continue;
+      const dateIso = new Date(
+        start + Number(fixture.matchday || 0) * 86400000,
+      )
+        .toISOString()
+        .slice(0, 10);
+      add(fixture.homeId, dateIso);
+      add(fixture.awayId, dateIso);
+    }
+  };
+
+  addEuropean(save.uclFixtures ?? []);
+  addEuropean(save.uelFixtures ?? []);
+  addEuropean(save.ueclFixtures ?? []);
+
+  return protectedDates;
+}
+
 function currentDateParts(iso: string | undefined): { year: number; month: number } {
   const fallback = new Date();
   const [y, m] = String(iso ?? "")
@@ -1208,32 +1278,33 @@ export const usePlayersStore = create<PlayersState>()(
         if (!myTeamId) return;
 
         const team = teamById(myTeamId);
-
         const league = team.league;
-
+        const save = loadSave();
+        const protectedDates = buildProtectedCompetitionDates(save, league);
         const full = buildFullLeagueSchedule(league);
 
+        let nextFixtures: ScheduleFixture[];
+
         if (fixtures.length === 0) {
-          set({ fixtures: full });
-
-          return;
+          nextFixtures = full;
+        } else if (fixtures.length < full.length) {
+          nextFixtures = mergeScheduleWithPlayed(full, fixtures, league);
+        } else if (scheduleNeedsRealisticDates(fixtures)) {
+          nextFixtures = rescheduleUnplayedFixtures(fixtures, generateLeagueFixtures(league));
+        } else {
+          nextFixtures = fixtures;
         }
 
-        if (fixtures.length < full.length) {
-          set({ fixtures: mergeScheduleWithPlayed(full, fixtures, league) });
+        const aligned = rescheduleLeagueAroundSpecialFixtures(nextFixtures, protectedDates);
 
-          return;
-        }
+        const changed = aligned.some((f, index) =>
+          f.date !== fixtures[index]?.date ||
+          f.isPlayed !== fixtures[index]?.isPlayed ||
+          f.homeScore !== fixtures[index]?.homeScore ||
+          f.awayScore !== fixtures[index]?.awayScore,
+        ) || aligned.length !== fixtures.length;
 
-        if (scheduleNeedsRealisticDates(fixtures)) {
-          set({
-            fixtures: rescheduleUnplayedFixtures(
-              fixtures,
-
-              generateLeagueFixtures(league),
-            ),
-          });
-        }
+        if (fixtures.length === 0 || changed) set({ fixtures: aligned });
       },
 
       clearPendingMatch: () => set({ pendingUserMatch: null, lastUserMatchResult: null }),
@@ -1299,7 +1370,7 @@ export const usePlayersStore = create<PlayersState>()(
       advanceTime: (days) => {
         if (days <= 0) return 0;
 
-        const state = get();
+        let state = get();
 
         if (!state.myTeamId) {
           const nextDate = addDaysToIso(state.currentDate, days);
@@ -1310,9 +1381,35 @@ export const usePlayersStore = create<PlayersState>()(
           return days;
         }
 
-        state.init();
+        try {
+          state.init();
+        } catch (err) {
+          // La inicialización de datos auxiliares (edades/hydration) nunca debe
+          // bloquear el avance del calendario. La fecha y los partidos se
+          // gestionan por separado más abajo.
+          console.error('[advanceTime] init failed:', err);
+        }
 
-        const onDay = unplayedOnDate(state.fixtures, state.currentDate);
+        try {
+          get().ensureLeagueSchedule();
+        } catch (err) {
+          // El avance del calendario nunca debe quedarse bloqueado por una
+          // reparación de fechas. Conservamos el calendario actual y dejamos
+          // que el motor siga avanzando.
+          console.error('[advanceTime] ensureLeagueSchedule failed:', err);
+        }
+        state = get();
+
+        const onDay = (() => {
+          try {
+            return Array.isArray(state.fixtures)
+              ? unplayedOnDate(state.fixtures, state.currentDate)
+              : [];
+          } catch (err) {
+            console.error('[advanceTime] current-day fixture lookup failed:', err);
+            return [];
+          }
+        })();
 
         const userMatch = onDay.find((f) => involvesTeam(f, state.myTeamId!));
 
@@ -1327,7 +1424,14 @@ export const usePlayersStore = create<PlayersState>()(
         // --- Copa: procesar al avanzar día, sin depender del calendario ---
 
         {
-          const rawSave = loadSave();
+          let rawSave: ReturnType<typeof loadSave> = null;
+          try {
+            rawSave = loadSave();
+          } catch (err) {
+            // Las migraciones/lecturas de la partida son auxiliares al avance.
+            // Una carrera antigua o un save corrupto no puede impedir pasar de día.
+            console.error('[advanceTime] loadSave (cup pipeline) failed:', err);
+          }
 
           if (rawSave) {
             const nextDate = addDaysToIso(state.currentDate, 1);
@@ -1361,23 +1465,27 @@ export const usePlayersStore = create<PlayersState>()(
 
               const nextMatchDate = nextScheduledMatch?.date;
 
-              simulateBackgroundLeaguesOnly(currentSave, nextDate, nextMatchDate).then((result) => {
-                if (result) {
-                  // Programar copas background también
+              simulateBackgroundLeaguesOnly(currentSave, nextDate, nextMatchDate)
+                .then((result) => {
+                  if (!result) return;
 
-                  scheduleBackgroundCupsOnly(
+                  // Programar copas background también.
+                  return scheduleBackgroundCupsOnly(
                     result,
                     result.currentMatchday[result.myLeague],
                     nextDate,
-                  ).then((withCups) => {
-                    if (withCups) {
-                      const withProcessed = processScheduledBackgroundSims(withCups, nextDate);
-
-                      saveSave(withProcessed);
-                    }
-                  });
-                }
-              });
+                  );
+                })
+                .then((withCups) => {
+                  if (!withCups) return;
+                  const withProcessed = processScheduledBackgroundSims(withCups, nextDate);
+                  saveSave(withProcessed);
+                })
+                .catch((err) => {
+                  // Nunca dejar una promesa de simulación de fondo rechazada:
+                  // el avance del día principal ya se ha ejecutado.
+                  console.error('[advanceTime] background scheduling failed:', err);
+                });
             } catch {
               /* keep currentSave */
             }
@@ -1417,89 +1525,42 @@ export const usePlayersStore = create<PlayersState>()(
                 }
               })();
 
+              // The full schedule is required for global-round gating. A team
+              // with a bye (e.g. Villarreal) may not play the preliminary round,
+              // but that round still has to finish before the first main draw.
               const relevantSchedule = cupSchedule.filter((s: any) =>
                 s.round === "Preliminar" ? isInPreliminary : true,
               );
+              const fullSchedule = cupSchedule;
 
               const cupFixtures = currentSave.cupFixtures[cupKey] || [];
 
-              const isDrawDay = relevantSchedule.some((s: any) => {
+              const drawStep = relevantSchedule.find((s: any) => {
                 const drawDate = new Date(CUP_START.getTime() + s.drawMatchday * 86400000);
-
                 const drawDateIso = drawDate.toISOString().slice(0, 10);
-
-                if (drawDateIso !== nextDate) return false;
-
-                return !cupFixtures.some((f: any) => f.round === s.round);
+                return drawDateIso <= nextDate && !cupFixtures.some((f: any) => f.round === s.round);
               });
 
-              if (isDrawDay) {
-                // Guardar copas extranjeras procesadas y bloquear para sorteo
+              if (drawStep) {
+                const previousStep = fullSchedule.find(
+                  (s: any) => s.globalSlot === drawStep.globalSlot - 1,
+                );
+                const previousRoundComplete = previousStep
+                  ? isGlobalNationalCupRoundComplete(currentSave, previousStep.globalSlot)
+                  : true;
 
-                saveSave(currentSave);
-
-                syncPlayerAgesForDate(nextDate);
-                set({ currentDate: nextDate, pendingCupDraw: true });
-
-                return 1;
-              }
-
-              // 3. Simular prelim del usuario 2 días antes del sorteo, si no está en prelim
-
-              const prelimRound = cupSchedule.find((s: any) => s.round === "Preliminar");
-
-              if (prelimRound && !isInPreliminary) {
-                const triggerOffset = prelimRound.drawMatchday - 2;
-
-                if (todayOffset === triggerOffset) {
-                  const prelimFixturesExist = (currentSave.cupFixtures[cupKey] || []).some(
-                    (f: any) => f.round === "Preliminar",
-                  );
-
-                  if (!prelimFixturesExist) {
-                    try {
-                      const cupData = initCup(userCountry || "");
-
-                      const prelimTeams = cupData.preliminaryParticipants || [];
-
-                      if (!currentSave.cupFixtures[cupKey]) currentSave.cupFixtures[cupKey] = [];
-
-                      for (let i = 0; i + 1 < prelimTeams.length; i += 2) {
-                        const hg = Math.floor(Math.random() * 4);
-
-                        const ag = Math.floor(Math.random() * 4);
-
-                        (currentSave.cupFixtures[cupKey] as any[]).push({
-                          id: `cup-${cupKey}-prelim-${i}`,
-
-                          competition: "cup",
-
-                          league: cupKey,
-
-                          matchday: prelimRound.matchday,
-
-                          round: "Preliminar",
-
-                          homeId: prelimTeams[i],
-
-                          awayId: prelimTeams[i + 1],
-
-                          result: {
-                            homeGoals: hg,
-                            awayGoals: ag,
-                            events: [],
-                            injuries: [],
-                            xgHome: hg,
-                            xgAway: ag,
-                          },
-                        });
-                      }
-                    } catch {
-                      /* ignore */
-                    }
-                  }
+                if (previousRoundComplete) {
+                  // Guardar copas extranjeras procesadas y bloquear para sorteo.
+                  saveSave(currentSave);
+                  syncPlayerAgesForDate(nextDate);
+                  set({ currentDate: nextDate, pendingCupDraw: true });
+                  return 1;
                 }
               }
+
+              // 3. La ronda preliminar sigue exactamente la misma regla que las demás:
+              // primero se muestra el sorteo y, como mínimo, 14 días después, se juegan
+              // los partidos. Nunca se simula dos días antes.
 
               // 4. Simular matchday de copa si usuario eliminado y es día de partido
 
@@ -1558,7 +1619,7 @@ export const usePlayersStore = create<PlayersState>()(
 
         // --- UCL: detectar dias de sorteo y partidos ---
 
-        {
+        try {
           const rawSave = loadSave();
 
           if (rawSave) {
@@ -1654,17 +1715,21 @@ export const usePlayersStore = create<PlayersState>()(
               // Catch up all UCL AI fixtures through this date (play-offs, knockouts, etc.)
               if (ucl.drawState.leagueDone && offset >= UCL_CALENDAR.leagueDay[0]) {
                 const synced = simulatePendingUCLThroughDay(rawSave, offset, rawSave.myTeamId);
-                rawSave.uclFixtures = synced.uclFixtures;
-                if (synced.ucl) rawSave.ucl = synced.ucl;
-                if (synced.uclChampion) rawSave.uclChampion = synced.uclChampion;
-                saveSave(rawSave);
+                if (synced !== rawSave) {
+                  rawSave.uclFixtures = synced.uclFixtures;
+                  if (synced.ucl) rawSave.ucl = synced.ucl;
+                  if (synced.uclChampion) rawSave.uclChampion = synced.uclChampion;
+                  saveSave(rawSave);
+                }
               }
             }
           }
+        } catch (err) {
+          console.error('[advanceTime] UCL processing failed:', err);
         }
 
         // --- Europa League + Conference League: mismo motor que UCL, siempre +1 día ---
-        {
+        try {
           const rawSave = loadSave();
           if (rawSave) {
             const nextDate = addDaysToIso(state.currentDate, 1);
@@ -1698,8 +1763,10 @@ export const usePlayersStore = create<PlayersState>()(
               }
               if (eu.drawState.leagueDone && offset >= calendar.leagueDay[0]) {
                 const synced = simulatePendingEuropeanThroughDay(rawSave, comp, offset, rawSave.myTeamId);
-                Object.assign(rawSave, synced);
-                saveSave(rawSave);
+                if (synced !== rawSave) {
+                  Object.assign(rawSave, synced);
+                  saveSave(rawSave);
+                }
               }
               return null;
             };
@@ -1712,6 +1779,8 @@ export const usePlayersStore = create<PlayersState>()(
               return 1;
             }
           }
+        } catch (err) {
+          console.error('[advanceTime] UEL/UECL processing failed:', err);
         }
 
         let date = state.currentDate;
@@ -1731,51 +1800,75 @@ export const usePlayersStore = create<PlayersState>()(
         let pendingUserMatch: ScheduleFixture | null = null;
 
         const simFixture = (f: ScheduleFixture) => {
-          const result = simulateScheduleFixtureDetailed(f, (teamId, md) =>
-            get().getSimXI(teamId, [], md),
-          );
-
-          // `ratings` ya contiene la participación real del encuentro. Evitamos
-          // volver a construir dos XI completos sólo para registrar estadísticas;
-          // sólo usamos el XI como fallback para resultados legacy sin ratings.
-          const minuteMap = new Map(
-            (result.ratings ?? []).map((r: any) => [r.playerId, Number(r.minutes) || 0]),
-          );
-          let participants = result.ratings?.length
-            ? result.ratings.map((r: any) => r.playerId)
-            : [];
-
-          if (participants.length === 0) {
-            const homeXI = get().getSimXI(f.homeTeam, [], f.matchday);
-            const awayXI = get().getSimXI(f.awayTeam, [], f.matchday);
-            participants = [...homeXI, ...awayXI].map((player) => player.id);
-          }
-
-          for (const playerId of participants) {
-            get().recordAppearance(
-              playerId,
-              f.competition,
-              minuteMap.has(playerId) ? minuteMap.get(playerId) : 90,
+          try {
+            const result = simulateScheduleFixtureDetailed(f, (teamId, md) =>
+              get().getSimXI(teamId, [], md),
             );
-          }
 
-          // Estos fixtures nunca incluyen al equipo del usuario (se filtra antes
-          // de entrar aquí), por lo que no hace falta recalcular su energía.
-          // La persistencia de energía se reserva al partido del usuario.
-          for (const ev of result.events) {
-            if (ev.type !== "goal") continue;
-            get().recordGoal(ev.scorerId);
-            if (ev.assistId) get().recordAssist(ev.assistId);
-          }
+            const minuteMap = new Map(
+              (result.ratings ?? []).map((r: any) => [r.playerId, Number(r.minutes) || 0]),
+            );
+            let participants = result.ratings?.length
+              ? result.ratings.map((r: any) => r.playerId)
+              : [];
 
-          const index = fixtureIndex.get(f.id);
-          if (index !== undefined) {
-            fixtures[index] = {
-              ...fixtures[index],
-              isPlayed: true,
-              homeScore: result.homeGoals,
-              awayScore: result.awayGoals,
-            };
+            if (participants.length === 0) {
+              const homeXI = get().getSimXI(f.homeTeam, [], f.matchday);
+              const awayXI = get().getSimXI(f.awayTeam, [], f.matchday);
+              participants = [...homeXI, ...awayXI].map((player) => player.id);
+            }
+
+            for (const playerId of participants) {
+              try {
+                get().recordAppearance(
+                  playerId,
+                  f.competition,
+                  minuteMap.has(playerId) ? minuteMap.get(playerId) : 90,
+                );
+              } catch (err) {
+                console.warn('[advanceTime] appearance update skipped:', playerId, err);
+              }
+            }
+
+            for (const ev of result.events) {
+              if (ev.type !== "goal") continue;
+              try {
+                get().recordGoal(ev.scorerId);
+                if (ev.assistId) get().recordAssist(ev.assistId);
+              } catch (err) {
+                console.warn('[advanceTime] goal stat update skipped:', err);
+              }
+            }
+
+            const index = fixtureIndex.get(f.id);
+            if (index !== undefined) {
+              fixtures[index] = {
+                ...fixtures[index],
+                isPlayed: true,
+                homeScore: result.homeGoals,
+                awayScore: result.awayGoals,
+              };
+            }
+          } catch (err) {
+            // Un partido de IA nunca puede bloquear el calendario completo.
+            // Conservamos el fixture como jugado con un resultado neutro para
+            // que el día pueda continuar y el partido no vuelva a procesarse.
+            console.error('[advanceTime] fixture simulation failed:', {
+              fixtureId: f.id,
+              homeTeam: f.homeTeam,
+              awayTeam: f.awayTeam,
+              error: err instanceof Error ? err.stack || err.message : err,
+            });
+
+            const index = fixtureIndex.get(f.id);
+            if (index !== undefined) {
+              fixtures[index] = {
+                ...fixtures[index],
+                isPlayed: true,
+                homeScore: 0,
+                awayScore: 0,
+              };
+            }
           }
         };
 
@@ -1783,9 +1876,20 @@ export const usePlayersStore = create<PlayersState>()(
           const nextDate = addDaysToIso(date, 1);
 
           // La energía se recupera con el paso del calendario, nunca por forma.
-          get().recoverPlayerEnergyToDate(nextDate);
+          try {
+            get().recoverPlayerEnergyToDate(nextDate);
+          } catch (err) {
+            console.error('[advanceTime] energy recovery failed:', err);
+          }
 
-          const onDay = unplayedOnDate(fixtures, nextDate);
+          const onDay = (() => {
+            try {
+              return unplayedOnDate(fixtures, nextDate);
+            } catch (err) {
+              console.error('[advanceTime] fixture lookup failed for next day:', err);
+              return [];
+            }
+          })();
 
           const userMatch = onDay.find((f) => involvesTeam(f, state.myTeamId!));
 
@@ -1822,6 +1926,8 @@ export const usePlayersStore = create<PlayersState>()(
           pendingUserMatch,
           squad: state.squad.length ? [...state.squad] : state.squad,
         });
+
+        console.log(`[advanceTime] Día avanzado: ${state.currentDate} -> ${date}; advanced=${advanced}`);
 
         return advanced;
       },

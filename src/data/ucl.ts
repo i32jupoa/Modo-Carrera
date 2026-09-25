@@ -204,12 +204,15 @@ export const UCL_CALENDAR = {
   leagueDay: [77, 91, 112, 127, 148, 161, 204, 211],
   //              ^J1 Sep 16  ^J2 Sep 30  ^J3 Oct 21  ^J4 Nov  5
   //              ^J5 Nov 26  ^J6 Dec  9  ^J7 Jan 21  ^J8 Jan 28
-  playoffDraw: 227, // Fri Feb 13 2026
+  // Draws after completed rounds: +2 days where possible, while keeping
+  // at least 14 days between the draw and the next match.
+  playoffDraw: 213, // Fri Jan 30 2026 – 2 days after league phase ends
   playoffLeg1: 231, // Tue Feb 17 2026
   playoffLeg2: 238, // Tue Feb 24 2026
-  knockoutDraw: 241, // Fri Feb 27 2026 – R16 bracket draw
-  r16Leg1: 252, // Tue Mar 10 2026
-  r16Leg2: 259, // Tue Mar 17 2026
+  knockoutDraw: 240, // Thu Feb 26 2026 – 2 days after play-off round ends
+  // R16 is moved one week later so the knockout draw still has >=14 days.
+  r16Leg1: 259, // Tue Mar 17 2026
+  r16Leg2: 266, // Tue Mar 24 2026
   qfLeg1: 280, // Tue Apr  7 2026
   qfLeg2: 287, // Tue Apr 14 2026
   sfLeg1: 301, // Tue Apr 28 2026

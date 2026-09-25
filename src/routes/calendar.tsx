@@ -18,6 +18,7 @@ import {
   scheduleBackgroundCupsOnly,
   processScheduledBackgroundSims,
   fixCupDraws,
+  isGlobalNationalCupRoundComplete,
   applyUCLLeagueDraw,
   applyUCLPlayoffDraw,
   applyUCLKnockoutDraw,
@@ -194,8 +195,6 @@ function CalendarPage() {
 
       const firstScheduleRound = cupSchedule[0]; // Use full schedule to check for prelim
 
-      const firstRelevantRound = relevantSchedule[0]; // Use filtered schedule for draw logic
-
       // Convert drawMatchdays to actual dates (cup starts July 7, 2025)
 
       // drawMatchday = days offset from July 7th (0=Jul7, 1=Jul8, etc.)
@@ -216,10 +215,6 @@ function CalendarPage() {
 
       const cupFixtures = save.cupFixtures[cupKey] || [];
 
-      // Check if any cup fixture exists at all (preliminary or main bracket)
-
-      const hasCupFixtures = cupFixtures.length > 0;
-
       // For draw day check: only block if the CURRENT draw day's round already has fixtures
 
       const currentDrawRound = relevantSchedule.find((s) => {
@@ -234,31 +229,12 @@ function CalendarPage() {
         ? cupFixtures.some((f) => f.round === currentDrawRound.round)
         : false;
 
-      // Check if we are 2 days before the first draw day (for auto-simulating preliminary)
-
-      // Use the full schedule to get the preliminary round draw day
-
-      const prelimRound = cupSchedule.find((s) => s.round === "Preliminar");
-
-      const prelimDrawDay = prelimRound?.drawMatchday;
-
-      const todayOffset = Math.floor(
-        (new Date(today).getTime() - new Date("2025-07-07T00:00:00Z").getTime()) / 86400000,
-      );
-
-      const isTwoDaysBeforePrelimDraw =
-        prelimDrawDay !== undefined && todayOffset === prelimDrawDay - 2;
-
       console.log(
         `[Calendar cup check] userCountry: ${userCountry}, myTeamId: ${myTeamId}, isInPreliminary: ${isInPreliminary}`,
       );
 
       console.log(
         `[Calendar cup check] today: ${today}, isDrawDay: ${isDrawDay}, hasCurrentRoundFixtures: ${hasCurrentRoundFixtures}, cupDrawPending: ${!!save.cupDrawPending}`,
-      );
-
-      console.log(
-        `[Calendar cup check] isTwoDaysBeforePrelimDraw: ${isTwoDaysBeforePrelimDraw}, prelimDrawDay: ${prelimDrawDay}, todayOffset: ${todayOffset}`,
       );
 
       // Check if user is eliminated from cup (team not in any unplayed cup fixture)
@@ -287,117 +263,44 @@ function CalendarPage() {
         `[Calendar cup check] userInCup: ${userInCup}, isCupMatchDay: ${isCupMatchDay}, currentCupMatchday: ${currentCupMatchday}`,
       );
 
-      // Auto-simulate cup matches on match days if user is eliminated
+      // Los partidos de copa se simulan desde el store/background scheduler.
+      // El calendario solo presenta las fechas y los sorteos; no ejecuta una
+      // segunda simulación al renderizar.
 
-      if (isCupMatchDay && !userInCup && currentCupMatchday !== undefined) {
-        const fixturesForMatchday = cupFixtures.filter(
-          (f) => f.matchday === currentCupMatchday && !f.result,
+      // A draw is shown on its calendar date, but if some country
+      // finishes the previous global round later, the draw waits until the
+      // whole worldwide round is complete. The calendar date remains the
+      // planned draw date.
+      const drawReadyRound = relevantSchedule.find((s) => {
+        const drawDate = new Date(
+          new Date("2025-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
         );
+        const drawDue = toDateOnly(drawDate) <= today;
+        if (!drawDue) return false;
+        if (cupFixtures.some((f) => f.round === s.round)) return false;
 
-        console.log(
-          `[Calendar] Auto-simulating cup matches for matchday ${currentCupMatchday}: ${fixturesForMatchday.length} fixtures`,
+        // A bye only removes the user's own match, never the global round
+        // dependency. The previous global round must be complete in every
+        // country before this draw can appear.
+        const previousStep = cupSchedule.find(
+          (candidate) => candidate.globalSlot === s.globalSlot - 1,
         );
+        return previousStep
+          ? isGlobalNationalCupRoundComplete(save, previousStep.globalSlot)
+          : true;
+      });
 
-        if (fixturesForMatchday.length > 0) {
-          const updated = loadSave();
-
-          if (!updated) return;
-
-          const simmed = simulateCupMatchday(updated, cupKey, currentCupMatchday);
-
-          saveSave(simmed);
-
-          setSave(simmed);
-
-          console.log(
-            `[Calendar] Auto-simulated ${fixturesForMatchday.length} cup fixtures for matchday ${currentCupMatchday}`,
-          );
-        }
-      }
-
-      // Auto-simulate preliminary round 2 days before prelim draw if user not in prelim
-
-      console.log(
-        `[Calendar] Prelim auto-sim check: isTwoDaysBeforePrelimDraw=${isTwoDaysBeforePrelimDraw}, !isInPreliminary=${!isInPreliminary}, prelimRound?.round=${prelimRound?.round}`,
-      );
-
-      if (isTwoDaysBeforePrelimDraw && !isInPreliminary && prelimRound?.round === "Preliminar") {
-        const prelimFixturesExist = cupFixtures.some((f) => f.round === "Preliminar");
-
-        console.log(
-          `[Calendar] Prelim fixtures exist: ${prelimFixturesExist}, preliminaryTeams.length: ${preliminaryTeams.length}`,
-        );
-
-        if (!prelimFixturesExist) {
-          console.log(`[Calendar] Auto-simulating preliminary round 2 days before first draw`);
-
-          const updated = loadSave();
-
-          if (!updated) return;
-
-          const prelimFixtures: any[] = [];
-
-          for (let i = 0; i + 1 < preliminaryTeams.length; i += 2) {
-            prelimFixtures.push({
-              id: `cup-${cupKey}-prelim-${i}`,
-
-              competition: "cup",
-
-              league: cupKey,
-
-              matchday: firstScheduleRound.matchday,
-
-              round: "Preliminar",
-
-              homeId: preliminaryTeams[i],
-
-              awayId: preliminaryTeams[i + 1],
-            });
-          }
-
-          // Add preliminary fixtures to save
-
-          if (!updated.cupFixtures[cupKey]) updated.cupFixtures[cupKey] = [];
-
-          for (const f of prelimFixtures) {
-            // Simple simulation: random winner
-
-            const homeGoals = Math.floor(Math.random() * 4);
-
-            const awayGoals = Math.floor(Math.random() * 4);
-
-            updated.cupFixtures[cupKey].push({
-              ...f,
-
-              result: {
-                homeGoals,
-                awayGoals,
-                events: [],
-                injuries: [],
-                xgHome: homeGoals,
-                xgAway: awayGoals,
-              },
-            });
-          }
-
-          saveSave(updated);
-
-          setSave(updated);
-        }
-      }
-
-      // Show notification if it's a draw day and this round hasn't been drawn yet
-
-      if (isDrawDay && !hasCurrentRoundFixtures && !save.cupDrawPending) {
+      // Show notification when the planned date has arrived and the global
+      // previous round is complete. This can therefore fire a few days late
+      // only if a background cup simulation had to finish its final batch.
+      if (drawReadyRound && !hasCurrentRoundFixtures && !save.cupDrawPending) {
         const cupData = initCup(userCountry || "");
 
         const preliminaryTeams = cupData.preliminaryParticipants || [];
 
-        const userIsInPreliminary = preliminaryTeams.includes(myTeamId);
-
         // Get the round for this specific draw day
 
-        const currentRound = relevantSchedule.find((s) => {
+        const currentRound = drawReadyRound || relevantSchedule.find((s) => {
           const drawDate = new Date(
             new Date("2025-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
           );
@@ -480,6 +383,11 @@ function CalendarPage() {
       console.error("Error in cup draw check:", err);
     }
   }, [save?.cupDrawPending, currentDateIso]); // Re-run when cupDrawPending or current date changes
+
+  useEffect(() => {
+    const latest = loadSave();
+    if (latest) setSave(latest);
+  }, [currentDateIso]);
 
   useLayoutEffect(() => {
     setBrowseMonth(null);
@@ -749,158 +657,32 @@ function CalendarPage() {
   }
 
   const handleAdvanceDay = async () => {
-    if (!save) return;
+    if (!save || isAdvancing) return;
 
     setIsAdvancing(true);
 
-    // Always process foreign cup draws/results first, before any early returns
-
-    let currentSave = save;
-
     try {
-      currentSave = autoDrawForeignCups(save, currentDateIso);
+      // La tienda es la única autoridad que avanza el calendario. Antes esta
+      // pantalla programaba ligas/copas y después volvía a llamar a advanceTime,
+      // dejando dos pipelines compitiendo por el mismo save.
+      const advanced = advanceTime(1);
+      const latest = usePlayersStore.getState();
 
-      saveSave(currentSave);
-
-      setSave(currentSave);
-    } catch (err) {
-      console.error("Error auto-processing foreign cups:", err);
-    }
-
-    // Programar ligas background alrededor del próximo partido del usuario
-
-    try {
-      const nextScheduledMatch = fixtures.find((f) => !f.isPlayed);
-
-      const nextMatchDate = nextScheduledMatch?.date;
-
-      currentSave = await simulateBackgroundLeaguesOnly(currentSave, currentDateIso, nextMatchDate);
-
-      saveSave(currentSave);
-
-      setSave(currentSave);
-    } catch (err) {
-      console.error("Error scheduling background leagues:", err);
-    }
-
-    // Programar copas background también
-
-    try {
-      currentSave = await scheduleBackgroundCupsOnly(
-        currentSave,
-        currentSave.currentMatchday[currentSave.myLeague],
-        currentDateIso,
-      );
-
-      saveSave(currentSave);
-
-      setSave(currentSave);
-    } catch (err) {
-      console.error("Error scheduling background cups:", err);
-    }
-
-    // Procesar simulaciones programadas para hoy
-
-    try {
-      currentSave = processScheduledBackgroundSims(currentSave, currentDateIso);
-
-      saveSave(currentSave);
-
-      setSave(currentSave);
-    } catch (err) {
-      console.error("Error processing scheduled background sims:", err);
-    }
-
-    try {
-      // Get the primary league for the user's country (the league that holds the cup)
-
-      const userCountry = LEAGUES[currentSave.myLeague]?.country;
-
-      const primaryLeague = userCountry
-        ? getPrimaryLeagueForCountry(userCountry)
-        : currentSave.myLeague;
-
-      const cupKey = (primaryLeague || currentSave.myLeague) as LeagueId;
-
-      // Check if today is a cup match day and user has a cup fixture
-
-      const cupStart = new Date("2025-07-07T00:00:00Z");
-
-      const todayCupFixtures = myCupFixtures.filter((f) => {
-        const matchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
-
-        return toDateOnly(matchDate) === currentDateIso;
-      });
-
-      if (todayCupFixtures.length > 0) {
-        // User has a cup fixture today - let advanceTime handle it (will navigate to match)
-
-        setIsAdvancing(false);
-
-        advanceTime(1);
-
-        return;
+      // `advanceTime` puede pausar voluntariamente para mostrar un partido o un
+      // sorteo pendiente. En ese caso el propio store ya ha actualizado el estado.
+      if (advanced === 0) {
+        console.log('[Calendar] advanceTime pausado:', {
+          currentDate: latest.currentDate,
+          pendingUserMatch: !!latest.pendingUserMatch,
+          pendingCupDraw: !!latest.pendingCupDraw,
+          pendingUclDraw: !!latest.pendingUclDraw,
+        });
       }
 
-      // Check if user is eliminated from cup and today is a cup match day for the league
-
-      const userCupFixtures = currentSave.cupFixtures[cupKey]?.filter((f) => !f.result) || [];
-
-      const userHasCupFixture = userCupFixtures.some(
-        (f) => f.homeId === currentSave.myTeamId || f.awayId === currentSave.myTeamId,
+    } catch (err) {
+      console.error('[Calendar] Error al avanzar el día:',
+        err instanceof Error ? (err.stack || err.message) : err,
       );
-
-      if (!userHasCupFixture && todayCupFixtures.length === 0) {
-        // User is eliminated from cup - auto-simulate the cup matchday
-
-        // Get the matchday for today from the cup schedule
-
-        const cupStart = new Date("2025-07-07T00:00:00Z");
-
-        const todayOffset = Math.floor(
-          (new Date(currentDateIso).getTime() - cupStart.getTime()) / 86400000,
-        );
-
-        // Find which matchday corresponds to today
-
-        const cupStructure =
-          (currentSave.cupFixtures as any)[`${cupKey}_structure`] ||
-          getCupStructureForCountry(userCountry || "");
-
-        const cupSchedule = cupStructure.schedule;
-
-        const todayMatchday = cupSchedule.find((s) => s.matchday === todayOffset)?.matchday;
-
-        if (todayMatchday !== undefined) {
-          console.log(
-            `[Calendar] Auto-simulating cup matchday ${todayMatchday} for eliminated user (using layered simulation)`,
-          );
-
-          const simulated = await simulateCupMatchdayLayered(
-            currentSave,
-            todayMatchday,
-            (done, total) => {
-              console.log(`Cup matches: ${done}/${total}`);
-            },
-          );
-
-          saveSave(simulated);
-
-          setSave(simulated);
-
-          // Now advance the day (this is the last step, like "back to season" but advancing day instead of navigating)
-
-          advanceTime(1);
-
-          setIsAdvancing(false);
-
-          return;
-        }
-      }
-
-      // Advance time
-
-      advanceTime(1);
     } finally {
       setIsAdvancing(false);
     }
@@ -936,6 +718,7 @@ function CalendarPage() {
     if (reloaded) {
       setSave(reloaded);
     }
+    ensureLeagueSchedule();
 
     setShowCupDrawModal(false);
 
@@ -1314,6 +1097,7 @@ function CalendarPage() {
               const synced = simulatePendingEuropeanThroughDay(updated, comp, offset, updated.myTeamId);
               saveSave(synced);
               setSave(loadSave());
+              ensureLeagueSchedule();
               setShowUclDrawModal(false);
               clearPendingUclDraw();
 
@@ -1341,7 +1125,7 @@ function CalendarPage() {
             onComplete={(updated) => {
               const offset = uclDayOffset(usePlayersStore.getState().currentDate);
               const synced = simulatePendingUCLThroughDay(updated, offset, updated.myTeamId);
-              saveSave(synced); setSave(loadSave()); setShowUclDrawModal(false); clearPendingUclDraw();
+              saveSave(synced); setSave(loadSave()); ensureLeagueSchedule(); setShowUclDrawModal(false); clearPendingUclDraw();
             }}
           />
         )
@@ -1382,6 +1166,7 @@ function CalendarPage() {
               saveSave(withDraw);
 
               setSave(withDraw);
+              ensureLeagueSchedule();
             }
           }}
         />

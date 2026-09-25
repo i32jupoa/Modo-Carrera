@@ -10,6 +10,10 @@ import {
   type Team,
 } from "@/data/teams";
 import { Fixture } from "@/lib/season";
+import {
+  findSafeNationalCupDateOnOrBefore,
+  NATIONAL_CUP_START,
+} from "@/lib/calendarRules";
 
 /* ============================================================
  *  NATIONAL CUP  (per country, dynamic size based on total teams)
@@ -154,96 +158,179 @@ export function getTotalTeamsInCountry(country: string): number {
 }
 
 // Generate dynamic cup structure based on total teams in country
-export function getCupStructureForCountry(country: string): {
-  schedule: { matchday: number; round: string; size: number; drawMatchday: number }[];
-  preliminaryTeams: number;
-  mainBracketSize: number;
-} {
+// Main cup rounds, from the largest common bracket to the final.
+// This table is intentionally kept independent from dates: dates are assigned
+// by the global synchronized calendar below.
+const ROUND_CALENDAR = [
+  { name: "R32", size: 64 },
+  { name: "R16", size: 32 },
+  { name: "Octavos", size: 16 },
+  { name: "QF", size: 8 },
+  { name: "SF", size: 4 },
+  { name: "Final", size: 2 },
+] as const;
+
+// Cup finals land together late in the season, on the first safe Tue/Wed/Thu
+// on or before this target date. Round slots are at least 42 days apart: the
+// draw is 14 days before the match and there is a 28-day buffer before the
+// next planned draw, so background simulation has room to be spread safely.
+const GLOBAL_CUP_FINAL_TARGET_MATCHDAY = 318; // 2026-05-21 relative to 2025-07-07
+const GLOBAL_CUP_ROUND_GAP = 42;
+const GLOBAL_CUP_DRAW_GAP = 14;
+
+type CupScheduleStep = {
+  matchday: number;
+  round: string;
+  size: number;
+  drawMatchday: number;
+  globalSlot: number;
+};
+
+const GLOBAL_CUP_SCHEDULE_CACHE = new Map<string, CupScheduleStep[]>();
+let GLOBAL_CUP_ROUND_COUNT_CACHE: number | null = null;
+
+function getMainBracketSizeForCountry(country: string): number {
   const totalTeams = getTotalTeamsInCountry(country);
 
-  // Determine the main bracket size based on total teams
-  // R32 = 64 teams, R16 = 32 teams, Octavos = 16 teams, QF = 8 teams, SF = 4 teams, Final = 2 teams
-  let mainBracketSize: number;
+  if (totalTeams >= 64) return 64;
+  if (totalTeams >= 32) return 32;
+  if (totalTeams >= 16) return 16;
+  if (totalTeams >= 8) return 8;
+  if (totalTeams >= 4) return 4;
+  return 2;
+}
 
-  if (totalTeams >= 64) {
-    mainBracketSize = 64; // Start at R32 (64 teams)
-  } else if (totalTeams >= 32) {
-    mainBracketSize = 32; // Start at R16 (32 teams)
-  } else if (totalTeams >= 16) {
-    mainBracketSize = 16; // Start at Octavos (16 teams)
-  } else if (totalTeams >= 8) {
-    mainBracketSize = 8; // Start at QF (8 teams)
-  } else if (totalTeams >= 4) {
-    mainBracketSize = 4; // Start at SF (4 teams)
-  } else {
-    mainBracketSize = 2; // Start at Final (2 teams)
-  }
+function getPreliminaryTeamsCountForCountry(country: string): number {
+  const totalTeams = getTotalTeamsInCountry(country);
+  const mainBracketSize = getMainBracketSizeForCountry(country);
+  const teamsToEliminate = Math.max(0, totalTeams - mainBracketSize);
+  return teamsToEliminate > 0 ? teamsToEliminate * 2 : 0;
+}
 
-  // Calculate how many teams need to be eliminated in preliminary round
-  // Teams in prelim = (totalTeams - mainBracketSize) * 2
-  // Winners from prelim = (totalTeams - mainBracketSize)
-  // Direct teams = totalTeams - preliminaryTeams
-  // Total bracket = winners + direct teams = mainBracketSize
-  const teamsToEliminate = totalTeams - mainBracketSize;
-  let preliminaryTeams = 0;
+function getLocalCupRoundDefinitions(country: string) {
+  const mainBracketSize = getMainBracketSizeForCountry(country);
+  const preliminaryTeams = getPreliminaryTeamsCountForCountry(country);
+  const rounds: { name: string; size: number }[] = [];
 
-  if (teamsToEliminate > 0) {
-    // To eliminate X teams, we need 2X teams in preliminary round (half will advance)
-    preliminaryTeams = teamsToEliminate * 2;
-  }
+  if (preliminaryTeams > 0) rounds.push({ name: "Preliminar", size: preliminaryTeams });
 
-  // Schedule anchored to league matchdays.
-  // LEAGUE_MD1_FRIDAY = 2025-08-15, CUP_START = 2025-07-07 → offset = (md-1)*7 + 39 days to reach jornada-md friday.
-  // Draw day = Monday between jornada N and N+1 → offset = 39 + (N-1)*7 + 1 = 40 + (N-1)*7
-  // Match day = Wednesday after draw → drawOffset + 2
-  //
-  // Round        Draw between    drawOffset   matchOffset
-  // Preliminar   J4–J5           61           63
-  // R32          J9–J10          96           98
-  // R16          J16–J17         145          147
-  // Octavos      J20–J21         173          175
-  // QF           J25–J26         208          210
-  // SF           J29–J30         236          238
-  // Final        J33–J34         264          266
-
-  const ROUND_CALENDAR: { name: string; size: number; drawOffset: number; matchOffset: number }[] =
-    [
-      { name: "Preliminar", size: 0, drawOffset: 61, matchOffset: 63 },
-      { name: "R32", size: 64, drawOffset: 96, matchOffset: 98 },
-      { name: "R16", size: 32, drawOffset: 145, matchOffset: 147 },
-      { name: "Octavos", size: 16, drawOffset: 173, matchOffset: 175 },
-      { name: "QF", size: 8, drawOffset: 208, matchOffset: 210 },
-      { name: "SF", size: 4, drawOffset: 236, matchOffset: 238 },
-      { name: "Final", size: 2, drawOffset: 264, matchOffset: 266 },
-    ];
-
-  const schedule: { matchday: number; round: string; size: number; drawMatchday: number }[] = [];
-
-  // Add preliminary round if needed
-  if (preliminaryTeams > 0) {
-    const entry = ROUND_CALENDAR.find((r) => r.name === "Preliminar")!;
-    schedule.push({
-      round: "Preliminar",
-      size: preliminaryTeams,
-      drawMatchday: entry.drawOffset,
-      matchday: entry.matchOffset,
-    });
-  }
-
-  // Add main bracket rounds in order
   for (const entry of ROUND_CALENDAR) {
-    if (entry.size === 0) continue; // Preliminar handled above
+    if (entry.size === 0) continue;
     if (mainBracketSize >= entry.size) {
-      schedule.push({
-        round: entry.name,
-        size: entry.size,
-        drawMatchday: entry.drawOffset,
-        matchday: entry.matchOffset,
-      });
+      rounds.push({ name: entry.name, size: entry.size });
     }
   }
 
-  return { schedule, preliminaryTeams, mainBracketSize };
+  return { rounds, mainBracketSize, preliminaryTeams };
+}
+
+function getAllCupCountries(): string[] {
+  return Object.keys(LEAGUES_BY_COUNTRY).filter((country) => {
+    const primaryLeague = LEAGUES_BY_COUNTRY[country]?.[0]?.id;
+    return !!primaryLeague && getTotalTeamsInCountry(country) >= 2;
+  });
+}
+
+function getGlobalCupRoundCount(): number {
+  if (GLOBAL_CUP_ROUND_COUNT_CACHE !== null) return GLOBAL_CUP_ROUND_COUNT_CACHE;
+
+  let maxRounds = 0;
+  for (const country of getAllCupCountries()) {
+    maxRounds = Math.max(maxRounds, getLocalCupRoundDefinitions(country).rounds.length);
+  }
+
+  GLOBAL_CUP_ROUND_COUNT_CACHE = Math.max(1, maxRounds);
+  return GLOBAL_CUP_ROUND_COUNT_CACHE;
+}
+
+/**
+ * Global national-cup calendar.
+ *
+ * Every country is aligned by the END of its competition, not by the first
+ * round. A country with fewer rounds therefore enters the common calendar
+ * later, so all national-cup finals land on the same day.
+ *
+ * Each round gets a synchronized slot with at least 42 days between match
+ * dates:
+ *   - draw: 14 days before the round match
+ *   - background-simulation window: up to 28 days before the next draw
+ * The next draw is still gated by the completion of every country in the
+ * previous global round.
+ */
+export function getGlobalCupScheduleForCountry(country: string): CupScheduleStep[] {
+  const cached = GLOBAL_CUP_SCHEDULE_CACHE.get(country);
+  if (cached) return cached;
+
+  const local = getLocalCupRoundDefinitions(country);
+  const maxRounds = getGlobalCupRoundCount();
+  const startSlot = Math.max(0, maxRounds - local.rounds.length);
+
+  const globalMatchdays = new Array<number>(maxRounds);
+  // Search backwards from the late-season final target until each slot lands on
+  // a safe Tue/Wed/Thu in a non-European week. The target offset is fixed, while
+  // the actual weekday is chosen by calendarRules.
+  const targetFinalIso = new Date(
+    `${NATIONAL_CUP_START}T00:00:00Z`,
+  );
+  targetFinalIso.setUTCDate(targetFinalIso.getUTCDate() + GLOBAL_CUP_FINAL_TARGET_MATCHDAY);
+  let currentIso = findSafeNationalCupDateOnOrBefore(targetFinalIso.toISOString().slice(0, 10));
+  globalMatchdays[maxRounds - 1] = Math.round(
+    (new Date(`${currentIso}T00:00:00Z`).getTime() -
+      new Date(`${NATIONAL_CUP_START}T00:00:00Z`).getTime()) /
+      86400000,
+  );
+
+  for (let slot = maxRounds - 2; slot >= 0; slot--) {
+    let candidate = new Date(`${currentIso}T00:00:00Z`);
+    candidate.setUTCDate(candidate.getUTCDate() - GLOBAL_CUP_ROUND_GAP);
+    let candidateIso = candidate.toISOString().slice(0, 10);
+    candidateIso = findSafeNationalCupDateOnOrBefore(candidateIso);
+    globalMatchdays[slot] = Math.round(
+      (new Date(`${candidateIso}T00:00:00Z`).getTime() -
+        new Date(`${NATIONAL_CUP_START}T00:00:00Z`).getTime()) /
+        86400000,
+    );
+    currentIso = candidateIso;
+  }
+
+  const schedule = local.rounds.map((round, localIndex) => {
+    const globalSlot = startSlot + localIndex;
+    const matchday = globalMatchdays[globalSlot];
+    const drawMatchday = matchday - GLOBAL_CUP_DRAW_GAP;
+
+    return {
+      matchday,
+      round: round.name,
+      size: round.size,
+      drawMatchday,
+      globalSlot,
+    };
+  });
+
+  GLOBAL_CUP_SCHEDULE_CACHE.set(country, schedule);
+  return schedule;
+}
+
+export function getGlobalCupRoundCountForTesting(): number {
+  return getGlobalCupRoundCount();
+}
+
+// Generate dynamic cup schedule based on the total number of teams in a country.
+// The round count is still country-specific, but its dates are aligned to the
+// shared global calendar so every country's final is played on the same day.
+export function getCupStructureForCountry(country: string): {
+  schedule: CupScheduleStep[];
+  preliminaryTeams: number;
+  mainBracketSize: number;
+} {
+  const local = getLocalCupRoundDefinitions(country);
+  const schedule = getGlobalCupScheduleForCountry(country);
+
+  return {
+    schedule,
+    preliminaryTeams: local.preliminaryTeams,
+    mainBracketSize: local.mainBracketSize,
+  };
 }
 
 // Generate dynamic cup schedule based on actual bracket size (legacy function)

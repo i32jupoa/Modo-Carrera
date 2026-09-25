@@ -32,7 +32,7 @@ import { uclDayOffset, isUCLLeaguePhaseFixture } from "@/data/ucl";
 import { EUROPEAN_START } from "@/data/europeanCompetitions";
 import { applyResult, Fixture } from "@/lib/season";
 import { FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
-import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
+import { teamById, LEAGUES, getPrimaryLeagueForCountry, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import {
@@ -759,12 +759,30 @@ function MatchPage() {
 
       // STRICT BRANCHING by matchType - ensure correct simulation for each competition
       if (matchType === "CUP") {
-        // CUP: Simulate ALL Cup fixtures for the matchday across ALL VIP countries
-        // Uses the same layered simulation format as league matches
-        console.log("Post-match: Simulating CUP matches for matchday:", fixture.matchday);
-        next = await simulateCupMatchdayLayered(latestSave, fixture.matchday, (done, total) => {
-          console.log(`Cup matches: ${done}/${total}`);
-        });
+        // IMPORTANT: when the user is playing a national cup match, only the
+        // user's own country is resolved here. Foreign national cups follow
+        // the exact same calendar days as they would when using "Avanzar día"
+        // and are already handled by the background scheduler.
+        const userCountry = LEAGUES[latestSave.myLeague]?.country;
+        const userCupLeague = userCountry
+          ? (getPrimaryLeagueForCountry(userCountry) as LeagueId)
+          : latestSave.myLeague;
+
+        console.log(
+          "Post-match: Simulating ONLY user's national cup:",
+          userCupLeague,
+          "matchday:",
+          fixture.matchday,
+        );
+
+        next = await simulateCupMatchdayLayered(
+          latestSave,
+          fixture.matchday,
+          (done, total) => {
+            console.log(`User-country cup matches: ${done}/${total}`);
+          },
+          userCupLeague,
+        );
       } else if (isEuropeanFixture(fixture)) {
         const europeanCompetition = europeanCompetitionOf(fixture)!;
         const { processEuropeanKnockoutProgress } = await import("@/lib/store");
@@ -1294,26 +1312,31 @@ function MatchPage() {
   async function simulateRemainingCupMatches(matchday: number, saveToUse: SaveGame | null = null) {
     try {
       const currentSave = saveToUse || save;
-      console.log("Post-extra-time: Simulating remaining CUP matches for matchday:", matchday);
-      console.log("simulateRemainingCupMatches: saveToUse provided?", !!saveToUse);
-      if (saveToUse) {
-        const userFixture = Object.values(saveToUse.cupFixtures)
-          .filter((list): list is any[] => Array.isArray(list))
-          .flat()
-          .find((f) => f.homeId === saveToUse.myTeamId || f.awayId === saveToUse.myTeamId);
-        console.log(
-          "simulateRemainingCupMatches: user fixture in saveToUse:",
-          userFixture ? JSON.stringify(userFixture.result, null, 2) : "not found",
-        );
-      }
-      const updatedSave = await simulateCupMatchdayLayered(currentSave, matchday, (done, total) => {
-        console.log(`Cup matches: ${done}/${total}`);
-      });
+      const userCountry = LEAGUES[currentSave.myLeague]?.country;
+      const userCupLeague = userCountry
+        ? (getPrimaryLeagueForCountry(userCountry) as LeagueId)
+        : currentSave.myLeague;
+
+      console.log(
+        "Post-match: Simulating ONLY user's national cup:",
+        userCupLeague,
+        "matchday:",
+        matchday,
+      );
+
+      const updatedSave = await simulateCupMatchdayLayered(
+        currentSave,
+        matchday,
+        (done, total) => {
+          console.log(`User-country cup matches: ${done}/${total}`);
+        },
+        userCupLeague,
+      );
       saveSaveWithRetry(updatedSave);
       setSave(updatedSave);
-      console.log("Cup matches simulation complete, setting phase to done");
+      console.log("User-country cup simulation complete, setting phase to done");
     } catch (err) {
-      console.error("Error simulating remaining cup matches:", err);
+      console.error("Error simulating user's remaining cup matches:", err);
     }
   }
 
@@ -1840,16 +1863,25 @@ function MatchPage() {
 
         // Simulate remaining cup matches for the matchday
         try {
+          const userCountry = LEAGUES[newSave.myLeague]?.country;
+          const userCupLeague = userCountry
+            ? (getPrimaryLeagueForCountry(userCountry) as LeagueId)
+            : newSave.myLeague;
+
           console.log(
-            "Post-match: Simulating remaining CUP matches for matchday:",
+            "Post-match: Simulating ONLY user's national cup:",
+            userCupLeague,
+            "matchday:",
             fixture.matchday,
           );
+
           const updatedSave = await simulateCupMatchdayLayered(
             newSave,
             fixture.matchday,
             (done, total) => {
-              console.log(`Cup matches: ${done}/${total}`);
+              console.log(`User-country cup matches: ${done}/${total}`);
             },
+            userCupLeague,
           );
           saveSaveWithRetry(updatedSave);
           setSave(updatedSave);

@@ -61,6 +61,72 @@ function slotOffsetsForCount(count: number): number[] {
   return base.slice(0, count);
 }
 
+
+const LEAGUE_PREFERRED_WEEKDAYS = new Set([0, 1, 5, 6]); // Sun, Mon, Fri, Sat
+
+function teamCanPlayWithProtections(
+  teamId: string,
+  dateIso: string,
+  lastPlayed: Map<string, string>,
+  protectedDates?: Map<string, Set<string>>,
+): boolean {
+  const specialDates = protectedDates?.get(teamId);
+  if (specialDates) {
+    for (const specialDate of specialDates) {
+      if (Math.abs(daysBetween(specialDate, dateIso)) < MIN_REST_DAYS) return false;
+    }
+  }
+  return teamCanPlay(teamId, dateIso, lastPlayed);
+}
+
+export function rescheduleLeagueAroundSpecialFixtures(
+  fixtures: ScheduleFixture[],
+  protectedDates?: Map<string, Set<string>>,
+): ScheduleFixture[] {
+  if (!protectedDates || protectedDates.size === 0) return fixtures;
+
+  const next = fixtures.map((f) => ({ ...f }));
+  const lastPlayed = new Map<string, string>();
+
+  for (const f of next
+    .filter((f) => f.isPlayed)
+    .sort((a, b) => a.date.localeCompare(b.date))) {
+    for (const teamId of [f.homeTeam, f.awayTeam]) {
+      const prev = lastPlayed.get(teamId);
+      if (!prev || f.date > prev) lastPlayed.set(teamId, f.date);
+    }
+  }
+
+  const unplayed = next
+    .filter((f) => !f.isPlayed)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.matchday - b.matchday);
+
+  for (const f of unplayed) {
+    let candidate = f.date;
+    let chosen = candidate;
+
+    for (let offset = 0; offset <= 120; offset++) {
+      const iso = addDaysToIso(candidate, offset);
+      const preferredWeekday = LEAGUE_PREFERRED_WEEKDAYS.has(parseDateOnly(iso).getDay());
+      if (!preferredWeekday && offset < 14) continue;
+
+      if (
+        teamCanPlayWithProtections(f.homeTeam, iso, lastPlayed, protectedDates) &&
+        teamCanPlayWithProtections(f.awayTeam, iso, lastPlayed, protectedDates)
+      ) {
+        chosen = iso;
+        break;
+      }
+    }
+
+    f.date = chosen;
+    lastPlayed.set(f.homeTeam, chosen);
+    lastPlayed.set(f.awayTeam, chosen);
+  }
+
+  return next;
+}
+
 /** Assign realistic dates across the week with 72h rest per team. */
 export function assignFixtureDates(
   raw: Pick<Fixture, "id" | "matchday" | "homeId" | "awayId">[],
