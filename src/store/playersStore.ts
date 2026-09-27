@@ -2441,6 +2441,13 @@ export const usePlayersStore = create<PlayersState>()(
         // solo existe dentro de la simulación de ese encuentro.
         const isUserControlledPlayer = !!myTeamId && rosterIds.includes(playerId);
         const playerForGame = fcToPlayer(fc, stats, teamIdOverride);
+        // Algunos registros históricos o bases antiguas pueden contener un
+        // jugador cuyo club ya no existe en el catálogo actual. `fcToPlayer`
+        // devuelve `undefined` en ese caso; nunca debemos intentar escribir
+        // energía sobre un objeto inexistente porque rompería vistas que
+        // recorren todos los jugadores (por ejemplo, Premios).
+        if (!playerForGame) return undefined;
+
         if (!isUserControlledPlayer) {
           playerForGame.energy = STAMINA_START;
           playerForGame.energyLastUpdatedDate = get().currentDate || GAME_START_DATE;

@@ -465,9 +465,11 @@ function findCurrentOrFirstPeriod(periods: MonthlyPeriod[], currentDate?: string
   return `${periods[0].year}-${periods[0].month}`;
 }
 
-function createAwardsShellError(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  return "No se han podido calcular los premios de esta partida.";
+function createAwardsShellError(_error: unknown): string {
+  // No exponer excepciones internas del motor al usuario. Si una parte no se
+  // puede calcular, la interfaz muestra un mensaje genérico y conserva las
+  // secciones que sí estén disponibles.
+  return "No se han podido calcular algunos datos de premios.";
 }
 
 function safeCalculateAwards(save: SaveGame, players: AwardPlayer[]) {

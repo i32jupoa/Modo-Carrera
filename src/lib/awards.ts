@@ -923,17 +923,28 @@ export function getMonthlyAward(
 
 export function getMonthlyPeriods(leagueId?: LeagueId, players = getPlayers(), save = loadSave()): MonthlyPeriod[] {
   const periods = new Map<string, MonthlyPeriod>();
+  const addPeriod = (year: number, month: number) => {
+    // El selector solo debe ofrecer meses que ya han terminado. Así nunca
+    // aparece el mes en curso ni meses futuros como si sus premios estuvieran
+    // publicados.
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !isMonthFinalized(year, month)) return;
+    const key = `${year}-${String(month).padStart(2, "0")}`;
+    periods.set(key, { year, month, label: monthLabel(year, month) });
+  };
 
+  // Conservamos los meses persistidos para partidas antiguas.
   for (const p of players) {
     for (const month of p.stats.dynamicStats?.monthlyStats ?? []) {
       if (month.appearances <= 0) continue;
       const monthLeague = month.teamId ? teamById(month.teamId)?.league : p.leagueId;
       if (leagueId && monthLeague !== leagueId) continue;
-      const key = `${month.year}-${String(month.month).padStart(2, "0")}`;
-      periods.set(key, { year: month.year, month: month.month, label: monthLabel(month.year, month.month) });
+      addPeriod(month.year, month.month);
     }
   }
 
+  // Y, de forma autoritativa, reconstruimos todos los meses que realmente
+  // tuvieron partidos de liga ya disputados en la partida. Esto evita perder
+  // meses cuando faltan snapshots mensuales en una partida antigua.
   if (save) {
     for (const currentLeagueId of ALL_LEAGUES) {
       if (leagueId && currentLeagueId !== leagueId) continue;
@@ -944,18 +955,12 @@ export function getMonthlyPeriods(leagueId?: LeagueId, players = getPlayers(), s
         if (!fixture.result) continue;
         const iso = dates.get(fixture.id);
         if (!iso) continue;
-        const date = new Date(`${shiftFixtureDateToSeason(iso, save!)}T12:00:00Z`);
-        const year = date.getUTCFullYear();
-        const month = date.getUTCMonth();
-        const key = `${year}-${String(month).padStart(2, "0")}`;
-        periods.set(key, { year, month, label: monthLabel(year, month) });
+        const date = new Date(`${shiftFixtureDateToSeason(iso, save)}T12:00:00Z`);
+        if (Number.isNaN(date.getTime())) continue;
+        addPeriod(date.getUTCFullYear(), date.getUTCMonth());
       }
     }
   }
-
-  const current = currentMonthKey();
-  const currentKey = `${current.year}-${String(current.month).padStart(2, "0")}`;
-  if (!periods.has(currentKey)) periods.set(currentKey, { ...current, label: monthLabel(current.year, current.month) });
 
   return [...periods.values()].sort((a, b) => b.year - a.year || b.month - a.month);
 }
