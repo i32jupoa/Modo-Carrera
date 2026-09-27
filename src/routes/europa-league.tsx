@@ -414,6 +414,12 @@ interface ImmutableBracketState {
 }
 
 // Build immutable bracket state from fixtures (not bracket slots)
+function isBracketFixture(value: unknown): value is Fixture {
+  if (!value || typeof value !== "object") return false;
+  const f = value as Partial<Fixture>;
+  return typeof f.homeId === "string" && typeof f.awayId === "string" && typeof f.round === "string";
+}
+
 function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState {
   const playoff: BracketMatchup[] = [];
   const r16: BracketMatchup[] = [];
@@ -427,11 +433,13 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
     winner: null,
   };
 
+  const safeFixtures = Array.isArray(fixtures) ? fixtures.filter(isBracketFixture) : [];
+
   // Helper to group fixtures by tie (same teams in both legs)
   const groupFixturesByTie = (roundPrefix: string): Map<string, Fixture[]> => {
     const ties = new Map<string, Fixture[]>();
-    const roundFixtures = fixtures.filter(
-      (f) => f.round?.startsWith(roundPrefix) && f.matchday > 0,
+    const roundFixtures = safeFixtures.filter(
+      (f) => typeof f.round === "string" && f.round.startsWith(roundPrefix) && (f.matchday == null || f.matchday > 0),
     );
 
     for (const f of roundFixtures) {
@@ -449,9 +457,21 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
   const calculateWinnerFromLegs = (leg1: Fixture, leg2: Fixture): string | null => {
     if (!leg1.result || !leg2.result) return null;
 
-    // Aggregate: leg1.homeGoals + leg2.awayGoals (team from leg1 home)
-    const aggHome = leg1.result.homeGoals + leg2.result.awayGoals;
-    const aggAway = leg1.result.awayGoals + leg2.result.homeGoals;
+    // The second leg decides ties level on aggregate via extra time/penalties.
+    if (leg2.result.penalties) {
+      return leg2.result.penalties.homeGoals > leg2.result.penalties.awayGoals
+        ? leg2.homeId
+        : leg2.awayId;
+    }
+
+    const aggHome =
+      leg1.result.homeGoals +
+      leg2.result.awayGoals +
+      (leg2.result.extraTime?.awayGoals || 0);
+    const aggAway =
+      leg1.result.awayGoals +
+      leg2.result.homeGoals +
+      (leg2.result.extraTime?.homeGoals || 0);
 
     return aggHome > aggAway ? leg1.homeId : leg1.awayId;
   };
@@ -459,7 +479,7 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
   // Build playoff matchups from fixtures
   const playoffTies = groupFixturesByTie("Playoff");
   let playoffIndex = 0;
-  for (const [key, tieFixtures] of playoffTies) {
+  for (const [key, tieFixtures] of [...playoffTies.entries()].sort((a, b) => (a[1][0]?.id ?? "").localeCompare(b[1][0]?.id ?? "", undefined, { numeric: true }))) {
     if (tieFixtures.length >= 1) {
       const leg1 = tieFixtures.find((f) => f.round?.includes("Leg1"));
       const leg2 = tieFixtures.find((f) => f.round?.includes("Leg2"));
@@ -478,7 +498,7 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
   // Build R16 matchups from fixtures
   const r16Ties = groupFixturesByTie("R16");
   let r16Index = 0;
-  for (const [key, tieFixtures] of r16Ties) {
+  for (const [key, tieFixtures] of [...r16Ties.entries()].sort((a, b) => (a[1][0]?.id ?? "").localeCompare(b[1][0]?.id ?? "", undefined, { numeric: true }))) {
     if (tieFixtures.length >= 1) {
       const leg1 = tieFixtures.find((f) => f.round?.includes("Leg1"));
       const leg2 = tieFixtures.find((f) => f.round?.includes("Leg2"));
@@ -497,7 +517,7 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
   // Build QF matchups from fixtures
   const qfTies = groupFixturesByTie("QF");
   let qfIndex = 0;
-  for (const [key, tieFixtures] of qfTies) {
+  for (const [key, tieFixtures] of [...qfTies.entries()].sort((a, b) => (a[1][0]?.id ?? "").localeCompare(b[1][0]?.id ?? "", undefined, { numeric: true }))) {
     if (tieFixtures.length >= 1) {
       const leg1 = tieFixtures.find((f) => f.round?.includes("Leg1"));
       const leg2 = tieFixtures.find((f) => f.round?.includes("Leg2"));
@@ -516,7 +536,7 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
   // Build SF matchups from fixtures
   const sfTies = groupFixturesByTie("SF");
   let sfIndex = 0;
-  for (const [key, tieFixtures] of sfTies) {
+  for (const [key, tieFixtures] of [...sfTies.entries()].sort((a, b) => (a[1][0]?.id ?? "").localeCompare(b[1][0]?.id ?? "", undefined, { numeric: true }))) {
     if (tieFixtures.length >= 1) {
       const leg1 = tieFixtures.find((f) => f.round?.includes("Leg1"));
       const leg2 = tieFixtures.find((f) => f.round?.includes("Leg2"));
@@ -533,7 +553,7 @@ function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState 
   }
 
   // Build final from fixtures
-  const finalFixture = fixtures.find((f) => f.round === "Final");
+  const finalFixture = safeFixtures.find((f) => f.round === "Final");
   if (finalFixture) {
     final = {
       id: "F",
@@ -563,11 +583,12 @@ function getRealMatchResult(
   penalties?: { homeGoals: number; awayGoals: number };
   lastLeg?: Fixture;
 } | null {
-  if (!matchup.homeTeam || !matchup.awayTeam) return null;
+  if (!matchup || typeof matchup !== "object" || typeof matchup.homeTeam !== "string" || typeof matchup.awayTeam !== "string") return null;
+  const safeFixtures = Array.isArray(fixtures) ? fixtures.filter(isBracketFixture) : [];
 
   // For final, find the single fixture
   if (matchup.round === "final") {
-    const finalMatch = fixtures.find((f) => f.round === "Final");
+    const finalMatch = safeFixtures.find((f) => f.round === "Final");
     if (finalMatch?.result) {
       const extraTime = !!finalMatch.result.extraTime;
       const penalties = finalMatch.result.penalties
@@ -580,9 +601,11 @@ function getRealMatchResult(
         homeGoals: finalMatch.result.homeGoals,
         awayGoals: finalMatch.result.awayGoals,
         winner:
-          finalMatch.result.homeGoals > finalMatch.result.awayGoals
-            ? finalMatch.homeId
-            : finalMatch.awayId,
+          finalMatch.result.penalties
+            ? (finalMatch.result.penalties.homeGoals > finalMatch.result.penalties.awayGoals ? finalMatch.homeId : finalMatch.awayId)
+            : finalMatch.result.homeGoals > finalMatch.result.awayGoals
+              ? finalMatch.homeId
+              : finalMatch.awayId,
         extraTime,
         penalties,
         lastLeg: finalMatch,
@@ -593,7 +616,7 @@ function getRealMatchResult(
 
   // For two-legged ties, find both legs by team IDs
   const roundPrefix = matchup.round === "playoff" ? "Playoff" : matchup.round.toUpperCase();
-  const roundFixtures = fixtures.filter((f) => f.round?.startsWith(roundPrefix) && f.matchday > 0);
+  const roundFixtures = safeFixtures.filter((f) => typeof f.round === "string" && f.round.startsWith(roundPrefix) && (f.matchday == null || f.matchday > 0));
 
   // Find the two legs for this tie
   const leg1 = roundFixtures.find(
@@ -647,6 +670,84 @@ function getRealMatchResult(
   return null;
 }
 
+
+// Use the persisted bracket as the authoritative tree structure. Legacy saves
+// can contain incomplete slots, so normalize them into the expected shape and
+// only use fixtures for scores/results.
+function buildDisplayBracketState(slots: unknown): ImmutableBracketState {
+  const raw = Array.isArray(slots) ? slots : [];
+
+  const sanitize = (
+    value: unknown,
+    fallbackId: string,
+    round: UCLBracketSlot["round"],
+  ): UCLBracketSlot => {
+    const slot = value && typeof value === "object" ? (value as Partial<UCLBracketSlot>) : {};
+    const homeId = typeof slot.homeId === "string" && slot.homeId.trim() ? slot.homeId : null;
+    const awayId = typeof slot.awayId === "string" && slot.awayId.trim() ? slot.awayId : null;
+    const id = typeof slot.id === "string" && slot.id.trim() ? slot.id : fallbackId;
+    const legOneMatchday = typeof slot.legOneMatchday === "number" && Number.isFinite(slot.legOneMatchday)
+      ? slot.legOneMatchday
+      : 0;
+    const legTwoMatchday = typeof slot.legTwoMatchday === "number" && Number.isFinite(slot.legTwoMatchday)
+      ? slot.legTwoMatchday
+      : legOneMatchday;
+
+    return {
+      id,
+      round,
+      homeId,
+      awayId,
+      legOneMatchday,
+      legTwoMatchday,
+      isFinal: round === "final",
+    };
+  };
+
+  const getNumericId = (id: string): number => {
+    const match = id.match(/(\d+)(?!.*\d)/);
+    return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+  };
+
+  const collect = (round: UCLBracketSlot["round"], count: number): UCLBracketSlot[] => {
+    const selected = raw
+      .filter((slot) => slot && typeof slot === "object" && (slot as any).round === round)
+      .sort((a: any, b: any) => getNumericId(String(a?.id ?? "")) - getNumericId(String(b?.id ?? "")))
+      .slice(0, count)
+      .map((slot, index) => sanitize(slot, `${round.toUpperCase()}-${index + 1}`, round));
+
+    while (selected.length < count) {
+      selected.push(sanitize(null, `${round.toUpperCase()}-${selected.length + 1}`, round));
+    }
+
+    return selected;
+  };
+
+  const finalRaw = raw.find(
+    (slot) => slot && typeof slot === "object" && (slot as any).round === "final",
+  );
+
+  return {
+    playoff: collect("playoff", 8),
+    r16: collect("r16", 8),
+    qf: collect("qf", 4),
+    sf: collect("sf", 2),
+    final: sanitize(finalRaw, "F", "final"),
+  };
+}
+
+function safeGetRealMatchResult(
+  matchup: BracketMatchup,
+  fixtures: Fixture[],
+): ReturnType<typeof getRealMatchResult> {
+  try {
+    return getRealMatchResult(matchup, Array.isArray(fixtures) ? fixtures : []);
+  } catch (error) {
+    console.error("[BracketView] Resultado de eliminatoria inválido; se ignora:", error);
+    return null;
+  }
+}
+
 function BracketView({
   bracket,
   fixtures,
@@ -656,7 +757,7 @@ function BracketView({
   fixtures: Fixture[];
   onOpenFixture?: (fixture: Fixture) => void;
 }) {
-  if (bracket.length === 0) {
+  if (!Array.isArray(bracket) || bracket.length === 0) {
     return (
       <p className="text-muted-foreground text-sm p-4">
         El cuadro se generará tras el sorteo de play-offs.
@@ -664,8 +765,10 @@ function BracketView({
     );
   }
 
-  // Build immutable bracket state from fixtures
-  const bracketState = buildImmutableBracketState(fixtures);
+  // The persisted bracket defines the tree. Fixtures are only used for
+  // aggregate results, which prevents stale/incomplete fixtures from breaking
+  // the route or changing the bracket structure.
+  const bracketState = buildDisplayBracketState(bracket);
 
   // Split into left half (routes A & B) and right half (routes C & D)
   const playoffLeft = bracketState.playoff.slice(0, 4);
@@ -679,7 +782,7 @@ function BracketView({
 
   // Safe helpers
   const safeTeamName = (id: string): string => {
-    if (!id || id.startsWith("winner-")) return "Por definir";
+    if (typeof id !== "string" || !id || id.startsWith("winner-")) return "Por definir";
     try {
       return teamName(id);
     } catch {
@@ -688,7 +791,7 @@ function BracketView({
   };
 
   const getTeamLogoPath = (teamId: string): string => {
-    if (!teamId || teamId.startsWith("PO-WINNER-") || teamId.startsWith("winner-")) {
+    if (typeof teamId !== "string" || !teamId || teamId.startsWith("PO-WINNER-") || teamId.startsWith("winner-")) {
       return "";
     }
 
@@ -895,7 +998,7 @@ function BracketView({
                 Final
               </div>
               {(() => {
-                const result = getRealMatchResult(bracketState.final, fixtures);
+                const result = safeGetRealMatchResult(bracketState.final, fixtures);
                 return result ? (
                   <div
                     className={`inline-flex items-center gap-2 bg-white/10 px-4 py-2 rounded-lg border border-white/20 ${result.lastLeg ? "cursor-pointer hover:bg-white/20 hover:border-white/40 transition-colors" : ""}`}
@@ -1111,9 +1214,10 @@ function ImmutableMatchCard({
   getTeamLogoPath: (id: string) => string;
   onOpenFixture?: (fixture: Fixture) => void;
 }) {
-  const home = matchup.homeTeam;
-  const away = matchup.awayTeam;
-  const result = getRealMatchResult(matchup, fixtures);
+  if (!matchup || typeof matchup !== "object") return null;
+  const home = typeof matchup.homeTeam === "string" ? matchup.homeTeam : null;
+  const away = typeof matchup.awayTeam === "string" ? matchup.awayTeam : null;
+  const result = safeGetRealMatchResult(matchup, fixtures);
 
   if (!home || !away) {
     return (

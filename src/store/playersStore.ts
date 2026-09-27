@@ -885,6 +885,18 @@ function fcToPlayer(
   };
 }
 
+type PendingDrawEvent =
+  | "cup"
+  | "league"
+  | "playoff"
+  | "knockout"
+  | "uel-league"
+  | "uel-playoff"
+  | "uel-knockout"
+  | "uecl-league"
+  | "uecl-playoff"
+  | "uecl-knockout";
+
 type PlayersState = {
   loaded: boolean;
 
@@ -936,6 +948,9 @@ type PlayersState = {
 
   pendingUclDraw: "league" | "playoff" | "knockout" | "uel-league" | "uel-playoff" | "uel-knockout" | "uecl-league" | "uecl-playoff" | "uecl-knockout" | null;
 
+  /** Todos los sorteos/avisos pendientes del día, en orden. */
+  pendingDrawQueue: PendingDrawEvent[];
+
   init: () => void;
 
   advanceTime: (days: number) => number;
@@ -947,6 +962,8 @@ type PlayersState = {
   clearPendingCupDraw: () => void;
 
   clearPendingUclDraw: () => void;
+
+  finishPendingDraw: () => void;
 
   dismissMatch: (matchId: string) => void;
 
@@ -1292,6 +1309,8 @@ export const usePlayersStore = create<PlayersState>()(
 
       pendingUclDraw: null,
 
+      pendingDrawQueue: [],
+
       stats: {},
 
       dismissedMatchIds: [],
@@ -1346,6 +1365,17 @@ export const usePlayersStore = create<PlayersState>()(
       clearPendingCupDraw: () => set({ pendingCupDraw: false }),
 
       clearPendingUclDraw: () => set({ pendingUclDraw: null }),
+
+      finishPendingDraw: () =>
+        set((state) => {
+          const [, ...rest] = state.pendingDrawQueue ?? [];
+          const next = rest[0] ?? null;
+          return {
+            pendingDrawQueue: rest,
+            pendingCupDraw: next === "cup",
+            pendingUclDraw: next && next !== "cup" ? next : null,
+          };
+        }),
 
       dismissMatch: (matchId) =>
         set((state) => ({
@@ -1455,6 +1485,11 @@ export const usePlayersStore = create<PlayersState>()(
 
         if (get().pendingUclDraw) return 0;
 
+        if ((get().pendingDrawQueue ?? []).length > 0) return 0;
+
+        const nextDate = addDaysToIso(state.currentDate, 1);
+        const drawQueue: PendingDrawEvent[] = [];
+
         // --- Copa: procesar al avanzar día, sin depender del calendario ---
 
         {
@@ -1468,8 +1503,6 @@ export const usePlayersStore = create<PlayersState>()(
           }
 
           if (rawSave) {
-            const nextDate = addDaysToIso(state.currentDate, 1);
-
             // 1. Procesar copas extranjeras solo en temporada de copa (julio-mayo)
 
             let currentSave = rawSave;
@@ -1586,9 +1619,7 @@ export const usePlayersStore = create<PlayersState>()(
                 if (previousRoundComplete) {
                   // Guardar copas extranjeras procesadas y bloquear para sorteo.
                   saveSave(currentSave);
-                  syncPlayerAgesForDate(nextDate);
-                  set({ currentDate: nextDate, pendingCupDraw: true });
-                  return 1;
+                  drawQueue.push("cup");
                 }
               }
 
@@ -1662,8 +1693,6 @@ export const usePlayersStore = create<PlayersState>()(
           const rawSave = loadSave();
 
           if (rawSave) {
-            const nextDate = addDaysToIso(state.currentDate, 1);
-
             const offset = uclDayOffset(nextDate);
 
             console.log(
@@ -1705,15 +1734,11 @@ export const usePlayersStore = create<PlayersState>()(
                 `[advanceTime] Checking league draw: offset=${offset}, leagueDraw=${UCL_CALENDAR.leagueDraw}, leagueDone=${ucl.drawState.leagueDone}`,
               );
 
-              if (offset === UCL_CALENDAR.leagueDraw && !ucl.drawState.leagueDone) {
+              if (offset >= UCL_CALENDAR.leagueDraw && !ucl.drawState.leagueDone) {
                 console.log(`[advanceTime] TRIGGERING LEAGUE DRAW`);
 
                 saveSave(rawSave);
-
-                syncPlayerAgesForDate(nextDate);
-                set({ currentDate: nextDate, pendingUclDraw: "league" });
-
-                return 1;
+                drawQueue.push("league");
               }
 
               // Playoff draw day - ALWAYS show modal regardless of team position
@@ -1723,20 +1748,12 @@ export const usePlayersStore = create<PlayersState>()(
               );
 
               if (
-                offset === UCL_CALENDAR.playoffDraw &&
+                offset >= UCL_CALENDAR.playoffDraw &&
                 ucl.drawState.leagueDone &&
                 !ucl.drawState.playoffDone
               ) {
-                console.log(`[advanceTime] TRIGGERING PLAYOFF DRAW - Always shown`);
-
-                const drawn = applyUCLPlayoffDraw(rawSave);
-
-                saveSave(drawn);
-
-                syncPlayerAgesForDate(nextDate);
-                set({ currentDate: nextDate, pendingUclDraw: "playoff" });
-
-                return 1;
+                console.log(`[advanceTime] TRIGGERING PLAYOFF DRAW - queued`);
+                drawQueue.push("playoff");
               }
 
               // Knockout draw day
@@ -1745,10 +1762,11 @@ export const usePlayersStore = create<PlayersState>()(
                 `[advanceTime] Checking knockout draw: offset=${offset}, knockoutDraw=${UCL_CALENDAR.knockoutDraw}, knockoutDone=${ucl.drawState.knockoutDone}`,
               );
 
-              // Octavos draw day (15 Jul): mark draw done; phase advances only after play-offs finish
-              if (offset === UCL_CALENDAR.knockoutDraw && !ucl.drawState.knockoutDone) {
-                rawSave.ucl.drawState.knockoutDone = true;
-                saveSave(rawSave);
+              // Octavos draw day: queue the notification so it cannot be lost when
+              // another competition has a draw on the same date. The modal itself
+              // performs the idempotent draw/mark-done operation.
+              if (offset >= UCL_CALENDAR.knockoutDraw && !ucl.drawState.knockoutDone) {
+                drawQueue.push("knockout");
               }
 
               // Catch up all UCL AI fixtures through this date (play-offs, knockouts, etc.)
@@ -1771,7 +1789,6 @@ export const usePlayersStore = create<PlayersState>()(
         try {
           const rawSave = loadSave();
           if (rawSave) {
-            const nextDate = addDaysToIso(state.currentDate, 1);
             const start = new Date(`${EUROPEAN_START}T00:00:00Z`);
             const offset = Math.floor((new Date(`${nextDate}T00:00:00Z`).getTime() - start.getTime()) / 86400000);
             const calendar = europeanCalendar();
@@ -1784,21 +1801,20 @@ export const usePlayersStore = create<PlayersState>()(
             }
             saveSave(rawSave);
 
-            const maybeTrigger = (comp: "uel" | "uecl") => {
+            const processEuropean = (comp: "uel" | "uecl") => {
               const eu = rawSave[comp];
-              if (!eu) return null;
-              if (offset === calendar.leagueDraw && !eu.drawState.leagueDone) return `${comp}-league` as const;
-              if (offset === calendar.playoffDraw && eu.drawState.leagueDone && !eu.drawState.playoffDone) {
-                const drawn = applyEuropeanPlayoffDraw(rawSave, comp);
-                Object.assign(rawSave, drawn);
-                saveSave(rawSave);
-                return `${comp}-playoff` as const;
+              if (!eu) return;
+              if (offset >= calendar.leagueDraw && !eu.drawState.leagueDone) {
+                drawQueue.push(`${comp}-league` as PendingDrawEvent);
+                return;
               }
-              if (offset === calendar.knockoutDraw && !eu.drawState.knockoutDone) {
-                const drawn = applyEuropeanKnockoutDraw(rawSave, comp);
-                Object.assign(rawSave, drawn);
-                saveSave(rawSave);
-                return `${comp}-knockout` as const;
+              if (offset >= calendar.playoffDraw && eu.drawState.leagueDone && !eu.drawState.playoffDone) {
+                drawQueue.push(`${comp}-playoff` as PendingDrawEvent);
+                return;
+              }
+              if (offset >= calendar.knockoutDraw && !eu.drawState.knockoutDone) {
+                drawQueue.push(`${comp}-knockout` as PendingDrawEvent);
+                return;
               }
               if (eu.drawState.leagueDone && offset >= calendar.leagueDay[0]) {
                 const synced = simulatePendingEuropeanThroughDay(rawSave, comp, offset, rawSave.myTeamId);
@@ -1807,19 +1823,41 @@ export const usePlayersStore = create<PlayersState>()(
                   saveSave(rawSave);
                 }
               }
-              return null;
             };
 
-            // UEL first; the calendar modal will immediately queue UECL on the same day.
-            const pending = maybeTrigger("uel") || maybeTrigger("uecl");
-            if (pending) {
-              syncPlayerAgesForDate(nextDate);
-              set({ currentDate: nextDate, pendingUclDraw: pending });
-              return 1;
-            }
+            processEuropean("uel");
+            processEuropean("uecl");
           }
         } catch (err) {
           console.error('[advanceTime] UEL/UECL processing failed:', err);
+        }
+
+        if (drawQueue.length > 0) {
+          // El orden es determinista: Copa nacional → Champions → Europa → Conference.
+          const order: PendingDrawEvent[] = [
+            "cup",
+            "league",
+            "playoff",
+            "knockout",
+            "uel-league",
+            "uel-playoff",
+            "uel-knockout",
+            "uecl-league",
+            "uecl-playoff",
+            "uecl-knockout",
+          ];
+          const queue = [...new Set(drawQueue)].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+          const first = queue[0];
+          const latest = loadSave();
+          if (latest) saveSave(latest);
+          syncPlayerAgesForDate(nextDate);
+          set({
+            currentDate: nextDate,
+            pendingDrawQueue: queue,
+            pendingCupDraw: first === "cup",
+            pendingUclDraw: first !== "cup" ? first : null,
+          });
+          return 1;
         }
 
         let date = state.currentDate;

@@ -11,6 +11,7 @@ export function GameDayBar() {
   const pendingMatch = usePlayersStore((s) => s.pendingUserMatch);
   const pendingCupDraw = usePlayersStore((s) => s.pendingCupDraw);
   const pendingUclDraw = usePlayersStore((s) => s.pendingUclDraw);
+  const pendingDrawQueue = usePlayersStore((s) => s.pendingDrawQueue ?? []);
   const [hasSave, setHasSave] = useState(false);
 
   useEffect(() => {
@@ -19,24 +20,34 @@ export function GameDayBar() {
 
   if (!hasSave) return null;
 
+  const activeDraw = pendingDrawQueue[0] ?? (pendingCupDraw ? "cup" : pendingUclDraw);
+  const isUel = typeof activeDraw === "string" && activeDraw.startsWith("uel-");
+  const isUecl = typeof activeDraw === "string" && activeDraw.startsWith("uecl-");
+  const isCup = activeDraw === "cup";
+
   return (
     <div className="ml-auto flex items-center gap-3">
-      {pendingUclDraw && (
+      {activeDraw && (
         <Link
           to="/calendar"
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${pendingUclDraw.startsWith("uel-") ? "bg-orange-500/15 border border-orange-500/40 text-orange-400 hover:bg-orange-500/25" : pendingUclDraw.startsWith("uecl-") ? "bg-green-500/15 border border-green-500/40 text-green-400 hover:bg-green-500/25" : "bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25"}`}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+            isCup
+              ? "bg-yellow-500/15 border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/25"
+              : isUel
+                ? "bg-orange-500/15 border border-orange-500/40 text-orange-400 hover:bg-orange-500/25"
+                : isUecl
+                  ? "bg-green-500/15 border border-green-500/40 text-green-400 hover:bg-green-500/25"
+                  : "bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25"
+          }`}
         >
           <Trophy className="h-3.5 w-3.5 shrink-0" />
-          {pendingUclDraw.startsWith("uel-") ? "Sorteo Europa League" : pendingUclDraw.startsWith("uecl-") ? "Sorteo Conference League" : "Sorteo UCL"} · Ir al Calendario
-        </Link>
-      )}
-      {pendingCupDraw && (
-        <Link
-          to="/calendar"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/25 transition"
-        >
-          <Trophy className="h-3.5 w-3.5 shrink-0" />
-          Sorteo de copa · Ir al Calendario
+          {isCup
+            ? "Sorteo de copa"
+            : isUel
+              ? "Sorteo Europa League"
+              : isUecl
+                ? "Sorteo Conference League"
+                : "Sorteo UCL"} · Ir al Calendario
         </Link>
       )}
       <span className="hidden sm:inline text-xs text-muted-foreground capitalize truncate max-w-[12rem]">
@@ -44,7 +55,7 @@ export function GameDayBar() {
       </span>
       <button
         type="button"
-        disabled={!!pendingMatch || !!pendingCupDraw || !!pendingUclDraw}
+        disabled={!!pendingMatch || !!activeDraw}
         onClick={() => advanceTime(1)}
         className="inline-flex items-center gap-2 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:brightness-110 transition shadow-[0_0_12px_hsl(var(--primary)/0.35)] disabled:opacity-50 disabled:cursor-not-allowed"
       >

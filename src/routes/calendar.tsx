@@ -81,6 +81,7 @@ function CalendarPage() {
 
   const advanceTime = usePlayersStore((s) => s.advanceTime);
 
+  const pendingCupDraw = usePlayersStore((s) => s.pendingCupDraw);
   const clearPendingCupDraw = usePlayersStore((s) => s.clearPendingCupDraw);
 
   const myTeamId = usePlayersStore((s) => s.myTeamId);
@@ -100,16 +101,25 @@ function CalendarPage() {
   const [isAdvancing, setIsAdvancing] = useState(false);
 
   const pendingUclDraw = usePlayersStore((s) => s.pendingUclDraw);
+  const pendingDrawQueue = usePlayersStore((s) => s.pendingDrawQueue ?? []);
 
-  const clearPendingUclDraw = usePlayersStore((s) => s.clearPendingUclDraw);
+  const finishPendingDraw = usePlayersStore((s) => s.finishPendingDraw);
 
   const [showUclDrawModal, setShowUclDrawModal] = useState(false);
 
-  // Open UCL draw modal when pending
+  const activePendingDraw = pendingDrawQueue[0] ?? (pendingCupDraw ? "cup" : pendingUclDraw);
 
+  // Open exactly one draw modal at a time. When several draws fall on the same
+  // date, finishing one advances the queue to the next without advancing the day.
   useEffect(() => {
-    if (pendingUclDraw) setShowUclDrawModal(true);
-  }, [pendingUclDraw]);
+    if (activePendingDraw === "cup") {
+      setShowCupDrawModal(true);
+      setShowUclDrawModal(false);
+    } else if (activePendingDraw) {
+      setShowUclDrawModal(true);
+      setShowCupDrawModal(false);
+    }
+  }, [activePendingDraw]);
 
   const gameDate = useMemo(
     () => parseDateOnly(currentDateIso),
@@ -1080,52 +1090,40 @@ function CalendarPage() {
         </div>
       </div>
 
-      {showUclDrawModal && pendingUclDraw && (
-        pendingUclDraw.startsWith("uel-") || pendingUclDraw.startsWith("uecl-") ? (
+      {showUclDrawModal && activePendingDraw && activePendingDraw !== "cup" && (
+        activePendingDraw.startsWith("uel-") || activePendingDraw.startsWith("uecl-") ? (
           <EuropeanDrawModal
-            type={pendingUclDraw.split("-")[1] as "league" | "playoff" | "knockout"}
-            competition={pendingUclDraw.startsWith("uel-") ? "uel" : "uecl"}
+            type={activePendingDraw.split("-")[1] as "league" | "playoff" | "knockout"}
+            competition={activePendingDraw.startsWith("uel-") ? "uel" : "uecl"}
             save={save!}
             onClose={() => {
               setShowUclDrawModal(false);
-              clearPendingUclDraw();
               setSave(loadSave());
             }}
             onComplete={(updated) => {
-              const comp = pendingUclDraw.startsWith("uel-") ? "uel" : "uecl";
+              const comp = activePendingDraw.startsWith("uel-") ? "uel" : "uecl";
               const offset = uclDayOffset(usePlayersStore.getState().currentDate);
               const synced = simulatePendingEuropeanThroughDay(updated, comp, offset, updated.myTeamId);
               saveSave(synced);
               setSave(loadSave());
               ensureLeagueSchedule();
               setShowUclDrawModal(false);
-              clearPendingUclDraw();
-
-              // UEL and UECL share the exact same calendar day. Queue the second draw immediately.
-              const type = pendingUclDraw.split("-")[1] as "league" | "playoff" | "knockout";
-              const other = comp === "uel" ? "uecl" : "uel";
-              const otherState = synced[other];
-              const cal = europeanCalendar();
-              const currentOffset = uclDayOffset(usePlayersStore.getState().currentDate);
-              const relevantKey = type === "league" ? "leagueDraw" : type === "playoff" ? "playoffDraw" : "knockoutDraw";
-              if (otherState && currentOffset === cal[relevantKey]) {
-                const done = relevantKey === "leagueDraw" ? otherState.drawState.leagueDone : relevantKey === "playoffDraw" ? otherState.drawState.playoffDone : otherState.drawState.knockoutDone;
-                if (!done) {
-                  usePlayersStore.setState({ pendingUclDraw: `${other}-${type}` });
-                  return;
-                }
-              }
+              finishPendingDraw();
             }}
           />
         ) : (
           <UCLDrawModal
-            type={pendingUclDraw}
+            type={activePendingDraw as "league" | "playoff" | "knockout"}
             save={save!}
-            onClose={() => { setShowUclDrawModal(false); clearPendingUclDraw(); setSave(loadSave()); }}
+            onClose={() => { setShowUclDrawModal(false); setSave(loadSave()); }}
             onComplete={(updated) => {
               const offset = uclDayOffset(usePlayersStore.getState().currentDate);
               const synced = simulatePendingUCLThroughDay(updated, offset, updated.myTeamId);
-              saveSave(synced); setSave(loadSave()); ensureLeagueSchedule(); setShowUclDrawModal(false); clearPendingUclDraw();
+              saveSave(synced);
+              setSave(loadSave());
+              ensureLeagueSchedule();
+              setShowUclDrawModal(false);
+              finishPendingDraw();
             }}
           />
         )
@@ -1162,11 +1160,14 @@ function CalendarPage() {
                 save.cupDrawPending.round,
                 matchups,
               );
+              withDraw.cupDrawPending = null;
 
               saveSave(withDraw);
 
               setSave(withDraw);
               ensureLeagueSchedule();
+              setShowCupDrawModal(false);
+              finishPendingDraw();
             }
           }}
         />
