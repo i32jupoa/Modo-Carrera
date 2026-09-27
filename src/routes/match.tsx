@@ -241,7 +241,9 @@ function MatchPage() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [matchType, setMatchType] = useState<"LEAGUE" | "CUP" | "UCL">("LEAGUE");
   const currentMatchCompetition = () => {
-    const fixtureCompetition = fixtureRef.current?.competition;
+    const fixture = fixtureRef.current;
+    if (fixture?.europeanCompetition) return fixture.europeanCompetition;
+    const fixtureCompetition = fixture?.competition;
     if (fixtureCompetition) return fixtureCompetition;
     return matchType === "CUP" ? "cup" : matchType === "UCL" ? "ucl" : "league";
   };
@@ -761,7 +763,11 @@ function MatchPage() {
             ? "Copa"
             : currentMatchCompetition() === "ucl"
               ? "Champions"
-              : "Liga";
+              : currentMatchCompetition() === "uel"
+                ? "Europa League"
+                : currentMatchCompetition() === "uecl"
+                  ? "Conference League"
+                  : "Liga";
         toast.error(
           `${card.playerName} expulsado — suspensión de ${matchdays} partido${matchdays > 1 ? "s" : ""} en ${competitionLabel}`,
         );

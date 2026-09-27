@@ -81,6 +81,22 @@ function posLabelOf(player: { positions?: any; position?: string }): string {
   return formatPositions(posCodesOf(player));
 }
 
+type LineupCompetition = "league" | "cup" | "ucl" | "uel" | "uecl";
+
+function competitionKeyForFixture(fixture: any): LineupCompetition {
+  return (fixture?.europeanCompetition ?? fixture?.competition ?? "league") as LineupCompetition;
+}
+
+function competitionLabel(competition: LineupCompetition): string {
+  switch (competition) {
+    case "cup": return "Copa nacional";
+    case "ucl": return "Champions League";
+    case "uel": return "Europa League";
+    case "uecl": return "Conference League";
+    default: return "Liga";
+  }
+}
+
 function playerOverall(player: any): number {
   const value = Number(player?.rating ?? player?.OVR ?? player?.overall ?? player?.overallRating);
   return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
@@ -132,7 +148,7 @@ function LineupPage() {
   const [tacticPlanState, setTacticPlanState] = useState<TacticPlanState | null>(null);
   const initializedPlanTeamRef = useRef<string | null>(null);
   const processedForMdRef = useRef<number>(-1);
-  const suspensionProcessedForMdRef = useRef<number>(-1);
+  const suspensionProcessedForMdRef = useRef<string>("");
 
   // Check if user navigated from "Temporada" screen
   const fromSeason = (search as any)?.from === "season";
@@ -170,15 +186,16 @@ function LineupPage() {
   }, [save, fixtureId]);
   // Live mode: the match is paused and we must come back to the exact minute.
   const liveMode = routerState?.liveMatch === true;
-  const activeCompetition = matchType
-    ? matchType === "CUP"
-      ? "cup"
-      : matchType === "UCL"
-        ? "ucl"
-        : "league"
-    : save
-      ? getMyNextFixtureAny(save)?.competition ?? "league"
-      : "league";
+  const activeCompetition = useMemo<LineupCompetition>(() => {
+    if (liveFixture) return competitionKeyForFixture(liveFixture);
+
+    const upcoming = save ? getMyNextFixtureAny(save) : null;
+    if (upcoming) return competitionKeyForFixture(upcoming);
+
+    if (matchType === "CUP") return "cup";
+    if (matchType === "UCL") return "ucl";
+    return "league";
+  }, [liveFixture, save, matchType]);
   const [live, setLive] = useState<LiveMatchState | null>(null);
   const liveBaseXIRef = useRef<string[]>([]);
   // Players taken off the pitch during this live edit (cannot come back).
@@ -451,7 +468,8 @@ function LineupPage() {
   useEffect(() => {
     if (liveMode) return;
     if (!save || startingXI.length === 0) return;
-    if (suspensionProcessedForMdRef.current === leagueMd) return;
+    const suspensionContextKey = `${leagueMd}:${activeCompetition}`;
+    if (suspensionProcessedForMdRef.current === suspensionContextKey) return;
 
     const suspensions = save.suspensions[save.myTeamId] ?? [];
     const suspendedPlayerIds = new Set(
@@ -491,7 +509,7 @@ function LineupPage() {
 
       setStartingXI(newStartingXI);
       setBench(newBench);
-      suspensionProcessedForMdRef.current = leagueMd;
+      suspensionProcessedForMdRef.current = suspensionContextKey;
 
       // Auto-save lineup exactly as if the user clicked Guardar
       if (save && newStartingXI.filter((id) => id && id.trim() !== "").length === 11) {
@@ -502,9 +520,9 @@ function LineupPage() {
         setSave(nextWithFormation);
       }
     } else {
-      suspensionProcessedForMdRef.current = leagueMd;
+      suspensionProcessedForMdRef.current = suspensionContextKey;
     }
-  }, [save, squad, startingXI, bench, leagueMd, selectedFormation]);
+  }, [save, squad, startingXI, bench, leagueMd, activeCompetition, selectedFormation]);
 
   const startingPlayers = useMemo(() => {
     return startingXI.map((id) => squad.find((p) => p.id === id));
@@ -839,12 +857,7 @@ function LineupPage() {
     const myId = save.myTeamId;
     const isHome = upcoming.homeId === myId;
     const rivalId = isHome ? upcoming.awayId : upcoming.homeId;
-    const competition =
-      upcoming.competition === "cup"
-        ? "Copa"
-        : upcoming.competition === "ucl"
-          ? "Champions"
-          : "Liga";
+    const competition = competitionLabel(competitionKeyForFixture(upcoming));
     return {
       rival: teamById(rivalId),
       isHome,
@@ -1489,7 +1502,10 @@ function LineupPage() {
 
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
     const suspended = suspensions.some(
-      (s) => s.playerId === reservePlayerId && s.matchdaysRemaining > 0,
+      (s) =>
+        s.playerId === reservePlayerId &&
+        s.matchdaysRemaining > 0 &&
+        (s.competition ?? "league") === activeCompetition,
     );
     if (suspended) {
       const suspension = suspensions.find((s) => s.playerId === reservePlayerId);
@@ -1534,7 +1550,9 @@ function LineupPage() {
     }
 
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
-    const suspended = suspensions.some((s) => s.playerId === playerId && s.matchdaysRemaining > 0);
+    const suspended = suspensions.some(
+      (s) => s.playerId === playerId && s.matchdaysRemaining > 0 && (s.competition ?? "league") === activeCompetition,
+    );
     if (suspended) {
       toast.error(`${player.name} está suspendido y no puede ser convocado.`);
       return;
@@ -1615,7 +1633,9 @@ function LineupPage() {
     }
 
     const suspensions = save?.suspensions[save.myTeamId] ?? [];
-    const suspended = suspensions.some((s) => s.playerId === playerId && s.matchdaysRemaining > 0);
+    const suspended = suspensions.some(
+      (s) => s.playerId === playerId && s.matchdaysRemaining > 0 && (s.competition ?? "league") === activeCompetition,
+    );
     if (suspended) {
       toast.error(`${player.name} está suspendido y no puede ser convocado.`);
       return;
@@ -2256,7 +2276,10 @@ function LineupPage() {
                           )
                         </span>
                       )}
-                      {isSuspended && <span className="text-xs text-destructive">(SUS)</span>}
+                      {isSuspended && (() => {
+                        const suspension = suspensions.find((s) => s.playerId === player.id && s.matchdaysRemaining > 0 && (s.competition ?? "league") === activeCompetition);
+                        return <span className="text-xs font-bold text-destructive">(SUS · {suspension?.matchdaysRemaining ?? 0} {suspension?.matchdaysRemaining === 1 ? "partido" : "partidos"})</span>;
+                      })()}
                       {isForcedOut && (
                         <span className="text-[0.55rem] font-black uppercase tracking-wider text-muted-foreground">
                           · Bloqueado
@@ -2307,14 +2330,22 @@ function LineupPage() {
 
                 {reservePlayers.map((player) => {
                   const isInjured = isCurrentlyInjured(player);
+                  const suspension = (save?.suspensions[save.myTeamId] ?? []).find(
+                    (s) =>
+                      s.playerId === player.id &&
+                      s.matchdaysRemaining > 0 &&
+                      (s.competition ?? "league") === activeCompetition,
+                  );
+                  const isSuspended = !!suspension;
+                  const isBlocked = isInjured || isSuspended;
                   return (
                     <div
                       key={player.id}
                       onClick={() => {
-                        if (!isInjured) handleReservePlayerClick(player.id);
+                        if (!isBlocked) handleReservePlayerClick(player.id);
                       }}
                       className={`mb-2 flex items-center gap-3 rounded-xl border-2 p-3 transition ${
-                        isInjured
+                        isBlocked
                           ? "border-destructive/30 bg-destructive/5 opacity-75 cursor-not-allowed"
                           : selectedPlayer === player.id
                             ? "border-primary bg-primary/10 glow-cyan cursor-pointer"
@@ -2332,7 +2363,7 @@ function LineupPage() {
                         <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
                           {playerOverall(player) || "—"}
                         </span>
-                        {isInjured && (
+                        {(isInjured || isSuspended) && (
                           <span className="absolute -right-1 -bottom-1 grid h-5 w-5 place-items-center rounded-full border border-destructive/30 bg-background text-[0.65rem] shadow">
                             🔒
                           </span>
@@ -2344,6 +2375,11 @@ function LineupPage() {
                           {isInjured && (
                             <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-destructive">
                               Lesionado
+                            </span>
+                          )}
+                          {isSuspended && (
+                            <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-destructive">
+                              Sancionado · {suspension!.matchdaysRemaining} {suspension!.matchdaysRemaining === 1 ? "partido" : "partidos"}
                             </span>
                           )}
                         </div>
@@ -2370,9 +2406,9 @@ function LineupPage() {
                         )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        {isInjured ? (
+                        {isBlocked ? (
                           <span className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1 text-[0.6rem] font-black text-destructive">
-                            Bloqueado
+                            {isSuspended ? "Bloqueado" : "Bloqueado"}
                           </span>
                         ) : (
                           <>
