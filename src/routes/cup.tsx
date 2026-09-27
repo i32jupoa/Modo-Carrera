@@ -314,6 +314,11 @@ function CupPage() {
                 key={step.round}
                 label={ROUND_LABEL[step.round] || step.round}
                 matchday={step.matchday}
+                dateLabel={
+                  save.pendingBackgroundSims?.find(
+                    (p) => p.isCup && p.league === primaryLeague && p.matchday === step.matchday,
+                  )?.date
+                }
               >
                 <p className="text-xs text-muted-foreground px-4 py-3">Pendiente de sortear</p>
               </RoundBlock>
@@ -324,6 +329,12 @@ function CupPage() {
               key={step.round}
               label={ROUND_LABEL[step.round] || step.round}
               matchday={step.matchday}
+              dateLabel={
+                rf.find((f) => !!f.date)?.date ||
+                save.pendingBackgroundSims?.find(
+                  (p) => p.isCup && p.league === primaryLeague && p.matchday === step.matchday,
+                )?.date
+              }
             >
               <div className="divide-y divide-border/40">
                 {rf.map((f) => (
@@ -352,13 +363,27 @@ function formatCupMatchDate(matchday: number): string {
   }).format(start);
 }
 
+function formatCupDateLabel(dateIso: string | undefined, fallbackMatchday: number): string {
+  if (!dateIso) return formatCupMatchDate(fallbackMatchday);
+  const date = new Date(`${String(dateIso).slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return formatCupMatchDate(fallbackMatchday);
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
 function RoundBlock({
   label,
   matchday,
+  dateLabel,
   children,
 }: {
   label: string;
   matchday: number;
+  dateLabel?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -366,7 +391,7 @@ function RoundBlock({
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-bold uppercase tracking-wider">{label}</h2>
 
-        <span className="text-xs text-muted-foreground">{formatCupMatchDate(matchday)}</span>
+        <span className="text-xs text-muted-foreground">{formatCupDateLabel(dateLabel, matchday)}</span>
       </div>
 
       <div className="panel">{children}</div>

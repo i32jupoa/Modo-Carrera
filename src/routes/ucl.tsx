@@ -1459,9 +1459,8 @@ function ResultsListView({
   };
 
   const formatDate = (matchday: number): string => {
-    // Simple date formatting based on matchday
-    const baseDate = new Date(2026, 2, 1); // March 2026
-    baseDate.setDate(baseDate.getDate() + matchday);
+    const baseDate = new Date(UCL_START + "T00:00:00Z");
+    baseDate.setUTCDate(baseDate.getUTCDate() + matchday);
     return baseDate
       .toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })
       .toUpperCase();

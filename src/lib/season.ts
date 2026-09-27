@@ -12,6 +12,8 @@ export type Fixture = {
   league: LeagueId; // for league fixtures = that league; for cup = host league; for UCL = "all" via metadata
   matchday: number; // for league: 1..N; for cup/UCL: round number 1..M
   round?: string; // friendly label e.g. "R16", "QF", "SF", "Final"
+  /** Actual calendar date used to play/simulate the fixture (ISO yyyy-mm-dd). */
+  date?: string;
   homeId: string;
   awayId: string;
   result?: SimResult;

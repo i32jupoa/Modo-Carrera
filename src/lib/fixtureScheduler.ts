@@ -6,7 +6,7 @@ import { addDaysToIso, parseDateOnly } from "@/lib/transferWindows";
 export const MIN_REST_DAYS = 3;
 
 /** Friday anchor for matchday 1 (season kickoff Saturday → Friday before). */
-export const LEAGUE_MD1_FRIDAY = "2025-08-15";
+export const LEAGUE_MD1_FRIDAY = "2026-08-14";
 
 /** Day offsets from Friday: Vie, Sáb, Dom, Lun, Mar, Mié, Jue. */
 const MATCHDAY_SLOT_OFFSETS = [0, 1, 1, 2, 2, 0, 1, 1, 2, 2];

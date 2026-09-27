@@ -195,13 +195,13 @@ function CalendarPage() {
 
       const firstScheduleRound = cupSchedule[0]; // Use full schedule to check for prelim
 
-      // Convert drawMatchdays to actual dates (cup starts July 7, 2025)
+      // Convert drawMatchdays to actual dates (cup starts July 7, 2026)
 
       // drawMatchday = days offset from July 7th (0=Jul7, 1=Jul8, etc.)
 
-      const cupStart = new Date("2025-07-07T00:00:00Z");
+      const cupStart = new Date("2026-07-07T00:00:00Z");
 
-      const today = currentDateIso; // already an ISO string like "2025-07-07"
+      const today = currentDateIso; // already an ISO string like "2026-07-07"
 
       // Check if today is a cup draw day
 
@@ -219,7 +219,7 @@ function CalendarPage() {
 
       const currentDrawRound = relevantSchedule.find((s) => {
         const drawDate = new Date(
-          new Date("2025-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
+          new Date("2026-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
         );
 
         return toDateOnly(drawDate) === today;
@@ -273,7 +273,7 @@ function CalendarPage() {
       // planned draw date.
       const drawReadyRound = relevantSchedule.find((s) => {
         const drawDate = new Date(
-          new Date("2025-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
+          new Date("2026-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
         );
         const drawDue = toDateOnly(drawDate) <= today;
         if (!drawDue) return false;
@@ -302,7 +302,7 @@ function CalendarPage() {
 
         const currentRound = drawReadyRound || relevantSchedule.find((s) => {
           const drawDate = new Date(
-            new Date("2025-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
+            new Date("2026-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
           );
 
           return toDateOnly(drawDate) === today;
@@ -445,9 +445,9 @@ function CalendarPage() {
   const cupFixturesByDate = useMemo(() => {
     const map = new Map<string, typeof myCupFixtures>();
 
-    // Cup starts July 7, 2025. matchday field = day offset from July 7th (0=Jul7, 1=Jul8...)
+    // Cup starts July 7, 2026. matchday field = day offset from July 7th (0=Jul7, 1=Jul8...)
 
-    const cupStart = new Date("2025-07-07T00:00:00Z");
+    const cupStart = new Date("2026-07-07T00:00:00Z");
 
     for (const f of myCupFixtures) {
       const matchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
@@ -504,11 +504,11 @@ function CalendarPage() {
 
     const drawDays = new Set<string>();
 
-    // Cup starts July 7, 2025 - alternating: draw, match, draw, match...
+    // Cup starts July 7, 2026 - alternating: draw, match, draw, match...
 
     // drawMatchday = days offset from July 7th (0=Jul7, 2=Jul9, 4=Jul11...)
 
-    const cupStart = new Date("2025-07-07T12:00:00Z");
+    const cupStart = new Date("2026-07-07T12:00:00Z");
 
     const userCountry = LEAGUES[save.myLeague]?.country;
 

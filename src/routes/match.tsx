@@ -152,12 +152,32 @@ function normalizeLiveArray(value: any): any[] {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+function mergeMatchSubstitutions(result: any): any[] {
+  const regular = normalizeLiveArray(result?.substitutions);
+  const extraTime = normalizeLiveArray(result?.extraTime?.substitutions);
+  const merged = [...regular, ...extraTime];
+  const seen = new Set<string>();
+  return merged
+    .filter((sub: any) => {
+      const key = [
+        Number(sub?.minute ?? 0),
+        sub?.team ?? "",
+        sub?.playerOutId ?? sub?.outId ?? "",
+        sub?.playerInId ?? sub?.inId ?? "",
+      ].join("|");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a: any, b: any) => Number(a?.minute ?? 0) - Number(b?.minute ?? 0));
+}
+
 function normalizeLiveResult(rawResult: any): any {
   const r = rawResult && typeof rawResult === "object" ? { ...rawResult } : {};
   r.events = normalizeLiveArray(r.events);
   r.cards = normalizeLiveArray(r.cards);
   r.highlights = normalizeLiveArray(r.highlights);
-  r.substitutions = normalizeLiveArray(r.substitutions);
+  r.substitutions = mergeMatchSubstitutions(r);
   r.injuries = normalizeLiveArray(r.injuries);
   r.homeGoals = Number.isFinite(Number(r.homeGoals)) ? Number(r.homeGoals) : 0;
   r.awayGoals = Number.isFinite(Number(r.awayGoals)) ? Number(r.awayGoals) : 0;
@@ -1420,6 +1440,15 @@ function MatchPage() {
       `updateFixtureInStore called: fixtureId=${fixtureId}, homeScore=${homeScore}, awayScore=${awayScore}, isCup=${isCup}, isUCL=${isUCL}, extraTimeData=${JSON.stringify(extraTimeData)}, penaltyData=${JSON.stringify(penaltyData)}`,
     );
 
+    // One authoritative substitution list for the whole match. Extra-time
+    // changes are merged into the top-level list as well as stored inside
+    // result.extraTime, so every competition (Copa/UCL/UEL/UECL) can render
+    // them in Alineación and the match chronicle.
+    const liveSubstitutions = buildPlayedSubstitutions();
+    const extraTimeSubstitutions = liveSubstitutions.filter(
+      (sub: any) => Number(sub?.minute ?? 0) > 90,
+    );
+
     if (isUCL) {
       const s = loadSave();
       const europeanCompetition = fixtureRef.current?.europeanCompetition as "uel" | "uecl" | undefined;
@@ -1442,6 +1471,9 @@ function MatchPage() {
           injuries: fx?.result?.injuries ?? [],
           xgHome: Number.isFinite(fx?.result?.xgHome) ? fx.result.xgHome : 0,
           xgAway: Number.isFinite(fx?.result?.xgAway) ? fx.result.xgAway : 0,
+          substitutions: liveSubstitutions.length
+            ? liveSubstitutions
+            : mergeMatchSubstitutions(fx?.result),
         };
 
         if (fx) {
@@ -1458,7 +1490,12 @@ function MatchPage() {
             homeGoals: extraTimeData.homeGoals,
             awayGoals: extraTimeData.awayGoals,
             events: extraTimeEventsRef.current,
+            substitutions: extraTimeSubstitutions,
           };
+          result.substitutions = mergeMatchSubstitutions({
+            substitutions: result.substitutions,
+            extraTime: result.extraTime,
+          });
           console.log("Adding extraTime to result:", result.extraTime);
         }
 
@@ -1495,13 +1532,17 @@ function MatchPage() {
         // For cup matches, homeGoals and awayGoals should be regular time only
         // extraTime.homeGoals and extraTime.awayGoals are the additional goals in extra time
         const result: any = {
+          ...(cupFx?.result ?? {}),
           homeGoals: homeScore - (extraTimeData?.homeGoals || 0),
           awayGoals: awayScore - (extraTimeData?.awayGoals || 0),
           events: allEventsRef.current,
           cards: allCardsRef.current,
           injuries: cupFx?.result?.injuries ?? [],
-          xgHome: 0,
-          xgAway: 0,
+          xgHome: Number.isFinite(cupFx?.result?.xgHome) ? cupFx.result.xgHome : 0,
+          xgAway: Number.isFinite(cupFx?.result?.xgAway) ? cupFx.result.xgAway : 0,
+          substitutions: liveSubstitutions.length
+            ? liveSubstitutions
+            : mergeMatchSubstitutions(cupFx?.result),
         };
 
         if (cupFx) {
@@ -1518,7 +1559,12 @@ function MatchPage() {
             homeGoals: extraTimeData.homeGoals,
             awayGoals: extraTimeData.awayGoals,
             events: extraTimeEventsRef.current,
+            substitutions: extraTimeSubstitutions,
           };
+          result.substitutions = mergeMatchSubstitutions({
+            substitutions: result.substitutions,
+            extraTime: result.extraTime,
+          });
           console.log("Adding extraTime to result:", result.extraTime);
         }
 
@@ -1637,15 +1683,16 @@ function MatchPage() {
         allEventsRef.current = foundFixture.result.events ?? [];
         allCardsRef.current = foundFixture.result.cards || [];
         allHighlightsRef.current = foundFixture.result.highlights || [];
+        const storedSubstitutions = mergeMatchSubstitutions(foundFixture.result);
         setSubFeed(
-          (foundFixture.result.substitutions || [])
+          storedSubstitutions
             .map((sb: any) => ({
               minute: sb.minute,
               team: sb.team,
-              inName: sb.playerInName,
-              outName: sb.playerOutName,
-              playerInId: sb.playerInId,
-              playerOutId: sb.playerOutId,
+              inName: sb.playerInName ?? sb.inName,
+              outName: sb.playerOutName ?? sb.outName,
+              playerInId: sb.playerInId ?? sb.inId,
+              playerOutId: sb.playerOutId ?? sb.outId,
             }))
             .reverse(),
         );
@@ -5609,9 +5656,13 @@ function MatchPage() {
       .sort((a: any, b: any) => b.rating - a.rating)
       .slice(0, 7);
     oppCacheRef.current = { key: `${fixture.id}:${oppId}`, formation: oppFmt };
-    const storedOppSubs = (fixture.result?.substitutions || [])
+    const storedOppSubs = mergeMatchSubstitutions(fixture.result)
       .filter((sb: any) => sb.team === (fixture.homeId === oppId ? "home" : "away"))
-      .map((sb: any) => ({ minute: sb.minute, outId: sb.playerOutId, inId: sb.playerInId }));
+      .map((sb: any) => ({
+        minute: sb.minute,
+        outId: sb.playerOutId ?? sb.outId,
+        inId: sb.playerInId ?? sb.inId,
+      }));
     oppPlanRef.current = storedOppSubs.length > 0 ? storedOppSubs : [];
   }
   const oppFormation = normalizeFormation(oppCacheRef.current?.formation);

@@ -2,7 +2,7 @@ import { UCL_CALENDAR, UCL_START } from "@/data/ucl";
 import { addDaysToIso, parseDateOnly } from "@/lib/transferWindows";
 
 /** Fixed season anchors used by all protected-competition calendars. */
-export const NATIONAL_CUP_START = "2025-07-07";
+export const NATIONAL_CUP_START = "2026-07-07";
 
 /** A cup match is only allowed Tue/Wed/Thu in a week with no European match. */
 export const NATIONAL_CUP_MATCH_WEEKDAYS = new Set([2, 3, 4]);

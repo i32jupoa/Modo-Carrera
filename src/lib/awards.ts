@@ -747,12 +747,12 @@ function currentMonthKey(): { year: number; month: number } {
 
 function seasonStartYear(save: SaveGame): number {
   const parsed = Number(String(save.season ?? "").slice(0, 4));
-  return Number.isFinite(parsed) && parsed >= 2000 ? parsed : 2025;
+  return Number.isFinite(parsed) && parsed >= 2000 ? parsed : 2026;
 }
 
 function shiftFixtureDateToSeason(isoDate: string, save: SaveGame): string {
   const targetYear = seasonStartYear(save);
-  const baseSeasonYear = 2025;
+  const baseSeasonYear = 2026;
   const date = new Date(`${isoDate}T12:00:00Z`);
   if (Number.isNaN(date.getTime())) return isoDate;
   date.setUTCFullYear(date.getUTCFullYear() + (targetYear - baseSeasonYear));

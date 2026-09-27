@@ -447,11 +447,21 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   const homeStarterIds = new Set<string>(homePlayers.slice(0, 11).map((p) => p.id));
   const awayStarterIds = new Set<string>(awayPlayers.slice(0, 11).map((p) => p.id));
 
+  // Extra-time substitutions are stored in result.extraTime.substitutions in
+  // addition to the top-level list in newer saves. Always merge both sources
+  // here so a player who entered in minutes 91-120 is treated exactly like a
+  // normal substitute in the match notes.
+  const matchSubstitutions = [
+    ...(result.substitutions || []),
+    ...(result.extraTime?.substitutions || []),
+  ].filter(Boolean);
+
   const getSubstituteIds = (team: "home" | "away", starterIds: Set<string>) => {
     const ids = new Set<string>(
-      (result.substitutions || [])
+      matchSubstitutions
         .filter((s: any) => s.team === team)
-        .map((s: any) => s.playerInId),
+        .map((s: any) => s.playerInId ?? s.inId)
+        .filter(Boolean),
     );
     const ratings = team === "home" ? finalHomeRatings : finalAwayRatings;
     for (const rating of ratings) {
@@ -462,6 +472,58 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
 
   const homeSubstituteIds = getSubstituteIds("home", homeStarterIds);
   const awaySubstituteIds = getSubstituteIds("away", awayStarterIds);
+
+  // Some live/legacy matches calculate player ratings at the end of the 90
+  // minutes and therefore never create a rating for a player who entered only
+  // during extra time. Build a deterministic display rating for those players
+  // so they cannot disappear from "Notas del partido - Suplentes".
+  const buildMissingSubstituteRatings = (
+    team: "home" | "away",
+    ids: Set<string>,
+    existing: typeof finalHomeRatings,
+    teamId: string,
+  ) => {
+    const existingIds = new Set(existing.map((r) => r.playerId));
+    const extras: any[] = [];
+    for (const id of ids) {
+      if (!id || existingIds.has(id)) continue;
+      const player = store.getSimPlayer(id);
+      if (!player) continue;
+      const sub = matchSubstitutions
+        .filter((s: any) => s.team === team)
+        .map((s: any) => ({ ...s, playerInId: s.playerInId ?? s.inId }))
+        .filter((s: any) => s.playerInId === id)
+        .sort((a: any, b: any) => Number(a.minute ?? 120) - Number(b.minute ?? 120))[0];
+      const enteredMinute = Number(sub?.minute ?? 91);
+      const minutes = Math.max(1, 120 - enteredMinute);
+      const base = Math.max(4.5, Math.min(8.5, 5.5 + (player.rating - 65) * 0.08));
+      const rating = Math.round((base + (minutes / 30) * 0.1) * 10) / 10;
+      extras.push({
+        playerId: player.id,
+        playerName: player.name,
+        team,
+        teamId,
+        position: player.positions?.[0] || "MC",
+        rating,
+        goals: 0,
+        assists: 0,
+        saves: 0,
+        yellow: 0,
+        red: false,
+        minutes,
+      });
+    }
+    return extras;
+  };
+
+  const homeDisplayRatings = [
+    ...finalHomeRatings,
+    ...buildMissingSubstituteRatings("home", homeSubstituteIds, finalHomeRatings, fixture.homeId),
+  ];
+  const awayDisplayRatings = [
+    ...finalAwayRatings,
+    ...buildMissingSubstituteRatings("away", awaySubstituteIds, finalAwayRatings, fixture.awayId),
+  ];
 
   return (
     <Dialog open={!!fixture} onOpenChange={onClose}>
@@ -1166,8 +1228,8 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
                             const isMvp = displayMvp?.playerId === rating.playerId;
-                            const substitution = (result.substitutions || []).find(
-                              (s: any) => s.team === "home" && s.playerOutId === rating.playerId,
+                            const substitution = matchSubstitutions.find(
+                              (s: any) => s.team === "home" && (s.playerOutId ?? s.outId) === rating.playerId,
                             );
                             return (
                               <div
@@ -1205,15 +1267,15 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div className="mt-4">
                       <h4 className="text-sm font-semibold mb-2">Notas del partido - Suplentes</h4>
                       <div className="space-y-1">
-                        {finalHomeRatings
+                        {homeDisplayRatings
                           .filter((rating) => homeSubstituteIds.has(rating.playerId))
                           .slice()
                           .sort((a, b) => b.rating - a.rating)
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
                             const isMvp = displayMvp?.playerId === rating.playerId;
-                            const substitution = (result.substitutions || []).find(
-                              (s: any) => s.team === "home" && s.playerInId === rating.playerId,
+                            const substitution = matchSubstitutions.find(
+                              (s: any) => s.team === "home" && (s.playerInId ?? s.inId) === rating.playerId,
                             );
                             return (
                               <div
@@ -1245,7 +1307,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                             );
                           })}
                         {!Array.from(homeSubstituteIds).some((id) =>
-                          finalHomeRatings.some((rating) => rating.playerId === id),
+                          homeDisplayRatings.some((rating) => rating.playerId === id),
                         ) && (
                           <p className="text-sm text-muted-foreground">Sin notas de suplentes.</p>
                         )}
@@ -1290,8 +1352,8 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
                             const isMvp = displayMvp?.playerId === rating.playerId;
-                            const substitution = (result.substitutions || []).find(
-                              (s: any) => s.team === "away" && s.playerOutId === rating.playerId,
+                            const substitution = matchSubstitutions.find(
+                              (s: any) => s.team === "away" && (s.playerOutId ?? s.outId) === rating.playerId,
                             );
                             return (
                               <div
@@ -1329,15 +1391,15 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div className="mt-4">
                       <h4 className="text-sm font-semibold mb-2">Notas del partido - Suplentes</h4>
                       <div className="space-y-1">
-                        {finalAwayRatings
+                        {awayDisplayRatings
                           .filter((rating) => awaySubstituteIds.has(rating.playerId))
                           .slice()
                           .sort((a, b) => b.rating - a.rating)
                           .map((rating) => {
                             const player = store.getSimPlayer(rating.playerId);
                             const isMvp = displayMvp?.playerId === rating.playerId;
-                            const substitution = (result.substitutions || []).find(
-                              (s: any) => s.team === "away" && s.playerInId === rating.playerId,
+                            const substitution = matchSubstitutions.find(
+                              (s: any) => s.team === "away" && (s.playerInId ?? s.inId) === rating.playerId,
                             );
                             return (
                               <div
@@ -1369,7 +1431,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                             );
                           })}
                         {!Array.from(awaySubstituteIds).some((id) =>
-                          finalAwayRatings.some((rating) => rating.playerId === id),
+                          awayDisplayRatings.some((rating) => rating.playerId === id),
                         ) && (
                           <p className="text-sm text-muted-foreground">Sin notas de suplentes.</p>
                         )}

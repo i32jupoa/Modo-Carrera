@@ -1,6 +1,6 @@
 /** Transfer windows + date helpers (local calendar, no UTC drift). */
 
-export const GAME_START_DATE = "2025-07-01";
+export const GAME_START_DATE = "2026-07-01";
 
 export const TRANSFER_WINDOWS = {
   summer: {

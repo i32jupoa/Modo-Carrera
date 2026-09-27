@@ -1,7 +1,7 @@
 import { Fixture } from "@/lib/season";
 
-/** Season starts Saturday August 16, 2025. */
-export const SEASON_START = new Date("2025-08-16T12:00:00Z");
+/** Season starts Saturday August 15, 2026. */
+export const SEASON_START = new Date("2026-08-15T12:00:00Z");
 
 /** League matchdays = weekly Saturdays. Cup midweek (Wed = -3d), UCL group/KO midweek (Tue = -4d). */
 export function fixtureDate(f: Fixture): Date {

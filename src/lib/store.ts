@@ -68,11 +68,11 @@ import type { DynamicPlayerStats } from "@/types/playerStats";
 import { invalidateSquadsCache, generateAllSquads } from "@/data/players";
 
 /**
- * Parse season string (e.g., "2025-26") to season number (e.g., 1)
+ * Parse season string (e.g., "2026-27") to season number (e.g., 1)
  */
 function parseSeasonNumber(season: string): number {
   const startYear = parseInt(season.split("-")[0]);
-  return startYear - 2025 + 1; // 2025-26 is season 1
+  return startYear - 2026 + 1; // 2026-27 is season 1
 }
 
 /**
@@ -1478,7 +1478,7 @@ export function newSave(myTeamId: string): SaveGame {
 
     myLeague: team.league,
 
-    season: "2025/26",
+    season: "2026/27",
 
     fixtures,
     standings,
@@ -2535,7 +2535,7 @@ function simulateFixtureInline(
 ): Fixture {
   // Apply monthly progression for league matches (only once per month)
   if (fixture.competition === "league") {
-    const seasonStart = new Date("2025-08-16T12:00:00Z");
+    const seasonStart = new Date("2026-08-15T12:00:00Z");
     const matchDate = new Date(seasonStart.getTime() + (fixture.matchday - 1) * 7 * 86400000);
     const currentMonth = matchDate.getMonth();
     const currentYear = matchDate.getFullYear();
@@ -2750,8 +2750,8 @@ export function getMyNextFixture(save: SaveGame): Fixture | null {
 }
 
 export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
-  const seasonStartMs = Date.parse("2025-08-16T12:00:00Z");
-  const cupStartMs = Date.parse("2025-07-07T00:00:00Z");
+  const seasonStartMs = Date.parse("2026-08-15T12:00:00Z");
+  const cupStartMs = Date.parse("2026-07-07T00:00:00Z");
   const uclStartMs = Date.parse(UCL_START + "T00:00:00Z");
   const myTeamId = save.myTeamId;
 
@@ -2774,15 +2774,20 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
     ? save.cupFixtures[primaryCupLeague as LeagueId]
     : undefined;
 
+  const cupFixtureDateMs = (fixture: Fixture) =>
+    fixture.date
+      ? Date.parse(`${String(fixture.date).slice(0, 10)}T12:00:00Z`)
+      : cupStartMs + fixture.matchday * 86400000;
+
   if (Array.isArray(primaryCupList)) {
     for (const fixture of primaryCupList) {
-      consider(fixture, cupStartMs + fixture.matchday * 86400000);
+      consider(fixture, cupFixtureDateMs(fixture));
     }
   } else {
     for (const list of Object.values(save.cupFixtures)) {
       if (!Array.isArray(list)) continue;
       for (const fixture of list) {
-        consider(fixture, cupStartMs + fixture.matchday * 86400000);
+        consider(fixture, cupFixtureDateMs(fixture));
       }
     }
   }
@@ -4926,10 +4931,17 @@ export async function scheduleBackgroundCupsOnly(
     );
     if (activeFixtures.length === 0) continue;
 
-    const alreadyScheduled = newScheduledSims.some(
+    const existingScheduled = newScheduledSims.find(
       (s) => s.isCup && s.league === lg && s.matchday === activeStep.matchday,
     );
-    if (alreadyScheduled) continue;
+    if (existingScheduled) {
+      if (existingScheduled.date) {
+        next.cupFixtures[lg] = cupFixtures.map((f: any) =>
+          f.round === activeStep.round && !f.result ? { ...f, date: existingScheduled.date } : f,
+        );
+      }
+      continue;
+    }
 
     // National-cup matches may only use Tue/Wed/Thu and never a week containing
     // Champions/Europa/Conference fixtures. Spread countries across the safe
@@ -4955,6 +4967,12 @@ export async function scheduleBackgroundCupsOnly(
       scheduledDate =
         safeDates.find((d) => d >= currentDate) ?? safeDates[safeDates.length - 1] ?? roundDate;
     }
+
+    // Persist the exact simulation date on every fixture in the round so the
+    // Copa page, calendar and scheduling protection all use the same date.
+    next.cupFixtures[lg] = cupFixtures.map((f: any) =>
+      f.round === activeStep.round && !f.result ? { ...f, date: scheduledDate } : f,
+    );
 
     newScheduledSims.push({
       league: lg,
@@ -5257,7 +5275,11 @@ function generateBackgroundInjury(
   };
 }
 
-export function processScheduledBackgroundSims(save: SaveGame, today: string): SaveGame {
+export function processScheduledBackgroundSims(
+  save: SaveGame,
+  today: string,
+  skipCupTeamId?: string,
+): SaveGame {
   return withPlayerStatsBatch(() => {
     const pending = save.pendingBackgroundSims ?? [];
 
@@ -5303,7 +5325,15 @@ export function processScheduledBackgroundSims(save: SaveGame, today: string): S
           continue;
         }
 
-        const fixtures = list.filter((f) => f.matchday === matchday && !f.result);
+        const fixtures = list.filter(
+          (f) =>
+            f.matchday === matchday &&
+            !f.result &&
+            !(
+              skipCupTeamId &&
+              (f.homeId === skipCupTeamId || f.awayId === skipCupTeamId)
+            ),
+        );
 
         for (const f of fixtures) {
           const home = teamById(f.homeId);
@@ -6425,7 +6455,7 @@ function hasFixtureConflict(save: SaveGame, date: Date): boolean {
 }
 
 function seasonStartForLeague(league: LeagueId, matchday: number): Date {
-  const seasonStart = new Date("2025-08-16T12:00:00Z");
+  const seasonStart = new Date("2026-08-15T12:00:00Z");
 
   return new Date(seasonStart.getTime() + (matchday - 1) * 7 * 86400000);
 }
@@ -6531,9 +6561,9 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
 
   const userCountry = LEAGUES[userLeague]?.country;
 
-  // Cup starts July 7, 2025. cupDayOffset = days since July 7th.
+  // Cup starts July 7, 2026. cupDayOffset = days since July 7th.
 
-  const CUP_START = new Date("2025-07-07T00:00:00Z");
+  const CUP_START = new Date("2026-07-07T00:00:00Z");
 
   const todayDate = currentDate ? new Date(currentDate + "T00:00:00Z") : new Date();
 
@@ -6662,6 +6692,8 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
                 matchday: firstRound.matchday,
 
                 round: firstRound.round,
+
+                date: addDaysToIso(NATIONAL_CUP_START, firstRound.matchday),
 
                 homeId: preliminaryTeams[i],
 
@@ -6851,6 +6883,7 @@ export function autoDrawForeignCups(save: SaveGame, currentDate?: string): SaveG
               league: primaryLeague,
               matchday: firstRound.matchday,
               round: "Preliminar",
+              date: addDaysToIso(NATIONAL_CUP_START, firstRound.matchday),
               homeId: preliminaryTeams[i],
               awayId: preliminaryTeams[i + 1],
             });
@@ -6937,6 +6970,8 @@ export function applyCupDraw(
       matchday: matchDayOffset, // day offset from July 7th
 
       round,
+
+      date: addDaysToIso(NATIONAL_CUP_START, matchDayOffset),
 
       homeId: home,
 
@@ -7912,7 +7947,7 @@ function initializeEuropeanState(save: SaveGame, comp: EuropeanStateKey): SaveGa
     ...save,
     [comp]: {
       phase: "league",
-      seasonNumber: Number((save.season ?? "2025").slice(0, 4)) - 2024,
+      seasonNumber: Number((save.season ?? "2026").slice(0, 4)) - 2025,
       participants: [...cfg.participants],
       table: cfg.participants.map((teamId) => emptyTableEntry(teamId)),
       drawState: { leagueDone: false, playoffDone: false, knockoutDone: false },

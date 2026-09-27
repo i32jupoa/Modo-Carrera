@@ -184,7 +184,7 @@ export function selectUCLParticipants(
 }
 
 // ============================================================
-//  CALENDAR OFFSETS (days from UCL_START = 2025-07-01)
+//  CALENDAR OFFSETS (days from UCL_START = 2026-07-01)
 //
 //  Realistic calendar aligned with the real UEFA Champions League:
 //   - League phase: late August → late January
@@ -197,27 +197,27 @@ export function selectUCLParticipants(
 //  matchdays), and keeping at least a 2-day gap between consecutive
 //  UCL fixtures.
 // ============================================================
-export const UCL_START = "2025-07-01";
+export const UCL_START = "2026-07-01";
 
 export const UCL_CALENDAR = {
-  leagueDraw: 56, // Tue Aug 26 2025 – Swiss-phase draw
-  leagueDay: [77, 91, 112, 127, 148, 161, 204, 211],
-  //              ^J1 Sep 16  ^J2 Sep 30  ^J3 Oct 21  ^J4 Nov  5
-  //              ^J5 Nov 26  ^J6 Dec  9  ^J7 Jan 21  ^J8 Jan 28
+  leagueDraw: 56, // Wed Aug 26 2026 – Swiss-phase draw
+  leagueDay: [76, 90, 111, 126, 147, 160, 202, 209],
+  //              ^J1 Sep 15  ^J2 Sep 29  ^J3 Oct 20  ^J4 Nov  4
+  //              ^J5 Nov 25  ^J6 Dec  8  ^J7 Jan 19  ^J8 Jan 26
   // Draws after completed rounds: +2 days where possible, while keeping
   // at least 14 days between the draw and the next match.
-  playoffDraw: 213, // Fri Jan 30 2026 – 2 days after league phase ends
-  playoffLeg1: 231, // Tue Feb 17 2026
-  playoffLeg2: 238, // Tue Feb 24 2026
-  knockoutDraw: 240, // Thu Feb 26 2026 – 2 days after play-off round ends
-  // R16 is moved one week later so the knockout draw still has >=14 days.
-  r16Leg1: 259, // Tue Mar 17 2026
-  r16Leg2: 266, // Tue Mar 24 2026
-  qfLeg1: 280, // Tue Apr  7 2026
-  qfLeg2: 287, // Tue Apr 14 2026
-  sfLeg1: 301, // Tue Apr 28 2026
-  sfLeg2: 308, // Tue May  5 2026
-  final: 330, // Wed May 27 2026 – single-leg final
+  playoffDraw: 211, // Thu Jan 28 2027 – 2 days after league phase ends
+  playoffLeg1: 230, // Tue Feb 16 2027
+  playoffLeg2: 237, // Tue Feb 23 2027
+  knockoutDraw: 239, // Thu Feb 25 2027 – 2 days after play-off round ends
+  // R16 keeps the minimum 14-day draw-to-match gap.
+  r16Leg1: 258, // Tue Mar 16 2027
+  r16Leg2: 265, // Tue Mar 23 2027
+  qfLeg1: 279, // Tue Apr  6 2027
+  qfLeg2: 286, // Tue Apr 13 2027
+  sfLeg1: 300, // Tue Apr 27 2027
+  sfLeg2: 307, // Tue May  4 2027
+  final: 329, // Wed May 26 2027 – single-leg final
 };
 
 export function uclDayOffset(isoDate: string): number {

@@ -667,8 +667,8 @@ function NextMatchCard({
   const isLineupComplete = activeStartersCount === 11;
 
   // Calculate match date based on competition type
-  const seasonStart = new Date("2025-08-16T12:00:00Z");
-  const cupStart = new Date("2025-07-07T00:00:00Z");
+  const seasonStart = new Date("2026-08-15T12:00:00Z");
+  const cupStart = new Date("2026-07-07T00:00:00Z");
 
   let matchDateIso: string;
   let matchDate: Date;

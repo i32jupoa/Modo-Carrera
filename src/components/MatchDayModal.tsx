@@ -65,7 +65,7 @@ export function MatchDayModal() {
 
     // Check cup fixtures if no league match today
     if (save) {
-      const cupStart = new Date("2025-07-07T00:00:00Z");
+      const cupStart = new Date("2026-07-07T00:00:00Z");
 
       // Check cup fixtures
       for (const lg of Object.keys(save.cupFixtures || {})) {

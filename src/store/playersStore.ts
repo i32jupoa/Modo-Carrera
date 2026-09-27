@@ -495,7 +495,7 @@ const SIM_SQUAD_VIEW_CACHE = new Map<
   }
 >();
 
-// La partida empieza el 1/7/2025: desde aquí toda la edad se calcula por fecha de nacimiento.
+// La partida empieza el 1/7/2026: desde aquí toda la edad se calcula por fecha de nacimiento.
 syncPlayerAgesForDate(GAME_START_DATE);
 
 // Calculamos la media real de cada equipo en cuanto tenemos las plantillas
@@ -1081,11 +1081,11 @@ function buildProtectedCompetitionDates(
     if (!Array.isArray(list)) continue;
     for (const fixture of list as any[]) {
       if (fixture.result || fixture.homeId == null || fixture.awayId == null) continue;
-      const dateIso = new Date(
-        cupStart + Number(fixture.matchday || 0) * 86400000,
-      )
-        .toISOString()
-        .slice(0, 10);
+      const dateIso = fixture.date
+        ? String(fixture.date).slice(0, 10)
+        : new Date(cupStart + Number(fixture.matchday || 0) * 86400000)
+            .toISOString()
+            .slice(0, 10);
       add(fixture.homeId, dateIso);
       add(fixture.awayId, dateIso);
     }
@@ -1501,7 +1501,7 @@ export const usePlayersStore = create<PlayersState>()(
 
               const cupKey = (primaryLeague || currentSave.myLeague) as LeagueId;
 
-              const CUP_START = new Date("2025-07-07T00:00:00Z");
+              const CUP_START = new Date("2026-07-07T00:00:00Z");
 
               const todayOffset = Math.floor(
                 (new Date(nextDate).getTime() - CUP_START.getTime()) / 86400000,
@@ -1558,56 +1558,61 @@ export const usePlayersStore = create<PlayersState>()(
                 }
               }
 
-              // 3. La ronda preliminar sigue exactamente la misma regla que las demás:
-              // primero se muestra el sorteo y, como mínimo, 14 días después, se juegan
-              // los partidos. Nunca se simula dos días antes.
-
-              // 4. Simular matchday de copa si usuario eliminado y es día de partido
-
-              const todayMatchday = cupSchedule.find(
-                (s: any) => s.matchday === todayOffset,
-              )?.matchday;
-
-              if (todayMatchday !== undefined) {
-                const unplayedCupFixtures = (currentSave.cupFixtures[cupKey] || []).filter(
-                  (f: any) => !f.result,
-                );
-
-                const userHasCupFixture = unplayedCupFixtures.some(
-                  (f: any) =>
-                    f.homeId === currentSave.myTeamId || f.awayId === currentSave.myTeamId,
-                );
-
-                if (!userHasCupFixture && unplayedCupFixtures.length > 0) {
-                  // Simular sincrónicamente con resultados simples
-
-                  for (const f of unplayedCupFixtures.filter(
-                    (f: any) => f.matchday === todayMatchday,
-                  )) {
-                    const hg = Math.floor(Math.random() * 4);
-
-                    const ag = Math.floor(Math.random() * 4);
-
-                    const idx = (currentSave.cupFixtures[cupKey] as any[]).findIndex(
-                      (x: any) => x.id === f.id,
-                    );
-
-                    if (idx >= 0) {
-                      (currentSave.cupFixtures[cupKey] as any[])[idx] = {
-                        ...f,
-
-                        result: {
-                          homeGoals: hg,
-                          awayGoals: ag,
-                          events: [],
-                          injuries: [],
-                          xgHome: hg,
-                          xgAway: ag,
-                        },
-                      };
-                    }
-                  }
+              // 3. Las copas del país del usuario deben utilizar exactamente el
+              // mismo motor de simulación que las copas extranjeras. La única
+              // excepción es el partido del propio equipo, que queda intacto
+              // para que pueda jugarse desde la pantalla de partido.
+              //
+              // El calendario puede tener una fecha real distinta del offset
+              // teórico de la ronda, así que priorizamos fixture.date y usamos
+              // el matchday del fixture para alimentar el motor común.
+              const dueUserCupMatchdays = new Set<number>();
+              for (const f of cupFixtures) {
+                if (f.result) continue;
+                const fixtureDate = f.date ? String(f.date).slice(0, 10) : null;
+                if (fixtureDate === nextDate) {
+                  dueUserCupMatchdays.add(Number(f.matchday));
                 }
+              }
+
+              // Compatibilidad con partidas antiguas sin `date` en los fixtures.
+              if (dueUserCupMatchdays.size === 0 && todayMatchday !== undefined) {
+                const legacyDue = cupFixtures.some(
+                  (f: any) =>
+                    !f.result &&
+                    f.matchday === todayMatchday &&
+                    !f.date,
+                );
+                if (legacyDue) dueUserCupMatchdays.add(Number(todayMatchday));
+              }
+
+              for (const dueMatchday of dueUserCupMatchdays) {
+                const pending = [...(currentSave.pendingBackgroundSims ?? [])].filter(
+                  (entry) =>
+                    !(
+                      entry.isCup &&
+                      entry.league === cupKey &&
+                      entry.matchday === dueMatchday
+                    ),
+                );
+
+                pending.push({
+                  league: cupKey,
+                  matchday: dueMatchday,
+                  isCup: true,
+                  date: nextDate,
+                });
+
+                const queuedSave: SaveGame = {
+                  ...currentSave,
+                  pendingBackgroundSims: pending,
+                };
+
+                currentSave = processScheduledBackgroundSims(
+                  queuedSave,
+                  nextDate,
+                  currentSave.myTeamId,
+                );
               }
 
               saveSave(currentSave);

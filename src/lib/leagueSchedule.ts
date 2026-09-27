@@ -9,7 +9,7 @@ import {
 } from "@/lib/fixtureScheduler";
 
 /** First league matchday anchor (Saturday display reference). */
-export const LEAGUE_SEASON_KICKOFF = "2025-08-16";
+export const LEAGUE_SEASON_KICKOFF = "2026-08-15";
 export { LEAGUE_MD1_FRIDAY, scheduleNeedsRealisticDates };
 
 export type ScheduleFixture = {
