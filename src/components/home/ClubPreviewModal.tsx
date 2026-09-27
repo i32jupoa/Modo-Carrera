@@ -1,20 +1,23 @@
 import React from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getAllTeams, findTeamByName, overall, LEAGUES } from "@/data/teams";
+import { getAllTeams, getLeagueTier, overall, LEAGUES } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import {
   getTeamCategory,
   getTeamDifficulty,
   getTeamObjectives,
-  estimateTeamFinancials,
   CATEGORY_COLORS,
   DIFFICULTY_COLORS,
 } from "@/lib/utils";
-import { getRivals, getRecentHistory } from "@/data/teamExtras";
+import { getRivals } from "@/data/teamExtras";
+import { realRecentTrophies } from "@/data/leagueWinners";
 import { getClubExtra } from "@/data/clubExtras";
-import playersData from "@/data/playersData";
+import { squadForTeam, marketValueEuros } from "@/store/playersStore";
+import { getClubProfile } from "@/lib/transfers/ClubStrategy";
+import { initialBudget } from "@/lib/transfers/BudgetManager";
+import { getClubWageBill } from "@/lib/transfers/PlayerIndex";
 import { formatPositionLabel } from "@/lib/positions";
 import { Trophy, Users, Building2, Target, Wallet, Swords, History, Sparkles } from "lucide-react";
 
@@ -34,9 +37,7 @@ export default function ClubPreviewModal({
   // Build full squad from players JSON, deterministic order by OVR
   const squad = React.useMemo(() => {
     if (!teamId) return [];
-    const data: any[] = Array.isArray(playersData) ? (playersData as any[]) : [];
-    const matches = data.filter((p) => p?.Team && findTeamByName(p.Team)?.id === teamId);
-    return matches.sort((a, b) => (b.OVR || 0) - (a.OVR || 0)).slice(0, 50);
+    return squadForTeam(teamId).slice().sort((a, b) => (b.OVR || 0) - (a.OVR || 0)).slice(0, 50);
   }, [teamId]);
 
   if (!team) return null;
@@ -45,10 +46,23 @@ export default function ClubPreviewModal({
   const category = getTeamCategory(team);
   const difficulty = getTeamDifficulty(ov);
   const objectives = getTeamObjectives(ov, category);
-  const financials = estimateTeamFinancials(team);
-  const estimatedSalaries = Math.round(financials.budget * 0.35);
+  const clubProfile = getClubProfile(team.id);
+  const startBudget = initialBudget(clubProfile);
+  const wageBill = getClubWageBill(team.id);
+  const initialWageBudget = Math.round(startBudget * 0.2);
+  const squadAverage = squad.length > 0
+    ? squad.reduce((sum, player) => sum + (player.OVR || 0), 0) / squad.length
+    : overall(team);
+  const squadValue = Math.round(
+    squad.reduce(
+      (sum, player) => sum + marketValueEuros(player, team.id, team.league, squadAverage),
+      0,
+    ) / 1_000_000,
+  );
   const rivals = getRivals(team);
-  const history = getRecentHistory(team);
+  const recentTrophies = realRecentTrophies(team.name, team.league);
+  const topPlayers = squad.slice(0, 5);
+  const leagueTier = getLeagueTier(team.league);
   const teamColor = team.color || "#1a1a2e";
   const extra = getClubExtra(team.name);
   const catCol = CATEGORY_COLORS[category];
@@ -130,6 +144,26 @@ export default function ClubPreviewModal({
             </div>
           </div>
 
+          {/* DATOS REALES DE ARRANQUE */}
+          <div className="px-4 md:px-6 pt-4">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.035] backdrop-blur-xl p-4 shadow-xl">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-primary font-black">Datos de la partida</div>
+                  <div className="text-sm font-semibold text-white mt-1">
+                    Estos valores se calculan con las mismas fuentes que usa la nueva partida.
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 min-w-0">
+                  <Mini label="Presupuesto" value={formatCompactMoney(startBudget)} />
+                  <Mini label="Bolsa salarial" value={formatCompactMoney(initialWageBudget)} />
+                  <Mini label="Masa salarial" value={formatCompactMoney(wageBill)} />
+                  <Mini label="Valor plantilla" value={formatCompactMoney(squadValue * 1_000_000)} />
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* TABS */}
           <Tabs defaultValue="resumen" className="p-4 md:p-6">
             <TabsList className="bg-white/[0.04] border border-white/10 h-auto flex-wrap gap-1">
@@ -159,7 +193,7 @@ export default function ClubPreviewModal({
               </TabsTrigger>
               <TabsTrigger value="historial" className="gap-1.5">
                 <History className="h-3.5 w-3.5" />
-                Historial
+                Palmarés
               </TabsTrigger>
             </TabsList>
 
@@ -170,17 +204,44 @@ export default function ClubPreviewModal({
                 <StatBlock label="Medio" value={team.mid} color={teamColor} />
                 <StatBlock label="Defensa" value={team.def} color={teamColor} />
               </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Mini label="Nivel de liga" value={leagueTier === 1 ? "1ª división" : `${leagueTier}º nivel`} />
+                <Mini label="Plantilla" value={`${squad.length} jugadores`} />
+                <Mini label="Media plantilla" value={`${Math.round(squadAverage)} OVR`} />
+                <Mini label="Potencia financiera" value={`${Math.round(clubProfile.financialPower * 100)}/100`} />
+              </div>
               <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03]">
                 <div className="text-xs uppercase tracking-wider text-white/50 mb-2">
                   Resumen del proyecto
                 </div>
                 <p className="text-sm text-white/85 leading-relaxed">
-                  {category === "Gigante"
-                    ? `${team.name} es uno de los gigantes del fútbol mundial. La presión es máxima: ganar y ganar. La afición y la directiva exigen títulos cada temporada.`
+                  {category === "Elite Mundial" || category === "Gigante"
+                    ? `${team.name} parte con una plantilla de primer nivel. El reto está en mantener el nivel competitivo, gestionar el vestuario y convertir la superioridad deportiva en títulos.`
                     : category === "Aspirante"
-                      ? `${team.name} aspira a romper la hegemonía de los grandes. Con una gestión inteligente y los fichajes adecuados, el salto a la élite está al alcance.`
-                      : `${team.name} es un club modesto con mucho que demostrar. Construir un proyecto sólido y dar el salto desde abajo será el reto.`}
+                      ? `${team.name} tiene una base competitiva para pelear por objetivos ambiciosos. El proyecto pasa por reforzar las posiciones clave y mantener una progresión sostenible.`
+                      : category === "Media tabla"
+                        ? `${team.name} cuenta con margen para crecer. La prioridad es consolidar el rendimiento, mejorar la plantilla y convertir el proyecto en una presencia habitual en la zona alta.`
+                        : `${team.name} parte con un reto de reconstrucción. El objetivo es hacer crecer el club paso a paso, proteger la economía y elevar el nivel de la plantilla.`}
                 </p>
+              </div>
+              <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03]">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs uppercase tracking-wider text-white/50">Jugadores clave</div>
+                  <div className="text-[10px] text-white/40">Datos de la plantilla inicial</div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {topPlayers.slice(0, 4).map((player, i) => (
+                    <div key={String(player.ID ?? i)} className="flex items-center gap-3 rounded-lg bg-white/[0.035] border border-white/8 p-2.5">
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black text-white" style={{ background: teamColor }}>
+                        {player.OVR}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold text-white truncate">{player.Name}</div>
+                        <div className="text-[11px] text-white/45">{formatPositionLabel(player.Position)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </TabsContent>
 
@@ -194,10 +255,10 @@ export default function ClubPreviewModal({
               <div className="rounded-xl p-6 border border-white/10 bg-gradient-to-br from-emerald-900/30 to-black/50 text-center">
                 <Building2 className="h-12 w-12 mx-auto mb-3 text-white/60" />
                 <div className="text-lg font-black text-white">
-                  {extra?.stadium ?? `Estadio de ${team.city}`}
+                  {extra?.stadium ?? "Datos no disponibles"}
                 </div>
                 <div className="text-xs text-white/60 mt-1 mb-4">
-                  Casa de {team.name} · {extra?.country ?? team.city}
+                  Casa de {team.name} · {extra?.country ?? LEAGUES[team.league]?.country ?? "País no registrado"}
                 </div>
                 <div className="grid grid-cols-3 gap-3 mt-4">
                   <Mini
@@ -232,7 +293,7 @@ export default function ClubPreviewModal({
               </div>
 
               <div className="mt-6 text-xs uppercase tracking-wider text-white/50 mb-3">
-                Expectativas directiva
+                Perfil de reto estimado
               </div>
               <div className="space-y-2.5">
                 {[
@@ -262,28 +323,27 @@ export default function ClubPreviewModal({
             </TabsContent>
 
             {/* FINANZAS */}
-            <TabsContent value="finanzas" className="mt-5">
+            <TabsContent value="finanzas" className="mt-5 space-y-4">
+              <div className="rounded-2xl border border-primary/20 bg-primary/[0.06] p-4">
+                <div className="flex items-start gap-3">
+                  <Wallet className="h-5 w-5 text-primary mt-0.5" />
+                  <div>
+                    <div className="text-sm font-black text-white">Economía inicial de la partida</div>
+                    <div className="text-xs text-white/55 mt-1">
+                      El presupuesto mostrado aquí es el que recibe el club al crear la carrera. La bolsa salarial inicial es el 20% de ese presupuesto, exactamente igual que en el estado inicial del juego.
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                <FinBlock
-                  label="Presupuesto Inicial"
-                  value={`${financials.budget}M €`}
-                  color={teamColor}
-                />
-                <FinBlock
-                  label="Valor de Plantilla"
-                  value={`${financials.value}M €`}
-                  color="#22c55e"
-                />
-                <FinBlock
-                  label="Ingresos Anuales Est."
-                  value={`${financials.income}M €`}
-                  color="#3b82f6"
-                />
-                <FinBlock
-                  label="Salarios Anuales Est."
-                  value={`${estimatedSalaries}M €`}
-                  color="#f97316"
-                />
+                <FinBlock label="Presupuesto inicial" value={formatCompactMoney(startBudget)} color={teamColor} />
+                <FinBlock label="Bolsa salarial inicial" value={formatCompactMoney(initialWageBudget)} color="#f97316" />
+                <FinBlock label="Masa salarial actual" value={formatCompactMoney(wageBill)} color="#3b82f6" />
+                <FinBlock label="Valor de plantilla" value={formatCompactMoney(squadValue * 1_000_000)} color="#22c55e" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Mini label="Poder financiero del club" value={`${Math.round(clubProfile.financialPower * 100)}/100`} />
+                <Mini label="Reputación del club" value={`${Math.round(clubProfile.reputation * 100)}/100`} />
               </div>
             </TabsContent>
 
@@ -321,42 +381,24 @@ export default function ClubPreviewModal({
               )}
             </TabsContent>
 
-            {/* HISTORIAL */}
+            {/* PALMARÉS */}
             <TabsContent value="historial" className="mt-5">
-              <div className="text-xs uppercase tracking-wider text-white/50 mb-3">
-                Últimas temporadas
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 mb-4">
+                <div className="text-sm font-black text-white">Palmarés reciente registrado</div>
+                <div className="text-xs text-white/50 mt-1">Solo se muestran títulos que están documentados en la base histórica del juego; no se generan posiciones ni goleadores ficticios.</div>
               </div>
               <div className="space-y-2">
-                {history.map((h, i) => (
-                  <div
-                    key={h.season}
-                    className="flex items-center gap-4 p-3 rounded-lg bg-white/[0.04] border border-white/8 animate-slide-in"
-                    style={{ animationDelay: `${i * 0.05}s` }}
-                  >
-                    <div className="text-xs font-mono text-white/50 w-12">{h.season}</div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-2 py-0.5 rounded text-xs font-black ${h.position <= 3 ? "bg-yellow-500/20 text-yellow-300" : h.position <= 6 ? "bg-blue-500/20 text-blue-300" : "bg-white/10 text-white/70"}`}
-                      >
-                        {h.position}º
-                      </span>
-                    </div>
-                    <div className="flex-1 flex flex-wrap gap-1">
-                      {h.trophies.length > 0 ? (
-                        h.trophies.map((t, j) => (
-                          <span
-                            key={j}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold uppercase"
-                          >
-                            🏆 {t}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-[10px] text-white/30">sin títulos</span>
+                {Object.entries(recentTrophies).map(([season, trophies]) => (
+                  <div key={season} className="flex items-center gap-4 p-3 rounded-lg bg-white/[0.04] border border-white/8">
+                    <div className="text-xs font-mono text-white/50 w-12">{season}</div>
+                    <div className="flex-1 flex flex-wrap gap-1.5">
+                      {trophies.length > 0 ? trophies.map((trophy, i) => (
+                        <span key={`${season}-${i}`} className="text-[10px] px-2 py-1 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold uppercase">
+                          🏆 {trophy}
+                        </span>
+                      )) : (
+                        <span className="text-xs text-white/30">Sin títulos registrados</span>
                       )}
-                    </div>
-                    <div className="text-xs text-white/60 hidden md:block">
-                      ⚽ {h.topScorer} ({h.goals})
                     </div>
                   </div>
                 ))}
@@ -413,6 +455,14 @@ function Mini({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+function formatCompactMoney(value: number): string {
+  const amount = Math.max(0, Math.round(value));
+  const millions = amount / 1_000_000;
+  if (millions >= 1) return `€${millions.toLocaleString("es-ES", { maximumFractionDigits: 1 })} M`;
+  const thousands = amount / 1_000;
+  return `€${thousands.toLocaleString("es-ES", { maximumFractionDigits: 0 })} K`;
+}
+
 function FinBlock({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div className="rounded-xl p-4 border bg-white/[0.03]" style={{ borderColor: `${color}33` }}>

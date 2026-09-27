@@ -316,6 +316,8 @@ export { GAME_START_DATE } from "@/lib/transferWindows";
 
 export type TransferResult = { ok: true } | { ok: false; reason: string };
 
+export type StatCompetition = "league" | "cup" | "ucl" | "uel" | "uecl";
+
 export type PlayerStats = {
   goals: number;
 
@@ -331,12 +333,28 @@ export type PlayerStats = {
   uclGoals: number;
   uclAssists: number;
   uclAppearances: number;
+  uclCleanSheets: number;
+  uclMotm: number;
+  uelGoals: number;
+  uelAssists: number;
+  uelAppearances: number;
+  uelCleanSheets: number;
+  uelMotm: number;
+  ueclGoals: number;
+  ueclAssists: number;
+  ueclAppearances: number;
+  ueclCleanSheets: number;
+  ueclMotm: number;
+  uclYellowCards: number;
+  uclRedCards: number;
+  uelYellowCards: number;
+  uelRedCards: number;
+  ueclYellowCards: number;
+  ueclRedCards: number;
   cleanSheets: number;
   cupCleanSheets: number;
-  uclCleanSheets: number;
   motm: number;
   cupMotm: number;
-  uclMotm: number;
 
   /** Legacy league-matchday marker kept for backwards compatibility. */
   injuredUntil: number;
@@ -589,12 +607,28 @@ function defaultStats(): PlayerStats {
     uclGoals: 0,
     uclAssists: 0,
     uclAppearances: 0,
+    uclCleanSheets: 0,
+    uclMotm: 0,
+    uelGoals: 0,
+    uelAssists: 0,
+    uelAppearances: 0,
+    uelCleanSheets: 0,
+    uelMotm: 0,
+    ueclGoals: 0,
+    ueclAssists: 0,
+    ueclAppearances: 0,
+    ueclCleanSheets: 0,
+    ueclMotm: 0,
+    uclYellowCards: 0,
+    uclRedCards: 0,
+    uelYellowCards: 0,
+    uelRedCards: 0,
+    ueclYellowCards: 0,
+    ueclRedCards: 0,
     cleanSheets: 0,
     cupCleanSheets: 0,
-    uclCleanSheets: 0,
     motm: 0,
     cupMotm: 0,
-    uclMotm: 0,
 
     injuredUntil: 0,
 
@@ -1002,9 +1036,9 @@ type PlayersState = {
   recordMotm: (playerId: string, competition?: string) => void;
   recordMatchRating: (playerId: string, rating: number) => void;
 
-  recordYellowCard: (playerId: string) => void;
+  recordYellowCard: (playerId: string, competition?: StatCompetition) => void;
 
-  recordRedCard: (playerId: string) => void;
+  recordRedCard: (playerId: string, competition?: StatCompetition) => void;
 
   incrementAccumulatedYellowCards: (playerId: string) => void;
 
@@ -2566,6 +2600,8 @@ export const usePlayersStore = create<PlayersState>()(
             appearances: s.appearances + 1,
             cupAppearances: (s.cupAppearances ?? 0) + (isCup ? 1 : 0),
             uclAppearances: (s.uclAppearances ?? 0) + (isUcl ? 1 : 0),
+            uelAppearances: (s.uelAppearances ?? 0) + (competition === "uel" ? 1 : 0),
+            ueclAppearances: (s.ueclAppearances ?? 0) + (competition === "uecl" ? 1 : 0),
           };
         });
 
@@ -2597,6 +2633,8 @@ export const usePlayersStore = create<PlayersState>()(
             goals: s.goals + 1,
             cupGoals: (s.cupGoals ?? 0) + (isCup ? 1 : 0),
             uclGoals: (s.uclGoals ?? 0) + (isUcl ? 1 : 0),
+            uelGoals: (s.uelGoals ?? 0) + (competition === "uel" ? 1 : 0),
+            ueclGoals: (s.ueclGoals ?? 0) + (competition === "uecl" ? 1 : 0),
           };
         });
 
@@ -2618,6 +2656,8 @@ export const usePlayersStore = create<PlayersState>()(
             assists: s.assists + 1,
             cupAssists: (s.cupAssists ?? 0) + (isCup ? 1 : 0),
             uclAssists: (s.uclAssists ?? 0) + (isUcl ? 1 : 0),
+            uelAssists: (s.uelAssists ?? 0) + (competition === "uel" ? 1 : 0),
+            ueclAssists: (s.ueclAssists ?? 0) + (competition === "uecl" ? 1 : 0),
           };
         });
 
@@ -2643,6 +2683,8 @@ export const usePlayersStore = create<PlayersState>()(
             goals: dec(s.goals),
             cupGoals: isCup ? dec(s.cupGoals ?? 0) : (s.cupGoals ?? 0),
             uclGoals: isUcl ? dec(s.uclGoals ?? 0) : (s.uclGoals ?? 0),
+            uelGoals: competition === "uel" ? dec(s.uelGoals ?? 0) : (s.uelGoals ?? 0),
+            ueclGoals: competition === "uecl" ? dec(s.ueclGoals ?? 0) : (s.ueclGoals ?? 0),
             dynamicStats: s.dynamicStats
               ? { ...s.dynamicStats, seasonGoals: dec(s.dynamicStats.seasonGoals) }
               : s.dynamicStats,
@@ -2660,6 +2702,8 @@ export const usePlayersStore = create<PlayersState>()(
             assists: dec(s.assists),
             cupAssists: isCup ? dec(s.cupAssists ?? 0) : (s.cupAssists ?? 0),
             uclAssists: isUcl ? dec(s.uclAssists ?? 0) : (s.uclAssists ?? 0),
+            uelAssists: competition === "uel" ? dec(s.uelAssists ?? 0) : (s.uelAssists ?? 0),
+            ueclAssists: competition === "uecl" ? dec(s.ueclAssists ?? 0) : (s.ueclAssists ?? 0),
             dynamicStats: s.dynamicStats
               ? { ...s.dynamicStats, seasonAssists: dec(s.dynamicStats.seasonAssists) }
               : s.dynamicStats,
@@ -2676,6 +2720,8 @@ export const usePlayersStore = create<PlayersState>()(
             cleanSheets: (s.cleanSheets ?? 0) + 1,
             cupCleanSheets: (s.cupCleanSheets ?? 0) + (isCup ? 1 : 0),
             uclCleanSheets: (s.uclCleanSheets ?? 0) + (isUcl ? 1 : 0),
+            uelCleanSheets: (s.uelCleanSheets ?? 0) + (competition === "uel" ? 1 : 0),
+            ueclCleanSheets: (s.ueclCleanSheets ?? 0) + (competition === "uecl" ? 1 : 0),
           };
         });
 
@@ -2728,6 +2774,8 @@ export const usePlayersStore = create<PlayersState>()(
             motm: (s.motm ?? 0) + 1,
             cupMotm: (s.cupMotm ?? 0) + (isCup ? 1 : 0),
             uclMotm: (s.uclMotm ?? 0) + (isUcl ? 1 : 0),
+            uelMotm: (s.uelMotm ?? 0) + (competition === "uel" ? 1 : 0),
+            ueclMotm: (s.ueclMotm ?? 0) + (competition === "uecl" ? 1 : 0),
           };
         });
 
@@ -2743,8 +2791,14 @@ export const usePlayersStore = create<PlayersState>()(
         return;
       },
 
-      recordYellowCard: (playerId) => {
-        mutatePlayerStat(get, set, playerId, (s) => ({ ...s, yellowCards: s.yellowCards + 1 }));
+      recordYellowCard: (playerId, competition) => {
+        mutatePlayerStat(get, set, playerId, (s) => ({
+          ...s,
+          yellowCards: s.yellowCards + 1,
+          uclYellowCards: (s.uclYellowCards ?? 0) + (competition === "ucl" ? 1 : 0),
+          uelYellowCards: (s.uelYellowCards ?? 0) + (competition === "uel" ? 1 : 0),
+          ueclYellowCards: (s.ueclYellowCards ?? 0) + (competition === "uecl" ? 1 : 0),
+        }));
         return;
 
         const next = { ...get().stats };
@@ -2756,8 +2810,14 @@ export const usePlayersStore = create<PlayersState>()(
         set({ stats: next });
       },
 
-      recordRedCard: (playerId) => {
-        mutatePlayerStat(get, set, playerId, (s) => ({ ...s, redCards: s.redCards + 1 }));
+      recordRedCard: (playerId, competition) => {
+        mutatePlayerStat(get, set, playerId, (s) => ({
+          ...s,
+          redCards: s.redCards + 1,
+          uclRedCards: (s.uclRedCards ?? 0) + (competition === "ucl" ? 1 : 0),
+          uelRedCards: (s.uelRedCards ?? 0) + (competition === "uel" ? 1 : 0),
+          ueclRedCards: (s.ueclRedCards ?? 0) + (competition === "uecl" ? 1 : 0),
+        }));
         return;
 
         const next = { ...get().stats };
@@ -2959,242 +3019,182 @@ export function useCurrentDate(): string {
   return usePlayersStore((s) => s.currentDate);
 }
 
+export type RankingCompetition = "all" | StatCompetition;
+
+function rankingStatValue(
+  st: PlayerStats,
+  competition: RankingCompetition,
+  stat: "goals" | "assists" | "appearances" | "cleanSheets" | "motm" | "yellowCards" | "redCards",
+): number {
+  const legacy: Record<string, number> = {
+    goals: st.goals ?? 0,
+    assists: st.assists ?? 0,
+    appearances: st.appearances ?? 0,
+    cleanSheets: st.cleanSheets ?? 0,
+    motm: st.motm ?? 0,
+    yellowCards: st.yellowCards ?? 0,
+    redCards: st.redCards ?? 0,
+  };
+  if (competition === "all") return legacy[stat] ?? 0;
+  if (competition === "league") {
+    const totals = legacy[stat] ?? 0;
+    const excluded =
+      competitionField(st, "cup", stat) +
+      competitionField(st, "ucl", stat) +
+      competitionField(st, "uel", stat) +
+      competitionField(st, "uecl", stat);
+    return Math.max(0, totals - excluded);
+  }
+  return competitionField(st, competition, stat);
+}
+
+function competitionField(
+  st: PlayerStats,
+  competition: Exclude<RankingCompetition, "all" | "league"> | "league",
+  stat: "goals" | "assists" | "appearances" | "cleanSheets" | "motm" | "yellowCards" | "redCards",
+): number {
+  const map: Record<string, keyof PlayerStats | undefined> = {
+    "cup:goals": "cupGoals", "cup:assists": "cupAssists", "cup:appearances": "cupAppearances",
+    "cup:cleanSheets": "cupCleanSheets", "cup:motm": "cupMotm",
+    "ucl:goals": "uclGoals", "ucl:assists": "uclAssists", "ucl:appearances": "uclAppearances",
+    "ucl:cleanSheets": "uclCleanSheets", "ucl:motm": "uclMotm", "ucl:yellowCards": "uclYellowCards", "ucl:redCards": "uclRedCards",
+    "uel:goals": "uelGoals", "uel:assists": "uelAssists", "uel:appearances": "uelAppearances",
+    "uel:cleanSheets": "uelCleanSheets", "uel:motm": "uelMotm", "uel:yellowCards": "uelYellowCards", "uel:redCards": "uelRedCards",
+    "uecl:goals": "ueclGoals", "uecl:assists": "ueclAssists", "uecl:appearances": "ueclAppearances",
+    "uecl:cleanSheets": "ueclCleanSheets", "uecl:motm": "ueclMotm", "uecl:yellowCards": "ueclYellowCards", "uecl:redCards": "ueclRedCards",
+  };
+  const key = map[`${competition}:${stat}`];
+  return key ? Number(st[key] ?? 0) : 0;
+}
+
+function rankingPlayerFilter(p: Player, leagueFilter?: LeagueId | "big5") {
+  if (!leagueFilter) return true;
+  const team = teamById(p.teamId);
+  if (!team) return false;
+  if (leagueFilter === "big5") return BIG5_LEAGUES.includes(team.league as LeagueId);
+  return team.league === leagueFilter;
+}
+
 export function selectTopScorers(
   leagueFilter?: LeagueId,
-
   limit = 30,
-
-  competition: "all" | "league" | "cup" | "ucl" = "all",
-
+  competition: RankingCompetition = "all",
   cupCountry?: string,
 ): Player[] {
   const store = usePlayersStore.getState();
-
   store.init();
-
   const out: Player[] = [];
-
   for (const [id, st] of Object.entries(store.stats)) {
-    const goals =
-      competition === "cup"
-        ? (st.cupGoals ?? 0)
-        : competition === "ucl"
-          ? (st.uclGoals ?? 0)
-          : competition === "league"
-            ? st.goals - (st.cupGoals ?? 0) - (st.uclGoals ?? 0)
-            : st.goals;
-
+    const goals = rankingStatValue(st, competition, "goals");
     if (goals <= 0) continue;
-
     const p = store.getSimPlayer(id);
-
-    if (!p) continue;
-
-    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
-
+    if (!p || !rankingPlayerFilter(p, leagueFilter)) continue;
     if (competition === "cup" && cupCountry) {
-      const teamCountry = LEAGUES[teamById(p.teamId).league as LeagueId]?.country;
-
-      if (teamCountry !== cupCountry) continue;
+      const country = LEAGUES[teamById(p.teamId).league as LeagueId]?.country;
+      if (country !== cupCountry) continue;
     }
-
-    const assistsOut =
-      competition === "cup"
-        ? (st.cupAssists ?? 0)
-        : competition === "ucl"
-          ? (st.uclAssists ?? 0)
-          : competition === "league"
-            ? st.assists - (st.cupAssists ?? 0) - (st.uclAssists ?? 0)
-            : st.assists;
-    const apps =
-      competition === "cup"
-        ? (st.cupAppearances ?? 0)
-        : competition === "ucl"
-          ? (st.uclAppearances ?? 0)
-          : competition === "league"
-            ? st.appearances - (st.cupAppearances ?? 0) - (st.uclAppearances ?? 0)
-            : st.appearances;
-    out.push({ ...p, goals, assists: assistsOut, appearances: apps });
+    out.push({
+      ...p,
+      goals,
+      assists: rankingStatValue(st, competition, "assists"),
+      appearances: rankingStatValue(st, competition, "appearances"),
+    });
   }
-
-  return out
-
-    .sort((a, b) => b.goals - a.goals || b.assists - a.assists)
-
-    .slice(0, limit);
+  return out.sort((a, b) => b.goals - a.goals || b.assists - a.assists).slice(0, limit);
 }
 
 export function selectTopAssisters(
   leagueFilter?: LeagueId,
-
   limit = 30,
-
-  competition: "all" | "league" | "cup" | "ucl" = "all",
-
+  competition: RankingCompetition = "all",
   cupCountry?: string,
 ): Player[] {
   const store = usePlayersStore.getState();
-
   store.init();
-
   const out: Player[] = [];
-
   for (const [id, st] of Object.entries(store.stats)) {
-    const assists =
-      competition === "cup"
-        ? (st.cupAssists ?? 0)
-        : competition === "ucl"
-          ? (st.uclAssists ?? 0)
-          : competition === "league"
-            ? st.assists - (st.cupAssists ?? 0) - (st.uclAssists ?? 0)
-            : st.assists;
-
+    const assists = rankingStatValue(st, competition, "assists");
     if (assists <= 0) continue;
-
     const p = store.getSimPlayer(id);
-
-    if (!p) continue;
-
-    if (leagueFilter && teamById(p.teamId).league !== leagueFilter) continue;
-
+    if (!p || !rankingPlayerFilter(p, leagueFilter)) continue;
     if (competition === "cup" && cupCountry) {
-      const teamCountry = LEAGUES[teamById(p.teamId).league as LeagueId]?.country;
-
-      if (teamCountry !== cupCountry) continue;
+      const country = LEAGUES[teamById(p.teamId).league as LeagueId]?.country;
+      if (country !== cupCountry) continue;
     }
-
-    const goalsOut =
-      competition === "cup"
-        ? (st.cupGoals ?? 0)
-        : competition === "ucl"
-          ? (st.uclGoals ?? 0)
-          : competition === "league"
-            ? st.goals - (st.cupGoals ?? 0) - (st.uclGoals ?? 0)
-            : st.goals;
-    const apps2 =
-      competition === "cup"
-        ? (st.cupAppearances ?? 0)
-        : competition === "ucl"
-          ? (st.uclAppearances ?? 0)
-          : competition === "league"
-            ? st.appearances - (st.cupAppearances ?? 0) - (st.uclAppearances ?? 0)
-            : st.appearances;
-    out.push({ ...p, goals: goalsOut, assists, appearances: apps2 });
+    out.push({
+      ...p,
+      goals: rankingStatValue(st, competition, "goals"),
+      assists,
+      appearances: rankingStatValue(st, competition, "appearances"),
+    });
   }
-
-  return out
-
-    .sort((a, b) => b.assists - a.assists || b.goals - a.goals)
-
-    .slice(0, limit);
+  return out.sort((a, b) => b.assists - a.assists || b.goals - a.goals).slice(0, limit);
 }
 
 export function selectTopYellowCards(
   leagueFilter?: LeagueId | "big5",
-
   limit = 30,
+  competition: RankingCompetition = "all",
 ): (Player & { yellowCards: number; redCards: number })[] {
   const store = usePlayersStore.getState();
-
   store.init();
-
   const out: (Player & { yellowCards: number; redCards: number })[] = [];
-
   for (const [id, st] of Object.entries(store.stats)) {
-    if ((st.yellowCards ?? 0) <= 0) continue;
-
+    const yellowCards = rankingStatValue(st, competition, "yellowCards");
+    if (yellowCards <= 0) continue;
     const p = store.getSimPlayer(id);
-
-    if (!p) continue;
-
-    if (leagueFilter) {
-      const team = teamById(p.teamId);
-      if (!team) continue;
-      const playerLeague = team.league;
-      if (leagueFilter === "big5") {
-        if (!BIG5_LEAGUES.includes(playerLeague as LeagueId)) continue;
-      } else if (playerLeague !== leagueFilter) {
-        continue;
-      }
-    }
-
-    out.push({ ...p, yellowCards: st.yellowCards ?? 0, redCards: st.redCards ?? 0 });
+    if (!p || !rankingPlayerFilter(p, leagueFilter)) continue;
+    out.push({
+      ...p,
+      appearances: rankingStatValue(st, competition, "appearances"),
+      yellowCards,
+      redCards: rankingStatValue(st, competition, "redCards"),
+    });
   }
-
-  return out
-    .sort((a, b) => b.yellowCards - a.yellowCards || b.redCards - a.redCards)
-    .slice(0, limit);
+  return out.sort((a, b) => b.yellowCards - a.yellowCards || b.redCards - a.redCards).slice(0, limit);
 }
 
 export function selectTopRedCards(
   leagueFilter?: LeagueId | "big5",
-
   limit = 30,
+  competition: RankingCompetition = "all",
 ): (Player & { yellowCards: number; redCards: number })[] {
   const store = usePlayersStore.getState();
-
   store.init();
-
   const out: (Player & { yellowCards: number; redCards: number })[] = [];
-
   for (const [id, st] of Object.entries(store.stats)) {
-    if ((st.redCards ?? 0) <= 0) continue;
-
+    const redCards = rankingStatValue(st, competition, "redCards");
+    if (redCards <= 0) continue;
     const p = store.getSimPlayer(id);
-
-    if (!p) continue;
-
-    if (leagueFilter) {
-      const team = teamById(p.teamId);
-      if (!team) continue;
-      const playerLeague = team.league;
-      if (leagueFilter === "big5") {
-        if (!BIG5_LEAGUES.includes(playerLeague as LeagueId)) continue;
-      } else if (playerLeague !== leagueFilter) {
-        continue;
-      }
-    }
-
-    out.push({ ...p, yellowCards: st.yellowCards ?? 0, redCards: st.redCards ?? 0 });
+    if (!p || !rankingPlayerFilter(p, leagueFilter)) continue;
+    out.push({
+      ...p,
+      appearances: rankingStatValue(st, competition, "appearances"),
+      yellowCards: rankingStatValue(st, competition, "yellowCards"),
+      redCards,
+    });
   }
-
-  return out
-    .sort((a, b) => b.redCards - a.redCards || b.yellowCards - a.yellowCards)
-    .slice(0, limit);
+  return out.sort((a, b) => b.redCards - a.redCards || b.yellowCards - a.yellowCards).slice(0, limit);
 }
 
 export function selectTopCleanSheets(
   leagueFilter?: LeagueId | "big5",
   limit = 30,
-  competition: "all" | "league" | "cup" | "ucl" = "all",
+  competition: RankingCompetition = "all",
 ): (Player & { cleanSheets: number })[] {
   const store = usePlayersStore.getState();
   store.init();
   const out: (Player & { cleanSheets: number })[] = [];
   for (const [id, st] of Object.entries(store.stats)) {
-    const cs =
-      competition === "cup"
-        ? (st.cupCleanSheets ?? 0)
-        : competition === "ucl"
-          ? (st.uclCleanSheets ?? 0)
-          : competition === "league"
-            ? (st.cleanSheets ?? 0) - (st.cupCleanSheets ?? 0) - (st.uclCleanSheets ?? 0)
-            : (st.cleanSheets ?? 0);
-    if (cs <= 0) continue;
+    const cleanSheets = rankingStatValue(st, competition, "cleanSheets");
+    if (cleanSheets <= 0) continue;
     const p = store.getSimPlayer(id);
-    if (!p) continue;
-    if (p.position !== "POR" && p.position !== "GK") continue;
-    if (leagueFilter) {
-      const team = teamById(p.teamId);
-      if (!team) continue;
-      const playerLeague = team.league;
-      if (leagueFilter === "big5") {
-        if (!BIG5_LEAGUES.includes(playerLeague as LeagueId)) continue;
-      } else if (playerLeague !== leagueFilter) {
-        continue;
-      }
-    }
-    out.push({ ...p, cleanSheets: cs });
+    if (!p || (p.position !== "POR" && p.position !== "GK") || !rankingPlayerFilter(p, leagueFilter)) continue;
+    out.push({
+      ...p,
+      appearances: rankingStatValue(st, competition, "appearances"),
+      cleanSheets,
+    });
   }
   return out.sort((a, b) => b.cleanSheets - a.cleanSheets).slice(0, limit);
 }
@@ -3202,36 +3202,196 @@ export function selectTopCleanSheets(
 export function selectTopMotm(
   leagueFilter?: LeagueId | "big5",
   limit = 30,
-  competition: "all" | "league" | "cup" | "ucl" = "all",
+  competition: RankingCompetition = "all",
 ): (Player & { motm: number })[] {
   const store = usePlayersStore.getState();
   store.init();
   const out: (Player & { motm: number })[] = [];
   for (const [id, st] of Object.entries(store.stats)) {
-    const m =
-      competition === "cup"
-        ? (st.cupMotm ?? 0)
-        : competition === "ucl"
-          ? (st.uclMotm ?? 0)
-          : competition === "league"
-            ? (st.motm ?? 0) - (st.cupMotm ?? 0) - (st.uclMotm ?? 0)
-            : (st.motm ?? 0);
-    if (m <= 0) continue;
+    const motm = rankingStatValue(st, competition, "motm");
+    if (motm <= 0) continue;
     const p = store.getSimPlayer(id);
-    if (!p) continue;
-    if (leagueFilter) {
-      const team = teamById(p.teamId);
-      if (!team) continue;
-      const playerLeague = team.league;
-      if (leagueFilter === "big5") {
-        if (!BIG5_LEAGUES.includes(playerLeague as LeagueId)) continue;
-      } else if (playerLeague !== leagueFilter) {
-        continue;
-      }
-    }
-    out.push({ ...p, motm: m });
+    if (!p || !rankingPlayerFilter(p, leagueFilter)) continue;
+    out.push({
+      ...p,
+      appearances: rankingStatValue(st, competition, "appearances"),
+      motm,
+    });
   }
   return out.sort((a, b) => b.motm - a.motm).slice(0, limit);
+}
+
+/**
+ * Rebuilds the dedicated European ranking counters from completed fixtures.
+ * This repairs old saves where Europa/Conference were historically stored in
+ * the Champions counters because all three competitions shared the same match
+ * engine.
+ */
+export function rebuildEuropeanRankingStats(save: SaveGame | null): void {
+  if (!save) return;
+  const store = usePlayersStore.getState();
+  store.init();
+  const current = store.stats ?? {};
+  const next: Record<string, PlayerStats> = { ...current };
+  const fixtureSets: Array<{ competition: "ucl" | "uel" | "uecl"; fixtures: any[] }> = [];
+  const seen = new Set<string>();
+  const addFixtures = (competition: "ucl" | "uel" | "uecl", fixtures: any[] | undefined) => {
+    for (const f of fixtures ?? []) {
+      if (!f?.result || seen.has(String(f.id))) continue;
+      seen.add(String(f.id));
+      fixtureSets.push({ competition, fixtures: [f] });
+    }
+  };
+  addFixtures("ucl", save.uclFixtures);
+  addFixtures("ucl", save.ucl?.fixtures as any);
+  addFixtures("uel", save.uelFixtures);
+  addFixtures("uel", save.uel?.fixtures as any);
+  addFixtures("uecl", save.ueclFixtures);
+  addFixtures("uecl", save.uecl?.fixtures as any);
+
+  const europeanFields = [
+    "uclGoals","uclAssists","uclAppearances","uclCleanSheets","uclMotm","uclYellowCards","uclRedCards",
+    "uelGoals","uelAssists","uelAppearances","uelCleanSheets","uelMotm","uelYellowCards","uelRedCards",
+    "ueclGoals","ueclAssists","ueclAppearances","ueclCleanSheets","ueclMotm","ueclYellowCards","ueclRedCards",
+  ] as const;
+  const working: Record<string, any> = {};
+  for (const [id, st] of Object.entries(next)) working[id] = { ...st };
+  for (const id of Object.keys(working)) for (const field of europeanFields) working[id][field] = 0;
+  const bump = (id: string | undefined, field: keyof PlayerStats, amount = 1) => {
+    if (!id) return;
+    if (!working[id]) working[id] = { ...defaultStats() };
+    working[id][field] = Number(working[id][field] ?? 0) + amount;
+  };
+
+  for (const { competition, fixtures } of fixtureSets) {
+    for (const fixture of fixtures) {
+      const r = fixture.result;
+      const prefix = competition;
+      const addGoals = (events: any[]) => {
+        for (const ev of events ?? []) {
+          if (ev.type === "own_goal") continue;
+          bump(ev.scorerId, `${prefix}Goals` as keyof PlayerStats);
+          if (ev.assistId) bump(ev.assistId, `${prefix}Assists` as keyof PlayerStats);
+        }
+      };
+      addGoals(r.events);
+      addGoals(r.extraTime?.events);
+
+      const participants = new Set<string>();
+      for (const p of [...(r.homeLineup ?? []), ...(r.awayLineup ?? []), ...(r.homeStartingLineup ?? []), ...(r.awayStartingLineup ?? [])]) {
+        if (p?.id) participants.add(String(p.id));
+      }
+      for (const sub of [...(r.substitutions ?? []), ...(r.extraTime?.substitutions ?? [])]) if (sub.playerInId) participants.add(String(sub.playerInId));
+      for (const id of participants) bump(id, `${prefix}Appearances` as keyof PlayerStats);
+
+      for (const card of r.cards ?? []) {
+        if (card.cardType === "red") {
+          bump(card.playerId, `${prefix}RedCards` as keyof PlayerStats);
+          if (card.isSecondYellow) bump(card.playerId, `${prefix}YellowCards` as keyof PlayerStats);
+        } else {
+          bump(card.playerId, `${prefix}YellowCards` as keyof PlayerStats);
+        }
+      }
+
+      const homeFinal = r.homeFinalLineup ?? r.homeLineup ?? [];
+      const awayFinal = r.awayFinalLineup ?? r.awayLineup ?? [];
+      if ((r.awayGoals ?? 0) === 0) {
+        const gk = homeFinal.find((p: any) => p?.positions?.includes("GK") || p?.position === "GK" || p?.position === "POR");
+        bump(gk?.id, `${prefix}CleanSheets` as keyof PlayerStats);
+      }
+      if ((r.homeGoals ?? 0) === 0) {
+        const gk = awayFinal.find((p: any) => p?.positions?.includes("GK") || p?.position === "GK" || p?.position === "POR");
+        bump(gk?.id, `${prefix}CleanSheets` as keyof PlayerStats);
+      }
+      if (r.mvp?.playerId) bump(r.mvp.playerId, `${prefix}Motm` as keyof PlayerStats);
+    }
+  }
+
+  // If a legacy save had European stats recorded in the aggregate season
+  // counters, keep those totals intact; only the dedicated competition buckets
+  // are rebuilt here. Champions/UEL/UECL selectors now read these dedicated
+  // counters and therefore never mix competitions.
+  usePlayersStore.setState({ stats: working });
+}
+
+
+/**
+ * Rebuilds the dedicated domestic-cup ranking counters from completed cup fixtures.
+ * This repairs saves created before the competition-specific appearance selector
+ * was applied consistently, and guarantees that PJ shown in Copa Nacional rankings
+ * is the number of cup matches played, never the player's overall season total.
+ */
+export function rebuildCupRankingStats(save: SaveGame | null): void {
+  if (!save) return;
+  const store = usePlayersStore.getState();
+  store.init();
+  const current = store.stats ?? {};
+  const working: Record<string, any> = {};
+  for (const [id, st] of Object.entries(current)) working[id] = { ...st };
+
+  for (const id of Object.keys(working)) {
+    working[id].cupGoals = 0;
+    working[id].cupAssists = 0;
+    working[id].cupAppearances = 0;
+    working[id].cupCleanSheets = 0;
+    working[id].cupMotm = 0;
+  }
+
+  const seen = new Set<string>();
+  const fixtures: any[] = [];
+  for (const [key, value] of Object.entries(save.cupFixtures ?? {})) {
+    if (key.endsWith('_structure') || !Array.isArray(value)) continue;
+    for (const f of value as any[]) {
+      if (!f?.result || seen.has(String(f.id))) continue;
+      seen.add(String(f.id));
+      fixtures.push(f);
+    }
+  }
+
+  const bump = (id: string | undefined, field: keyof PlayerStats, amount = 1) => {
+    if (!id) return;
+    const sid = String(id);
+    if (!working[sid]) working[sid] = { ...defaultStats() };
+    working[sid][field] = Number(working[sid][field] ?? 0) + amount;
+  };
+
+  for (const fixture of fixtures) {
+    const r = fixture.result;
+    const events = [ ...(r.events ?? []), ...(r.extraTime?.events ?? []) ];
+    for (const ev of events) {
+      if (ev.type === 'own_goal') continue;
+      bump(ev.scorerId, 'cupGoals');
+      if (ev.assistId) bump(ev.assistId, 'cupAssists');
+    }
+
+    const participants = new Set<string>();
+    for (const p of [
+      ...(r.homeStartingLineup ?? []),
+      ...(r.awayStartingLineup ?? []),
+      ...(r.homeLineup ?? []),
+      ...(r.awayLineup ?? []),
+    ]) {
+      if (p?.id) participants.add(String(p.id));
+    }
+    for (const sub of [ ...(r.substitutions ?? []), ...(r.extraTime?.substitutions ?? []) ]) {
+      if (sub.playerInId) participants.add(String(sub.playerInId));
+    }
+    for (const id of participants) bump(id, 'cupAppearances');
+
+    const homeFinal = r.homeFinalLineup ?? r.homeLineup ?? r.homeStartingLineup ?? [];
+    const awayFinal = r.awayFinalLineup ?? r.awayLineup ?? r.awayStartingLineup ?? [];
+    if ((r.awayGoals ?? 0) === 0) {
+      const gk = homeFinal.find((p: any) => p?.positions?.includes('GK') || p?.position === 'GK' || p?.position === 'POR');
+      bump(gk?.id, 'cupCleanSheets');
+    }
+    if ((r.homeGoals ?? 0) === 0) {
+      const gk = awayFinal.find((p: any) => p?.positions?.includes('GK') || p?.position === 'GK' || p?.position === 'POR');
+      bump(gk?.id, 'cupCleanSheets');
+    }
+    if (r.mvp?.playerId) bump(r.mvp.playerId, 'cupMotm');
+  }
+
+  usePlayersStore.setState({ stats: working });
 }
 
 export function isPlayerInjuredAtDate(

@@ -1,29 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  LEAGUES_BY_COUNTRY,
-  LEAGUES,
-  getAllTeams,
-  teamsByLeague,
-  overall,
-  LeagueId,
-} from "@/data/teams";
+import { LEAGUES_BY_COUNTRY, LEAGUES, teamsByLeague, overall, LeagueId } from "@/data/teams";
 import { LeagueLogo } from "@/components/LeagueLogo";
-import { CountryFlag } from "@/components/CountryFlag";
 import WorldMap from "./WorldMap";
 import ClubCardPremium from "./ClubCardPremium";
 import RandomPickModal from "./RandomPickModal";
-import { ArrowLeft, ArrowRight, Dice5, Globe2, Trophy, Sparkles } from "lucide-react";
+import { ArrowLeft, Dice5, Globe2, Trophy, Sparkles, ChevronRight } from "lucide-react";
 
 type Step = "intro" | "country" | "league" | "team";
 
 export default function MainMenuWizard({
   onPickTeam,
-  onQuickStart,
   loading,
 }: {
   onPickTeam: (id: string) => void;
-  /** @deprecated kept for backwards compat — no longer used directly */
-  onQuickStart?: () => void;
   loading: boolean;
 }) {
   const [step, setStep] = useState<Step>("intro");
@@ -61,11 +50,6 @@ export default function MainMenuWizard({
   const stepIndex = { intro: 0, country: 1, league: 2, team: 3 }[step];
   const steps = ["Inicio", "País", "Liga", "Equipo"];
 
-  function goNext() {
-    if (step === "intro") setStep("country");
-    else if (step === "country" && country) setStep("league");
-    else if (step === "league" && league) setStep("team");
-  }
   function goBack() {
     if (step === "country") setStep("intro");
     else if (step === "league") setStep("country");
@@ -145,18 +129,10 @@ export default function MainMenuWizard({
               onPickCountry={(c) => {
                 setCountry(c);
                 setLeague(null);
+                setStep("league");
               }}
             />
-            {country && (
-              <div className="mt-8 flex justify-end">
-                <button
-                  onClick={goNext}
-                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-white font-black hover:brightness-125 transition shadow-lg shadow-primary/40"
-                >
-                  Continuar a ligas <ArrowRight className="h-4 w-4" />
-                </button>
-              </div>
-            )}
+
           </div>
         )}
 
@@ -174,8 +150,11 @@ export default function MainMenuWizard({
                 return (
                   <button
                     key={lg.id}
-                    onClick={() => setLeague(lg.id as LeagueId)}
-                    className={`flex items-center gap-3 p-4 rounded-xl border text-left transition ${
+                    onClick={() => {
+                      setLeague(lg.id as LeagueId);
+                      setStep("team");
+                    }}
+                    className={`group flex items-center gap-3 p-4 rounded-xl border text-left transition ${
                       isSel
                         ? "border-primary bg-primary/15 shadow-lg shadow-primary/30"
                         : "border-white/10 bg-white/[0.04] hover:border-white/30"
@@ -186,21 +165,12 @@ export default function MainMenuWizard({
                       <div className="font-bold text-white truncate">{lg.name}</div>
                       <div className="text-xs text-white/50">{lgTeams.length} equipos</div>
                     </div>
-                    {isSel && <span className="text-primary text-xs font-bold">SELECCIONADA</span>}
+                    <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isSel ? "text-primary translate-x-0.5" : "text-white/25 group-hover:translate-x-0.5"}`} />
                   </button>
                 );
               })}
             </div>
-            {league && (
-              <div className="mt-8 flex justify-end">
-                <button
-                  onClick={goNext}
-                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-white font-black hover:brightness-125 transition shadow-lg shadow-primary/40"
-                >
-                  Ver equipos <ArrowRight className="h-4 w-4" />
-                </button>
-              </div>
-            )}
+
           </div>
         )}
 

@@ -21,6 +21,8 @@ import {
   selectTopRedCards,
   selectTopCleanSheets,
   selectTopMotm,
+  rebuildEuropeanRankingStats,
+  rebuildCupRankingStats,
 } from "@/store/playersStore";
 
 /** Miniatura de la carta del jugador, mismo recorte que en el Mercado
@@ -68,7 +70,7 @@ function ScorersPage() {
   const { loading, ready } = usePlayersReady();
   const [save, setSave] = useState<SaveGame | null>(null);
   const [tab, setTab] = useState<Tab>("scorers");
-  const [competition, setCompetition] = useState<"all" | "league" | "cup" | "ucl">("all");
+  const [competition, setCompetition] = useState<"all" | "league" | "cup" | "ucl" | "uel" | "uecl">("all");
   const [league, setLeague] = useState<LeagueId | "all" | "big5">("all");
   const [cupCountry, setCupCountry] = useState<string>("all");
 
@@ -80,15 +82,11 @@ function ScorersPage() {
       navigate({ to: "/" });
       return;
     }
+    rebuildEuropeanRankingStats(s);
+    rebuildCupRankingStats(s);
     setSave(s);
   }, [navigate]);
 
-  useEffect(() => {
-    if (isCardTab) {
-      setCompetition("all");
-      setCupCountry("all");
-    }
-  }, [tab, isCardTab]);
 
   const allCountries = useMemo(() => {
     const all = Object.keys(LEAGUES_BY_COUNTRY);
@@ -121,16 +119,16 @@ function ScorersPage() {
   const yellows = useMemo(
     () =>
       save && ready
-        ? selectTopYellowCards(league !== "all" ? (league as LeagueId | "big5") : undefined, 30)
+        ? selectTopYellowCards((competition === "all" || competition === "league" || competition === "cup") && league !== "all" ? (league as LeagueId | "big5") : undefined, 30, competition)
         : [],
-    [save, ready, league],
+    [save, ready, league, competition],
   );
   const reds = useMemo(
     () =>
       save && ready
-        ? selectTopRedCards(league !== "all" ? (league as LeagueId | "big5") : undefined, 30)
+        ? selectTopRedCards((competition === "all" || competition === "league" || competition === "cup") && league !== "all" ? (league as LeagueId | "big5") : undefined, 30, competition)
         : [],
-    [save, ready, league],
+    [save, ready, league, competition],
   );
 
   const currentTab = TABS.find((t) => t.id === tab)!;
@@ -165,12 +163,12 @@ function ScorersPage() {
 
       {/* Filters row */}
       <div className="flex flex-wrap gap-3">
-        {/* Competition filter — only for scorers/assisters */}
-        {!isCardTab && (
+        {/* Competition filter */}
+        {(
           <Select
             value={competition}
             onValueChange={(v) => {
-              setCompetition(v as "all" | "league" | "cup" | "ucl");
+              setCompetition(v as "all" | "league" | "cup" | "ucl" | "uel" | "uecl");
               setLeague("all");
               setCupCountry("all");
             }}
@@ -183,12 +181,14 @@ function ScorersPage() {
               <SelectItem value="league">Liga</SelectItem>
               <SelectItem value="cup">Copa nacional</SelectItem>
               <SelectItem value="ucl">Champions League</SelectItem>
+              <SelectItem value="uel">Europa League</SelectItem>
+              <SelectItem value="uecl">Conference League</SelectItem>
             </SelectContent>
           </Select>
         )}
 
         {/* League filter — for league competition or card tabs */}
-        {(competition === "league" || isCardTab) && (
+        {(competition === "league" || (isCardTab && (competition === "all" || competition === "league"))) && (
           <Select value={league} onValueChange={(v) => setLeague(v as LeagueId | "all" | "big5")}>
             <SelectTrigger className="w-[210px]">
               <SelectValue placeholder="Todas las ligas" />
@@ -209,7 +209,7 @@ function ScorersPage() {
         )}
 
         {/* Country filter — only for cup competition */}
-        {competition === "cup" && !isCardTab && (
+        {competition === "cup" && (
           <Select value={cupCountry} onValueChange={setCupCountry}>
             <SelectTrigger className="w-[210px]">
               <SelectValue placeholder="Todos los países" />

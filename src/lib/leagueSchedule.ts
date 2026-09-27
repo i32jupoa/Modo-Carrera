@@ -21,6 +21,8 @@ export type ScheduleFixture = {
   homeScore: number | null;
   awayScore: number | null;
   competition: "Liga" | "cup" | "ucl";
+  /** UEFA competition identity when the fixture reuses the UCL schedule engine. */
+  europeanCompetition?: "uel" | "uecl";
   matchday: number;
 };
 

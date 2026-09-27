@@ -22,6 +22,7 @@ import { loadSave, type SaveGame } from "@/lib/store";
 import { UCL_START } from "@/data/ucl";
 import { EUROPEAN_START } from "@/data/europeanCompetitions";
 import { toDateOnly } from "@/lib/transferWindows";
+import { themeForScheduleFixture } from "@/lib/seasonExtras";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -175,6 +176,8 @@ export function MatchDayModal() {
 
   if (!pending || !myTeamId || !live) return null;
 
+  const theme = themeForScheduleFixture(live);
+  const competitionLabel = theme.label;
   const home = teamById(live.homeTeam);
   const away = teamById(live.awayTeam);
   const isHome = live.homeTeam === myTeamId;
@@ -218,15 +221,18 @@ export function MatchDayModal() {
       }}
     >
       <DialogContent
-        className="sm:max-w-lg border-primary/30 bg-gradient-to-b from-card to-background p-0 overflow-hidden gap-0"
+        className={`sm:max-w-lg ${theme.cardBorder} bg-gradient-to-b from-card to-background p-0 overflow-hidden gap-0 shadow-2xl`}
         onPointerDownOutside={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}
       >
-        <div className="h-1.5 w-full bg-gradient-to-r from-primary via-accent to-primary" />
-        <div className="p-6">
-          <DialogHeader className="text-center space-y-1 mb-6">
-            <span className="chip mx-auto text-[0.65rem]">Jornada {live.matchday}</span>
-            <DialogTitle className="text-2xl font-black tracking-tight">
+        <div className={`h-1.5 w-full ${theme.primaryBtn}`} />
+        <div className="relative p-6">
+          <div className={`pointer-events-none absolute inset-x-0 top-0 h-40 ${theme.bgOverlay}`} />
+          <DialogHeader className="relative text-center space-y-2 mb-6">
+            <span className={`mx-auto inline-flex items-center rounded-full border px-3 py-1 text-[0.65rem] font-black uppercase tracking-[0.16em] ${theme.badge}`}>
+              {competitionLabel} · {live.matchday > 0 ? `Jornada ${live.matchday}` : "Partido"}
+            </span>
+            <DialogTitle className={`text-2xl font-black tracking-tight ${theme.accent}`}>
               {played ? "Resultado final" : "Día de partido"}
             </DialogTitle>
             <DialogDescription>
@@ -236,8 +242,8 @@ export function MatchDayModal() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="relative rounded-xl border border-border/80 bg-background/60 p-6 mb-4 overflow-hidden">
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,hsl(var(--primary)/0.12),transparent_70%)] pointer-events-none" />
+          <div className={`relative rounded-xl border ${theme.cardBorder} bg-background/70 p-6 mb-4 overflow-hidden ring-1 ${theme.ring}`}>
+            <div className={`absolute inset-0 pointer-events-none ${theme.bgOverlay}`} />
             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 relative">
               <div className="flex flex-col items-center gap-2 text-center">
                 <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={56} />
@@ -248,7 +254,7 @@ export function MatchDayModal() {
               </div>
               <div className="flex flex-col items-center min-w-[5.5rem]">
                 {played ? (
-                  <div className="scoreline text-4xl font-black text-primary tabular-nums">
+                  <div className={`scoreline text-4xl font-black ${theme.accent} tabular-nums`}>
                     {live.homeScore} - {live.awayScore}
                   </div>
                 ) : (
@@ -301,7 +307,7 @@ export function MatchDayModal() {
             <button
               type="button"
               onClick={handleNavigateToMatch}
-              className="w-full inline-flex items-center justify-center gap-2 py-3.5 rounded-lg bg-primary text-primary-foreground font-bold text-sm hover:brightness-110 transition shadow-[0_0_20px_hsl(var(--primary)/0.4)]"
+              className={`w-full inline-flex items-center justify-center gap-2 py-3.5 rounded-lg ${theme.primaryBtn} font-bold text-sm hover:brightness-110 transition shadow-lg`}
             >
               <Zap className="h-4 w-4" />
               Simular partido

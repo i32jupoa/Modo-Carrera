@@ -145,6 +145,23 @@ function LineupPage() {
   const cupRound = routerState?.cupRound as string | undefined;
   const fixtureId = routerState?.fixtureId as string | undefined;
   const returningFromLineupEdit = routerState?.returningFromLineupEdit === true;
+  const liveFixture = useMemo(() => {
+    if (!save || !fixtureId) return undefined;
+    const leagueFixtures = Object.values(save.fixtures || {}).flatMap((list: any) =>
+      Array.isArray(list) ? list : [],
+    );
+    const cupFixtures = Object.values(save.cupFixtures || {}).flatMap((list: any) =>
+      Array.isArray(list) ? list : [],
+    );
+    const allFixtures = [
+      ...leagueFixtures,
+      ...cupFixtures,
+      ...(Array.isArray((save as any).uclFixtures) ? (save as any).uclFixtures : []),
+      ...(Array.isArray((save as any).uelFixtures) ? (save as any).uelFixtures : []),
+      ...(Array.isArray((save as any).ueclFixtures) ? (save as any).ueclFixtures : []),
+    ];
+    return allFixtures.find((fixture: any) => fixture?.id === fixtureId);
+  }, [save, fixtureId]);
   const europeanCompetition = useMemo(() => {
     if (!save || !fixtureId) return undefined as "uel" | "uecl" | undefined;
     if (Array.isArray((save as any).uelFixtures) && (save as any).uelFixtures.some((f: any) => f.id === fixtureId)) return "uel" as const;
@@ -2560,6 +2577,26 @@ function LineupPage() {
 
                     const stamina = { ...(live.stamina || {}) };
                     const subs = [...(live.subs || [])];
+                    const mySide = liveFixture?.homeId === save?.myTeamId ? "home" : "away";
+                    const opponentSide = mySide === "home" ? "away" : "home";
+                    const opponentSubsDone = Array.isArray((live as any).opponentSubsDone)
+                      ? [...((live as any).opponentSubsDone || [])]
+                      : (Array.isArray(live.result?.substitutions)
+                          ? live.result.substitutions
+                              .filter(
+                                (s: any) =>
+                                  s.team === opponentSide &&
+                                  Number(s.minute ?? 0) <= Number(live.minute ?? 0),
+                              )
+                              .map((s: any) => ({
+                                minute: Number(s.minute) || 0,
+                                team: opponentSide,
+                                inName: s.playerInName ?? s.inName ?? "",
+                                outName: s.playerOutName ?? s.outName ?? "",
+                                playerInId: s.playerInId ?? s.inId,
+                                playerOutId: s.playerOutId ?? s.outId,
+                              }))
+                          : []);
                     const recordedForcedOutIds = new Set(subs.map((s: any) => s.outId));
 
                     for (const assignment of resolvedInjuryAssignments) {
@@ -2603,6 +2640,7 @@ function LineupPage() {
                       subs,
                       subsUsed: live.subsUsed + changes,
                       windowsUsed: live.windowsUsed + (changes > 0 && !free ? 1 : 0),
+                      opponentSubsDone,
                     };
                     livePendingForcedInjurySlotsRef.current = {};
                     setSelectedRedHolePlayerId(null);

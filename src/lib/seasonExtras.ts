@@ -260,11 +260,22 @@ export const THEMES: Record<CentralTheme["id"], CentralTheme> = {
   },
 };
 
-export function themeForFixture(f: Fixture | null | undefined): CentralTheme {
+export type ScheduleThemeFixture = {
+  competition: "Liga" | "cup" | "ucl";
+  europeanCompetition?: "uel" | "uecl";
+};
+
+export function themeForScheduleFixture(
+  f: ScheduleThemeFixture | null | undefined,
+): CentralTheme {
   if (!f) return THEMES.default;
   if (f.europeanCompetition === "uel") return THEMES.uel;
   if (f.europeanCompetition === "uecl") return THEMES.uecl;
   if (f.competition === "ucl") return THEMES.ucl;
   if (f.competition === "cup") return THEMES.cup;
   return THEMES.default;
+}
+
+export function themeForFixture(f: Fixture | null | undefined): CentralTheme {
+  return themeForScheduleFixture(f ? { competition: f.competition === "league" ? "Liga" : f.competition, europeanCompetition: f.europeanCompetition === "ucl" ? undefined : f.europeanCompetition } : null);
 }

@@ -2132,12 +2132,17 @@ export function squadOf(_save: SaveGame, teamId: string): Player[] {
 function applyMatchToStats(
   save: SaveGame,
   fixture: Fixture,
-  options: { skipPerformanceTeamId?: string } = {},
+  options: {
+    skipPerformanceTeamId?: string;
+    skipPlayerPerformanceStats?: boolean;
+    skipInjuryRecord?: boolean;
+  } = {},
 ): SaveGame {
   if (!fixture.result) return save;
 
   const r = fixture.result;
 
+  const statsCompetition = fixture.europeanCompetition ?? fixture.competition;
   const store = usePlayersStore.getState();
 
   // IMPORTANT: existing suspensions must still be active while selecting the
@@ -2190,6 +2195,12 @@ function applyMatchToStats(
   // appearance/minute/rating/MVP/clean-sheet stats until the real chronicle is
   // finished. The engine may have planned different substitutions up front.
   const skipTeamId = options.skipPerformanceTeamId;
+  // Live matches commit player performance (appearances, goals, assists,
+  // ratings, MOTM and clean sheets) from the actual chronicle in match.tsx.
+  // Keep the normal post-match bookkeeping for cards/suspensions/lineups, but
+  // do not run the same performance mutations a second time.
+  const skipPlayerPerformanceStats = options.skipPlayerPerformanceStats === true;
+  const skipInjuryRecord = options.skipInjuryRecord === true;
 
   // Persist the end-of-match physical energy. For live user matches the
   // manager's own exact stamina timeline is written later by match.tsx; here
@@ -2221,35 +2232,37 @@ function applyMatchToStats(
         ...(r.substitutions ?? []).map((sub) => sub.playerInId),
       ];
 
-  for (const playerId of [...new Set(participation)]) {
-    if (skipTeamId && teamForPlayer(playerId) === skipTeamId) continue;
-    store.recordAppearance(
-      playerId,
-      fixture.competition,
-      minuteMap.has(playerId) ? minuteMap.get(playerId) : 90,
-    );
-  }
+  if (!skipPlayerPerformanceStats) {
+    for (const playerId of [...new Set(participation)]) {
+      if (skipTeamId && teamForPlayer(playerId) === skipTeamId) continue;
+      store.recordAppearance(
+        playerId,
+        fixture.competition,
+        minuteMap.has(playerId) ? minuteMap.get(playerId) : 90,
+      );
+    }
 
-  // Process regular time events
+    // Process regular time events
 
-  for (const ev of r.events) {
-    // Own goals must never be credited to the scorer in the stats tables.
-    if (ev.type === "own_goal") continue;
-
-    store.recordGoal(ev.scorerId, fixture.competition);
-
-    if (ev.assistId) store.recordAssist(ev.assistId, fixture.competition);
-  }
-
-  // Process extra time events (goals and assists count for stats)
-
-  if (r.extraTime && r.extraTime.events) {
-    for (const ev of r.extraTime.events) {
+    for (const ev of r.events) {
+      // Own goals must never be credited to the scorer in the stats tables.
       if (ev.type === "own_goal") continue;
 
-      store.recordGoal(ev.scorerId, fixture.competition);
+      store.recordGoal(ev.scorerId, statsCompetition);
 
-      if (ev.assistId) store.recordAssist(ev.assistId, fixture.competition);
+      if (ev.assistId) store.recordAssist(ev.assistId, statsCompetition);
+    }
+
+    // Process extra time events (goals and assists count for stats)
+
+    if (r.extraTime && r.extraTime.events) {
+      for (const ev of r.extraTime.events) {
+        if (ev.type === "own_goal") continue;
+
+        store.recordGoal(ev.scorerId, statsCompetition);
+
+        if (ev.assistId) store.recordAssist(ev.assistId, statsCompetition);
+      }
     }
   }
 
@@ -2257,7 +2270,7 @@ function applyMatchToStats(
 
   for (const card of r.cards) {
     if (card.cardType === "yellow") {
-      store.recordYellowCard(card.playerId);
+      store.recordYellowCard(card.playerId, statsCompetition);
 
       store.incrementAccumulatedYellowCards(card.playerId);
 
@@ -2273,43 +2286,45 @@ function applyMatchToStats(
         );
       }
     } else if (card.cardType === "red") {
-      store.recordRedCard(card.playerId);
+      store.recordRedCard(card.playerId, statsCompetition);
 
       // If it's a second yellow, also count it as a yellow card
 
       if (card.isSecondYellow) {
-        store.recordYellowCard(card.playerId);
+        store.recordYellowCard(card.playerId, statsCompetition);
 
         store.incrementAccumulatedYellowCards(card.playerId);
       }
     }
   }
 
-  for (const inj of r.injuries) {
-    const p = store.getSimPlayer(inj.playerId);
+  if (!skipInjuryRecord) {
+    for (const inj of r.injuries) {
+      const p = store.getSimPlayer(inj.playerId);
 
-    if (!p) continue;
+      if (!p) continue;
 
-    const teamLeague = teamById(p.teamId).league;
+      const teamLeague = teamById(p.teamId).league;
 
-    const durationDays = Math.min(180, inj.durationDays ?? Math.max(7, inj.weeks * 7));
-    const startDate = fixture.date || usePlayersStore.getState().currentDate;
-    const untilDate = addDaysToIso(startDate, durationDays);
+      const durationDays = Math.min(180, inj.durationDays ?? Math.max(7, inj.weeks * 7));
+      const startDate = fixture.date || usePlayersStore.getState().currentDate;
+      const untilDate = addDaysToIso(startDate, durationDays);
 
-    store.recordInjury(
-      inj.playerId,
+      store.recordInjury(
+        inj.playerId,
 
-      updatedSave.currentMatchday[teamLeague] + Math.max(1, inj.weeks),
+        updatedSave.currentMatchday[teamLeague] + Math.max(1, inj.weeks),
 
-      inj.reason,
-      {
-        startDate,
-        untilDate,
-        durationDays,
-        injuryType: inj.injuryType ?? inj.diagnosis,
-        injuryArea: inj.bodyPart,
-      },
-    );
+        inj.reason,
+        {
+          startDate,
+          untilDate,
+          durationDays,
+          injuryType: inj.injuryType ?? inj.diagnosis,
+          injuryArea: inj.bodyPart,
+        },
+      );
+    }
   }
 
   // Auto-update user's lineup if their players got injured or red-carded during the match
@@ -2461,17 +2476,20 @@ function applyMatchToStats(
     }
   }
 
-  // Clean sheets (GK of team that conceded 0)
-  try {
-    const homeGoals = r.homeGoals ?? 0;
+  // Clean sheets / ratings / MOTM are also performance stats. Live matches
+  // already committed them from the actual chronicle, so skip this block there.
+  if (!skipPlayerPerformanceStats) {
+    // Clean sheets (GK of team that conceded 0)
+    try {
+      const homeGoals = r.homeGoals ?? 0;
     const awayGoals = r.awayGoals ?? 0;
     if (awayGoals === 0) {
       const gk = homeXI.find((p) => p.positions.includes("GK"));
-      if (gk && gk.teamId !== skipTeamId) store.recordCleanSheet(gk.id, fixture.competition);
+      if (gk && gk.teamId !== skipTeamId) store.recordCleanSheet(gk.id, statsCompetition);
     }
     if (homeGoals === 0) {
       const gk = awayXI.find((p) => p.positions.includes("GK"));
-      if (gk && gk.teamId !== skipTeamId) store.recordCleanSheet(gk.id, fixture.competition);
+      if (gk && gk.teamId !== skipTeamId) store.recordCleanSheet(gk.id, statsCompetition);
     }
     // MOTM: top scorer of the match (or a random starter of winner if 0-0)
     const scorerCounts: Record<string, number> = {};
@@ -2519,10 +2537,11 @@ function applyMatchToStats(
             ? fixture.awayId
             : null;
       if (!skipTeamId || motmTeamId !== skipTeamId) {
-        store.recordMotm(motmId, fixture.competition);
+        store.recordMotm(motmId, statsCompetition);
       }
     }
-  } catch {}
+    } catch {}
+  }
 
   return updatedSave;
 }
@@ -4148,11 +4167,14 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
 
     if (competition === "league") {
       next.standings[next.myLeague] = applyResult(next.standings[next.myLeague], officialFixture);
-      next = applyMatchToStats(next, officialFixture);
+      next = applyMatchToStats(next, officialFixture, {
+        skipPlayerPerformanceStats: true,
+        skipInjuryRecord: true,
+      });
     } else if (competition === "cup") {
-      next = applyMatchToStats(next, officialFixture);
+      next = applyMatchToStats(next, officialFixture, { skipPlayerPerformanceStats: true, skipInjuryRecord: true });
     } else if (competition === "european" && europeanCompetition) {
-      next = applyMatchToStats(next, officialFixture);
+      next = applyMatchToStats(next, officialFixture, { skipPlayerPerformanceStats: true, skipInjuryRecord: true });
       next = runEuropeanEngine(next, europeanCompetition, (engine) => {
         if (officialFixture.result && engine.ucl && isUCLLeaguePhaseFixture(officialFixture.round)) {
           engine.ucl.table = applyUCLTableResult(
@@ -4166,7 +4188,7 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
         return applyUCLMatchAftermath(engine, officialFixture.homeId, officialFixture.awayId);
       });
     } else {
-      next = applyMatchToStats(next, officialFixture);
+      next = applyMatchToStats(next, officialFixture, { skipPlayerPerformanceStats: true, skipInjuryRecord: true });
       if (officialFixture.result && next.ucl && isUCLLeaguePhaseFixture(officialFixture.round)) {
         next.ucl.table = applyUCLTableResult(
           next.ucl.table,
@@ -4994,7 +5016,7 @@ function recordFakeMatchStats(
   awayPlayers: Player[],
   result: SimResult,
   currentMatchday: number,
-  competition: "league" | "cup" | "ucl" = "league",
+  competition: "league" | "cup" | "ucl" | "uel" | "uecl" = "league",
   matchDate?: string,
 ) {
   // Fast-simulated matches already contain the same authoritative events as
@@ -7548,12 +7570,21 @@ function applyEuropeanFastResult(
   simmed: Fixture,
   homeXI: Player[],
   awayXI: Player[],
+  fixtureKeyOverride?: EuropeanFixtureKey | "uclFixtures",
 ): SaveGame {
   let next = save;
-  const idx = next.uclFixtures?.findIndex((x) => x.id === simmed.id) ?? -1;
+  const europeanCompetition = simmed.europeanCompetition ?? "ucl";
+  // Europa League / Conference reuse the UCL engine through runEuropeanEngine().
+  // During that temporary engine pass their fixtures live in `uclFixtures`,
+  // even though their statistics and disciplinary state must keep their real
+  // competition identity.  Allow the caller to override only the storage key.
+  const fixtureKey = fixtureKeyOverride ?? (
+    europeanCompetition === "uel" ? "uelFixtures" : europeanCompetition === "uecl" ? "ueclFixtures" : "uclFixtures"
+  );
+  const idx = (next as any)[fixtureKey]?.findIndex((x: Fixture) => x.id === simmed.id) ?? -1;
   if (idx < 0 || !simmed.result) return next;
 
-  next.uclFixtures![idx] = simmed;
+  (next as any)[fixtureKey][idx] = simmed;
   const store = usePlayersStore.getState();
 
   // Batch-friendly stat recording: unlike applyMatchToStats, this does not
@@ -7564,25 +7595,34 @@ function applyEuropeanFastResult(
     awayXI,
     simmed.result,
     simmed.matchday,
-    "ucl",
+    europeanCompetition,
     simmed.date,
   );
 
   next.currentMatchday = { ...next.currentMatchday };
-  next = consumeSuspensionsForFixture(next, [simmed.homeId, simmed.awayId], "ucl");
+  next = consumeSuspensionsForFixture(
+    next,
+    [simmed.homeId, simmed.awayId],
+    europeanCompetition,
+  );
   if (simmed.result.cards?.length) {
     next = processRedCards(
       next,
       simmed.result.cards,
       simmed.homeId,
       simmed.awayId,
-      "ucl",
+      europeanCompetition,
     );
     for (const card of simmed.result.cards) {
       if (card.cardType !== "yellow") continue;
       const p = store.getSimPlayer(card.playerId);
       if (p) {
-        next = processAccumulatedYellowSuspension(next, card.playerId, p.teamId, "ucl");
+        next = processAccumulatedYellowSuspension(
+          next,
+          card.playerId,
+          p.teamId,
+          europeanCompetition,
+        );
       }
     }
   }
@@ -7641,6 +7681,7 @@ export function simulateUserPhaseUCLDay(
   save: SaveGame,
   dayOffset: number,
   userTeamId: string,
+  fixtureKeyOverride?: EuropeanFixtureKey | "uclFixtures",
 ): SaveGame {
   const dayFixtures = (save.uclFixtures ?? []).filter((f) => f.matchday === dayOffset && !f.result);
   const aiFixtures = dayFixtures.filter(
@@ -7663,7 +7704,13 @@ export function simulateUserPhaseUCLDay(
 
     for (const f of aiFixtures) {
       const sim = simulateEuropeanFixtureFast(next, f);
-      next = applyEuropeanFastResult(next, sim.fixture, sim.homeXI, sim.awayXI);
+      next = applyEuropeanFastResult(
+        next,
+        sim.fixture,
+        sim.homeXI,
+        sim.awayXI,
+        fixtureKeyOverride,
+      );
     }
 
     return next;
@@ -8019,18 +8066,85 @@ export function simulateEuropeanKnockoutMatchday(save: SaveGame, comp: EuropeanS
 }
 
 export function simulateEuropeanUserPhaseDay(save: SaveGame, comp: EuropeanStateKey, dayOffset: number, userTeamId: string): SaveGame {
-  return runEuropeanEngine(save, comp, (engine) => simulateUserPhaseUCLDay(engine, dayOffset - 1, userTeamId));
+  return runEuropeanEngine(
+    save,
+    comp,
+    (engine) => simulateUserPhaseUCLDay(engine, dayOffset - 1, userTeamId, "uclFixtures"),
+  );
 }
 
-export function simulatePendingEuropeanThroughDay(save: SaveGame, comp: EuropeanStateKey, throughOffset: number, userTeamId: string): SaveGame {
+function simulateAllEuropeanAIThroughDay(
+  save: SaveGame,
+  throughOffset: number,
+  userTeamId: string,
+): SaveGame {
+  const pendingMatchdays = new Set(
+    (save.uclFixtures ?? [])
+      .filter(
+        (f) =>
+          !f.result &&
+          typeof f.matchday === "number" &&
+          f.matchday <= throughOffset,
+      )
+      .map((f) => f.matchday),
+  );
+
+  if (pendingMatchdays.size === 0) return save;
+
+  return withPlayerStatsBatch(() => {
+    let next = createFastMutationSnapshot(save);
+    next.uclFixtures = [...(save.uclFixtures ?? [])];
+
+    const ordered = [...pendingMatchdays].sort((a, b) => a - b);
+    for (const md of ordered) {
+      const dayFixtures = next.uclFixtures.filter(
+        (f) => f.matchday === md && !f.result,
+      );
+      const aiFixtures = dayFixtures.filter(
+        (f) =>
+          f.homeId !== userTeamId &&
+          f.awayId !== userTeamId &&
+          isRealTeamId(f.homeId) &&
+          isRealTeamId(f.awayId),
+      );
+
+      for (const f of aiFixtures) {
+        const sim = simulateEuropeanFixtureFast(next, f);
+        next = applyEuropeanFastResult(
+          next,
+          sim.fixture,
+          sim.homeXI,
+          sim.awayXI,
+          "uclFixtures",
+        );
+      }
+    }
+
+    return next;
+  });
+}
+
+export function simulatePendingEuropeanThroughDay(
+  save: SaveGame,
+  comp: EuropeanStateKey,
+  throughOffset: number,
+  userTeamId: string,
+): SaveGame {
   const key = europeanFixtureKey(comp);
-  const fixtures = Array.isArray((save as any)[key]) ? ((save as any)[key] as Fixture[]) : [];
+  const fixtures = Array.isArray((save as any)[key])
+    ? ((save as any)[key] as Fixture[])
+    : [];
   const engineOffset = throughOffset - 1;
-  const hasPending = fixtures.some((f) => !f.result && f.matchday <= engineOffset);
+  const hasPending = fixtures.some(
+    (f) =>
+      !f.result &&
+      typeof f.matchday === "number" &&
+      f.matchday <= throughOffset,
+  );
   if (!hasPending) return save;
 
   return runEuropeanEngine(save, comp, (engine) =>
-    simulatePendingUCLThroughDay(engine, engineOffset, userTeamId),
+    simulateAllEuropeanAIThroughDay(engine, engineOffset, userTeamId),
   );
 }
 

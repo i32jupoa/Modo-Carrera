@@ -263,10 +263,6 @@ function MatchPage() {
   const momentumHistoryRef = useRef<Array<{ minute: number; value: number }>>([]);
   const [liveMoment, setLiveMoment] = useState<LiveMoment | null>(null);
   const momentTimerRef = useRef<number | null>(null);
-  // Timer used when temporarily resuming the live match after lineup edits.
-  // It must exist even when no resume timer is scheduled because React Strict
-  // Mode runs effect cleanups during the initial development mount.
-  const transientResumeTimerRef = useRef<number | null>(null);
   const [managerEffects, setManagerEffects] = useState<LiveManagerEffects>(DEFAULT_MANAGER_EFFECTS);
   const managerEffectsRef = useRef<LiveManagerEffects>({ ...DEFAULT_MANAGER_EFFECTS });
   const [commentaryEntries, setCommentaryEntries] = useState<CommentaryEntry[]>([]);
@@ -482,9 +478,28 @@ function MatchPage() {
           : restoredResult.highlights.filter(
               (h: any) => Number(h?.minute ?? 0) <= Number(st.minute ?? 0),
             );
-      oppSubsDoneRef.current = safeOpponentSubsDone;
-
       const m = Math.max(0, Number(st.minute) || 0);
+      const resumeMySideForSubs = fx.homeId === s.myTeamId ? "home" : "away";
+      const resumeOpponentSideForSubs = resumeMySideForSubs === "home" ? "away" : "home";
+      const restoredOpponentSubsDone =
+        safeOpponentSubsDone.length > 0
+          ? safeOpponentSubsDone
+          : normalizeLiveArray(restoredResult.substitutions)
+              .filter(
+                (sb: any) =>
+                  sb.team === resumeOpponentSideForSubs &&
+                  Number(sb.minute ?? 0) <= m,
+              )
+              .map((sb: any) => ({
+                minute: Number(sb.minute) || 0,
+                team: resumeOpponentSideForSubs,
+                inName: sb.playerInName ?? sb.inName ?? "",
+                outName: sb.playerOutName ?? sb.outName ?? "",
+                playerInId: sb.playerInId ?? sb.inId,
+                playerOutId: sb.playerOutId ?? sb.outId,
+              }));
+      oppSubsDoneRef.current = restoredOpponentSubsDone;
+
       setFeed(
         allEventsRef.current.filter((e: any) => Number(e?.minute ?? 0) <= m).slice().reverse(),
       );
@@ -560,17 +575,26 @@ function MatchPage() {
       setSubsMade(safeSubs);
 
       const mySide = fx.homeId === s.myTeamId ? "home" : "away";
+      const restoredMySubs = safeSubs.map((sb: any) => ({
+        minute: Number(sb?.minute) || 0,
+        team: mySide,
+        inName: sb?.inName ?? sb?.playerInName ?? "",
+        outName: sb?.outName ?? sb?.playerOutName ?? "",
+        playerInId: sb?.inId ?? sb?.playerInId,
+        playerOutId: sb?.outId ?? sb?.playerOutId,
+      }));
+      const opponentSide = mySide === "home" ? "away" : "home";
+      const restoredOpponentSubs = restoredOpponentSubsDone.map((sb: any) => ({
+        minute: Number(sb?.minute) || 0,
+        team: opponentSide,
+        inName: sb?.inName ?? sb?.playerInName ?? "",
+        outName: sb?.outName ?? sb?.playerOutName ?? "",
+        playerInId: sb?.inId ?? sb?.playerInId,
+        playerOutId: sb?.outId ?? sb?.playerOutId,
+      }));
       setSubFeed(
-        safeSubs
-          .map((sb: any) => ({
-            minute: Number(sb?.minute) || 0,
-            team: mySide,
-            inName: sb?.inName ?? sb?.playerInName ?? "",
-            outName: sb?.outName ?? sb?.playerOutName ?? "",
-            playerInId: sb?.inId ?? sb?.playerInId,
-            playerOutId: sb?.outId ?? sb?.playerOutId,
-          }))
-          .reverse(),
+        [...restoredMySubs, ...restoredOpponentSubs]
+          .sort((a: any, b: any) => Number(b.minute ?? 0) - Number(a.minute ?? 0)),
       );
 
       handledInjuriesRef.current = safeHandledInjuries;
@@ -697,8 +721,15 @@ function MatchPage() {
     setResumeClockPending(false);
 
     if (pausedRef.current) return;
-    if (pending.isExtraTime) runExtraTimeClock(pending.minute);
-    else runClock(pending.minute);
+
+    // Defer one macrotask so the restored fixture/team bindings are committed
+    // before the existing clock engine starts. Reuse the normal clock timeout
+    // ref instead of introducing a second timer lifecycle.
+    clockTimeoutRef.current = window.setTimeout(() => {
+      if (pausedRef.current || !resumeLive) return;
+      if (pending.isExtraTime) runExtraTimeClock(pending.minute);
+      else runClock(pending.minute);
+    }, 0);
   }, [resumeLive, resumeClockPending, save]);
 
   // Show injury/red card notifications when match ends
@@ -2826,6 +2857,7 @@ function MatchPage() {
     if (finalPerformanceRecordedRef.current) return null;
     const fx = fixtureRef.current;
     if (!fx) return null;
+    const statsCompetition = fx.europeanCompetition ?? fx.competition;
 
     const performance = buildActualLivePerformance(result);
     if (!performance) return null;
@@ -2836,7 +2868,7 @@ function MatchPage() {
     // Every player who actually appeared gets one appearance, regardless of
     // whether he started or entered from the bench. Do this for BOTH teams.
     for (const p of participants) {
-      store.recordAppearance(p.id, fx.competition, performance.minutesPlayed[p.id] ?? 1);
+      store.recordAppearance(p.id, statsCompetition, performance.minutesPlayed[p.id] ?? 1);
     }
 
     // Persist match ratings for every player who actually appeared, including
@@ -2853,18 +2885,18 @@ function MatchPage() {
     if (finalAwayGoals === 0) {
       const gk = performance.homeFinalXI.find((p: any) => p.positions?.includes("GK"));
       if (gk && performance.minutesPlayed[gk.id] > 0) {
-        store.recordCleanSheet(gk.id, fx.competition);
+        store.recordCleanSheet(gk.id, statsCompetition);
       }
     }
     if (finalHomeGoals === 0) {
       const gk = performance.awayFinalXI.find((p: any) => p.positions?.includes("GK"));
       if (gk && performance.minutesPlayed[gk.id] > 0) {
-        store.recordCleanSheet(gk.id, fx.competition);
+        store.recordCleanSheet(gk.id, statsCompetition);
       }
     }
 
     if (performance.mvp) {
-      store.recordMotm(performance.mvp.playerId, fx.competition);
+      store.recordMotm(performance.mvp.playerId, statsCompetition);
     }
 
     // Match energy is physical state, independent from form. Persist the
@@ -2929,6 +2961,7 @@ function MatchPage() {
     const fx = fixtureRef.current;
     if (!fx?.result) return;
     const comp = fx.competition;
+    const statsCompetition = fx.europeanCompetition ?? fx.competition;
     const store = usePlayersStore.getState();
 
     // The live match is provisional until it ends, so its goals/assists must
@@ -2950,8 +2983,8 @@ function MatchPage() {
       );
 
       for (const ev of scoringEvents) {
-        store.recordGoal(ev.scorerId, comp);
-        if (ev.assistId) store.recordAssist(ev.assistId, comp);
+        store.recordGoal(ev.scorerId, statsCompetition);
+        if (ev.assistId) store.recordAssist(ev.assistId, statsCompetition);
       }
 
       playerScoringStatsRecordedRef.current = true;
@@ -3067,6 +3100,74 @@ function MatchPage() {
       });
     }
     oppPlanRef.current = plan;
+  }
+
+  function applyOpponentForcedInjurySubsAt(m: number) {
+    const fx = fixtureRef.current;
+    if (!fx?.result) return;
+    const myId = myTeamIdRef.current || save?.myTeamId;
+    const oppSide = fx.homeId === myId ? "away" : "home";
+    const alreadyDone = new Set(
+      oppSubsDoneRef.current.map(
+        (s: any) => `${s.minute}|${s.outId ?? s.playerOutId}|${s.inId ?? s.playerInId}`,
+      ),
+    );
+    const injuries = (fx.result.injuries || []).filter(
+      (injury: any) =>
+        injury?.team === oppSide &&
+        Number(injury?.minute ?? -1) === m &&
+        injury?.forcedSub &&
+        injury?.replacementId,
+    );
+    if (injuries.length === 0) return;
+
+    const xi = [...oppXIRef.current];
+    let bench = [...oppBenchRef.current];
+    const made: any[] = [];
+
+    for (const injury of injuries) {
+      const replacementId = String(injury.replacementId);
+      const key = `${m}|${injury.playerId}|${replacementId}`;
+      if (alreadyDone.has(key)) continue;
+
+      const outIndex = xi.findIndex((p: any) => p?.id === injury.playerId);
+      if (outIndex < 0) continue;
+
+      const incoming =
+        bench.find((p: any) => p?.id === replacementId) ??
+        bench.find((p: any) => p && !isGkPlayer(p));
+      if (!incoming) continue;
+
+      const outgoing = xi[outIndex];
+      xi[outIndex] = incoming;
+      bench = bench.filter((p: any) => p?.id !== incoming.id);
+
+      // A forced replacement owns that bench player. Prevent a legacy/future
+      // tactical plan from trying to use the same player or the injured player.
+      oppPlanRef.current = oppPlanRef.current.filter(
+        (plan) =>
+          !(
+            plan.minute > m &&
+            (plan.inId === incoming.id || plan.outId === injury.playerId)
+          ),
+      );
+
+      made.push({
+        minute: m,
+        team: oppSide,
+        inName: incoming.name,
+        outName: outgoing?.name ?? injury.playerName,
+        playerInId: incoming.id,
+        playerOutId: outgoing?.id ?? injury.playerId,
+        forcedInjury: true,
+      });
+    }
+
+    if (made.length === 0) return;
+    oppXIRef.current = xi;
+    oppBenchRef.current = bench;
+    oppSubsDoneRef.current = [...oppSubsDoneRef.current, ...made];
+    setSubFeed((prev) => [...made.slice().reverse(), ...prev]);
   }
 
   function applyOpponentSubsAt(m: number) {
@@ -3402,6 +3503,10 @@ function MatchPage() {
     // naturally: 29' injury, then 29' change.
     if (wasOpponentInjury && deferredOpponentSubMinutesRef.current.has(currentMinute)) {
       deferredOpponentSubMinutesRef.current.delete(currentMinute);
+      // The injury itself is authoritative for an emergency replacement.
+      // Do it before ordinary tactical changes so a minute-8 injury can never
+      // leave the rival playing a man down or wait for a later planned change.
+      applyOpponentForcedInjurySubsAt(currentMinute);
       applyOpponentSubsAt(currentMinute);
       const deferredForced = (allHighlightsRef.current || []).filter(
         (h: any) =>
@@ -5349,6 +5454,9 @@ function MatchPage() {
         .filter((h) => !(opponentInjuryAtMinute && h.type === "forced_sub"));
       playedHighlightsRef.current = uniq([...playedHighlightsRef.current, ...hls], highlightKey);
       if (includeOpponentSubs) {
+        if (opponentInjuryAtMinute) {
+          applyOpponentForcedInjurySubsAt(m);
+        }
         applyOpponentSubsAt(m);
       }
     }
@@ -5571,8 +5679,6 @@ function MatchPage() {
         window.clearTimeout(clockTimeoutRef.current);
       }
       if (momentTimerRef.current !== null) window.clearTimeout(momentTimerRef.current);
-      if (transientResumeTimerRef.current !== null)
-        window.clearTimeout(transientResumeTimerRef.current);
     };
   }, []);
 

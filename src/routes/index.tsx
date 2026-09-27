@@ -124,14 +124,6 @@ function Index() {
     }
   }
 
-  function quickStart() {
-    const top = getAllTeams()
-      .filter((t) => (t.att + t.mid + t.def) / 3 >= 80)
-      .sort(() => Math.random() - 0.5);
-    const pick = top[0] || getAllTeams()[Math.floor(Math.random() * getAllTeams().length)];
-    if (pick) pickTeam(pick.id);
-  }
-
   function continueGame(save: any, id?: string) {
     // Activar la partida cargada como la actual (para que saveSave la mantenga)
     if (id) {
@@ -214,7 +206,6 @@ function Index() {
               setSelectedClub(id);
               setModalOpen(true);
             }}
-            onQuickStart={quickStart}
             loading={loading}
           />
         </div>
