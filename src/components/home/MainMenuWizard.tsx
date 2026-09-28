@@ -26,9 +26,10 @@ export default function MainMenuWizard({
       const raw = localStorage.getItem("dynasty:wizard");
       if (raw) {
         const v = JSON.parse(raw);
-        if (v.country) setCountry(v.country);
-        if (v.league) setLeague(v.league);
-        if (v.step) setStep(v.step);
+        const validSteps: Step[] = ["intro", "country", "league", "team"];
+        if (typeof v.country === "string" && LEAGUES_BY_COUNTRY[v.country]) setCountry(v.country);
+        if (typeof v.league === "string" && LEAGUES[v.league as LeagueId]) setLeague(v.league as LeagueId);
+        if (validSteps.includes(v.step)) setStep(v.step);
       }
     } catch {}
   }, []);

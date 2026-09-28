@@ -1,5 +1,5 @@
 import React from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,7 +40,12 @@ export default function SavedGamesModal({
 
   React.useEffect(() => {
     if (open) {
-      setSaves(loadAllSaves());
+      try {
+        setSaves(loadAllSaves());
+      } catch (error) {
+        console.error("No se pudieron leer las partidas guardadas:", error);
+        setSaves([]);
+      }
     }
   }, [open]);
 
@@ -85,16 +90,18 @@ export default function SavedGamesModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl w-full p-0 overflow-hidden border-white/10 bg-gradient-to-br from-slate-950 via-black to-slate-950">
         <div className="p-6 md:p-8">
-          <div className="flex items-center gap-3 mb-1">
-            <Trophy className="h-6 w-6 text-amber-400" />
-            <div className="text-[11px] font-bold uppercase tracking-[0.3em] text-amber-300">
-              Partidas guardadas
+          <DialogHeader className="mb-5 text-left">
+            <div className="flex items-center gap-3">
+              <Trophy className="h-6 w-6 text-amber-400" />
+              <div className="text-[11px] font-bold uppercase tracking-[0.3em] text-amber-300">
+                Partidas guardadas
+              </div>
             </div>
-          </div>
-          <h2 className="text-2xl md:text-3xl font-black text-white mb-2">Tus carreras</h2>
-          <p className="text-sm text-white/55 mb-6">
-            Selecciona una partida para continuar o elimina las que ya no necesites.
-          </p>
+            <DialogTitle className="mt-2 text-2xl font-black text-white md:text-3xl">Tus carreras</DialogTitle>
+            <DialogDescription className="text-sm text-white/55">
+              Selecciona una partida para continuar o elimina las que ya no necesites.
+            </DialogDescription>
+          </DialogHeader>
 
           {saves.length === 0 ? (
             <div className="rounded-xl p-8 border border-white/10 bg-white/[0.03] text-center">

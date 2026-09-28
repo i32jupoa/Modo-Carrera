@@ -47,23 +47,57 @@ function effectivePlayerRating(player: Player): number {
 
 // Weighted scorer pick considering position and OVR for fast simulation
 function penaltyTakerScore(player: Player): number {
-  const stats = getPlayerShootingStats(player.id);
+  const stats = getPlayerShootingStats(player.id, player.attributes);
   const penalties = Number((player as any).penaltyRating ?? (player as any).penalties ?? stats.penalties ?? 0);
   return (penalties * 0.45) + (stats.finishing * 0.22) +
     (stats.shooting * 0.13) + (stats.composure * 0.10) +
     (stats.shotPower * 0.05) + (stats.volleys * 0.03) + (stats.longShots * 0.02);
 }
 
+function scorerGoalThreat(player: Player): number {
+  const stats = getPlayerShootingStats(player.id, player.attributes);
+  const finishing = Number(stats.finishing) || 0;
+  const shooting = Number(stats.shooting) || 0;
+  const positioning = Number((player as any).positioning ?? (player as any).Positioning ?? 0);
+  const composure = Number(stats.composure) || 0;
+  const shotPower = Number(stats.shotPower) || 0;
+
+  // The scorer model is deliberately driven by attributes that explain why a
+  // good finisher scores more often: finishing, positioning, shooting,
+  // composure and power. This prevents a merely high-OVR midfielder from
+  // taking roughly as many goals as an elite centre-forward.
+  return (
+    finishing * 0.34 +
+    positioning * 0.24 +
+    shooting * 0.18 +
+    composure * 0.14 +
+    shotPower * 0.10
+  );
+}
+
+function scorerPositionFactor(player: Player): number {
+  const positions = player.positions ?? [];
+  // Central strikers are the primary goal outlet. Wingers and attacking
+  // midfielders still score regularly, but less often than a true 9.
+  if (positions.includes("DC")) return 8.5;
+  if (positions.some((p) => ["ED", "EI"].includes(p))) return 5.2;
+  if (positions.includes("MCO")) return 4.4;
+  if (positions.some((p) => ["MC", "MD", "MI", "MCD"].includes(p))) return 1.8;
+  return 0.45;
+}
+
 function fastPickScorerWeighted(xi: Player[]): Player | undefined {
   const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   if (candidates.length === 0) return xi[0];
 
-  // Weight = position factor * effective rating. Physical energy is the only
-  // dynamic player condition used by the match engine; form is deliberately ignored.
+  // Weight the probability of being the scorer using both role and actual
+  // finishing quality. Physical energy still matters, but it is not enough for
+  // a non-attacking player to compete with an elite striker for goals.
   const weights = candidates.map((p) => {
-    const posFactor = isAttacking(p.positions) ? 5 : isMidfield(p.positions) ? 2 : 0.5;
-    const ratingFactor = effectivePlayerRating(p) / 70;
-    return posFactor * ratingFactor;
+    const goalThreat = scorerGoalThreat(p);
+    const threatFactor = 0.55 + (goalThreat / 100) * 0.90;
+    const ratingFactor = Math.max(0.55, effectivePlayerRating(p) / 88);
+    return scorerPositionFactor(p) * threatFactor * Math.pow(ratingFactor, 1.35);
   });
 
   const total = weights.reduce((a, b) => a + b, 0);
@@ -358,10 +392,12 @@ export type SimResult = {
 
 function pickScorer(xi: Player[]): Player {
   const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
+  if (candidates.length === 0) return xi[0];
   const weights = candidates.map((p) => {
-    const posBonus = isAttacking(p.positions) ? 5 : isMidfield(p.positions) ? 1.6 : 0.4;
-    const ratingFactor = effectivePlayerRating(p) / 70;
-    return Math.pow(ratingFactor, 2) * posBonus;
+    const goalThreat = scorerGoalThreat(p);
+    const threatFactor = 0.55 + (goalThreat / 100) * 0.90;
+    const ratingFactor = Math.max(0.55, effectivePlayerRating(p) / 88);
+    return scorerPositionFactor(p) * threatFactor * Math.pow(ratingFactor, 1.45);
   });
   return weightedPick(candidates, weights);
 }
@@ -1019,6 +1055,17 @@ const buildWoodworkDetail = (player: Player) => {
 
 // Ultra-fast simulation for bulk matchdays (no detailed events, just results)
 // NOTE: Stats recording is handled by applyMatchToStats after the simulation
+
+const LEAGUE_TEAM_COUNT_CACHE = new Map<string, number>();
+
+function cachedLeagueTeamCount(leagueId: string): number {
+  const cached = LEAGUE_TEAM_COUNT_CACHE.get(leagueId);
+  if (cached !== undefined) return cached;
+  const count = teamsByLeague(leagueId).length;
+  LEAGUE_TEAM_COUNT_CACHE.set(leagueId, count);
+  return count;
+}
+
 export function simulateMatchFast(
   home: Team,
   away: Team,
@@ -1092,8 +1139,8 @@ export function simulateMatchFast(
   // Previously this path returned `injuries: []`, so those leagues could never
   // produce a player injury even though the detailed simulation could.
   const injuries: InjuryEvent[] = [];
-  const homeLeagueTeamCount = teamsByLeague(home.league).length;
-  const awayLeagueTeamCount = teamsByLeague(away.league).length;
+  const homeLeagueTeamCount = cachedLeagueTeamCount(home.league);
+  const awayLeagueTeamCount = cachedLeagueTeamCount(away.league);
   const homeInjury = maybeInjury(
     homeXI,
     "home",
@@ -1779,8 +1826,8 @@ export function simulateMatch(
 
   // Injuries are generated before goals/highlights so an injured player is
   // immediately removed from the pool of eligible match actions.
-  const homeLeagueTeamCount = teamsByLeague(home.league).length;
-  const awayLeagueTeamCount = teamsByLeague(away.league).length;
+  const homeLeagueTeamCount = cachedLeagueTeamCount(home.league);
+  const awayLeagueTeamCount = cachedLeagueTeamCount(away.league);
   const homeInj = maybeInjury(
     homeXI,
     "home",
@@ -1956,7 +2003,7 @@ export function simulateMatch(
   }
 
   const penaltyRating = (player: Player): number => {
-    const stats = getPlayerShootingStats(player.id);
+    const stats = getPlayerShootingStats(player.id, player.attributes);
     const direct = Number((player as any).penaltyRating ?? (player as any).penalties ?? 0);
     const penalties = direct || stats.penalties;
     // La elección del lanzador no depende solo de "Penalties": también

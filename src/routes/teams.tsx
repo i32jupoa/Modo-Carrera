@@ -38,6 +38,7 @@ import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace
 import { formatPositionLabel } from "@/lib/positions";
 import { TypicalElevenPitch } from "@/components/TypicalElevenPitch";
 import { getPlayerForm } from "@/lib/playerForm";
+import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
 import { Search, X, Trophy, CalendarDays, ArrowUp, ArrowDown, Minus } from "lucide-react";
 
 // Helper to get league name from league ID
@@ -83,6 +84,7 @@ function TeamsPage() {
   const [selectedLeague, setSelectedLeague] = useState<LeagueId>("laliga");
   const [openCountry, setOpenCountry] = useState<string | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<PanelTab>("squad");
   const teamsSectionRef = useRef<HTMLDivElement>(null);
@@ -141,6 +143,18 @@ function TeamsPage() {
 
   const q = norm(query.trim());
 
+  const currentDate = usePlayersStore((s: any) => s.currentDate);
+  const playerStats = usePlayersStore((s: any) => s.stats);
+
+  const rawPlayers = useMemo(() => {
+    try {
+      return usePlayersStore.getState().getRawPlayers?.() ?? [];
+    } catch (error) {
+      console.error("No se pudo preparar la búsqueda de jugadores; usando resultados vacíos.", error);
+      return [];
+    }
+  }, [playerStats, currentDate]);
+
   const teamResults = useMemo(() => {
     if (q.length < 2) return [];
     return getAllTeams()
@@ -152,7 +166,6 @@ function TeamsPage() {
       .slice(0, 8);
   }, [q]);
 
-  const rawPlayers = usePlayersStore((s: any) => s.getRawPlayers?.() ?? []);
   const playerResults = useMemo(() => {
     if (q.length < 3) return [];
     return (rawPlayers as FcPlayer[])
@@ -165,8 +178,8 @@ function TeamsPage() {
 
   const clubOverrides = usePlayersStore((s: any) => s.clubOverrides);
   const myTeamId = usePlayersStore((s: any) => s.myTeamId);
-  const currentDate = usePlayersStore((s: any) => s.currentDate);
   const myRosterIds = usePlayersStore((s: any) => s.rosterIds);
+  const getFcSquadByTeamId = usePlayersStore((s: any) => s.getFcSquadByTeamId);
   // `clubOverrides` y `rosterIds` DEBEN estar en las dependencias: son los que
   // cambian al cerrar una venta o una cesión. Sin ellos el `useMemo` devolvía
   // la plantilla cacheada y el jugador seguía apareciendo en la ficha del
@@ -174,18 +187,18 @@ function TeamsPage() {
   const teamSquad = useMemo(() => {
     if (!selectedTeam) return [];
     try {
-      // Para tu propio club manda siempre el roster real de la partida.
-      if (myTeamId && selectedTeam.id === myTeamId && myRosterIds?.length) {
-        return syncSquadFromRoster(myRosterIds);
-      }
-      return squadForTeam(selectedTeam.id);
+      return getFcSquadByTeamId(selectedTeam.id) ?? [];
     } catch (error) {
       console.error("No se pudo cargar la plantilla del equipo; usando una plantilla vacía.", error);
       return [];
     }
-  }, [selectedTeam, clubOverrides, myTeamId, myRosterIds, currentDate]);
+  }, [selectedTeam, clubOverrides, myTeamId, myRosterIds, currentDate, getFcSquadByTeamId]);
 
   const isUserTeam = !!save && selectedTeam?.id === save.myTeamId;
+  const selectedTeamPlayer = selectedPlayerId
+    ? (teamSquad.find((p) => String(p.ID) === String(selectedPlayerId)) ?? null)
+    : null;
+  const selectedTeamPlayerStats = selectedPlayerId ? playerStats[String(selectedPlayerId)] : undefined;
 
   // Dibujo que mejor encaja con la plantilla, entre las formaciones típicas del estilo del equipo.
   const bestFormation = useMemo(() => {
@@ -351,7 +364,7 @@ function TeamsPage() {
                           {club?.name ?? p.Team}
                         </div>
                       </div>
-                      <span className="text-sm font-black scoreline">{p.OVR}</span>
+                      <span className="text-sm font-black scoreline">{Math.round(p.OVR)}</span>
                     </button>
                   );
                 })}
@@ -651,7 +664,11 @@ function TeamsPage() {
                       const form = getPlayerForm(stats);
 
                       return (
-                        <tr key={p.ID} className="border-b border-border/30 hover:bg-secondary/20">
+                        <tr
+                          key={p.ID}
+                          onClick={() => setSelectedPlayerId(String(p.ID))}
+                          className="cursor-pointer border-b border-border/30 hover:bg-secondary/20"
+                        >
                           <td className="py-2 px-1">
                             <div className="flex items-center gap-2.5">
                               <PlayerFace
@@ -676,7 +693,7 @@ function TeamsPage() {
                                 p.OVR >= 82 ? "text-primary" : p.OVR >= 78 ? "text-accent" : ""
                               }`}
                             >
-                              {p.OVR}
+                              {Math.round(p.OVR)}
                             </span>
                           </td>
                           <td className="py-2 px-1 text-center text-muted-foreground">{p.Age}</td>
@@ -725,6 +742,18 @@ function TeamsPage() {
           )}
         </div>
       )}
+
+      <PlayerDetailDialog
+        open={!!selectedTeamPlayer}
+        onClose={() => setSelectedPlayerId(null)}
+        player={selectedTeamPlayer}
+        team={selectedTeam}
+        stats={selectedTeamPlayerStats}
+        privateMode={false}
+        fixtures={[]}
+        myTeamId={myTeamId}
+        showMorale={false}
+      />
     </div>
   );
 }

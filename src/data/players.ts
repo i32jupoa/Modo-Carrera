@@ -9,7 +9,7 @@ import {
   calculateVersatilityBonus,
   type PosCode,
 } from "@/lib/positions";
-import type { DynamicPlayerStats } from "@/types/playerStats";
+import type { DynamicPlayerStats, PlayerAttributeRatings } from "@/types/playerStats";
 
 /**
  * Estadísticas ofensivas del dataset FC26 usadas por el motor de partido.
@@ -42,8 +42,11 @@ for (const raw of Array.isArray(playersData) ? playersData : []) {
   });
 }
 
-export function getPlayerShootingStats(playerId: string | number | undefined): PlayerShootingStats {
-  return (playerId != null ? SHOOTING_STATS_BY_ID.get(String(playerId)) : undefined) ?? {
+export function getPlayerShootingStats(
+  playerId: string | number | undefined,
+  dynamicAttributes?: Partial<PlayerAttributeRatings>,
+): PlayerShootingStats {
+  const base = (playerId != null ? SHOOTING_STATS_BY_ID.get(String(playerId)) : undefined) ?? {
     shooting: 0,
     finishing: 0,
     shotPower: 0,
@@ -51,6 +54,23 @@ export function getPlayerShootingStats(playerId: string | number | undefined): P
     volleys: 0,
     penalties: 0,
     composure: 0,
+  };
+
+  const scale = (baseValue: number, nextValue: unknown) => {
+    const n = Number(nextValue);
+    if (!Number.isFinite(n)) return baseValue;
+    return Math.max(1, Math.min(99, n));
+  };
+
+  return {
+    ...base,
+    shooting: scale(base.shooting, dynamicAttributes?.SHO),
+    finishing: scale(base.finishing, dynamicAttributes?.SHO),
+    shotPower: scale(base.shotPower, dynamicAttributes?.SHO),
+    longShots: scale(base.longShots, dynamicAttributes?.SHO),
+    volleys: scale(base.volleys, dynamicAttributes?.SHO),
+    penalties: scale(base.penalties, dynamicAttributes?.SHO),
+    composure: scale(base.composure, dynamicAttributes?.SHO),
   };
 }
 
@@ -88,6 +108,8 @@ export type Player = {
   passing?: number;
   longPassing?: number;
   freeKickAccuracy?: number;
+  /** Atributos técnicos dinámicos que evolucionan con la progresión. */
+  attributes?: PlayerAttributeRatings;
   /** Estadísticas dinámicas que cambian con el tiempo (persistidas por partida) */
   dynamicStats?: DynamicPlayerStats;
 };
@@ -419,7 +441,7 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
 
     // Use dynamic OVR if available, otherwise use static rating
     const dynamicOVR = dynamicStatsMap?.[rp.id]?.dynamicStats?.currentOVR;
-    const effectiveRating = dynamicOVR || rp.rating;
+    const effectiveRating = Math.round(Number(dynamicOVR ?? rp.rating));
 
     const playerPositions = buildPositions(
       rp.rawData?.Position ?? rp.pos,
@@ -438,8 +460,8 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
       false,
       teamAvgRating,
       playerPositions,
-      dynamicOVR,
-      Number(rp.rawData?.potential ?? rp.rating),
+      Math.round(Number(dynamicOVR ?? effectiveRating)),
+      Math.round(Number(rp.rawData?.potential ?? rp.rating)),
     );
 
     const playerObj: Player = {
@@ -450,7 +472,7 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
         rp.rawData?.["Alternative positions"],
       ),
       rating: effectiveRating,
-      potential: Math.max(effectiveRating, Number(rp.rawData?.potential ?? rp.rating)),
+      potential: Math.max(effectiveRating, Math.round(Number(rp.rawData?.potential ?? rp.rating))),
       age: rp.age,
       teamId: rp.teamId,
       marketValue: marketValueResult.value,

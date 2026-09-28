@@ -1,7 +1,16 @@
 /**
  * Estadísticas dinámicas de un jugador que cambian con el tiempo
- * basado en rendimiento, edad y otros factores.
+ * en función del rendimiento, edad, potencial, lesiones y minutos.
  */
+
+export interface PlayerAttributeRatings {
+  PAC: number;
+  SHO: number;
+  PAS: number;
+  DRI: number;
+  DEF: number;
+  PHY: number;
+}
 
 export interface MonthlyStats {
   month: number;
@@ -12,11 +21,11 @@ export interface MonthlyStats {
   averageRating: number;
   mvpCount: number;
   cleanSheets: number;
-  /** Totales de valoración para evitar perder precisión al mostrar medias. */
   ratingTotal?: number;
   ratingCount?: number;
-  /** Club representado durante el mes cuando el dato está disponible. */
   teamId?: string;
+  /** Valor interno decimal de evolución del OVR en el cierre de ese mes. La media visible sigue siendo entera. */
+  ovr?: number;
 }
 
 export interface SeasonStats {
@@ -43,22 +52,29 @@ export interface DynamicPlayerStats {
   seasonAverageRating: number;
   seasonRatingTotal?: number;
   seasonRatingCount?: number;
-  seasonTrophies: number; // Trofeos ganados esta temporada
+  seasonTrophies: number;
 
-  // Estadísticas mensuales para progresión sutil
+  // Progresión mensual
   monthlyStats: MonthlyStats[];
 
-  // Progresión/regresión
-  currentOVR: number; // OVR dinámico actual
-  baseOVR: number; // OVR base del JSON
-  potentialOVR: number; // Potencial dinámico ajustado
+  // Media y potencial dinámicos
+  currentOVR: number;
+  /** Media de referencia con la que arrancó la carrera. No sube con la progresión. */
+  baseOVR: number;
+  potentialOVR: number;
+
+  // Atributos dinámicos visibles y utilizables por el simulador
+  attributes?: PlayerAttributeRatings;
 
   // Historial de rendimiento
-  formHistory: number[]; // Últimos 10 ratings
+  formHistory: number[];
   careerSeasons: SeasonStats[];
 
   // Estado de progresión
   lastProgressionMonth: number;
   lastProgressionYear: number;
+  lastProgressionDelta: number;
+  lastProgressionDate?: string;
+  lastProgressionReason?: string;
   lastSeasonEndSeason: number;
 }

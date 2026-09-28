@@ -17,6 +17,8 @@ import {
   simulateCupMatchday,
   simulateUCLMatchday,
   simulateEuropeanLeagueMatchday,
+  simulatePendingEuropeanThroughDay,
+  processEuropeanKnockoutProgress,
   saveSaveWithRetry,
   setLineup,
   setFormation,
@@ -31,7 +33,7 @@ import {
   type Team,
   LEAGUES_BY_COUNTRY,
 } from "@/data/teams";
-import { UCL_START } from "@/data/ucl";
+import { UCL_START, UCL_CALENDAR } from "@/data/ucl";
 
 import { type Fixture } from "@/lib/season";
 
@@ -324,7 +326,6 @@ function SeasonPage() {
         const absoluteEuropeanDay = Number(
           lastPlayedFixture?.matchday ?? save.currentMatchday[save.myLeague],
         );
-        const { simulatePendingEuropeanThroughDay, processEuropeanKnockoutProgress } = await import("@/lib/store");
         next = simulatePendingEuropeanThroughDay(
           save,
           competitionType,
@@ -338,6 +339,20 @@ function SeasonPage() {
           setSimProgress({ done, total });
           console.log(`Matches: ${done}/${total}`);
         });
+      }
+
+      // Europa League and Conference League must progress independently of the
+      // competition in which the user's club plays. Previously `simulateRest`
+      // only advanced the last competition detected above, so an AI-only UECL
+      // could stop before the R16 draw while the user's UEL continued normally.
+      if (competitionType === "uel" || competitionType === "uecl") {
+        const europeanDay = Number(lastPlayedFixture?.matchday ?? 0);
+        if (europeanDay > 0) {
+          for (const comp of ["uel", "uecl"] as const) {
+            next = simulatePendingEuropeanThroughDay(next, comp, europeanDay, next.myTeamId);
+            next = processEuropeanKnockoutProgress(next, comp, europeanDay);
+          }
+        }
       }
 
       console.timeEnd("simulateRest");
@@ -502,7 +517,14 @@ function SeasonPage() {
 
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            {seasonComplete ? (
+            {nextFixture ? (
+              <NextMatchCard
+                fixture={nextFixture}
+                myId={save.myTeamId}
+                onPlayMatch={handlePlayMatch}
+                theme={theme}
+              />
+            ) : seasonComplete ? (
               <div className="panel-glow p-8 text-center">
                 <span className="chip mb-3">Temporada finalizada</span>
 
@@ -512,13 +534,6 @@ function SeasonPage() {
                   Posición final: <span className="text-primary font-bold">{myPos}º</span>
                 </p>
               </div>
-            ) : nextFixture ? (
-              <NextMatchCard
-                fixture={nextFixture}
-                myId={save.myTeamId}
-                onPlayMatch={handlePlayMatch}
-                theme={theme}
-              />
             ) : null}
 
             {!seasonComplete && null}
@@ -693,15 +708,41 @@ function NextMatchCard({
       "-" +
       String(matchDate.getDate()).padStart(2, "0");
   } else {
-    // For UCL: matchday = absolute day offset from UCL_START
+    // European fixtures must use their real calendar date when available.
+    // Knockout fixtures also carry an absolute UCL-style day offset in
+    // `matchday`, but legacy UEL/UECL saves may have a shifted/temporary
+    // matchday after passing through the shared Champions engine. The round
+    // label is therefore the authoritative fallback for the date.
     const uclStart = new Date(UCL_START + "T00:00:00Z");
-    matchDate = new Date(uclStart.getTime() + fixture.matchday * 86400000);
+    const europeanRoundOffsets: Record<string, number> = {
+      ...Object.fromEntries(UCL_CALENDAR.leagueDay.map((offset, index) => [`Jornada ${index + 1}`, offset])),
+      "Playoff-Leg1": UCL_CALENDAR.playoffLeg1,
+      "Playoff-Leg2": UCL_CALENDAR.playoffLeg2,
+      "R16-Leg1": UCL_CALENDAR.r16Leg1,
+      "R16-Leg2": UCL_CALENDAR.r16Leg2,
+      "QF-Leg1": UCL_CALENDAR.qfLeg1,
+      "QF-Leg2": UCL_CALENDAR.qfLeg2,
+      "SF-Leg1": UCL_CALENDAR.sfLeg1,
+      "SF-Leg2": UCL_CALENDAR.sfLeg2,
+      Final: UCL_CALENDAR.final,
+    };
+    const storedDate = fixture.date
+      ? Date.parse(`${String(fixture.date).slice(0, 10)}T12:00:00Z`)
+      : NaN;
+    const roundOffset = europeanRoundOffsets[String(fixture.round ?? "")];
+    if (Number.isFinite(storedDate)) {
+      matchDate = new Date(storedDate);
+    } else if (roundOffset != null) {
+      matchDate = new Date(uclStart.getTime() + roundOffset * 86400000);
+    } else {
+      matchDate = new Date(uclStart.getTime() + fixture.matchday * 86400000);
+    }
     matchDateIso =
-      matchDate.getFullYear() +
+      matchDate.getUTCFullYear() +
       "-" +
-      String(matchDate.getMonth() + 1).padStart(2, "0") +
+      String(matchDate.getUTCMonth() + 1).padStart(2, "0") +
       "-" +
-      String(matchDate.getDate()).padStart(2, "0");
+      String(matchDate.getUTCDate()).padStart(2, "0");
   }
 
   const isMatchDay = currentDate === matchDateIso;

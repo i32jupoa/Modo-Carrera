@@ -41,6 +41,7 @@ import {
   selectTopAssisters,
   selectTopScorers,
   usePlayersStore,
+  defaultStats,
   withPlayerStatsBatch,
   withPlayerStatsBatchAsync,
   isPlayerInjuredAtDate,
@@ -66,111 +67,6 @@ import { applyMonthlyProgressionToPlayer } from "@/lib/progressionHelper";
 import { normalizeDynamicStats } from "@/lib/playerProgression";
 import type { DynamicPlayerStats } from "@/types/playerStats";
 import { invalidateSquadsCache, generateAllSquads } from "@/data/players";
-
-/**
- * Parse season string (e.g., "2026-27") to season number (e.g., 1)
- */
-function parseSeasonNumber(season: string): number {
-  const startYear = parseInt(season.split("-")[0]);
-  return startYear - 2026 + 1; // 2026-27 is season 1
-}
-
-/**
- * Apply season-end progression to all players in the players store
- */
-function applySeasonEndProgressionToAllPlayers(seasonNumber: number): void {
-  const store = usePlayersStore.getState();
-  const allStats = store.stats ?? {};
-  const nextStats: Record<string, any> = { ...allStats };
-  let changed = false;
-
-  // Update the Zustand stats map once. `mutatePlayerStat` is an internal
-  // closure of playersStore and is not exposed on `getState()`.
-  for (const [playerId, stats] of Object.entries(allStats)) {
-    if (!stats.dynamicStats) continue;
-
-    const player = store.getSimPlayer(playerId);
-    if (!player) continue;
-
-    const { updatedStats } = applySeasonEndProgressionToPlayer(
-      player,
-      stats.dynamicStats,
-      seasonNumber,
-    );
-
-    nextStats[playerId] = {
-      ...stats,
-      dynamicStats: updatedStats,
-    };
-    changed = true;
-  }
-
-  if (changed) {
-    usePlayersStore.setState({ stats: nextStats });
-  }
-
-  invalidateSquadsCache();
-}
-
-
-/**
- * Apply monthly progression to all players in the players store
- */
-function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: number): void {
-  const store = usePlayersStore.getState();
-  const allStats = store.stats ?? {};
-  const nextStats: Record<string, any> = { ...allStats };
-  let changed = false;
-
-  // Mutate the Zustand stats map once instead of calling a non-public
-  // `store.mutatePlayerStat` method once per player. The previous implementation
-  // generated hundreds of exceptions for every monthly progression pass and
-  // could make a match appear frozen while the browser flooded the console.
-  for (const [playerId, stats] of Object.entries(allStats)) {
-    const player = store.getSimPlayer(playerId);
-    if (!player) continue;
-
-    try {
-      const safeDynamicStats = normalizeDynamicStats(
-        stats?.dynamicStats,
-        Number(player.rating) || 70,
-      );
-
-      const { updatedStats } = applyMonthlyProgressionToPlayer(
-        player,
-        safeDynamicStats,
-        currentMonth,
-        currentYear,
-      );
-
-      nextStats[playerId] = {
-        ...stats,
-        dynamicStats: updatedStats,
-      };
-      changed = true;
-    } catch (error) {
-      console.warn(
-        `[monthly progression] jugador ${playerId} omitido para mantener la jornada jugable`,
-        error,
-      );
-    }
-  }
-
-  if (changed) {
-    usePlayersStore.setState({ stats: nextStats });
-  }
-
-  invalidateSquadsCache();
-
-  try {
-    generateAllSquads(usePlayersStore.getState().stats ?? {});
-  } catch (error) {
-    console.warn(
-      "[monthly progression] no se pudo regenerar la caché de plantillas; se continúa la simulación",
-      error,
-    );
-  }
-}
 
 import {
   simulateMatch,
@@ -237,9 +133,130 @@ import {
 } from "@/lib/formations";
 import { FIVE_DEFENDER_TEAMS, getTeamStyle, formationsForStyle } from "@/lib/teamProfile";
 
-// Generate a CPU XI using a random (or specified) formation, always returning exactly 11 players
 
-// Returns ids in slot order so MiniPitch can position them correctly by role
+/**
+ * Parse season string (e.g., "2026-27") to season number (e.g., 1)
+ */
+function parseSeasonNumber(season: string): number {
+  const startYear = parseInt(season.split("-")[0]);
+  return startYear - 2026 + 1; // 2026-27 is season 1
+}
+
+/**
+ * Apply season-end progression to all players in the players store
+ */
+function applySeasonEndProgressionToAllPlayers(seasonNumber: number): void {
+  const store = usePlayersStore.getState();
+  const allStats = store.stats ?? {};
+  const nextStats: Record<string, any> = { ...allStats };
+  let changed = false;
+  const rawPlayers = store.getRawPlayers();
+
+  const teamTotals = new Map<string, { sum: number; count: number }>();
+  for (const raw of rawPlayers) {
+    const player = store.getSimPlayer(String(raw.ID));
+    const teamId = player?.teamId;
+    if (!teamId) continue;
+    const dynamic = allStats[String(raw.ID)]?.dynamicStats;
+    const current = Number(dynamic?.currentOVR ?? raw.OVR) || 70;
+    const entry = teamTotals.get(teamId) ?? { sum: 0, count: 0 };
+    entry.sum += current;
+    entry.count += 1;
+    teamTotals.set(teamId, entry);
+  }
+
+  for (const raw of rawPlayers) {
+    const playerId = String(raw.ID);
+    const player = store.getSimPlayer(playerId);
+    if (!player) continue;
+    const stats = allStats[playerId] ?? defaultStats();
+    const safeDynamic = normalizeDynamicStats(
+      stats.dynamicStats,
+      Number(raw.OVR) || player.rating || 70,
+      Number(raw.potential ?? player.potential ?? raw.OVR) || 70,
+      { PAC: raw.PAC, SHO: raw.SHO, PAS: raw.PAS, DRI: raw.DRI, DEF: raw.DEF, PHY: raw.PHY },
+    );
+    const teamContext = player.teamId ? teamTotals.get(player.teamId) : undefined;
+    const teamAverageOVR = teamContext && teamContext.count > 0 ? teamContext.sum / teamContext.count : undefined;
+    const { updatedStats } = applySeasonEndProgressionToPlayer(
+      player,
+      safeDynamic,
+      seasonNumber,
+      { teamAverageOVR, injuryDaysRemaining: daysRemainingForInjury(stats, store.currentDate), dateIso: store.currentDate },
+    );
+    nextStats[playerId] = { ...stats, dynamicStats: updatedStats };
+    changed = true;
+  }
+
+  if (changed) usePlayersStore.setState({ stats: nextStats });
+  invalidateSquadsCache();
+}
+
+
+/**
+ * Apply monthly progression to all players in the players store
+ */
+function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: number): void {
+  const store = usePlayersStore.getState();
+  const allStats = store.stats ?? {};
+  const nextStats: Record<string, any> = { ...allStats };
+  let changed = false;
+  const progressionDate = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-15`;
+
+  const rawPlayers = store.getRawPlayers();
+  const teamTotals = new Map<string, { sum: number; count: number }>();
+  for (const raw of rawPlayers) {
+    const player = store.getSimPlayer(String(raw.ID));
+    const teamId = player?.teamId;
+    if (!teamId) continue;
+    const current = Number(raw.OVR) || Number(player.rating) || 70;
+    const entry = teamTotals.get(teamId) ?? { sum: 0, count: 0 };
+    entry.sum += current;
+    entry.count += 1;
+    teamTotals.set(teamId, entry);
+  }
+
+  for (const raw of rawPlayers) {
+    const playerId = String(raw.ID);
+    const player = store.getSimPlayer(playerId);
+    if (!player) continue;
+    const stats = allStats[playerId] ?? defaultStats();
+    const teamContext = player.teamId ? teamTotals.get(player.teamId) : undefined;
+    const teamAverageOVR = teamContext && teamContext.count > 0 ? teamContext.sum / teamContext.count : undefined;
+    try {
+      const safeDynamicStats = normalizeDynamicStats(
+        stats.dynamicStats,
+        Number(player.rating) || Number(raw.OVR) || 70,
+        Number(player.potential) || Number(raw.potential) || Number(raw.OVR) || 70,
+        { PAC: raw.PAC, SHO: raw.SHO, PAS: raw.PAS, DRI: raw.DRI, DEF: raw.DEF, PHY: raw.PHY },
+      );
+      const { updatedStats } = applyMonthlyProgressionToPlayer(
+        player,
+        safeDynamicStats,
+        currentMonth,
+        currentYear,
+        {
+          teamAverageOVR,
+          injuryDaysRemaining: 0,
+          dateIso: progressionDate,
+        },
+      );
+      nextStats[playerId] = { ...stats, dynamicStats: updatedStats };
+      changed = true;
+    } catch (error) {
+      console.warn(`[monthly progression] jugador ${playerId} omitido para mantener la jornada jugable`, error);
+    }
+  }
+
+  if (changed) usePlayersStore.setState({ stats: nextStats });
+  invalidateSquadsCache();
+  try {
+    generateAllSquads(usePlayersStore.getState().stats ?? {});
+  } catch (error) {
+    console.warn("[monthly progression] no se pudo regenerar la caché de plantillas; se continúa la simulación", error);
+  }
+}
+
 
 /**
  * Coloca 11 jugadores disponibles en los huecos de una formación concreta,
@@ -664,25 +681,8 @@ export function fixCupDraws(save: SaveGame): SaveGame {
 
         if (!home || !away) continue;
 
-        const homeData = getStartersWithFormation(next, f.homeId, {
-          fixture: {
-            fixtureId: f.id,
-            opponentId: f.awayId,
-            isHome: true,
-            competition: "cup",
-            matchday: f.matchday,
-          },
-        });
-
-        const awayData = getStartersWithFormation(next, f.awayId, {
-          fixture: {
-            fixtureId: f.id,
-            opponentId: f.homeId,
-            isHome: false,
-            competition: "cup",
-            matchday: f.matchday,
-          },
-        });
+        const homeData = getCachedCupStarters(f.homeId, f as any, true);
+        const awayData = getCachedCupStarters(f.awayId, f as any, false);
         const homeXI = homeData.players;
         const awayXI = awayData.players;
 
@@ -838,6 +838,9 @@ export type SaveGame = {
   ueclPrizesAwarded?: string[];
   uel: import("@/data/ucl").UCLState | null;
   uecl: import("@/data/ucl").UCLState | null;
+
+  /** Version of the appearance-counter repair already applied to this save. */
+  appearanceStatsRepairVersion?: number;
 };
 
 const STORAGE_KEY = "fcsim:save:v2";
@@ -874,6 +877,192 @@ export type SavedGameMeta = {
 export const ALL_LEAGUES: LeagueId[] = Object.keys(LEAGUES) as LeagueId[];
 
 type LegacySave = SaveGame & { players?: Record<string, Player> };
+
+
+const APPEARANCE_STATS_REPAIR_VERSION = 1;
+
+type AppearanceCompetition = "league" | "cup" | "ucl" | "uel" | "uecl";
+
+function appearanceCompetitionOfFixture(fixture: Fixture): AppearanceCompetition {
+  if (fixture.europeanCompetition === "uel") return "uel";
+  if (fixture.europeanCompetition === "uecl") return "uecl";
+  if (fixture.europeanCompetition === "ucl") return "ucl";
+  if (fixture.competition === "cup") return "cup";
+  if (fixture.competition === "ucl") return "ucl";
+  return "league";
+}
+
+function participantIdsFromResult(result: any): string[] {
+  if (!result) return [];
+  const ids = new Set<string>();
+  const addPlayers = (list: any) => {
+    if (!Array.isArray(list)) return;
+    for (const p of list) {
+      const id = typeof p === "string" ? p : p?.id ?? p?.playerId;
+      if (id != null && String(id)) ids.add(String(id));
+    }
+  };
+
+  for (const rating of result.ratings ?? []) {
+    if (rating?.playerId != null) ids.add(String(rating.playerId));
+  }
+  addPlayers(result.homeStartingLineup);
+  addPlayers(result.awayStartingLineup);
+  // Older saves used homeLineup/awayLineup for the full participant set.
+  addPlayers(result.homeLineup);
+  addPlayers(result.awayLineup);
+  addPlayers(result.homeFinalLineup);
+  addPlayers(result.awayFinalLineup);
+
+  for (const sub of result.substitutions ?? []) {
+    if (sub?.playerInId != null) ids.add(String(sub.playerInId));
+    if (sub?.playerOutId != null) ids.add(String(sub.playerOutId));
+  }
+  for (const sub of result.extraTime?.substitutions ?? []) {
+    if (sub?.playerInId != null) ids.add(String(sub.playerInId));
+    if (sub?.playerOutId != null) ids.add(String(sub.playerOutId));
+  }
+
+  return [...ids];
+}
+
+function dedupeFixtureList(list: Fixture[]): { list: Fixture[]; changed: boolean } {
+  const seen = new Map<string, Fixture>();
+  let changed = false;
+  for (const fixture of list ?? []) {
+    if (!fixture?.id) continue;
+    const previous = seen.get(fixture.id);
+    if (!previous) {
+      seen.set(fixture.id, fixture);
+      continue;
+    }
+    changed = true;
+    // Prefer the version that already has a result. If both do, keep the one
+    // carrying the richer/latest result payload.
+    if (!previous.result && fixture.result) seen.set(fixture.id, fixture);
+  }
+  return { list: [...seen.values()], changed };
+}
+
+function dedupeAllFixtureCollections(save: SaveGame): boolean {
+  let changed = false;
+  for (const league of Object.keys(save.fixtures ?? {}) as LeagueId[]) {
+    const result = dedupeFixtureList(save.fixtures[league] ?? []);
+    if (result.changed) {
+      save.fixtures[league] = result.list;
+      changed = true;
+    }
+  }
+  for (const league of Object.keys(save.cupFixtures ?? {}) as LeagueId[]) {
+    const result = dedupeFixtureList(save.cupFixtures[league] ?? []);
+    if (result.changed) {
+      save.cupFixtures[league] = result.list;
+      changed = true;
+    }
+  }
+  for (const key of ["uclFixtures", "uelFixtures", "ueclFixtures"] as const) {
+    const result = dedupeFixtureList((save[key] ?? []) as Fixture[]);
+    if (result.changed) {
+      save[key] = result.list as any;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function rebuildAppearanceCountersFromFixtures(save: SaveGame): boolean {
+  const store = usePlayersStore.getState();
+  const counters = new Map<string, Record<AppearanceCompetition, Set<string>>>();
+  const allPlayerIds = new Set(Object.keys(store.stats ?? {}));
+
+  const ensure = (playerId: string) => {
+    let current = counters.get(playerId);
+    if (!current) {
+      current = {
+        league: new Set<string>(),
+        cup: new Set<string>(),
+        ucl: new Set<string>(),
+        uel: new Set<string>(),
+        uecl: new Set<string>(),
+      };
+      counters.set(playerId, current);
+    }
+    return current;
+  };
+
+  const visitFixture = (fixture: Fixture) => {
+    if (!fixture?.result?.events && !fixture?.result?.ratings && !fixture?.result?.homeStartingLineup && !fixture?.result?.homeLineup) {
+      return;
+    }
+    if (!fixture.result) return;
+    const competition = appearanceCompetitionOfFixture(fixture);
+    const participantIds = participantIdsFromResult(fixture.result);
+    for (const playerId of participantIds) {
+      allPlayerIds.add(playerId);
+      ensure(playerId)[competition].add(fixture.id);
+    }
+  };
+
+  for (const list of Object.values(save.fixtures ?? {})) {
+    for (const fixture of list ?? []) visitFixture(fixture);
+  }
+  for (const list of Object.values(save.cupFixtures ?? {})) {
+    for (const fixture of list ?? []) visitFixture(fixture);
+  }
+  for (const fixture of save.uclFixtures ?? []) visitFixture(fixture);
+  for (const fixture of save.uelFixtures ?? []) visitFixture(fixture);
+  for (const fixture of save.ueclFixtures ?? []) visitFixture(fixture);
+
+  const currentStats = store.stats ?? {};
+  const nextStats: Record<string, any> = { ...currentStats };
+  let changed = false;
+
+  for (const playerId of allPlayerIds) {
+    const existing = currentStats[playerId];
+    if (!existing) continue;
+    const c = counters.get(playerId) ?? {
+      league: new Set<string>(),
+      cup: new Set<string>(),
+      ucl: new Set<string>(),
+      uel: new Set<string>(),
+      uecl: new Set<string>(),
+    };
+    const leagueAppearances = c.league.size;
+    const cupAppearances = c.cup.size;
+    const uclAppearances = c.ucl.size;
+    const uelAppearances = c.uel.size;
+    const ueclAppearances = c.uecl.size;
+    const totalAppearances =
+      leagueAppearances + cupAppearances + uclAppearances + uelAppearances + ueclAppearances;
+
+    const dynamic = existing.dynamicStats
+      ? { ...existing.dynamicStats, seasonAppearances: totalAppearances }
+      : existing.dynamicStats;
+
+    if (
+      existing.appearances !== totalAppearances ||
+      existing.cupAppearances !== cupAppearances ||
+      existing.uclAppearances !== uclAppearances ||
+      existing.uelAppearances !== uelAppearances ||
+      existing.ueclAppearances !== ueclAppearances ||
+      (dynamic && dynamic !== existing.dynamicStats)
+    ) {
+      nextStats[playerId] = {
+        ...existing,
+        appearances: totalAppearances,
+        cupAppearances,
+        uclAppearances,
+        uelAppearances,
+        ueclAppearances,
+        ...(dynamic ? { dynamicStats: dynamic } : {}),
+      };
+      changed = true;
+    }
+  }
+
+  if (changed) usePlayersStore.setState({ stats: nextStats });
+  return changed;
+}
 
 export function loadSave(): SaveGame | null {
   if (typeof window === "undefined") return null;
@@ -1014,6 +1203,10 @@ export function loadSave(): SaveGame | null {
       needsMigrationSave = true;
     }
 
+    if (dedupeAllFixtureCollections(parsed)) {
+      needsMigrationSave = true;
+    }
+
     playersStoreInit();
 
     // MIGRATION: older saves stored suspensions without a competition and, in
@@ -1068,6 +1261,12 @@ export function loadSave(): SaveGame | null {
       parsed.lineups = buildDefaultLineups();
 
       delete parsed.players;
+      needsMigrationSave = true;
+    }
+
+    if (parsed.appearanceStatsRepairVersion !== APPEARANCE_STATS_REPAIR_VERSION) {
+      rebuildAppearanceCountersFromFixtures(parsed as SaveGame);
+      parsed.appearanceStatsRepairVersion = APPEARANCE_STATS_REPAIR_VERSION;
       needsMigrationSave = true;
     }
 
@@ -2159,6 +2358,11 @@ function applyMatchToStats(
   if (!fixture.result) return save;
 
   const r = fixture.result;
+  // A fixture can pass through more than one simulation/commit path during
+  // long advances and live-match reconciliation. Once its match bookkeeping
+  // is applied, never count the same player appearance/statistics twice.
+  if (r.matchStatsApplied) return save;
+
 
   const statsCompetition = fixture.europeanCompetition ?? fixture.competition;
   const store = usePlayersStore.getState();
@@ -2563,6 +2767,7 @@ function applyMatchToStats(
     } catch {}
   }
 
+  r.matchStatsApplied = true;
   return updatedSave;
 }
 
@@ -2707,8 +2912,8 @@ function simulateFixtureInline(
         ? simulateMatchFast(home, away, homeXI, awayXI, {
             homeBench: homeBenchForSim,
             awayBench: awayBenchForSim,
-            homeTactics: loadTactics(fixture.homeId),
-            awayTactics: loadTactics(fixture.awayId),
+            homeTactics: getCachedTactics(fixture.homeId),
+            awayTactics: getCachedTactics(fixture.awayId),
             homeFormation: homeFormationForSim,
             awayFormation: awayFormationForSim,
           })
@@ -2797,6 +3002,37 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
   const uclStartMs = Date.parse(UCL_START + "T00:00:00Z");
   const myTeamId = save.myTeamId;
 
+  const europeanRoundOffset = (fixture: Fixture): number | null => {
+    const round = String(fixture.round ?? "");
+    const jornada = round.match(/^Jornada\s+(\d+)$/i);
+    if (jornada) {
+      const index = Number(jornada[1]) - 1;
+      return UCL_CALENDAR.leagueDay[index] ?? null;
+    }
+    const roundOffsets: Record<string, number> = {
+      "Playoff-Leg1": UCL_CALENDAR.playoffLeg1,
+      "Playoff-Leg2": UCL_CALENDAR.playoffLeg2,
+      "R16-Leg1": UCL_CALENDAR.r16Leg1,
+      "R16-Leg2": UCL_CALENDAR.r16Leg2,
+      "QF-Leg1": UCL_CALENDAR.qfLeg1,
+      "QF-Leg2": UCL_CALENDAR.qfLeg2,
+      "SF-Leg1": UCL_CALENDAR.sfLeg1,
+      "SF-Leg2": UCL_CALENDAR.sfLeg2,
+      Final: UCL_CALENDAR.final,
+    };
+    return roundOffsets[round] ?? null;
+  };
+
+  const europeanFixtureDateMs = (fixture: Fixture): number => {
+    if (fixture.date) {
+      const parsed = Date.parse(`${String(fixture.date).slice(0, 10)}T12:00:00Z`);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    const roundOffset = europeanRoundOffset(fixture);
+    if (roundOffset != null) return uclStartMs + roundOffset * 86400000;
+    return uclStartMs + Number(fixture.matchday ?? 0) * 86400000;
+  };
+
   let best: { fixture: Fixture; dateMs: number } | null = null;
   const consider = (fixture: Fixture, dateMs: number) => {
     if (fixture.result || (fixture.homeId !== myTeamId && fixture.awayId !== myTeamId)) return;
@@ -2805,7 +3041,15 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
 
   // The user's league contains all league fixtures for the controlled team.
   for (const fixture of save.fixtures[save.myLeague] ?? []) {
-    consider(fixture, seasonStartMs + (fixture.matchday - 1) * 7 * 86400000);
+    const fixtureDate = fixture.date
+      ? Date.parse(`${String(fixture.date).slice(0, 10)}T12:00:00Z`)
+      : NaN;
+    consider(
+      fixture,
+      Number.isFinite(fixtureDate)
+        ? fixtureDate
+        : seasonStartMs + (fixture.matchday - 1) * 7 * 86400000,
+    );
   }
 
   // Cups are stored by the primary league of the user's country. Fall back to
@@ -2835,13 +3079,13 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
   }
 
   for (const fixture of save.uclFixtures ?? []) {
-    consider(fixture, uclStartMs + fixture.matchday * 86400000);
+    consider(fixture, europeanFixtureDateMs(fixture));
   }
   for (const fixture of save.uelFixtures ?? []) {
-    consider(fixture, uclStartMs + fixture.matchday * 86400000);
+    consider(fixture, europeanFixtureDateMs(fixture));
   }
   for (const fixture of save.ueclFixtures ?? []) {
-    consider(fixture, uclStartMs + fixture.matchday * 86400000);
+    consider(fixture, europeanFixtureDateMs(fixture));
   }
 
   return best?.fixture ?? null;
@@ -3268,8 +3512,8 @@ export async function simulateCupMatchdayLayered(
           result = simulateCupMatch(home, away, homeXI, awayXI, {
             homeBench,
             awayBench,
-            homeTactics: loadTactics(fixture.homeId),
-            awayTactics: loadTactics(fixture.awayId),
+            homeTactics: getCachedTactics(fixture.homeId),
+            awayTactics: getCachedTactics(fixture.awayId),
             homeFormation: homeData.formation,
             awayFormation: awayData.formation,
           });
@@ -3495,6 +3739,32 @@ export async function simulateRemainingCupMatches(
   }
 
   const userLeague = next.myLeague;
+  const starterCache = new Map<string, { players: Player[]; formation: FormationName }>();
+  const tacticsCache = new Map<string, ReturnType<typeof loadTactics>>();
+  const getCachedCupStarters = (teamId: string, fixture: any, isHome: boolean) => {
+    const key = `${teamId}:${fixture.id}:${isHome ? "h" : "a"}`;
+    const cached = starterCache.get(key);
+    if (cached) return cached;
+    const data = getStartersWithFormation(next, teamId, {
+      fixture: {
+        fixtureId: fixture.id,
+        opponentId: isHome ? fixture.awayId : fixture.homeId,
+        isHome,
+        competition: "cup",
+        europeanCompetition: fixture.europeanCompetition,
+        matchday: fixture.matchday,
+      },
+    });
+    starterCache.set(key, data);
+    return data;
+  };
+  const getCachedCupTactics = (teamId: string) => {
+    const cached = tacticsCache.get(teamId);
+    if (cached) return cached;
+    const tactics = loadTactics(teamId);
+    tacticsCache.set(teamId, tactics);
+    return tactics;
+  };
 
   // Get all leagues that have cup fixtures
 
@@ -3566,11 +3836,11 @@ export async function simulateRemainingCupMatches(
             xgAway: 0,
           };
         } else {
-          result = simulateMatch(home, away, homeXI, awayXI, {
+          result = simulateMatchFast(home, away, homeXI, awayXI, {
             homeBench: getCupSimulationBench(next, f.homeId, homeXI, f.competition),
             awayBench: getCupSimulationBench(next, f.awayId, awayXI, f.competition),
-            homeTactics: loadTactics(f.homeId),
-            awayTactics: loadTactics(f.awayId),
+            homeTactics: getCachedCupTactics(f.homeId),
+            awayTactics: getCachedCupTactics(f.awayId),
             homeFormation:
               (next.formations[f.homeId] as FormationName | undefined) || "Táctica 4-4-2",
             awayFormation:
@@ -3589,8 +3859,8 @@ export async function simulateRemainingCupMatches(
               awayBench,
               regularSubstitutions: result.substitutions ?? [],
               regularCards: result.cards ?? [],
-              homeTactics: loadTactics(f.homeId),
-              awayTactics: loadTactics(f.awayId),
+              homeTactics: getCachedCupTactics(f.homeId),
+              awayTactics: getCachedCupTactics(f.awayId),
             });
 
             result.substitutions = [
@@ -3647,24 +3917,8 @@ export async function simulateRemainingCupMatches(
       } else {
         // O(1) MATH SIMULATION for background countries - EXACT same logic as league background matches
 
-        const homeData = getStartersWithFormation(next, f.homeId, {
-          fixture: {
-            fixtureId: f.id,
-            opponentId: f.awayId,
-            isHome: true,
-            competition: "cup",
-            matchday: f.matchday,
-          },
-        });
-        const awayData = getStartersWithFormation(next, f.awayId, {
-          fixture: {
-            fixtureId: f.id,
-            opponentId: f.homeId,
-            isHome: false,
-            competition: "cup",
-            matchday: f.matchday,
-          },
-        });
+        const homeData = getCachedCupStarters(f.homeId, f as any, true);
+        const awayData = getCachedCupStarters(f.awayId, f as any, false);
         const homeXI = homeData.players;
         const awayXI = awayData.players;
         const homeBench = getCupSimulationBench(next, f.homeId, homeXI, f.competition);
@@ -3672,8 +3926,8 @@ export async function simulateRemainingCupMatches(
         result = simulateMatchFast(home, away, homeXI, awayXI, {
           homeBench,
           awayBench,
-          homeTactics: loadTactics(f.homeId),
-          awayTactics: loadTactics(f.awayId),
+          homeTactics: getCachedCupTactics(f.homeId),
+          awayTactics: getCachedCupTactics(f.awayId),
           homeFormation: homeData.formation,
           awayFormation: awayData.formation,
         });
@@ -3688,8 +3942,8 @@ export async function simulateRemainingCupMatches(
             awayBench,
             regularSubstitutions: result.substitutions ?? [],
             regularCards: result.cards ?? [],
-            homeTactics: loadTactics(f.homeId),
-            awayTactics: loadTactics(f.awayId),
+            homeTactics: getCachedCupTactics(f.homeId),
+            awayTactics: getCachedCupTactics(f.awayId),
           });
           result.substitutions = [
             ...(result.substitutions ?? []),
@@ -3940,10 +4194,9 @@ export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame 
 export function playSpecificFixture(
   save: SaveGame,
   fixtureId: string,
+  fast = false,
 ): { save: SaveGame; fixture: Fixture | null } {
   let next: SaveGame = createFastMutationSnapshot(save);
-
-  console.log("playSpecificFixture called with fixtureId:", fixtureId);
 
   // Try to find fixture in league fixtures
 
@@ -3956,9 +4209,7 @@ export function playSpecificFixture(
     next.fixtures[next.myLeague] = [...leagueFixtures];
     const mutableLeagueFixtures = next.fixtures[next.myLeague];
     fixture = mutableLeagueFixtures.find((f) => f.id === fixtureId);
-    console.log("Found fixture in league fixtures:", fixture?.id);
-
-    const simmed = simulateFixtureInline(next, fixture!);
+    const simmed = simulateFixtureInline(next, fixture!, fast);
 
     const idx = mutableLeagueFixtures.findIndex((x) => x.id === fixtureId);
 
@@ -3999,13 +4250,11 @@ export function playSpecificFixture(
       next.cupFixtures[lg as LeagueId] = [...cupList];
       const mutableCupList = next.cupFixtures[lg as LeagueId];
       fixture = mutableCupList.find((f) => f.id === fixtureId);
-      console.log("Found fixture in cup fixtures:", fixture?.id, "league:", lg);
-
       // Check if this is a user match - if so, use regular simulation (no auto extra time/penalties)
 
       const isUserMatch = fixture!.homeId === next.myTeamId || fixture!.awayId === next.myTeamId;
 
-      const simmed = simulateFixtureInline(next, fixture!, false, isUserMatch ? false : true);
+      const simmed = simulateFixtureInline(next, fixture!, fast, isUserMatch ? false : true);
 
       const idx = mutableCupList.findIndex((x) => x.id === fixtureId);
 
@@ -4029,9 +4278,7 @@ export function playSpecificFixture(
     if (fixture && !fixture.result) {
       next.uclFixtures = [...next.uclFixtures];
       fixture = next.uclFixtures.find((f) => f.id === fixtureId);
-      console.log("Found fixture in UCL fixtures:", fixture?.id);
-
-      const simmed = simulateFixtureInline(next, fixture!);
+      const simmed = simulateFixtureInline(next, fixture!, fast);
 
       const idx = next.uclFixtures.findIndex((x) => x.id === fixtureId);
 
@@ -4079,7 +4326,7 @@ export function playSpecificFixture(
       if (!fixture) break;
 
       const simmed = {
-        ...simulateFixtureInline(next, { ...fixture, europeanCompetition: comp } as Fixture),
+        ...simulateFixtureInline(next, { ...fixture, europeanCompetition: comp } as Fixture, fast),
         europeanCompetition: comp,
       };
 
@@ -4088,7 +4335,6 @@ export function playSpecificFixture(
         mutableEuropeanList[idx] = simmed;
       }
 
-      console.log(`Found fixture in ${comp === "uel" ? "Europa League" : "Conference League"} fixtures:`, fixture.id);
       return { save: next, fixture: simmed };
     }
 
@@ -4099,8 +4345,6 @@ export function playSpecificFixture(
       };
     }
   }
-
-  console.log("Fixture not found in any competition:", fixtureId);
 
   return { save: next, fixture: null };
 }
@@ -5425,8 +5669,8 @@ export function processScheduledBackgroundSims(
               awayBench,
               regularSubstitutions: result.substitutions ?? [],
               regularCards: result.cards ?? [],
-              homeTactics: loadTactics(f.homeId),
-              awayTactics: loadTactics(f.awayId),
+              homeTactics: getCachedCupTactics(f.homeId),
+              awayTactics: getCachedCupTactics(f.awayId),
             });
             result.substitutions = [
               ...(result.substitutions ?? []),
@@ -5710,6 +5954,35 @@ export async function advanceMatchdayLayered(
 
     let processed = 0;
 
+    // Per-matchday caches: a team only plays once, so avoid regenerating its XI
+    // and rereading tactics from localStorage for every fixture.
+    const starterCache = new Map<string, { players: Player[]; formation: FormationName }>();
+    const tacticsCache = new Map<string, ReturnType<typeof loadTactics>>();
+    const getCachedStarters = (teamId: string, fixture: Fixture, isHome: boolean) => {
+      const key = `${teamId}:${fixture.id}:${isHome ? "h" : "a"}`;
+      const cached = starterCache.get(key);
+      if (cached) return cached;
+      const data = getStartersWithFormation(next, teamId, {
+        fixture: {
+          fixtureId: fixture.id,
+          opponentId: isHome ? fixture.awayId : fixture.homeId,
+          isHome,
+          competition: fixture.competition,
+          europeanCompetition: fixture.europeanCompetition,
+          matchday: fixture.matchday,
+        },
+      });
+      starterCache.set(key, data);
+      return data;
+    };
+    const getCachedTactics = (teamId: string) => {
+      const cached = tacticsCache.get(teamId);
+      if (cached) return cached;
+      const tactics = loadTactics(teamId);
+      tacticsCache.set(teamId, tactics);
+      return tactics;
+    };
+
     // Leagues that actually have fixtures to resolve this matchday. Each one
     // must have its currentMatchday advanced EXACTLY ONCE no matter how many
     // batches it takes to process all of its fixtures (a matchday can span
@@ -5734,27 +6007,12 @@ export async function advanceMatchdayLayered(
         let result: SimResult;
 
         if (league === userLeague) {
-          // DEEP SIMULATION for user's own league
-
-          const homeData = getStartersWithFormation(next, fixture.homeId, {
-            fixture: {
-              fixtureId: fixture.id,
-              opponentId: fixture.awayId,
-              isHome: true,
-              competition: "league",
-              matchday: fixture.matchday,
-            },
-          });
-
-          const awayData = getStartersWithFormation(next, fixture.awayId, {
-            fixture: {
-              fixtureId: fixture.id,
-              opponentId: fixture.homeId,
-              isHome: false,
-              competition: "league",
-              matchday: fixture.matchday,
-            },
-          });
+          // The user's own league still needs rich stats, injuries, cards and
+          // substitutions, but the ultra-detailed minute-by-minute engine is
+          // unnecessary for AI-vs-AI fixtures. The fast engine produces the same
+          // result shape for the stats/standings pipeline at a fraction of the cost.
+          const homeData = getCachedStarters(fixture.homeId, fixture, true);
+          const awayData = getCachedStarters(fixture.awayId, fixture, false);
           const homeXI = homeData.players;
           const awayXI = awayData.players;
 
@@ -5769,11 +6027,11 @@ export async function advanceMatchdayLayered(
               xgAway: 0,
             };
           } else {
-            result = simulateMatch(home, away, homeXI, awayXI, {
+            result = simulateMatchFast(home, away, homeXI, awayXI, {
               homeBench: getBenchForTeam(next, fixture.homeId, homeXI, fixtureDisciplineCompetition(fixture)),
               awayBench: getBenchForTeam(next, fixture.awayId, awayXI, fixtureDisciplineCompetition(fixture)),
-              homeTactics: loadTactics(fixture.homeId),
-              awayTactics: loadTactics(fixture.awayId),
+              homeTactics: getCachedTactics(fixture.homeId),
+              awayTactics: getCachedTactics(fixture.awayId),
               homeFormation: homeData.formation,
               awayFormation: awayData.formation,
             });
@@ -5784,24 +6042,8 @@ export async function advanceMatchdayLayered(
           // FAST, pero detallada: incluso los partidos de otros equipos deben
           // guardar XI, formación, goleadores, asistencias, tarjetas, paradones,
           // palos y sustituciones para que la pantalla de crónica sea completa.
-          const homeData = getStartersWithFormation(next, fixture.homeId, {
-            fixture: {
-              fixtureId: fixture.id,
-              opponentId: fixture.awayId,
-              isHome: true,
-              competition: "league",
-              matchday: fixture.matchday,
-            },
-          });
-          const awayData = getStartersWithFormation(next, fixture.awayId, {
-            fixture: {
-              fixtureId: fixture.id,
-              opponentId: fixture.homeId,
-              isHome: false,
-              competition: "league",
-              matchday: fixture.matchday,
-            },
-          });
+          const homeData = getCachedStarters(fixture.homeId, fixture, true);
+          const awayData = getCachedStarters(fixture.awayId, fixture, false);
           const hXI = homeData.players;
           const aXI = awayData.players;
 
@@ -8150,28 +8392,157 @@ function simulateAllEuropeanAIThroughDay(
   });
 }
 
+function europeanTeamIsUserParticipant(comp: EuropeanStateKey, userTeamId: string): boolean {
+  return EUROPEAN_CONFIGS[comp]?.participants.includes(userTeamId) ?? false;
+}
+
+/**
+ * Synchronise one Europa/Conference competition up to a calendar offset.
+ *
+ * Important distinction:
+ * - if the user's club participates in the competition, draw notifications are
+ *   left to the calendar/modal flow;
+ * - if it is an AI-only competition, draws are executed automatically so the
+ *   competition can never get stuck waiting for a UI event that the manager is
+ *   not expected to see.
+ *
+ * The loop is intentionally idempotent and runs several passes because a pass
+ * can complete a playoff, which unlocks R16 fixtures that in turn need to be
+ * simulated before the next bracket progression can be calculated.
+ */
 export function simulatePendingEuropeanThroughDay(
   save: SaveGame,
   comp: EuropeanStateKey,
   throughOffset: number,
   userTeamId: string,
 ): SaveGame {
-  const key = europeanFixtureKey(comp);
-  const fixtures = Array.isArray((save as any)[key])
-    ? ((save as any)[key] as Fixture[])
-    : [];
-  const engineOffset = throughOffset - 1;
-  const hasPending = fixtures.some(
-    (f) =>
-      !f.result &&
-      typeof f.matchday === "number" &&
-      f.matchday <= throughOffset,
-  );
-  if (!hasPending) return save;
+  let next = initializeEuropeanState(save, comp);
+  const calendar = europeanCalendar();
+  const aiOnly = !europeanTeamIsUserParticipant(comp, userTeamId);
 
-  return runEuropeanEngine(save, comp, (engine) =>
-    simulateAllEuropeanAIThroughDay(engine, engineOffset, userTeamId),
-  );
+  const hasPendingAtOrBefore = (state: SaveGame) => {
+    const fixtures = ((state as any)[europeanFixtureKey(comp)] ?? []) as Fixture[];
+    return fixtures.some(
+      (f) => !f.result && typeof f.matchday === "number" && f.matchday <= throughOffset,
+    );
+  };
+
+  const hasUnplayedLeagueFixtures = (state: SaveGame) => {
+    const fixtures = ((state as any)[europeanFixtureKey(comp)] ?? []) as Fixture[];
+    return fixtures.some((f) => f.round?.startsWith("Jornada") && !f.result);
+  };
+
+  // Several passes are intentional. Completing a playoff can wire the R16
+  // opponents; completing R16 can wire QF opponents, etc. The next pass then
+  // simulates the newly materialised fixtures up to the same date.
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = false;
+    let state = (next as any)[comp];
+    if (!state) break;
+
+    // AI-only competitions never depend on a modal opened by the manager.
+    if (aiOnly && throughOffset >= calendar.leagueDraw && !state.drawState.leagueDone) {
+      next = applyEuropeanLeagueDraw(next, comp);
+      changed = true;
+      state = (next as any)[comp];
+    }
+
+    if (state.drawState.leagueDone && throughOffset >= calendar.leagueDay[0] && hasPendingAtOrBefore(next)) {
+      const before = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      next = runEuropeanEngine(
+        next,
+        comp,
+        (engine) => simulateAllEuropeanAIThroughDay(engine, throughOffset - 1, userTeamId),
+      );
+      const after = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      if (before !== after) changed = true;
+      state = (next as any)[comp];
+    }
+
+    // The shared UCL engine creates the complete knockout bracket when the
+    // playoff draw is applied. Do not create it until the league phase has
+    // actually produced its final table.
+    if (
+      aiOnly &&
+      state.drawState.leagueDone &&
+      !state.drawState.playoffDone &&
+      throughOffset >= calendar.playoffDraw &&
+      !hasUnplayedLeagueFixtures(next)
+    ) {
+      next = applyEuropeanPlayoffDraw(next, comp);
+      changed = true;
+      state = (next as any)[comp];
+    }
+
+    if (state.drawState.playoffDone && throughOffset >= calendar.playoffLeg1 && hasPendingAtOrBefore(next)) {
+      const before = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      next = runEuropeanEngine(
+        next,
+        comp,
+        (engine) => simulateAllEuropeanAIThroughDay(engine, throughOffset - 1, userTeamId),
+      );
+      const after = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      if (before !== after) changed = true;
+      state = (next as any)[comp];
+    }
+
+    const beforeProgress = JSON.stringify((next as any)[comp]?.bracket ?? []);
+    const beforePhase = (next as any)[comp]?.phase;
+    next = processEuropeanKnockoutProgress(next, comp, throughOffset);
+    if (
+      JSON.stringify((next as any)[comp]?.bracket ?? []) !== beforeProgress ||
+      (next as any)[comp]?.phase !== beforePhase
+    ) {
+      changed = true;
+    }
+    state = (next as any)[comp];
+
+    // `applyUCLPlayoffDraw` already sets knockoutDone because the full R16/QF/
+    // SF/final bracket is built at that point. Keep the explicit state update
+    // for compatibility with older saves where knockoutDone was left false.
+    if (
+      aiOnly &&
+      state.drawState.playoffDone &&
+      !state.drawState.knockoutDone &&
+      throughOffset >= calendar.knockoutDraw
+    ) {
+      next = applyEuropeanKnockoutDraw(next, comp);
+      changed = true;
+      state = (next as any)[comp];
+    }
+
+    if (state.drawState.knockoutDone && throughOffset >= calendar.r16Leg1 && hasPendingAtOrBefore(next)) {
+      const before = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      next = runEuropeanEngine(
+        next,
+        comp,
+        (engine) => simulateAllEuropeanAIThroughDay(engine, throughOffset - 1, userTeamId),
+      );
+      const after = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      if (before !== after) changed = true;
+    }
+
+    const beforeLateProgress = JSON.stringify((next as any)[comp]?.bracket ?? []);
+    const beforeLatePhase = (next as any)[comp]?.phase;
+    next = processEuropeanKnockoutProgress(next, comp, throughOffset);
+    if (
+      JSON.stringify((next as any)[comp]?.bracket ?? []) !== beforeLateProgress ||
+      (next as any)[comp]?.phase !== beforeLatePhase
+    ) {
+      changed = true;
+    }
+
+    state = (next as any)[comp];
+    const drawDue = aiOnly && (
+      (throughOffset >= calendar.leagueDraw && !state?.drawState?.leagueDone) ||
+      (throughOffset >= calendar.playoffDraw && state?.drawState?.leagueDone && !state?.drawState?.playoffDone) ||
+      (throughOffset >= calendar.knockoutDraw && state?.drawState?.playoffDone && !state?.drawState?.knockoutDone)
+    );
+
+    if (!hasPendingAtOrBefore(next) && !drawDue && !changed) break;
+  }
+
+  return next;
 }
 
 export function processEuropeanKnockoutProgress(save: SaveGame, comp: EuropeanStateKey, throughOffset: number): SaveGame {

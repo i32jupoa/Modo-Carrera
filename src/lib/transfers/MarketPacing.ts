@@ -22,7 +22,7 @@ import {
   transferWindowKey,
   transferWindowLengthDays,
 } from "../transferWindows";
-import { BIG_SIGNING_PACING } from "./constants";
+import { BIG_SIGNING_PACING, WINTER_MARKET } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
 import { clamp, seededUnit } from "./random";
 
@@ -111,6 +111,13 @@ export function bigSigningSpendCapRatio(
   date: string,
   options: BigSigningCapOptions = {},
 ): number {
+  // Enero no utiliza la rampa de gasto de verano: incluso un club grande
+  // debe conservar margen y los fichajes normales/urgentes tienen un techo
+  // deliberadamente más prudente. Las necesidades críticas reciben algo más
+  // de margen, pero tampoco convierten el invierno en otro mercado de agosto.
+  if (transferWindowKey(date).endsWith(":winter")) {
+    return options.critical ? WINTER_MARKET.reactiveSpendRatio : WINTER_MARKET.normalSpendRatio;
+  }
   if (options.deadlineDay) return 1;
   const day = daysIntoTransferWindow(date);
   const ramp = rampDay(clubId, date);

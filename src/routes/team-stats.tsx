@@ -200,7 +200,7 @@ function TeamStatsPage() {
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
             <StatPill label="Jugadores" value={String(squad.length)} />
-            <StatPill label="Media" value={teamAverage.toFixed(1)} />
+            <StatPill label="Media" value={String(Math.round(teamAverage))} />
             <StatPill label="PJ" value={String(teamRecord.played)} />
             <StatPill label="V / E / D" value={`${teamRecord.won} / ${teamRecord.drawn} / ${teamRecord.lost}`} />
             <StatPill label="Goles" value={String(totals.goals)} icon={<Goal className="h-3 w-3" />} />
@@ -232,7 +232,7 @@ function TeamStatsPage() {
                 <span className="scoreline text-2xl font-black">{POS_LABEL_ES[pos]}</span>
                 <div className="flex-1">
                   <p className="text-sm font-bold uppercase tracking-wider">{POSITION_FULL[pos]}</p>
-                  <p className="text-[0.65rem] uppercase tracking-wider opacity-70">{players.length} jugadores · Media {(players.reduce((sum, p) => sum + p.OVR, 0) / players.length).toFixed(1)}</p>
+                  <p className="text-[0.65rem] uppercase tracking-wider opacity-70">{players.length} jugadores · Media {Math.round(players.reduce((sum, p) => sum + p.OVR, 0) / players.length)}</p>
                 </div>
               </div>
 

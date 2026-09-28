@@ -339,19 +339,40 @@ function GoldenPassView({ leaderboard, award }: { leaderboard: GoldenPassCandida
   );
 }
 
-function ChampionsView({ ranking, award, xi }: { ranking: ChampionsRankingEntry[]; award: SeasonAward; xi: AwardPlayer[] }) {
+function EuropeanCompetitionView({
+  title,
+  competition,
+  ranking,
+  award,
+  xi,
+}: {
+  title: string;
+  competition: "ucl" | "uel" | "uecl";
+  ranking: ChampionsRankingEntry[];
+  award: SeasonAward;
+  xi: AwardPlayer[];
+}) {
+  const icon = <Swords className="h-4 w-4" />;
+  const stats = (entry: ChampionsRankingEntry) => {
+    if (competition === "ucl") return `${entry.uclGoals} G · ${entry.uclAssists} A · ${entry.uclMotm} MVP · ${entry.uclAppearances} PJ`;
+    if (competition === "uel") return `${entry.uelGoals} G · ${entry.uelAssists} A · ${entry.uelMotm} MVP · ${entry.uelAppearances} PJ`;
+    return `${entry.ueclGoals} G · ${entry.ueclAssists} A · ${entry.ueclMotm} MVP · ${entry.ueclAppearances} PJ`;
+  };
   return (
     <div className="space-y-4">
-      <AwardCard icon={<Swords className="h-4 w-4" />} title="Mejor jugador Champions" award={award} />
-      <XIBlock title="11 de la Champions" subtitle="4-3-3 con MCO. Los partidos de octavos, cuartos, semifinales y final tienen un peso especial." players={xi} />
-      <RankingList
-        title="Top Champions"
-        icon={<Swords className="h-4 w-4" />}
-        entries={ranking}
-        renderStat={(entry) => `${entry.uclGoals} G · ${entry.uclAssists} A · ${entry.uclMotm} MVP`}
+      <AwardCard icon={icon} title={`Mejor jugador ${title}`} award={award} />
+      <XIBlock
+        title={`11 de la ${title}`}
+        subtitle="Selección basada en rendimiento individual, con peso creciente en las eliminatorias. Llegar a semifinales o a la final suma, pero no convierte automáticamente a todo el campeón en el once."
+        players={xi}
       />
+      <RankingList title={`Top ${title}`} icon={icon} entries={ranking} renderStat={stats} />
     </div>
   );
+}
+
+function ChampionsView({ ranking, award, xi }: { ranking: ChampionsRankingEntry[]; award: SeasonAward; xi: AwardPlayer[] }) {
+  return <EuropeanCompetitionView title="Champions League" competition="ucl" ranking={ranking} award={award} xi={xi} />;
 }
 
 function LeagueView({
@@ -441,8 +462,8 @@ function SummaryView({ snapshot }: { snapshot: ReturnType<typeof getAwardsSnapsh
         <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <InfoTile title="Balón de Oro" text="30 puestos. La calidad del jugador es una condición previa; después pesan media, títulos, MVP y, especialmente, la Champions y sus rondas decisivas." />
           <InfoTile title="Bota de Oro" text="Estadística pura: goles de liga multiplicados por el coeficiente de cada competición." />
-          <InfoTile title="Champions" text="Premio, top de rendimiento y XI propios. Un MVP en la final suma mucho, pero no garantiza el premio por sí solo." />
-          <InfoTile title="Ligas" text="Elige cualquier liga y cualquier mes disponible para consultar jugador del mes, XI 4-3-3 y rendimiento mensual." />
+          <InfoTile title="Champions" text="Rendimiento individual, producción, rondas decisivas y títulos. El once no pertenece automáticamente al campeón." />
+          <InfoTile title="Europa y Conference" text="Cada competición tiene su propio mejor jugador, ranking y XI, con estadísticas y progresión independientes." />
         </CardContent>
       </Card>
     </div>
@@ -541,17 +562,25 @@ function AwardsPage() {
   const snapshot = awardData.snapshot;
 
   useEffect(() => {
-    if (!ready || !save || activeTab !== "ligas" || !players.length) return;
+    if (!ready || !save || !players.length) {
+      setAwardData((current) => ({ ...current, periods: [] }));
+      return;
+    }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      const nextPeriods = getMonthlyPeriods(leagueId, players, save);
-      if (!cancelled) setAwardData((current) => ({ ...current, periods: nextPeriods }));
+      try {
+        const nextPeriods = getMonthlyPeriods(leagueId, players, save);
+        if (!cancelled) setAwardData((current) => ({ ...current, periods: nextPeriods }));
+      } catch (error) {
+        console.error("Monthly periods calculation failed", error);
+        if (!cancelled) setAwardData((current) => ({ ...current, periods: [] }));
+      }
     }, 0);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [ready, save, players, leagueId, activeTab, currentDate]);
+  }, [ready, save, players, leagueId, currentDate]);
 
   useEffect(() => {
     if (!periodKey && periods.length) setPeriodKey(findCurrentOrFirstPeriod(periods, currentDate));
@@ -622,6 +651,8 @@ function AwardsPage() {
           <TabsTrigger value="bota">Bota de Oro</TabsTrigger>
           <TabsTrigger value="pase">Pase de Oro</TabsTrigger>
           <TabsTrigger value="champions">Champions</TabsTrigger>
+          <TabsTrigger value="europa">Europa League</TabsTrigger>
+          <TabsTrigger value="conference">Conference League</TabsTrigger>
           <TabsTrigger value="ligas">Ligas</TabsTrigger>
         </TabsList>
 
@@ -639,6 +670,12 @@ function AwardsPage() {
         </TabsContent>
         <TabsContent value="champions">
           {snapshot ? <ChampionsView ranking={snapshot.championsRanking} award={snapshot.championsPlayer} xi={snapshot.championsXI} /> : <PlayersLoading message={loading || !ready ? "Cargando datos de Champions…" : (awardData.error ?? "Calculando Champions…")} />}
+        </TabsContent>
+        <TabsContent value="europa">
+          {snapshot ? <EuropeanCompetitionView title="Europa League" competition="uel" ranking={snapshot.europaLeagueRanking} award={snapshot.europaLeaguePlayer} xi={snapshot.europaLeagueXI} /> : <PlayersLoading message={loading || !ready ? "Cargando datos de Europa League…" : (awardData.error ?? "Calculando Europa League…")} />}
+        </TabsContent>
+        <TabsContent value="conference">
+          {snapshot ? <EuropeanCompetitionView title="Conference League" competition="uecl" ranking={snapshot.conferenceLeagueRanking} award={snapshot.conferenceLeaguePlayer} xi={snapshot.conferenceLeagueXI} /> : <PlayersLoading message={loading || !ready ? "Cargando datos de Conference League…" : (awardData.error ?? "Calculando Conference League…")} />}
         </TabsContent>
         <TabsContent value="ligas">
           {monthlyError ? (

@@ -339,7 +339,8 @@ function ScoutingPage() {
   const myTeamId = usePlayersStore((state) => state.myTeamId);
   const budget = usePlayersStore((state) => state.budget);
   const currentDate = usePlayersStore((state) => state.currentDate);
-  const rawPlayers = usePlayersStore((state) => state.getRawPlayers?.() || []);
+  const playerStats = usePlayersStore((state) => state.stats);
+  const rawPlayers = useMemo(() => usePlayersStore.getState().getRawPlayers?.() || [], [playerStats, currentDate]);
   const spendBudget = usePlayersStore((state) => state.spendBudget);
   const [positionFilter, setPositionFilter] = useState<PosCode | "">("");
   const [minOvr, setMinOvr] = useState("");

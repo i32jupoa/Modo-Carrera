@@ -31,13 +31,31 @@ export type AwardPlayer = Player & {
   uclMotm: number;
   uclCleanSheets: number;
   uclFinalMvp: boolean;
+  uelGoals: number;
+  uelAssists: number;
+  uelAppearances: number;
+  uelMotm: number;
+  uelCleanSheets: number;
+  uelFinalMvp: boolean;
+  ueclGoals: number;
+  ueclAssists: number;
+  ueclAppearances: number;
+  ueclMotm: number;
+  ueclCleanSheets: number;
+  ueclFinalMvp: boolean;
   titles: number;
   leagueTitles: number;
   domesticCupTitle: boolean;
   uclChampion: boolean;
+  uelChampion: boolean;
+  ueclChampion: boolean;
   teamSeasonScore: number;
   uclStageScore: number;
   uclDecisiveScore: number;
+  uelStageScore: number;
+  uelDecisiveScore: number;
+  ueclStageScore: number;
+  ueclDecisiveScore: number;
   awardScore: number;
   currentOVR: number;
 };
@@ -92,6 +110,12 @@ export type AwardsSnapshot = {
   championsPlayer: SeasonAward;
   championsRanking: ChampionsRankingEntry[];
   championsXI: SeasonXI;
+  europaLeaguePlayer: SeasonAward;
+  europaLeagueRanking: ChampionsRankingEntry[];
+  europaLeagueXI: SeasonXI;
+  conferenceLeaguePlayer: SeasonAward;
+  conferenceLeagueRanking: ChampionsRankingEntry[];
+  conferenceLeagueXI: SeasonXI;
 };
 
 export type MonthlyPeriod = { year: number; month: number; label: string };
@@ -182,11 +206,11 @@ function isEuropeanTopFlight(leagueId: string): boolean {
 
 function seasonLeagueStats(st: PlayerStats) {
   return {
-    goals: Math.max(0, (st.goals ?? 0) - (st.cupGoals ?? 0) - (st.uclGoals ?? 0)),
-    assists: Math.max(0, (st.assists ?? 0) - (st.cupAssists ?? 0) - (st.uclAssists ?? 0)),
-    appearances: Math.max(0, (st.appearances ?? 0) - (st.cupAppearances ?? 0) - (st.uclAppearances ?? 0)),
-    motm: Math.max(0, (st.motm ?? 0) - (st.cupMotm ?? 0) - (st.uclMotm ?? 0)),
-    cleanSheets: Math.max(0, (st.cleanSheets ?? 0) - (st.cupCleanSheets ?? 0) - (st.uclCleanSheets ?? 0)),
+    goals: Math.max(0, (st.goals ?? 0) - (st.cupGoals ?? 0) - (st.uclGoals ?? 0) - (st.uelGoals ?? 0) - (st.ueclGoals ?? 0)),
+    assists: Math.max(0, (st.assists ?? 0) - (st.cupAssists ?? 0) - (st.uclAssists ?? 0) - (st.uelAssists ?? 0) - (st.ueclAssists ?? 0)),
+    appearances: Math.max(0, (st.appearances ?? 0) - (st.cupAppearances ?? 0) - (st.uclAppearances ?? 0) - (st.uelAppearances ?? 0) - (st.ueclAppearances ?? 0)),
+    motm: Math.max(0, (st.motm ?? 0) - (st.cupMotm ?? 0) - (st.uclMotm ?? 0) - (st.uelMotm ?? 0) - (st.ueclMotm ?? 0)),
+    cleanSheets: Math.max(0, (st.cleanSheets ?? 0) - (st.cupCleanSheets ?? 0) - (st.uclCleanSheets ?? 0) - (st.uelCleanSheets ?? 0) - (st.ueclCleanSheets ?? 0)),
   };
 }
 
@@ -207,6 +231,8 @@ type AwardTeamContext = {
   leagueTitlesByTeam: Map<string, number>;
   seasonScoreByTeam: Map<string, number>;
   uclStageScoreByTeam: Map<string, number>;
+  uelStageScoreByTeam: Map<string, number>;
+  ueclStageScoreByTeam: Map<string, number>;
 };
 
 function domesticCupChampions(save: SaveGame): Set<string> {
@@ -221,6 +247,8 @@ function buildAwardTeamContext(save: SaveGame): AwardTeamContext {
   const leagueTitlesByTeam = new Map<string, number>();
   const seasonScoreByTeam = new Map<string, number>();
   const uclStageScoreByTeam = new Map<string, number>();
+  const uelStageScoreByTeam = new Map<string, number>();
+  const ueclStageScoreByTeam = new Map<string, number>();
   const cupChampions = domesticCupChampions(save);
 
   const add = (map: Map<string, number>, teamId: string, value: number) => map.set(teamId, (map.get(teamId) ?? 0) + value);
@@ -252,16 +280,38 @@ function buildAwardTeamContext(save: SaveGame): AwardTeamContext {
     add(titlesByTeam, save.uclChampion, 1);
     add(seasonScoreByTeam, save.uclChampion, 18);
   }
+  if (save.uelChampion) {
+    add(titlesByTeam, save.uelChampion, 1);
+    add(seasonScoreByTeam, save.uelChampion, 11);
+  }
+  if (save.ueclChampion) {
+    add(titlesByTeam, save.ueclChampion, 1);
+    add(seasonScoreByTeam, save.ueclChampion, 7);
+  }
 
   for (const fixture of save.uclFixtures ?? []) {
     if (!fixture.result) continue;
-    const weight = uclRoundWeight(fixture.round);
+    const weight = europeanRoundWeight(fixture.round);
     if (fixture.homeId) add(uclStageScoreByTeam, fixture.homeId, weight);
     if (fixture.awayId) add(uclStageScoreByTeam, fixture.awayId, weight);
   }
-  if (save.uclChampion) add(uclStageScoreByTeam, save.uclChampion, 10);
+  for (const fixture of save.uelFixtures ?? []) {
+    if (!fixture.result) continue;
+    const weight = europeanRoundWeight(fixture.round);
+    if (fixture.homeId) add(uelStageScoreByTeam, fixture.homeId, weight);
+    if (fixture.awayId) add(uelStageScoreByTeam, fixture.awayId, weight);
+  }
+  for (const fixture of save.ueclFixtures ?? []) {
+    if (!fixture.result) continue;
+    const weight = europeanRoundWeight(fixture.round);
+    if (fixture.homeId) add(ueclStageScoreByTeam, fixture.homeId, weight);
+    if (fixture.awayId) add(ueclStageScoreByTeam, fixture.awayId, weight);
+  }
+  if (save.uclChampion) add(uclStageScoreByTeam, save.uclChampion, 6);
+  if (save.uelChampion) add(uelStageScoreByTeam, save.uelChampion, 4);
+  if (save.ueclChampion) add(ueclStageScoreByTeam, save.ueclChampion, 3);
 
-  return { titlesByTeam, leagueTitlesByTeam, seasonScoreByTeam, uclStageScoreByTeam };
+  return { titlesByTeam, leagueTitlesByTeam, seasonScoreByTeam, uclStageScoreByTeam, uelStageScoreByTeam, ueclStageScoreByTeam };
 }
 
 function worldClassScore(p: AwardPlayer): number {
@@ -271,9 +321,9 @@ function worldClassScore(p: AwardPlayer): number {
   return rating * 1.25 + potential * 0.35 + Math.min(value / 10, 24);
 }
 
-function uclRoundWeight(round?: string): number {
+function europeanRoundWeight(round?: string): number {
   if (!round) return 0;
-  if (round === "Final") return 10;
+  if (round === "Final") return 9;
   if (round.includes("SF")) return 7;
   if (round.includes("QF")) return 5;
   if (round.includes("R16")) return 3.5;
@@ -281,19 +331,39 @@ function uclRoundWeight(round?: string): number {
   return 1;
 }
 
-function uclFinalMvpIds(save: SaveGame): Set<string> {
+function uclRoundWeight(round?: string): number {
+  return europeanRoundWeight(round);
+}
+
+function europeanFixtures(save: SaveGame, competition: "ucl" | "uel" | "uecl"): Fixture[] {
+  if (competition === "ucl") return save.uclFixtures ?? [];
+  if (competition === "uel") return save.uelFixtures ?? [];
+  return save.ueclFixtures ?? [];
+}
+
+function europeanChampion(save: SaveGame, competition: "ucl" | "uel" | "uecl"): string | null {
+  if (competition === "ucl") return save.uclChampion ?? null;
+  if (competition === "uel") return save.uelChampion ?? null;
+  return save.ueclChampion ?? null;
+}
+
+function europeanFinalMvpIds(save: SaveGame, competition: "ucl" | "uel" | "uecl"): Set<string> {
   const ids = new Set<string>();
-  for (const fixture of save.uclFixtures ?? []) {
+  for (const fixture of europeanFixtures(save, competition)) {
     if (fixture.round === "Final" && fixture.result?.mvp?.playerId) ids.add(fixture.result.mvp.playerId);
   }
   return ids;
 }
 
-function buildUclDecisivePlayerScores(save: SaveGame): Map<string, number> {
+function uclFinalMvpIds(save: SaveGame): Set<string> {
+  return europeanFinalMvpIds(save, "ucl");
+}
+
+function buildEuropeanDecisivePlayerScores(save: SaveGame, competition: "ucl" | "uel" | "uecl"): Map<string, number> {
   const scores = new Map<string, number>();
-  for (const fixture of save.uclFixtures ?? []) {
+  for (const fixture of europeanFixtures(save, competition)) {
     if (!fixture.result) continue;
-    const weight = uclRoundWeight(fixture.round);
+    const weight = europeanRoundWeight(fixture.round);
     if (weight <= 0) continue;
     const result = fixture.result;
     const lineupIds = new Set<string>([
@@ -322,6 +392,18 @@ function buildUclDecisivePlayerScores(save: SaveGame): Map<string, number> {
   return scores;
 }
 
+function buildUclDecisivePlayerScores(save: SaveGame): Map<string, number> {
+  return buildEuropeanDecisivePlayerScores(save, "ucl");
+}
+
+function buildEuropeanTeamStageScore(save: SaveGame, teamId: string, competition: "ucl" | "uel" | "uecl"): number {
+  return europeanFixtures(save, competition).reduce((total, fixture) => {
+    if (!fixture.result) return total;
+    if (fixture.homeId !== teamId && fixture.awayId !== teamId) return total;
+    return total + europeanRoundWeight(fixture.round);
+  }, 0);
+}
+
 function getPlayers(save = loadSave()): AwardPlayer[] {
   const store = usePlayersStore.getState();
   store.init();
@@ -330,12 +412,18 @@ function getPlayers(save = loadSave()): AwardPlayer[] {
   const safeSave = save ?? ({} as SaveGame);
   const finalMvpIds = uclFinalMvpIds(safeSave);
   const uclDecisivePlayerScores = buildUclDecisivePlayerScores(safeSave);
+  const uelDecisivePlayerScores = buildEuropeanDecisivePlayerScores(safeSave, "uel");
+  const ueclDecisivePlayerScores = buildEuropeanDecisivePlayerScores(safeSave, "uecl");
+  const uelFinalMvpIds = europeanFinalMvpIds(safeSave, "uel");
+  const ueclFinalMvpIds = europeanFinalMvpIds(safeSave, "uecl");
   const cupChampions = domesticCupChampions(safeSave);
   const teamContext = save ? buildAwardTeamContext(save) : {
     titlesByTeam: new Map<string, number>(),
     leagueTitlesByTeam: new Map<string, number>(),
     seasonScoreByTeam: new Map<string, number>(),
     uclStageScoreByTeam: new Map<string, number>(),
+    uelStageScoreByTeam: new Map<string, number>(),
+    ueclStageScoreByTeam: new Map<string, number>(),
   };
 
   const out: AwardPlayer[] = [];
@@ -357,8 +445,12 @@ function getPlayers(save = loadSave()): AwardPlayer[] {
     const leagueTitleCount = teamContext.leagueTitlesByTeam.get(player.teamId) ?? 0;
     const teamScore = teamContext.seasonScoreByTeam.get(player.teamId) ?? 0;
     const uclStageScore = teamContext.uclStageScoreByTeam.get(player.teamId) ?? 0;
+    const uelStageScore = teamContext.uelStageScoreByTeam.get(player.teamId) ?? 0;
+    const ueclStageScore = teamContext.ueclStageScoreByTeam.get(player.teamId) ?? 0;
     const currentOVR = Number(d?.currentOVR ?? player.rating);
     const uclChampion = save?.uclChampion === player.teamId;
+    const uelChampion = save?.uelChampion === player.teamId;
+    const ueclChampion = save?.ueclChampion === player.teamId;
     const domesticCupTitle = cupChampions.has(player.teamId);
 
     const awardScore =
@@ -394,13 +486,31 @@ function getPlayers(save = loadSave()): AwardPlayer[] {
       uclMotm: st.uclMotm ?? 0,
       uclCleanSheets: st.uclCleanSheets ?? 0,
       uclFinalMvp: finalMvpIds.has(id),
+      uelGoals: st.uelGoals ?? 0,
+      uelAssists: st.uelAssists ?? 0,
+      uelAppearances: st.uelAppearances ?? 0,
+      uelMotm: st.uelMotm ?? 0,
+      uelCleanSheets: st.uelCleanSheets ?? 0,
+      uelFinalMvp: uelFinalMvpIds.has(id),
+      ueclGoals: st.ueclGoals ?? 0,
+      ueclAssists: st.ueclAssists ?? 0,
+      ueclAppearances: st.ueclAppearances ?? 0,
+      ueclMotm: st.ueclMotm ?? 0,
+      ueclCleanSheets: st.ueclCleanSheets ?? 0,
+      ueclFinalMvp: ueclFinalMvpIds.has(id),
       titles: titleCount,
       leagueTitles: leagueTitleCount,
       domesticCupTitle,
       uclChampion,
+      uelChampion,
+      ueclChampion,
       teamSeasonScore: teamScore,
       uclStageScore,
       uclDecisiveScore: uclDecisivePlayerScores.get(id) ?? 0,
+      uelStageScore,
+      uelDecisiveScore: uelDecisivePlayerScores.get(id) ?? 0,
+      ueclStageScore,
+      ueclDecisiveScore: ueclDecisivePlayerScores.get(id) ?? 0,
       awardScore,
       currentOVR,
     });
@@ -413,33 +523,49 @@ export function getAwardPlayers(save = loadSave()): AwardPlayer[] {
 }
 
 function ballonDorBreakdown(p: AwardPlayer): BallonDorCandidate {
-  // The real-world Ballon d'Or is not a pure statistical award.
-  // First require a meaningful level of individual quality, then combine
-  // season level, big-five context, titles and Champions League performance.
-  const bigFiveFactor = isTopFiveLeague(p.leagueId) ? 1.2 : 0.78;
-  const ratingPoints = clamp((p.averageRating - 6.7) * 46, 0, 46);
-  const domesticProduction = (p.leagueGoals * 1.22 + p.leagueAssists * 0.82) * bigFiveFactor;
-  const otherGoals = Math.max(0, p.seasonGoals - p.leagueGoals - p.uclGoals);
-  const otherAssists = Math.max(0, p.seasonAssists - p.leagueAssists - p.uclAssists);
-  const productionPoints = Math.min(34, domesticProduction + otherGoals * 0.32 + otherAssists * 0.24);
-  const mvpPoints = Math.min(27, p.seasonMVPs * 2.9 + p.leagueMotm * 0.75 + p.uclMotm * 1.35);
-  const championsPoints = Math.min(52,
-    p.uclGoals * 3.2 +
-    p.uclAssists * 1.9 +
-    p.uclMotm * 4.8 +
-    p.uclDecisiveScore * 1.1 +
-    (p.uclChampion ? 9 : 0) +
-    (p.uclFinalMvp ? 11 : 0),
+  // Individual season quality is the foundation. Domestic titles and production
+  // carry more weight than a single Champions final, while deep European runs
+  // are rewarded without making the champion's squad automatically dominant.
+  const bigFiveFactor = isTopFiveLeague(p.leagueId) ? 1.18 : 0.82;
+  const ratingPoints = clamp((p.averageRating - 6.65) * 48, 0, 48);
+  const domesticProduction = (
+    p.leagueGoals * 1.45 + p.leagueAssists * 0.88 +
+    p.cupGoals * 1.15 + p.cupAssists * 0.7
+  ) * bigFiveFactor;
+  const europeanProduction =
+    p.uclGoals * 2.35 + p.uclAssists * 1.35 +
+    p.uelGoals * 1.85 + p.uelAssists * 1.1 +
+    p.ueclGoals * 1.45 + p.ueclAssists * 0.9;
+  const otherGoals = Math.max(0, p.seasonGoals - p.leagueGoals - p.cupGoals - p.uclGoals - p.uelGoals - p.ueclGoals);
+  const otherAssists = Math.max(0, p.seasonAssists - p.leagueAssists - p.cupAssists - p.uclAssists - p.uelAssists - p.ueclAssists);
+  const productionPoints = Math.min(44, domesticProduction + europeanProduction + otherGoals * 0.2 + otherAssists * 0.16);
+  const mvpPoints = Math.min(20, p.seasonMVPs * 2.4 + p.leagueMotm * 0.7 + p.uclMotm * 1.15 + p.uelMotm * 0.9 + p.ueclMotm * 0.7);
+  const championsPoints = Math.min(28,
+    p.uclGoals * 2.35 +
+    p.uclAssists * 1.35 +
+    p.uclMotm * 3.1 +
+    p.uclDecisiveScore * 0.55 +
+    (p.uclChampion ? 5 : 0) +
+    (p.uclFinalMvp ? 5 : 0),
   );
-  const trophyPoints = Math.min(34,
-    p.leagueTitles * 5.25 +
-    (p.domesticCupTitle ? 3.5 : 0) +
-    (p.uclChampion ? 13 : 0) +
-    Math.min(8, p.teamSeasonScore * 0.12),
+  const trophyPoints = Math.min(42,
+    p.leagueTitles * 8 +
+    (p.domesticCupTitle ? 6 : 0) +
+    (p.uclChampion ? 7 : 0) +
+    (p.uelChampion ? 4.5 : 0) +
+    (p.ueclChampion ? 2.5 : 0) +
+    Math.min(9, p.teamSeasonScore * 0.12),
   );
-  const decisivePoints = Math.min(30, p.uclDecisiveScore * 1.55 + p.uclMotm * 1.6 + (p.uclFinalMvp ? 12 : 0));
-  const consistencyPoints = Math.min(16, p.seasonAppearances * 0.3);
-  const prestigePoints = Math.min(12, Math.max(0, worldClassScore(p) - 185) * 0.34);
+  const decisivePoints = Math.min(18,
+    p.uclDecisiveScore * 0.75 +
+    p.uelDecisiveScore * 0.55 +
+    p.ueclDecisiveScore * 0.4 +
+    (p.uclFinalMvp ? 5 : 0) +
+    (p.uelFinalMvp ? 3 : 0) +
+    (p.ueclFinalMvp ? 2 : 0),
+  );
+  const consistencyPoints = Math.min(14, p.seasonAppearances * 0.28);
+  const prestigePoints = Math.min(10, Math.max(0, worldClassScore(p) - 185) * 0.28);
   const points = ratingPoints + productionPoints + mvpPoints + championsPoints + trophyPoints + decisivePoints + consistencyPoints + prestigePoints;
 
   return { ...p, points, ratingPoints, productionPoints, mvpPoints, championsPoints, trophyPoints, decisivePoints, consistencyPoints, prestigePoints };
@@ -585,45 +711,106 @@ export function getGoldenGlove(players = getPlayers(loadSave() ?? undefined), sa
   };
 }
 
-function playerUclScore(save: SaveGame, p: AwardPlayer): number {
-  if (p.uclAppearances <= 0) return -Infinity;
+function europeanProgressBonus(save: SaveGame, teamId: string, competition: "ucl" | "uel" | "uecl"): number {
+  const fixtures = europeanFixtures(save, competition).filter((fixture) => fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId));
+  if (!fixtures.length) return 0;
+  const ranks = fixtures.map((fixture) => {
+    const round = String(fixture.round ?? "");
+    if (round === "Final") return 10;
+    if (round.includes("SF")) return 8;
+    if (round.includes("QF")) return 6;
+    if (round.includes("R16")) return 4.5;
+    if (round === "Playoff") return 3;
+    return 1.5;
+  });
+  return Math.max(...ranks);
+}
+
+function playerEuropeanScore(save: SaveGame, p: AwardPlayer, competition: "ucl" | "uel" | "uecl"): number {
+  const appearances = competition === "ucl" ? p.uclAppearances : competition === "uel" ? p.uelAppearances : p.ueclAppearances;
+  if (appearances <= 0) return -Infinity;
+  const goals = competition === "ucl" ? p.uclGoals : competition === "uel" ? p.uelGoals : p.ueclGoals;
+  const assists = competition === "ucl" ? p.uclAssists : competition === "uel" ? p.uelAssists : p.ueclAssists;
+  const motm = competition === "ucl" ? p.uclMotm : competition === "uel" ? p.uelMotm : p.ueclMotm;
+  const cleanSheets = competition === "ucl" ? p.uclCleanSheets : competition === "uel" ? p.uelCleanSheets : p.ueclCleanSheets;
+  const stageScore = competition === "ucl" ? p.uclStageScore : competition === "uel" ? p.uelStageScore : p.ueclStageScore;
+  const decisive = competition === "ucl" ? p.uclDecisiveScore : competition === "uel" ? p.uelDecisiveScore : p.ueclDecisiveScore;
+  const finalMvp = competition === "ucl" ? p.uclFinalMvp : competition === "uel" ? p.uelFinalMvp : p.ueclFinalMvp;
+  const champion = competition === "ucl" ? p.uclChampion : competition === "uel" ? p.uelChampion : p.ueclChampion;
+
+  const progressBonus = europeanProgressBonus(save, p.teamId, competition);
   return (
-    (p.averageRating - 6.2) * 27 +
-    p.uclGoals * 3.1 +
-    p.uclAssists * 1.8 +
-    p.uclMotm * 5.2 +
-    p.uclCleanSheets * (isGoalkeeper(p) ? 2.8 : 0.5) +
-    p.uclAppearances * 0.35 +
-    p.uclStageScore * 1.8 +
-    (p.uclChampion ? 8 : 0) +
-    (p.uclFinalMvp ? 14 : 0)
+    (p.averageRating - 6.15) * 28 +
+    goals * 3.15 +
+    assists * 1.9 +
+    motm * 4.4 +
+    cleanSheets * (isGoalkeeper(p) ? 2.7 : 0.45) +
+    appearances * 0.3 +
+    progressBonus * 1.6 +
+    decisive * 0.9 +
+    (champion ? 4 : 0) +
+    (finalMvp ? 5 : 0)
   );
 }
 
-export function getChampionsRanking(limit = 25, players = getPlayers(loadSave() ?? undefined), save = loadSave()): ChampionsRankingEntry[] {
+function playerUclScore(save: SaveGame, p: AwardPlayer): number {
+  return playerEuropeanScore(save, p, "ucl");
+}
+
+export function getEuropeanRanking(competition: "ucl" | "uel" | "uecl", limit = 25, players = getPlayers(loadSave() ?? undefined), save = loadSave()): ChampionsRankingEntry[] {
   if (!save) return [];
   return players
-    .filter((p) => p.uclAppearances > 0)
-    .map((p) => ({ ...p, points: playerUclScore(save, p) }))
-    .sort((a, b) => b.points - a.points || Number(b.uclFinalMvp) - Number(a.uclFinalMvp) || b.uclMotm - a.uclMotm || b.uclGoals - a.uclGoals || b.averageRating - a.averageRating)
+    .filter((p) => (competition === "ucl" ? p.uclAppearances : competition === "uel" ? p.uelAppearances : p.ueclAppearances) > 0)
+    .map((p) => ({ ...p, points: playerEuropeanScore(save, p, competition) }))
+    .sort((a, b) => b.points - a.points || b.averageRating - a.averageRating || b.currentOVR - a.currentOVR)
     .slice(0, limit);
 }
 
-export function getChampionsBestPlayer(players = getPlayers(loadSave() ?? undefined), save = loadSave(), ranking?: ChampionsRankingEntry[]): SeasonAward {
-  if (!save) return { player: null, score: 0, label: "Mejor jugador Champions", detail: "Sin partida activa", provisional: true };
-  const top = (ranking ?? getChampionsRanking(25, players, save))[0];
+export function getChampionsRanking(limit = 25, players = getPlayers(loadSave() ?? undefined), save = loadSave()): ChampionsRankingEntry[] {
+  return getEuropeanRanking("ucl", limit, players, save);
+}
+
+function europeanBestPlayer(competition: "ucl" | "uel" | "uecl", label: string, players = getPlayers(loadSave() ?? undefined), save = loadSave(), ranking?: ChampionsRankingEntry[]): SeasonAward {
+  if (!save) return { player: null, score: 0, label, detail: "Sin partida activa", provisional: true };
+  const top = (ranking ?? getEuropeanRanking(competition, 25, players, save))[0];
+  if (!top) return { player: null, score: 0, label, detail: "Sin datos de competición.", provisional: true };
+  const goals = competition === "ucl" ? top.uclGoals : competition === "uel" ? top.uelGoals : top.ueclGoals;
+  const assists = competition === "ucl" ? top.uclAssists : competition === "uel" ? top.uelAssists : top.ueclAssists;
+  const motm = competition === "ucl" ? top.uclMotm : competition === "uel" ? top.uelMotm : top.ueclMotm;
+  const finalMvp = competition === "ucl" ? top.uclFinalMvp : competition === "uel" ? top.uelFinalMvp : top.ueclFinalMvp;
+  const champion = competition === "ucl" ? top.uclChampion : competition === "uel" ? top.uelChampion : top.ueclChampion;
   return {
-    player: top ?? null,
-    score: round(top?.points ?? 0),
-    label: "Mejor jugador Champions",
-    detail: top ? `${top.uclGoals} goles · ${top.uclAssists} asistencias · ${top.uclMotm} MVP · ${round(top.averageRating, 2)} de media${top.uclFinalMvp ? " · MVP de la final" : ""}` : "Sin datos de Champions.",
-    provisional: !seasonIsComplete(save) || !save.uclChampion,
+    player: top,
+    score: round(top.points),
+    label,
+    detail: `${goals} goles · ${assists} asistencias · ${motm} MVP · ${round(top.averageRating, 2)} de media${champion ? " · Campeón" : ""}${finalMvp ? " · MVP de la final" : ""}`,
+    provisional: !seasonIsComplete(save) || !champion,
   };
 }
 
-function competitionScore(p: AwardPlayer, competition: "season" | "ucl", monthlyById?: Map<string, MonthlyStats>, save?: SaveGame): number {
+export function getChampionsBestPlayer(players = getPlayers(loadSave() ?? undefined), save = loadSave(), ranking?: ChampionsRankingEntry[]): SeasonAward {
+  return europeanBestPlayer("ucl", "Mejor jugador Champions", players, save, ranking);
+}
+
+export function getEuropaLeagueRanking(limit = 25, players = getPlayers(loadSave() ?? undefined), save = loadSave()): ChampionsRankingEntry[] {
+  return getEuropeanRanking("uel", limit, players, save);
+}
+
+export function getEuropaLeagueBestPlayer(players = getPlayers(loadSave() ?? undefined), save = loadSave(), ranking?: ChampionsRankingEntry[]): SeasonAward {
+  return europeanBestPlayer("uel", "Mejor jugador Europa League", players, save, ranking);
+}
+
+export function getConferenceLeagueRanking(limit = 25, players = getPlayers(loadSave() ?? undefined), save = loadSave()): ChampionsRankingEntry[] {
+  return getEuropeanRanking("uecl", limit, players, save);
+}
+
+export function getConferenceLeagueBestPlayer(players = getPlayers(loadSave() ?? undefined), save = loadSave(), ranking?: ChampionsRankingEntry[]): SeasonAward {
+  return europeanBestPlayer("uecl", "Mejor jugador Conference League", players, save, ranking);
+}
+
+function competitionScore(p: AwardPlayer, competition: "season" | "ucl" | "uel" | "uecl", monthlyById?: Map<string, MonthlyStats>, save?: SaveGame): number {
   const group = positionGroup(p);
-  if (competition === "ucl") return save ? playerUclScore(save, p) : -Infinity;
+  if ((competition === "ucl" || competition === "uel" || competition === "uecl") && save) return playerEuropeanScore(save, p, competition);
   if (monthlyById?.has(p.id)) return monthlyPerformanceScore(monthlyById.get(p.id)!, p);
   return (
     (p.averageRating - 6.2) * 30 +
@@ -652,8 +839,6 @@ function slotSuitability(
   player: AwardPlayer,
   slot: "GK" | "LB" | "CB" | "RB" | "CM" | "CAM" | "LW" | "ST" | "RW",
 ): number {
-  // Awards XI is positional, not a generic role grouping. A player must
-  // actually list the requested position (including EA alternative positions).
   if (slot === "GK") return hasPosition(player, ["GK", "POR"]) ? 80 : -1000;
   if (slot === "LB") return hasPosition(player, ["LI", "LB", "LWB"]) ? 80 : -1000;
   if (slot === "CB") return hasPosition(player, ["DFC", "CB"]) ? 80 : -1000;
@@ -667,7 +852,7 @@ function slotSuitability(
 
 function buildXI(
   candidates: AwardPlayer[],
-  competition: "season" | "ucl",
+  competition: "season" | "ucl" | "uel" | "uecl",
   monthlyById?: Map<string, MonthlyStats>,
   save?: SaveGame,
 ): AwardPlayer[] {
@@ -676,9 +861,7 @@ function buildXI(
   ];
 
   const scored = new Map<string, number>();
-  for (const player of candidates) {
-    scored.set(player.id, competitionScore(player, competition, monthlyById, save));
-  }
+  for (const player of candidates) scored.set(player.id, competitionScore(player, competition, monthlyById, save));
 
   const candidateBySlot = slots.map((slot, slotIndex) => ({
     slot,
@@ -688,39 +871,17 @@ function buildXI(
       .sort((a, b) => (scored.get(b.id)! + slotSuitability(b, slot)) - (scored.get(a.id)! + slotSuitability(a, slot)) || b.currentOVR - a.currentOVR),
   }));
 
-  // Fill the most constrained positions first. A player who can cover several
-  // slots is treated as flexible, while an exclusive candidate makes a slot
-  // more urgent. This prevents Cancelo-type players being consumed at LB and
-  // then leaving the RB slot empty, for example.
   const flexibility = new Map<string, number>();
-  for (const entry of candidateBySlot) {
-    for (const player of entry.candidates) {
-      flexibility.set(player.id, (flexibility.get(player.id) ?? 0) + 1);
-    }
-  }
-  const criticality = (entry: typeof candidateBySlot[number]) =>
-    entry.candidates.reduce((sum, player) => sum + 1 / Math.max(1, flexibility.get(player.id) ?? 1), 0);
-
+  for (const entry of candidateBySlot) for (const player of entry.candidates) flexibility.set(player.id, (flexibility.get(player.id) ?? 0) + 1);
+  const criticality = (entry: typeof candidateBySlot[number]) => entry.candidates.reduce((sum, player) => sum + 1 / Math.max(1, flexibility.get(player.id) ?? 1), 0);
   const assignment = new Array<AwardPlayer | null>(slots.length).fill(null);
   const used = new Set<string>();
-  const work = [...candidateBySlot].sort(
-    (a, b) =>
-      a.candidates.length - b.candidates.length ||
-      criticality(b) - criticality(a) ||
-      a.slotIndex - b.slotIndex,
-  );
+  const work = [...candidateBySlot].sort((a, b) => a.candidates.length - b.candidates.length || criticality(b) - criticality(a) || a.slotIndex - b.slotIndex);
 
   for (const entry of work) {
     const chosen = entry.candidates.find((player) => !used.has(player.id));
-    if (chosen) {
-      assignment[entry.slotIndex] = chosen;
-      used.add(chosen.id);
-    }
+    if (chosen) { assignment[entry.slotIndex] = chosen; used.add(chosen.id); }
   }
-
-  // Never return a partially mapped XI: the route maps these 11 players to
-  // fixed 4-3-3 positions, so a partial array would put players in the wrong
-  // places on the pitch.
   if (assignment.some((player) => !player)) return [];
   return assignment as AwardPlayer[];
 }
@@ -729,8 +890,22 @@ export function getSeasonXI(players = getPlayers(loadSave() ?? undefined), save 
   return buildXI(players.filter((p) => p.seasonAppearances >= 5), "season", undefined, save ?? undefined);
 }
 
+function getEuropeanXI(competition: "ucl" | "uel" | "uecl", players = getPlayers(loadSave() ?? undefined), save = loadSave()): SeasonXI {
+  const minApps = competition === "ucl" ? 1 : 1;
+  const candidates = players.filter((p) => (competition === "ucl" ? p.uclAppearances : competition === "uel" ? p.uelAppearances : p.ueclAppearances) >= minApps);
+  return buildXI(candidates, competition, undefined, save ?? undefined);
+}
+
 export function getChampionsXI(players = getPlayers(loadSave() ?? undefined), save = loadSave()): SeasonXI {
-  return buildXI(players.filter((p) => p.uclAppearances > 0), "ucl", undefined, save ?? undefined);
+  return getEuropeanXI("ucl", players, save);
+}
+
+export function getEuropaLeagueXI(players = getPlayers(loadSave() ?? undefined), save = loadSave()): SeasonXI {
+  return getEuropeanXI("uel", players, save);
+}
+
+export function getConferenceLeagueXI(players = getPlayers(loadSave() ?? undefined), save = loadSave()): SeasonXI {
+  return getEuropeanXI("uecl", players, save);
 }
 
 function monthLabel(year: number, month: number): string {
@@ -953,9 +1128,14 @@ export function getMonthlyPeriods(leagueId?: LeagueId, players = getPlayers(), s
       const dates = assignFixtureDates(generateLeagueFixtures(currentLeagueId));
       for (const fixture of rawFixtures) {
         if (!fixture.result) continue;
-        const iso = dates.get(fixture.id);
+        // Prefer the actual date stored on the played fixture. Older saves may
+        // not have it, so fall back to the scheduler and normalize that
+        // generated date to the current season.
+        const actualDate = typeof fixture.date === "string" && fixture.date.trim() ? fixture.date : null;
+        const iso = actualDate ?? dates.get(fixture.id);
         if (!iso) continue;
-        const date = new Date(`${shiftFixtureDateToSeason(iso, save)}T12:00:00Z`);
+        const normalizedIso = actualDate ? actualDate : shiftFixtureDateToSeason(iso, save);
+        const date = new Date(`${normalizedIso}T12:00:00Z`);
         if (Number.isNaN(date.getTime())) continue;
         addPeriod(date.getUTCFullYear(), date.getUTCMonth());
       }
@@ -983,11 +1163,19 @@ export function getAwardsSnapshot(save = loadSave(), players = getPlayers(save ?
       championsPlayer: { ...empty, label: "Mejor jugador Champions" },
       championsRanking: [],
       championsXI: [],
+      europaLeaguePlayer: { ...empty, label: "Mejor jugador Europa League" },
+      europaLeagueRanking: [],
+      europaLeagueXI: [],
+      conferenceLeaguePlayer: { ...empty, label: "Mejor jugador Conference League" },
+      conferenceLeagueRanking: [],
+      conferenceLeagueXI: [],
     };
   }
 
   const ballonRanking = getBallonDorRanking(30, players, save);
   const championsRanking = getChampionsRanking(25, players, save);
+  const europaLeagueRanking = getEuropaLeagueRanking(25, players, save);
+  const conferenceLeagueRanking = getConferenceLeagueRanking(25, players, save);
   return {
     ballon: getBallonDor(players, save, ballonRanking),
     ballonRanking,
@@ -999,6 +1187,12 @@ export function getAwardsSnapshot(save = loadSave(), players = getPlayers(save ?
     championsPlayer: getChampionsBestPlayer(players, save, championsRanking),
     championsRanking,
     championsXI: getChampionsXI(players, save),
+    europaLeaguePlayer: getEuropaLeagueBestPlayer(players, save, europaLeagueRanking),
+    europaLeagueRanking,
+    europaLeagueXI: getEuropaLeagueXI(players, save),
+    conferenceLeaguePlayer: getConferenceLeagueBestPlayer(players, save, conferenceLeagueRanking),
+    conferenceLeagueRanking,
+    conferenceLeagueXI: getConferenceLeagueXI(players, save),
   };
 }
 
@@ -1006,7 +1200,9 @@ export function seasonIsComplete(save = loadSave()): boolean {
   if (!save) return false;
   const leagueComplete = ALL_LEAGUES.every((league) => (save.fixtures?.[league] ?? []).every((fixture) => !!fixture.result));
   const cupComplete = Object.values(save.cupFixtures ?? {}).flat().every((fixture) => !fixture || !!fixture.result);
-  const uclFixtures = save.uclFixtures ?? [];
-  const uclComplete = uclFixtures.length === 0 || save.uclChampion != null || uclFixtures.every((fixture) => !!fixture.result);
-  return leagueComplete && cupComplete && uclComplete;
+  const europeanComplete = (fixtures: Fixture[], champion: string | null) => fixtures.length === 0 || champion != null || fixtures.every((fixture) => !!fixture.result);
+  return leagueComplete && cupComplete &&
+    europeanComplete(save.uclFixtures ?? [], save.uclChampion ?? null) &&
+    europeanComplete(save.uelFixtures ?? [], save.uelChampion ?? null) &&
+    europeanComplete(save.ueclFixtures ?? [], save.ueclChampion ?? null);
 }

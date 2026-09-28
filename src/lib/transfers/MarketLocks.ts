@@ -17,8 +17,23 @@
 /** Ventana activa (`temporada:ventana`). Vacío = mercado sin inicializar. */
 let activeWindowKey = "";
 
+function seasonOfDate(date: string): number {
+  const month = Number(date.slice(5, 7));
+  const year = Number(date.slice(0, 4));
+  return month >= 7 ? year : year - 1;
+}
+
+function isSummerDate(date: string): boolean {
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  return month >= 7 && month <= 9 && (month < 9 || day <= 1);
+}
+
 /** playerId -> ventana en la que se movió. */
 const settled = new Map<string, string>();
+
+/** playerId -> temporada en la que ya se movió durante el mercado de verano. */
+const summerMovedThisSeason = new Map<string, number>();
 
 /**
  * playerId -> ventana en la que se cedió (subconjunto de `settled`).
@@ -126,6 +141,8 @@ export function isBlockedUserMove(fromClubId: string | null, toClubId: string | 
 /** Fija la ventana activa. Al cambiar de ventana se liberan los cerrojos. */
 export function setLockWindow(key: string): void {
   if (key === activeWindowKey) return;
+  const nextSeason = Number(key.split(":")[0]);
+  const previousSeason = activeWindowKey ? Number(activeWindowKey.split(":")[0]) : null;
   activeWindowKey = key;
   settled.clear();
   loanSettled.clear();
@@ -134,11 +151,27 @@ export function setLockWindow(key: string): void {
   coreDepartures.clear();
   lastCoreLoss.clear();
   lastCoreSigning.clear();
+  if (previousSeason !== null && Number.isFinite(nextSeason) && nextSeason !== previousSeason) {
+    summerMovedThisSeason.clear();
+  }
 }
 
 /** Ventana activa para los cerrojos. */
 export function currentLockWindow(): string {
   return activeWindowKey;
+}
+
+/** Registra una operación histórica para impedir una segunda mudanza en enero. */
+export function registerHistoricalMove(playerId: string, date: string): void {
+  if (!playerId || !date) return;
+  if (isSummerDate(date)) summerMovedThisSeason.set(playerId, seasonOfDate(date));
+}
+
+/** ¿Se movió ya este jugador durante el verano de la misma temporada deportiva? */
+export function movedInSummerThisSeason(playerId: string, date: string): boolean {
+  const month = Number(date.slice(5, 7));
+  if (month !== 1) return false;
+  return summerMovedThisSeason.get(playerId) === seasonOfDate(date);
 }
 
 /**
@@ -282,6 +315,7 @@ export function resetMarketLocks(): void {
   coreDepartures.clear();
   lastCoreLoss.clear();
   lastCoreSigning.clear();
+  summerMovedThisSeason.clear();
   userApprovedDepth = 0;
 }
 
@@ -305,6 +339,8 @@ export function rebuildLocks(
   departures.clear();
   coreDepartures.clear();
   lastCoreLoss.clear();
+  summerMovedThisSeason.clear();
+  for (const record of records) registerHistoricalMove(record.playerId, record.date);
   if (!activeWindowKey) return;
   for (const record of records) {
     if (windowKeyOf(record.date) !== activeWindowKey) continue;

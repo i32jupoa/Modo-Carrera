@@ -282,9 +282,10 @@ function TransfersPage() {
   const totalEconomicBudget = budget;
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const currentDate = usePlayersStore((s) => s.currentDate);
+  const playerStats = usePlayersStore((s) => s.stats);
   const effectiveEconomicBudget = totalEconomicBudget;
   const transferBudget = Math.max(0, totalEconomicBudget - wageBudget);
-  const rawPlayers = usePlayersStore((s) => s.getRawPlayers?.() || []);
+  const rawPlayers = useMemo(() => usePlayersStore.getState().getRawPlayers?.() || [], [playerStats, currentDate]);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const rosterIds = usePlayersStore((s) => s.rosterIds);
   const { isMarketOpen } = useTransferMarket();

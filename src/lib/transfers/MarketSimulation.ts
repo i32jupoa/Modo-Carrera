@@ -13,7 +13,7 @@
  * Todo lo que ocurre se vuelca en `TransferHistory` y `RumorEngine`.
  */
 
-import { BALANCE, ELITE_EXIT, MARKET_TIMING } from "./constants";
+import { BALANCE, ELITE_EXIT, MARKET_TIMING, WINTER_MARKET } from "./constants";
 import {
   TRANSFER_WINDOWS,
   isSummerTransferWindow,
@@ -51,6 +51,7 @@ import {
 } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import { POSITION_GROUPS } from "./types";
+import { getLongTermInjuredPlayerIds } from "./MarketPlayerSignals";
 import type { MarketDayResult, MarketSimulationState, MarketWindow } from "./types";
 
 // ============================================================================
@@ -340,11 +341,15 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
     // entra en la rotación aunque el sorteo diario no lo hubiese elegido.
     // Antes esta condición no existía y un club podía llegar al cierre de la
     // ventana sin pasar jamás por su red de seguridad.
-    const requiredSignings = Math.max(
-      minSigningsFor(state.window),
-      departuresFor(clubId),
-      coreDeparturesFor(clubId),
-    );
+    const longTermInjury =
+      state.window === "winter" &&
+      getLongTermInjuredPlayerIds(clubId, date, WINTER_MARKET.longTermInjuryDays).length > 0;
+    const requiredSignings =
+      state.window === "winter"
+        ? longTermInjury || coreDeparturesFor(clubId) > 0
+          ? 1
+          : 0
+        : Math.max(minSigningsFor(state.window), departuresFor(clubId), coreDeparturesFor(clubId));
     if (
       window.signings < requiredSignings &&
       (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
@@ -498,7 +503,7 @@ function runClubDay(
   // Un club con saldo negativo en la ventana (más salidas que llegadas) sale
   // a reponer sí o sí: ni la caja ni la pasividad de la temporada le frenan.
   const deficit = windowDeficit(clubId);
-  const idleTooLong = window.signings === 0 && window.sales === 0 && state.windowDay > 8;
+  const idleTooLong = state.window === "summer" && window.signings === 0 && window.sales === 0 && state.windowDay > 8;
   const belowMinimum = window.signings < minSigningsFor(state.window);
   // Una necesidad "crítica" (ver `SquadAnalyzer.computeUrgency`) puede venir
   // de dos sitios muy distintos: (a) haber perdido a un titular de nivel
@@ -513,25 +518,52 @@ function runClubDay(
   // un hueco que ya estaba ahí desde el minuto uno se cubre igual, pero
   // repartido en las mismas dos semanas que el resto de compras "por gusto".
   const topNeed = priorityNeeds(clubId, date, 1)[0];
-  const hasCriticalReactiveNeed = !!topNeed && recentCoreLossOvr(clubId, topNeed.group) > 0;
-  // Compra "por gusto" o para cubrir el cupo mínimo de la ventana: ambas se
-  // someten a una misma probabilidad que empieza más baja el día 1 y sube
-  // hasta 1 en poco más de una semana (ver `shoppingRamp`). Es una
-  // probabilidad diaria, no una fecha fija por club, así que ningún club
-  // puede quedarse sin poder fichar durante semanas por mala suerte en un
-  // sorteo: como mucho pierde algún intento suelto al principio, y para
-  // cuando la rampa llega a 1 (~día 9) todo el mundo puede intentarlo cada
-  // día igual que antes. Sólo las urgencias de verdad (déficit de ventana,
-  // salida reciente de un titular, o llevar demasiado tiempo sin mover
-  // ficha) se saltan esta probabilidad.
+  const hasLongTermInjury =
+    state.window === "winter" &&
+    getLongTermInjuredPlayerIds(clubId, date, WINTER_MARKET.longTermInjuryDays).length > 0;
+  const injuryAlreadyCovered =
+    hasLongTermInjury &&
+    !!topNeed &&
+    recentCoreSigningOvr(clubId, topNeed.group) > 0;
+  const hasCriticalReactiveNeed =
+    (!!topNeed && recentCoreLossOvr(clubId, topNeed.group) > 0) ||
+    (hasLongTermInjury && !injuryAlreadyCovered);
+  const winterOpportunityChance =
+    WINTER_MARKET.normalSigningChance * (0.7 + profile.ambition * 0.3) +
+    WINTER_MARKET.interestingSigningChance * profile.ambition;
+  // No hay un máximo de fichajes de invierno por club: la actividad se
+  // enfría de forma probabilística conforme ya se han hecho incorporaciones.
+  // Esto conserva la posibilidad de una ventana excepcionalmente activa sin
+  // convertir enero en una segunda ventana de verano ni cortar una necesidad
+  // realmente importante.
+  const winterActivityDampening =
+    state.window === "winter"
+      ? 1 / (1 + window.signings * 0.75)
+      : 1;
+  const winterOpportunityRoll =
+    state.window === "winter" &&
+    state.windowDay >= 5 &&
+    seededUnit(clubId, date, "winter-opportunity") <
+      winterOpportunityChance * winterActivityDampening;
+  // En invierno las compras normales usan una probabilidad baja y además
+  // decreciente después de cada incorporación. No hay un cupo rígido: un club
+  // que necesite varios refuerzos puede seguir comprando, pero la probabilidad
+  // de encadenar operaciones baja claramente para que enero no se convierta
+  // en un segundo agosto. Las urgencias reales se saltan este freno.
   const rollsToShop = seededUnit(clubId, date, "shopping-roll") < shoppingRamp(date);
+  const winterNeedOrOpportunity =
+    hasCriticalReactiveNeed || winterOpportunityRoll;
   const canBuy =
-    window.signings < MARKET_TIMING.maxSigningsPerWindow &&
-    (idleTooLong ||
-      hasCriticalReactiveNeed ||
-      state.deadlineDay ||
-      (rollsToShop &&
-        (belowMinimum || (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay)))));
+    (state.window === "winter"
+      ? winterNeedOrOpportunity
+      : window.signings < MARKET_TIMING.maxSigningsPerWindow) &&
+    (state.window === "winter"
+      ? (hasCriticalReactiveNeed || winterOpportunityRoll)
+      : (idleTooLong ||
+          hasCriticalReactiveNeed ||
+          state.deadlineDay ||
+          (rollsToShop &&
+            (belowMinimum || (!needsToSell(clubId) && !(window.dormant && !state.deadlineDay))))));
   if (canBuy) {
     // Reponer siempre pesa más que esperar: un club que ha vendido sale a
     // fichar a varios jugadores el mismo día, como en la vida real. En
@@ -539,7 +571,7 @@ function runClubDay(
     // el mercado, y un club no puede pasarse el mes entero fichando de uno
     // en uno.
     //
-    // El tope por operación diaria es deliberadamente bajo fuera de
+    // El ritmo por operación diaria es deliberadamente bajo fuera de
     // deadline day: antes un único club activo podía cerrar hasta 5-6
     // fichajes en un solo día, así que en cuanto se abría la ventana
     // cientos de clubes con algún hueco cerraban TODAS sus necesidades de
@@ -550,16 +582,22 @@ function runClubDay(
     // jornada, y el mercado se mantiene vivo durante toda la ventana en vez
     // de agotarse el primer día.
     const burst = state.window === "summer" ? BALANCE.summerSigningBurst : 1;
-    const baseSignings = state.deadlineDay
-      ? profile.aggression > 0.6
-        ? 5
-        : 3
-      : hasCriticalReactiveNeed
-        ? 2
-        : belowMinimum
-          ? 2
-          : 1;
-    const maxSignings = Math.max(1, Math.round(baseSignings * burst));
+    const baseSignings =
+      state.window === "winter"
+        ? 1
+        : state.deadlineDay
+          ? profile.aggression > 0.6
+            ? 5
+            : 3
+          : hasCriticalReactiveNeed
+            ? 2
+            : belowMinimum
+              ? 2
+              : 1;
+    const maxSignings =
+      state.window === "winter"
+        ? MARKET_TIMING.maxSigningsPerDayWinter
+        : Math.max(1, Math.round(baseSignings * burst));
     const cycle = runClubTransferCycle(clubId, {
       date,
       deadlineDay: state.deadlineDay,
@@ -653,10 +691,10 @@ function runClubDay(
   // cinco jugadores y fichar tres si su plantilla lo permite. Lo que sí es
   // obligatorio es (1) hacer al menos dos incorporaciones en verano y (2)
   // reaccionar ante cada zona que haya perdido un jugador importante.
-  const requiredSignings = Math.max(
-    minSigningsFor(state.window),
-    unreplacedCoreGroups,
-  );
+  const requiredSignings =
+    state.window === "winter"
+      ? unreplacedCoreGroups
+      : Math.max(minSigningsFor(state.window), unreplacedCoreGroups);
   if (
     window.signings < requiredSignings &&
     (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)

@@ -47,6 +47,7 @@ import {
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { useUserMarket } from "@/hooks/useUserMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
+import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
 import {
   getPlayer,
   getPlayerAnnualWage,
@@ -394,7 +395,9 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
   const injured = (stats?.injuredUntil ?? 0) > 0;
   const contract = getPlayer(String(p.ID))?.contract;
   const wage = contract?.wage ?? getPlayerAnnualWage(String(p.ID));
-  const potential = Math.max(p.OVR, Number(p.potential ?? p.OVR));
+  const dynamicOvr = Math.round(Number(stats?.dynamicStats?.currentOVR ?? p.OVR));
+  const potential = Number(stats?.dynamicStats?.potentialOVR ?? p.potential ?? p.OVR);
+  const progressionDelta = dynamicOvr - Math.round(Number(stats?.dynamicStats?.baseOVR ?? p.OVR));
 
   return (
     <button
@@ -417,8 +420,16 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
               p.OVR,
             )}`}
           >
-            {p.OVR}
+            {Math.round(p.OVR)}
           </div>
+          {Math.abs(progressionDelta) >= 1 && (
+            <div
+              title={stats?.dynamicStats?.lastProgressionReason ?? "Evolución durante la temporada"}
+              className={`text-center text-[0.55rem] font-black ${progressionDelta > 0 ? "text-emerald-300" : "text-destructive"}`}
+            >
+              {progressionDelta > 0 ? "↑" : "↓"} {progressionDelta > 0 ? "+" : ""}{Math.abs(progressionDelta)}
+            </div>
+          )}
           <div className="px-1 text-center">
             <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">POT</p>
             <p className="scoreline text-sm font-black text-muted-foreground">{potential}</p>
@@ -721,6 +732,7 @@ function SquadPage() {
   const myTeamId = usePlayersStore((s) => s.myTeamId);
   const currentDate = usePlayersStore((s) => s.currentDate);
   const squad = usePlayersStore((s) => s.squad);
+  const playerStats = usePlayersStore((s) => s.stats);
   const fixtures = usePlayersStore((s) => s.fixtures);
   const budget = usePlayersStore((s) => s.budget);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
@@ -744,7 +756,7 @@ function SquadPage() {
     }
     if (!myTeamId) {
       setMyTeam(save.myTeamId);
-    } else if (squad.length === 0) {
+    } else {
       hydrate();
     }
   }, [myTeamId, squad.length, navigate, setMyTeam, hydrate, syncWageStateFromMarket]);
@@ -760,15 +772,18 @@ function SquadPage() {
     );
   }, [myTeamId, squad, syncWageStateFromMarket]);
 
+  const getDynamicOvr = (p: FcPlayer) =>
+    Math.round(Number(playerStats[String(p.ID)]?.dynamicStats?.currentOVR ?? p.OVR));
+
   const byPos = useMemo(() => {
     const buckets: Record<Position, FcPlayer[]> = { GK: [], DEF: [], MID: [], FWD: [] };
     for (const p of squad) buckets[mapEaPosition(p.Position)].push(p);
-    for (const k of POSITION_ORDER) buckets[k].sort((a, b) => b.OVR - a.OVR);
+    for (const k of POSITION_ORDER) buckets[k].sort((a, b) => getDynamicOvr(b) - getDynamicOvr(a));
     return buckets;
-  }, [squad]);
+  }, [squad, playerStats]);
 
   const avgOvr = squad.length
-    ? (squad.reduce((s, p) => s + p.OVR, 0) / squad.length).toFixed(1)
+    ? String(Math.round(squad.reduce((sum, p) => sum + getDynamicOvr(p), 0) / squad.length))
     : "—";
   const totalValue = squad.reduce((s, p) => s + marketValueEuros(p), 0);
   const currentWageBill = squad.reduce((sum, p) => sum + getPlayerAnnualWage(String(p.ID)), 0);
@@ -887,7 +902,7 @@ function SquadPage() {
                     </p>
                     <p className="text-[0.65rem] uppercase tracking-wider opacity-70">
                       {players.length} jugadores · OVR medio{" "}
-                      {(players.reduce((s, p) => s + p.OVR, 0) / players.length).toFixed(1)}
+                      {Math.round(players.reduce((s, p) => s + p.OVR, 0) / players.length)}
                     </p>
                   </div>
                   {listed.size > 0 && (
@@ -907,390 +922,25 @@ function SquadPage() {
         </div>
       )}
 
-      {/* Player detail dialog */}
-      <Dialog open={!!selected} onOpenChange={(o) => !o && setSelectedId(null)}>
-        <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto overflow-x-hidden p-0">
-          {selected &&
-            (() => {
-              const pos = mapEaPosition(selected.Position);
-              const morale = selectedStats?.morale ?? 70;
-              const mood = moodLabel(morale);
-              const injured = (selectedStats?.injuredUntil ?? 0) > 0;
-              const marketPlayer = getPlayer(String(selected.ID));
-              const marketContract = marketPlayer?.contract;
-              const isListed = marketPlayer?.transferListed ?? listed.has(String(selected.ID));
-              const value = marketValueEuros(selected);
-              const wage = marketContract?.wage ?? getPlayerAnnualWage(String(selected.ID));
-              const dynamicOvr = Math.round(Number(selectedStats?.currentOVR ?? selected.OVR));
-              const baseOvr = Math.round(Number(selectedStats?.baseOVR ?? selected.OVR));
-              const potential = Math.max(
-                dynamicOvr,
-                Number(selectedStats?.potentialOVR ?? selected.potential ?? selected.OVR),
-              );
-              const ovrDelta = dynamicOvr - baseOvr;
-              // Use the same authoritative legacy counters as the Team Stats screen.
-              // The dynamic block mirrors them for progression, but the team screen
-              // intentionally reads these counters because they are updated by every
-              // match path. Minutes remain in dynamicStats because they are not part
-              // of the legacy PlayerStats model.
-              const seasonAppearances = Number(selectedStats?.appearances ?? 0);
-              // The Team Stats screen uses the legacy match counter as its source
-              // of truth. For minutes, use the minutes stored in each completed
-              // match rating so a 20-minute cameo is not turned into 90 minutes.
-              const fixtureMinutes = getSeasonMinutesFromFixtures(
-                fixtures,
-                String(selected.ID),
-                myTeamId,
-              );
-              const seasonMinutes = fixtureMinutes ?? Number(selectedStats?.dynamicStats?.seasonMinutes ?? 0);
-              const seasonGoals = Number(selectedStats?.goals ?? 0);
-              const seasonAssists = Number(selectedStats?.assists ?? 0);
-              const seasonMVPs = Number(
-                selectedStats?.dynamicStats?.seasonMVPs ?? selectedStats?.motm ?? 0,
-              );
-              const seasonCleanSheets = Number(
-                selectedStats?.dynamicStats?.seasonCleanSheets ?? selectedStats?.cleanSheets ?? 0,
-              );
-              const seasonRating = Number(
-                selectedStats?.dynamicStats && selectedStats.dynamicStats.seasonAppearances > 0
-                  ? selectedStats.dynamicStats.seasonAverageRating
-                  : selectedStats?.formHistory?.length
-                    ? selectedStats.formHistory.reduce((sum, value) => sum + value, 0) / selectedStats.formHistory.length
-                    : 0,
-              );
-              const seasonTrophies = Number(selectedStats?.dynamicStats?.seasonTrophies ?? 0);
-              const currentForm =
-                selectedStats?.formHistory?.length
-                  ? selectedStats.formHistory[selectedStats.formHistory.length - 1]
-                  : 0;
-
-              return (
-                <>
-                  {/* Player hero */}
-                  <div className={`relative overflow-hidden bg-gradient-to-br p-5 ${POSITION_ACCENT[pos]}`}>
-                    <div className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-background/10 blur-3xl" />
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(null)}
-                      className="absolute right-3 top-3 z-10 rounded-full p-2 text-foreground/70 transition hover:bg-background/30 hover:text-foreground"
-                      aria-label="Cerrar"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-
-                    <DialogHeader className="relative">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-                        <div className="flex items-end gap-3">
-                          <div className="w-28 shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-secondary/50 shadow-xl">
-                            {faceUrl(String(selected.ID), selected.card) ? (
-                              <img
-                                src={faceUrl(String(selected.ID), selected.card)}
-                                alt={selected.Name}
-                                className="h-36 w-full object-cover object-top"
-                              />
-                            ) : (
-                              <div className="grid h-36 place-items-center text-xs text-muted-foreground">
-                                Sin foto
-                              </div>
-                            )}
-                          </div>
-                          <div className="mb-1 flex flex-col items-center gap-2">
-                            <div
-                              className={`grid h-16 w-16 place-items-center rounded-2xl border scoreline text-2xl font-black shadow-lg ${ovrTone(
-                                dynamicOvr,
-                              )}`}
-                            >
-                              {dynamicOvr}
-                            </div>
-                            <div className="rounded-xl border border-border/50 bg-background/45 px-2.5 py-1.5 text-center backdrop-blur">
-                              <p className="text-[0.48rem] font-black uppercase tracking-wider text-muted-foreground">
-                                POT
-                              </p>
-                              <p className="scoreline text-sm font-black">{potential}</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <DialogTitle className="text-2xl font-black tracking-tight">
-                              {selected.Name}
-                            </DialogTitle>
-                            <span className={`rounded-full border px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider ${ROLE_TEXT[roleFromPosition(selected.Position)]}`}>
-                              {POS_LABEL_ES[pos]}
-                            </span>
-                            {isListed && (
-                              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-amber-300">
-                                En venta
-                              </span>
-                            )}
-                          </div>
-
-                          <DialogDescription className="mt-1 text-xs font-semibold uppercase tracking-wider">
-                            {selected.Position} · {selected.Age} años · {selected.Nation ?? "Nacionalidad no disponible"}
-                          </DialogDescription>
-
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                            <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-background/35 px-2.5 py-2 backdrop-blur">
-                              <TeamLogo
-                                teamName={team.name}
-                                leagueName={getLeagueName(team.league)}
-                                size={30}
-                                className="rounded-md"
-                              />
-                              <div>
-                                <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">
-                                  Equipo
-                                </p>
-                                <p className="text-xs font-black">{team.name}</p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-1.5 rounded-xl border border-border/50 bg-background/35 px-2.5 py-2 text-xs font-bold backdrop-blur">
-                              <Cake className="h-3.5 w-3.5" />
-                              {formatBirthdate(selected.birthdate)}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </DialogHeader>
-                  </div>
-
-                  <div className="space-y-5 p-4 sm:p-5">
-                    {/* Executive snapshot */}
-                    <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <DetailMetric
-                        icon={Target}
-                        label="Valor"
-                        value={formatEuro(value)}
-                        accent="text-emerald-300"
-                        hint="Valor de mercado"
-                      />
-                      <DetailMetric
-                        icon={Banknote}
-                        label="Salario"
-                        value={`${formatEuro(wage)}/año`}
-                        accent="text-primary"
-                      />
-                      <DetailMetric
-                        icon={CalendarDays}
-                        label="Contrato"
-                        value={`${marketContract?.yearsLeft ?? 0} temp.`}
-                      />
-                      <DetailMetric
-                        icon={Shield}
-                        label="Cláusula"
-                        value={formatEuro(marketContract?.releaseClause ?? 0)}
-                        accent="text-amber-300"
-                      />
-                    </section>
-
-                    {/* Season performance */}
-                    <section className="space-y-3">
-                      <SectionHeading
-                        icon={Medal}
-                        title="Rendimiento de temporada"
-                        subtitle="Impacto real en los partidos disputados"
-                      />
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                        <DetailMetric icon={Users} label="Partidos" value={String(seasonAppearances)} />
-                        <DetailMetric
-                          icon={Timer}
-                          label="Minutos"
-                          value={seasonMinutes.toLocaleString("es-ES")}
-                        />
-                        <DetailMetric
-                          icon={Star}
-                          label="Media"
-                          value={seasonRating > 0 ? seasonRating.toFixed(2) : "—"}
-                          accent="text-primary"
-                        />
-                        <DetailMetric icon={Goal} label="Goles" value={String(seasonGoals)} />
-                        <DetailMetric icon={Sparkles} label="Asistencias" value={String(seasonAssists)} />
-                        <DetailMetric
-                          icon={Trophy}
-                          label="Trofeos"
-                          value={String(seasonTrophies)}
-                          accent="text-amber-300"
-                        />
-                      </div>
-
-                      {pos === "GK" && (
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                          <DetailMetric
-                            icon={Shield}
-                            label="Porterías a 0"
-                            value={String(seasonCleanSheets)}
-                            accent="text-emerald-300"
-                            hint="Esta temporada"
-                          />
-                          <DetailMetric
-                            icon={Star}
-                            label="MVP"
-                            value={String(seasonMVPs)}
-                            accent="text-amber-300"
-                          />
-                          <DetailMetric
-                            icon={Shield}
-                            label="Ratio"
-                            value={
-                              seasonAppearances > 0
-                                ? `${((seasonCleanSheets / seasonAppearances) * 100).toFixed(0)}%`
-                                : "—"
-                            }
-                            hint="Partidos con portería a cero"
-                          />
-                        </div>
-                      )}
-                    </section>
-
-                    {/* OVR progression */}
-                    <section className="space-y-3">
-                      <SectionHeading
-                        icon={TrendingUp}
-                        title="Evolución del jugador"
-                        subtitle="Cómo ha cambiado su media durante la partida"
-                      />
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        <DetailMetric icon={Shield} label="Media inicial" value={String(baseOvr)} />
-                        <DetailMetric
-                          icon={TrendingUp}
-                          label="Media actual"
-                          value={String(dynamicOvr)}
-                          accent={ovrDelta >= 0 ? "text-emerald-300" : "text-destructive"}
-                          hint={`${ovrDelta >= 0 ? "+" : ""}${ovrDelta} OVR`}
-                        />
-                        <DetailMetric icon={Medal} label="Potencial" value={String(potential)} />
-                        <DetailMetric
-                          icon={Star}
-                          label="Forma"
-                          value={currentForm > 0 ? Number(currentForm).toFixed(1) : "—"}
-                          accent="text-primary"
-                        />
-                      </div>
-                    </section>
-
-                    <SeasonProgressChart monthlyStats={selectedStats?.monthlyStats ?? []} />
-                    <FormStrip values={selectedStats?.formHistory ?? []} />
-
-                    {/* Mood */}
-                    <section className="rounded-xl border border-border/60 bg-card/55 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="text-[0.58rem] font-black uppercase tracking-[0.18em] text-muted-foreground">
-                            Estado de ánimo
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {morale}/100 · impacto de la satisfacción en la plantilla
-                          </p>
-                        </div>
-                        <span className={`flex items-center gap-1.5 text-sm font-black ${mood.tone}`}>
-                          <mood.Icon className="h-4 w-4" />
-                          {mood.label}
-                        </span>
-                      </div>
-                      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted/40">
-                        <div
-                          className={`h-full transition-[width] ${
-                            morale >= 60
-                              ? "bg-emerald-400"
-                              : morale >= 40
-                                ? "bg-yellow-400"
-                                : "bg-destructive"
-                          }`}
-                          style={{ width: `${Math.max(4, Math.min(100, morale))}%` }}
-                        />
-                      </div>
-                    </section>
-
-                    {/* Technical profile */}
-                    <section className="space-y-3">
-                      <SectionHeading
-                        icon={Target}
-                        title="Perfil técnico"
-                        subtitle="Atributos principales del jugador"
-                      />
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border/60 bg-card/55 p-4">
-                        <StatBar label="PAC" value={selected.PAC} />
-                        <StatBar label="SHO" value={selected.SHO} />
-                        <StatBar label="PAS" value={selected.PAS} />
-                        <StatBar label="DRI" value={selected.DRI} />
-                        <StatBar label="DEF" value={selected.DEF} />
-                        <StatBar label="PHY" value={selected.PHY} />
-                      </div>
-                    </section>
-
-                    {/* Status flags */}
-                    {(injured || isListed) && (
-                      <div className="flex flex-wrap gap-2">
-                        {injured && (
-                          <span className="flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-[0.65rem] font-bold uppercase tracking-wider text-destructive">
-                            <Activity className="h-3 w-3" />
-                            Lesionado
-                          </span>
-                        )}
-                        {isListed && (
-                          <span className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[0.65rem] font-bold uppercase tracking-wider text-amber-300">
-                            <Tag className="h-3 w-3" />
-                            En el mercado
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Actions */}
-                    <div className="grid grid-cols-1 gap-2 border-t border-border/50 pt-4 sm:grid-cols-3">
-                      <button
-                        type="button"
-                        onClick={() => setRenewalPlayerId(String(selected.ID))}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5 text-xs font-black text-emerald-300 transition hover:bg-emerald-500/20"
-                      >
-                        <HeartHandshake className="h-4 w-4" />
-                        Renovar contrato
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleListed(selected)}
-                        disabled={!isMarketOpen}
-                        className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                          isListed
-                            ? "border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
-                            : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
-                        }`}
-                      >
-                        <Tag className="h-4 w-4" />
-                        {isListed ? "Retirar de venta" : "Poner en venta"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLoanSearchPlayerId(String(selected.ID));
-                          setLoanSearchListed(getPlayer(String(selected.ID))?.loanListed ?? false);
-                        }}
-                        disabled={!isMarketOpen || !!getPlayer(String(selected.ID))?.loanClubId}
-                        className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                          getPlayer(String(selected.ID))?.loanListed
-                            ? "border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
-                            : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
-                        }`}
-                      >
-                        <Handshake className="h-4 w-4" />
-                        {getPlayer(String(selected.ID))?.loanListed ? "Retirar de cesión" : "Listar en cesión"}
-                      </button>
-                    </div>
-
-                    {!isMarketOpen && (
-                      <p className="flex items-center gap-1 text-[0.65rem] text-muted-foreground">
-                        <ShieldAlert className="h-3 w-3" />
-                        Mercado cerrado. Las operaciones se reanudarán en la próxima ventana.
-                      </p>
-                    )}
-                  </div>
-                </>
-              );
-            })()}
-        </DialogContent>
-      </Dialog>
+      <PlayerDetailDialog
+        open={!!selected}
+        onClose={() => setSelectedId(null)}
+        player={selected}
+        team={team}
+        stats={selectedStats}
+        privateMode
+        fixtures={fixtures}
+        myTeamId={myTeamId}
+        isListed={selected ? listed.has(String(selected.ID)) : false}
+        isMarketOpen={isMarketOpen}
+        onRenew={() => selected && setRenewalPlayerId(String(selected.ID))}
+        onToggleListed={() => selected && handleToggleListed(selected)}
+        onListLoan={() => {
+          if (!selected) return;
+          setLoanSearchPlayerId(String(selected.ID));
+          setLoanSearchListed(getPlayer(String(selected.ID))?.loanListed ?? false);
+        }}
+      />
 
       {loanSearchPlayerId && (() => {
         const loanPlayer = squad.find((player) => String(player.ID) === loanSearchPlayerId);

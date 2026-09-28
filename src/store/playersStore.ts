@@ -64,10 +64,18 @@ import {
   updatePlayerMatchStats,
   applyMonthlyProgression,
   applySeasonEndProgression,
+  normalizeDynamicStats,
 } from "@/lib/playerProgression";
-import type { DynamicPlayerStats } from "@/types/playerStats";
+import type { DynamicPlayerStats, PlayerAttributeRatings } from "@/types/playerStats";
 
 import { addDaysToIso, GAME_START_DATE, isMarketOpenForIso } from "@/lib/transferWindows";
+import {
+  hydrateMarketPlayerSignals,
+  hydrateMarketPlayerInjuries,
+  recordMarketAppearance,
+  recordMarketInjury,
+  resetMarketPlayerSignals,
+} from "@/lib/transfers/MarketPlayerSignals";
 import { NATIONAL_CUP_START } from "@/lib/calendarRules";
 import { recoverStamina, STAMINA_START } from "@/lib/liveMatch";
 
@@ -92,6 +100,7 @@ import {
   involvesTeam,
   simulateScheduleFixture,
   simulateScheduleFixtureDetailed,
+  simulateScheduleFixtureFastDetailed,
   unplayedOnDate,
 } from "@/lib/matchEngine";
 
@@ -591,7 +600,7 @@ export function squadForTeam(teamId: string): FcPlayer[] {
   return squad;
 }
 
-function defaultStats(): PlayerStats {
+export function defaultStats(): PlayerStats {
   return {
     goals: 0,
 
@@ -651,6 +660,42 @@ function defaultStats(): PlayerStats {
     energy: STAMINA_START,
     energyLastUpdatedDate: GAME_START_DATE,
   };
+}
+
+/** Reconstruye las señales que usa el mercado para detectar falta de minutos y lesiones largas. */
+export function rebuildMarketPlayerSignalsFromStore(): void {
+  const state = usePlayersStore.getState();
+  const date = state.currentDate || GAME_START_DATE;
+  const entries = Object.entries(state.stats ?? {}).map(([playerId, stats]) => {
+    const player = state.getSimPlayer(playerId);
+    const appearances = Math.max(
+      0,
+      Number(stats.appearances ?? stats.dynamicStats?.seasonAppearances) || 0,
+    );
+    const minutes = Math.max(
+      0,
+      Number(stats.dynamicStats?.seasonMinutes) || appearances * 90,
+    );
+    return {
+      playerId,
+      clubId: player?.clubId ?? null,
+      date,
+      appearances,
+      minutes,
+    };
+  });
+  hydrateMarketPlayerSignals(entries);
+  const injuries = Object.entries(state.stats ?? {})
+    .map(([playerId, stats]) => {
+      const player = state.getSimPlayer(playerId);
+      const startDate = stats.injuryStartDate;
+      const untilDate = stats.injuredUntilDate;
+      const durationDays = Number(stats.injuryDurationDays) || 0;
+      if (!player?.clubId || !startDate || !untilDate || durationDays <= 0) return null;
+      return { playerId, clubId: player.clubId, startDate, untilDate, durationDays };
+    })
+    .filter((entry): entry is { playerId: string; clubId: string; startDate: string; untilDate: string; durationDays: number } => Boolean(entry));
+  hydrateMarketPlayerInjuries(injuries);
 }
 
 export function mapEaPosition(pos: string): Position {
@@ -808,10 +853,47 @@ export const POS_LABEL_ES: Record<Position, string> = {
 
 export function syncSquadFromRoster(rosterIds: string[]): FcPlayer[] {
   return rosterIds
-
     .map((id) => FC_BY_ID.get(id))
-
     .filter((p): p is FcPlayer => !!p);
+}
+
+function dynamicAttributesFor(fc: FcPlayer, stats?: PlayerStats): PlayerAttributeRatings {
+  const attrs = stats?.dynamicStats?.attributes;
+  return {
+    PAC: Number.isFinite(Number(attrs?.PAC)) ? Number(attrs?.PAC) : fc.PAC,
+    SHO: Number.isFinite(Number(attrs?.SHO)) ? Number(attrs?.SHO) : fc.SHO,
+    PAS: Number.isFinite(Number(attrs?.PAS)) ? Number(attrs?.PAS) : fc.PAS,
+    DRI: Number.isFinite(Number(attrs?.DRI)) ? Number(attrs?.DRI) : fc.DRI,
+    DEF: Number.isFinite(Number(attrs?.DEF)) ? Number(attrs?.DEF) : fc.DEF,
+    PHY: Number.isFinite(Number(attrs?.PHY)) ? Number(attrs?.PHY) : fc.PHY,
+  };
+}
+
+function dynamicFcPlayerView(fc: FcPlayer, stats?: PlayerStats): FcPlayer {
+  const dynamic = stats?.dynamicStats;
+  const attrs = dynamicAttributesFor(fc, stats);
+  return {
+    ...fc,
+    OVR: Number.isFinite(Number(dynamic?.currentOVR)) ? Math.round(Number(dynamic?.currentOVR)) : Math.round(fc.OVR),
+    potential: Number.isFinite(Number(dynamic?.potentialOVR))
+      ? Math.round(Number(dynamic?.potentialOVR))
+      : Math.round(fc.potential ?? fc.OVR),
+    PAC: attrs.PAC,
+    SHO: attrs.SHO,
+    PAS: attrs.PAS,
+    DRI: attrs.DRI,
+    DEF: attrs.DEF,
+    PHY: attrs.PHY,
+  };
+}
+
+export function progressionBadgeForPlayer(playerId: string): { delta: number; reason?: string } {
+  const stats = usePlayersStore.getState().stats[playerId];
+  const delta = Math.round(Number(stats?.dynamicStats?.currentOVR ?? 0)) - Math.round(Number(stats?.dynamicStats?.baseOVR ?? 0));
+  return {
+    delta: Number.isFinite(delta) ? delta : 0,
+    reason: stats?.dynamicStats?.lastProgressionReason,
+  };
 }
 
 function fcToPlayer(
@@ -839,6 +921,13 @@ function fcToPlayer(
 
   const id = String(fc.ID);
 
+  const dynamic = stats.dynamicStats;
+  const currentOVR = Number.isFinite(Number(dynamic?.currentOVR)) ? Math.round(Number(dynamic?.currentOVR)) : Math.round(fc.OVR);
+  const currentPotential = Number.isFinite(Number(dynamic?.potentialOVR))
+    ? Math.round(Number(dynamic?.potentialOVR))
+    : Math.round(Number(fc.potential ?? currentOVR));
+  const attributes = dynamicAttributesFor(fc, stats);
+
   return {
     id,
 
@@ -847,15 +936,15 @@ function fcToPlayer(
     position: mapEaPosition(fc.Position),
     positions: buildPositions(fc.Position, (fc as any)["Alternative positions"]),
 
-    rating: fc.OVR,
+    rating: currentOVR,
 
-    potential: Math.max(fc.OVR, Number(fc.potential ?? fc.OVR)),
+    potential: currentPotential,
 
     age: fc.Age,
 
     teamId,
 
-    marketValue: marketValueMillions(fc.OVR, fc.Age, fc.Position, "", "", false, 75, fc.potential),
+    marketValue: marketValueMillions(currentOVR, fc.Age, fc.Position, "", "", false, 75, currentPotential),
 
     isReal: true,
 
@@ -880,8 +969,14 @@ function fcToPlayer(
 
     energy: Math.max(0, Math.min(100, Number(stats.energy ?? STAMINA_START))),
 
+    attributes,
+
     // Inicializar estadísticas dinámicas si no existen
-    dynamicStats: stats.dynamicStats || initializeDynamicStats(fc.OVR),
+    dynamicStats: stats.dynamicStats || initializeDynamicStats(
+      fc.OVR,
+      Number(fc.potential ?? fc.OVR),
+      attributes,
+    ),
   };
 }
 
@@ -1112,6 +1207,101 @@ function mutatePlayerStat(
   else set({ stats: next });
 }
 
+
+function daysRemainingForInjury(stats: PlayerStats, currentDate: string): number {
+  const until = stats.injuredUntilDate;
+  if (!until || !currentDate) return 0;
+  const end = new Date(`${until}T00:00:00Z`).getTime();
+  const current = new Date(`${currentDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(end) || !Number.isFinite(current) || end <= current) return 0;
+  return Math.max(0, Math.ceil((end - current) / 86400000));
+}
+
+/**
+ * Evoluciona a todos los jugadores al comienzo de cada nuevo mes de la partida.
+ * No depende de que hayan jugado un partido ese mismo mes: la progresión usa
+ * rendimiento acumulado, último mes disponible, edad, potencial, continuidad
+ * e impacto de las lesiones largas.
+ */
+function applyGlobalMonthlyProgression(currentMonth: number, currentYear: number, dateIso: string): void {
+  const state = usePlayersStore.getState();
+  const sourceStats = state.stats ?? {};
+  const nextStats: Record<string, PlayerStats> = { ...sourceStats };
+  let changed = false;
+
+  // Cada jugador se evalúa dentro del contexto de su club actual.
+  const teamTotals = new Map<string, { sum: number; count: number }>();
+  for (const raw of RAW_PLAYERS) {
+    const player = state.getSimPlayer(String(raw.ID));
+    const teamId = player?.teamId;
+    if (!teamId) continue;
+    const dynamic = sourceStats[String(raw.ID)]?.dynamicStats;
+    const current = Number(dynamic?.currentOVR ?? raw.OVR) || 70;
+    const entry = teamTotals.get(teamId) ?? { sum: 0, count: 0 };
+    entry.sum += current;
+    entry.count += 1;
+    teamTotals.set(teamId, entry);
+  }
+
+  // TODOS los jugadores progresan, aunque todavía no tengan estadísticas.
+  for (const raw of RAW_PLAYERS) {
+    const playerId = String(raw.ID);
+    const existing = sourceStats[playerId] ?? defaultStats();
+    const baseAttributes = { PAC: raw.PAC, SHO: raw.SHO, PAS: raw.PAS, DRI: raw.DRI, DEF: raw.DEF, PHY: raw.PHY };
+    const safeDynamic = normalizeDynamicStats(
+      existing.dynamicStats,
+      Number(raw.OVR) || 70,
+      Number(raw.potential ?? raw.OVR) || 70,
+      baseAttributes,
+    );
+    const age = playerAgeAtDate(raw.birthdate, dateIso, raw.Age);
+    const injuryDaysRemaining = daysRemainingForInjury(existing, dateIso);
+    const player = state.getSimPlayer(playerId);
+    const teamContext = player?.teamId ? teamTotals.get(player.teamId) : undefined;
+    const teamAverageOVR = teamContext && teamContext.count > 0 ? teamContext.sum / teamContext.count : undefined;
+
+    try {
+      const updatedDynamic = applyMonthlyProgression(
+        safeDynamic,
+        age,
+        buildPositions(raw.Position, raw["Alternative positions"]),
+        currentMonth,
+        currentYear,
+        { injuryDaysRemaining, dateIso, teamAverageOVR },
+      );
+      nextStats[playerId] = { ...existing, dynamicStats: updatedDynamic };
+      changed = true;
+    } catch (error) {
+      console.warn(`[progression] no se pudo actualizar ${raw.Name}`, error);
+    }
+  }
+
+  if (!changed) return;
+  usePlayersStore.setState({
+    stats: nextStats,
+    squad: state.rosterIds.length
+      ? syncSquadFromRoster(state.rosterIds).map((raw) => dynamicFcPlayerView(raw, nextStats[String(raw.ID)]))
+      : state.squad,
+  });
+
+  try {
+    for (const team of getAllTeams()) {
+      const rawSquad = squadForTeam(team.id);
+      const dynamicSquad = rawSquad.map((raw) => dynamicFcPlayerView(raw, nextStats[String(raw.ID)]));
+      const rated: RatedSquadMember[] = dynamicSquad.map((player) => ({
+        rating: player.OVR || 70,
+        position: mapEaPosition(player.Position),
+        age: player.Age,
+      }));
+      const tier = getLeagueTier(team.league);
+      applyTeamRating(team.id, finalizeTeamRating(computeTeamRatingFromSquad(rated), tier));
+    }
+  } catch (error) {
+    console.warn("[progression] no se pudieron recalcular las medias de club", error);
+  }
+}
+
+
 function buildProtectedCompetitionDates(
   save: SaveGame | null,
   league: LeagueId,
@@ -1205,6 +1395,7 @@ function withMonthlyDelta(
       cleanSheets: 0,
       ratingTotal: 0,
       ratingCount: 0,
+      ovr: dynamic.currentOVR,
     };
     monthlyStats.push(entry);
   }
@@ -1214,6 +1405,9 @@ function withMonthlyDelta(
   entry.appearances += delta.appearances ?? 0;
   entry.mvpCount += delta.mvpCount ?? 0;
   entry.cleanSheets += delta.cleanSheets ?? 0;
+  // Conserva el valor decimal calculado para la evolución del mes. Si todavía
+  // no hay punto de progresión, usamos el OVR visible entero como referencia.
+  if (!Number.isFinite(Number(entry.ovr))) entry.ovr = dynamic.currentOVR;
 
   if (delta.rating !== undefined && Number.isFinite(delta.rating)) {
     entry.ratingTotal = (entry.ratingTotal ?? 0) + delta.rating;
@@ -1395,7 +1589,7 @@ export const usePlayersStore = create<PlayersState>()(
 
         if (!fixture || fixture.isPlayed) return;
 
-        const sim = simulateScheduleFixtureDetailed(fixture, (teamId, matchday) =>
+        const sim = simulateScheduleFixtureFastDetailed(fixture, (teamId, matchday) =>
           state.getSimXI(teamId, [], matchday),
         );
 
@@ -1437,10 +1631,19 @@ export const usePlayersStore = create<PlayersState>()(
         let state = get();
 
         if (!state.myTeamId) {
-          const nextDate = addDaysToIso(state.currentDate, days);
-          get().recoverPlayerEnergyToDate(nextDate);
-          syncPlayerAgesForDate(nextDate);
-          set({ currentDate: nextDate });
+          let cursor = state.currentDate;
+          for (let i = 0; i < days; i += 1) {
+            const nextDate = addDaysToIso(cursor, 1);
+            const prev = new Date(`${cursor}T00:00:00Z`);
+            const next = new Date(`${nextDate}T00:00:00Z`);
+            if (prev.getUTCMonth() !== next.getUTCMonth() || prev.getUTCFullYear() !== next.getUTCFullYear()) {
+              applyGlobalMonthlyProgression(next.getUTCMonth(), next.getUTCFullYear(), nextDate);
+            }
+            cursor = nextDate;
+          }
+          get().recoverPlayerEnergyToDate(cursor);
+          syncPlayerAgesForDate(cursor);
+          set({ currentDate: cursor });
 
           return days;
         }
@@ -1695,16 +1898,6 @@ export const usePlayersStore = create<PlayersState>()(
           if (rawSave) {
             const offset = uclDayOffset(nextDate);
 
-            console.log(
-              `[advanceTime] currentDate: ${state.currentDate}, nextDate: ${nextDate}, offset: ${offset}`,
-            );
-
-            console.log(
-              `[advanceTime] UCL Calendar - leagueDraw: ${UCL_CALENDAR.leagueDraw}, playoffDraw: ${UCL_CALENDAR.playoffDraw}, knockoutDraw: ${UCL_CALENDAR.knockoutDraw}`,
-            );
-
-            console.log(`[advanceTime] drawState:`, rawSave.ucl?.drawState);
-
             if (!rawSave.ucl && offset >= UCL_CALENDAR.leagueDraw) {
               rawSave.ucl = {
                 phase: "league" as const,
@@ -1730,37 +1923,22 @@ export const usePlayersStore = create<PlayersState>()(
 
               // League draw day
 
-              console.log(
-                `[advanceTime] Checking league draw: offset=${offset}, leagueDraw=${UCL_CALENDAR.leagueDraw}, leagueDone=${ucl.drawState.leagueDone}`,
-              );
-
               if (offset >= UCL_CALENDAR.leagueDraw && !ucl.drawState.leagueDone) {
-                console.log(`[advanceTime] TRIGGERING LEAGUE DRAW`);
-
                 saveSave(rawSave);
                 drawQueue.push("league");
               }
 
               // Playoff draw day - ALWAYS show modal regardless of team position
 
-              console.log(
-                `[advanceTime] Checking playoff draw: offset=${offset}, playoffDraw=${UCL_CALENDAR.playoffDraw}, leagueDone=${ucl.drawState.leagueDone}, playoffDone=${ucl.drawState.playoffDone}`,
-              );
-
               if (
                 offset >= UCL_CALENDAR.playoffDraw &&
                 ucl.drawState.leagueDone &&
                 !ucl.drawState.playoffDone
               ) {
-                console.log(`[advanceTime] TRIGGERING PLAYOFF DRAW - queued`);
                 drawQueue.push("playoff");
               }
 
               // Knockout draw day
-
-              console.log(
-                `[advanceTime] Checking knockout draw: offset=${offset}, knockoutDraw=${UCL_CALENDAR.knockoutDraw}, knockoutDone=${ucl.drawState.knockoutDone}`,
-              );
 
               // Octavos draw day: queue the notification so it cannot be lost when
               // another competition has a draw on the same date. The modal itself
@@ -1804,19 +1982,23 @@ export const usePlayersStore = create<PlayersState>()(
             const processEuropean = (comp: "uel" | "uecl") => {
               const eu = rawSave[comp];
               if (!eu) return;
-              if (offset >= calendar.leagueDraw && !eu.drawState.leagueDone) {
-                drawQueue.push(`${comp}-league` as PendingDrawEvent);
+
+              // Cualquier sorteo europeo pendiente se encola, participe o no el
+              // equipo del usuario. La cola es única para el día, por lo que si
+              // UEL y UECL coinciden, las dos notificaciones se muestran una tras
+              // otra y ninguna competición queda esperando en silencio.
+              const needsLeagueDraw = offset >= calendar.leagueDraw && !eu.drawState.leagueDone;
+              const needsPlayoffDraw = offset >= calendar.playoffDraw && eu.drawState.leagueDone && !eu.drawState.playoffDone;
+              const needsKnockoutDraw = offset >= calendar.knockoutDraw && eu.drawState.playoffDone && !eu.drawState.knockoutDone;
+
+              if (needsLeagueDraw || needsPlayoffDraw || needsKnockoutDraw) {
+                if (needsLeagueDraw) drawQueue.push(`${comp}-league` as PendingDrawEvent);
+                else if (needsPlayoffDraw) drawQueue.push(`${comp}-playoff` as PendingDrawEvent);
+                else drawQueue.push(`${comp}-knockout` as PendingDrawEvent);
                 return;
               }
-              if (offset >= calendar.playoffDraw && eu.drawState.leagueDone && !eu.drawState.playoffDone) {
-                drawQueue.push(`${comp}-playoff` as PendingDrawEvent);
-                return;
-              }
-              if (offset >= calendar.knockoutDraw && !eu.drawState.knockoutDone) {
-                drawQueue.push(`${comp}-knockout` as PendingDrawEvent);
-                return;
-              }
-              if (eu.drawState.leagueDone && offset >= calendar.leagueDay[0]) {
+
+              if (offset >= calendar.leagueDay[0]) {
                 const synced = simulatePendingEuropeanThroughDay(rawSave, comp, offset, rawSave.myTeamId);
                 if (synced !== rawSave) {
                   Object.assign(rawSave, synced);
@@ -1875,11 +2057,20 @@ export const usePlayersStore = create<PlayersState>()(
         let advanced = 0;
 
         let pendingUserMatch: ScheduleFixture | null = null;
+        const simXICache = new Map<string, Player[]>();
+        const getCachedScheduleXI = (teamId: string, md: number) => {
+          const key = `${teamId}:${md}`;
+          const cached = simXICache.get(key);
+          if (cached) return cached;
+          const xi = get().getSimXI(teamId, [], md);
+          simXICache.set(key, xi);
+          return xi;
+        };
 
         const simFixture = (f: ScheduleFixture) => {
           try {
-            const result = simulateScheduleFixtureDetailed(f, (teamId, md) =>
-              get().getSimXI(teamId, [], md),
+            const result = simulateScheduleFixtureFastDetailed(f, (teamId, md) =>
+              getCachedScheduleXI(teamId, md),
             );
 
             const minuteMap = new Map(
@@ -1890,8 +2081,8 @@ export const usePlayersStore = create<PlayersState>()(
               : [];
 
             if (participants.length === 0) {
-              const homeXI = get().getSimXI(f.homeTeam, [], f.matchday);
-              const awayXI = get().getSimXI(f.awayTeam, [], f.matchday);
+              const homeXI = getCachedScheduleXI(f.homeTeam, f.matchday);
+              const awayXI = getCachedScheduleXI(f.awayTeam, f.matchday);
               participants = [...homeXI, ...awayXI].map((player) => player.id);
             }
 
@@ -1950,7 +2141,24 @@ export const usePlayersStore = create<PlayersState>()(
         };
 
         for (let d = 0; d < days; d++) {
+          const previousDate = date;
           const nextDate = addDaysToIso(date, 1);
+
+          // La progresión ocurre al entrar en un nuevo mes de la partida.
+          // Así no depende de que haya un partido de liga justo ese día.
+          try {
+            const prev = new Date(`${previousDate}T00:00:00Z`);
+            const next = new Date(`${nextDate}T00:00:00Z`);
+            const prevMonth = prev.getUTCMonth();
+            const prevYear = prev.getUTCFullYear();
+            const nextMonth = next.getUTCMonth();
+            const nextYear = next.getUTCFullYear();
+            if (nextMonth !== prevMonth || nextYear !== prevYear) {
+              applyGlobalMonthlyProgression(nextMonth, nextYear, nextDate);
+            }
+          } catch (error) {
+            console.warn("[advanceTime] monthly progression failed:", error);
+          }
 
           // La energía se recupera con el paso del calendario, nunca por forma.
           try {
@@ -2004,8 +2212,6 @@ export const usePlayersStore = create<PlayersState>()(
           squad: state.squad.length ? [...state.squad] : state.squad,
         });
 
-        console.log(`[advanceTime] Día avanzado: ${state.currentDate} -> ${date}; advanced=${advanced}`);
-
         return advanced;
       },
 
@@ -2022,6 +2228,7 @@ export const usePlayersStore = create<PlayersState>()(
 
         queueMicrotask(() => {
           set({ loaded: true });
+          rebuildMarketPlayerSignalsFromStore();
 
           const teamId = get().myTeamId;
 
@@ -2031,7 +2238,9 @@ export const usePlayersStore = create<PlayersState>()(
 
       setMyTeam: (teamId, opts) => {
         const team = teamById(teamId);
-        const defaultSquad = squadForTeam(team.id);
+        const rawDefaultSquad = squadForTeam(team.id);
+        const previousStats = get().stats;
+        const defaultSquad = rawDefaultSquad.map((raw) => dynamicFcPlayerView(raw, previousStats[String(raw.ID)]));
         const rosterIds = defaultSquad.map((p) => String(p.ID));
         const prev = get();
         const avgOvr =
@@ -2083,9 +2292,10 @@ export const usePlayersStore = create<PlayersState>()(
             : 0.2;
         const wageBudget = wageAllocation(totalBudget, ratio);
 
+        const hydratedSquad = syncSquadFromRoster(currentRosterIds).map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)]));
         set({
           rosterIds: currentRosterIds,
-          squad: syncSquadFromRoster(currentRosterIds),
+          squad: hydratedSquad,
           budget: totalBudget,
           wageBill,
           wageBudget,
@@ -2093,6 +2303,7 @@ export const usePlayersStore = create<PlayersState>()(
       },
 
       clear: () => {
+        resetMarketPlayerSignals();
         syncPlayerAgesForDate(GAME_START_DATE);
         set({
           squad: [],
@@ -2120,7 +2331,10 @@ export const usePlayersStore = create<PlayersState>()(
         });
       },
 
-      resetAllStats: () => set({ stats: {} }),
+      resetAllStats: () => {
+        resetMarketPlayerSignals();
+        set({ stats: {} });
+      },
 
       resetBudget: () => {
         const state = get();
@@ -2367,31 +2581,25 @@ export const usePlayersStore = create<PlayersState>()(
       searchMarket: ({ search, position, limit = 100 }) => {
         syncPlayerAgesForDate(get().currentDate);
         const inRoster = new Set(get().rosterIds);
-
         const q = search.trim().toLowerCase();
-
         const out: FcPlayer[] = [];
 
-        for (const p of RAW_PLAYERS) {
-          const id = String(p.ID);
-
+        for (const raw of RAW_PLAYERS) {
+          const id = String(raw.ID);
           if (inRoster.has(id)) continue;
-
-          if (position !== "all" && mapEaPosition(p.Position) !== position) continue;
-
-          if (q && !p.Name.toLowerCase().includes(q)) continue;
-
-          out.push(p);
+          if (position !== "all" && mapEaPosition(raw.Position) !== position) continue;
+          if (q && !raw.Name.toLowerCase().includes(q)) continue;
+          out.push(dynamicFcPlayerView(raw, get().stats[id]));
         }
 
         out.sort((a, b) => b.OVR - a.OVR);
-
         return out.slice(0, limit);
       },
 
       getRawPlayers: () => {
-        syncPlayerAgesForDate(usePlayersStore.getState().currentDate);
-        return RAW_PLAYERS;
+        const state = usePlayersStore.getState();
+        syncPlayerAgesForDate(state.currentDate);
+        return RAW_PLAYERS.map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)]));
       },
 
       importLegacyStats: (players) => {
@@ -2430,7 +2638,7 @@ export const usePlayersStore = create<PlayersState>()(
         const { myTeamId, rosterIds } = get();
 
         if (myTeamId === teamId && rosterIds.length > 0) {
-          return syncSquadFromRoster(rosterIds);
+          return syncSquadFromRoster(rosterIds).map((raw) => dynamicFcPlayerView(raw, get().stats[String(raw.ID)]));
         }
 
         const team = teamById(teamId);
@@ -2445,11 +2653,10 @@ export const usePlayersStore = create<PlayersState>()(
 
         if (!squad) {
           console.warn(`No players found for team: ${team.name} (ID: ${teamId})`);
-
           return [];
         }
 
-        return squad;
+        return squad.map((raw) => dynamicFcPlayerView(raw, get().stats[String(raw.ID)]));
       },
 
       getSimPlayer: (playerId) => {
@@ -2666,6 +2873,14 @@ export const usePlayersStore = create<PlayersState>()(
             dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { appearances: 1 }),
           };
         });
+
+        const simPlayer = get().getSimPlayer(playerId);
+        recordMarketAppearance(
+          playerId,
+          simPlayer?.clubId ?? null,
+          get().currentDate,
+          safeMinutes,
+        );
         return;
       },
 
@@ -2914,6 +3129,16 @@ export const usePlayersStore = create<PlayersState>()(
           injuryType: meta?.injuryType ?? s.injuryType,
           injuryArea: meta?.injuryArea ?? s.injuryArea,
         }));
+        const simPlayer = get().getSimPlayer(playerId);
+        if (meta?.startDate && meta?.untilDate) {
+          recordMarketInjury(
+            playerId,
+            simPlayer?.clubId ?? null,
+            meta.startDate,
+            meta.untilDate,
+            meta.durationDays ?? 0,
+          );
+        }
         return;
 
         const next = { ...get().stats };

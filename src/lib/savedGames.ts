@@ -5,6 +5,7 @@ import {
   fcPlayerById,
   setClubOverrides,
   usePlayersStore,
+  rebuildMarketPlayerSignalsFromStore,
 } from "@/store/playersStore";
 import { getSaveItem, setSaveItem, removeSaveItem } from "./saveStorage";
 
@@ -322,6 +323,7 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
     wageBill: snap.wageBill,
     dismissedMatchIds: snap.dismissedMatchIds ?? [],
   } as any);
+  rebuildMarketPlayerSignalsFromStore();
 }
 
 export function clearPlayersStorePersist() {

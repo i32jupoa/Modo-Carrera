@@ -193,8 +193,23 @@ function Index() {
           <HeroAAA
             savedGamesCount={mounted ? savedGames.length : 0}
             loading={loading}
-            onLoadGame={() => setSavedGamesOpen(true)}
-            onNewGame={() => setShowWizard(true)}
+            onLoadGame={() => {
+              try {
+                setSavedGamesOpen(true);
+              } catch (error) {
+                console.error("No se pudo abrir el gestor de partidas:", error);
+              }
+            }}
+            onNewGame={() => {
+              try {
+                // Una nueva carrera siempre empieza desde cero: no heredamos
+                // el paso del asistente de una carrera anterior.
+                localStorage.removeItem("dynasty:wizard");
+              } catch (error) {
+                console.warn("No se pudo limpiar el estado del asistente:", error);
+              }
+              setShowWizard(true);
+            }}
           />
         </div>
       ) : (

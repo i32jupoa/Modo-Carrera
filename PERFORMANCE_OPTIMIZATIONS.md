@@ -58,3 +58,13 @@ Se transpilaron con TypeScript, sin errores de sintaxis, los archivos modificado
 - `src/routes/ucl.tsx`
 
 En este entorno no se pudo completar `npm ci`/`vite build` porque la instalación de dependencias disponible quedó incompleta; por eso no se presenta el build como una validación pasada. El ZIP final no incluye `node_modules`.
+
+
+### Optimización rápida — simulación y avance de día
+- La simulación de partidos de calendario/background usa `simulateMatchFast` y ya no ejecuta el motor minuto a minuto para partidos IA.
+- `advanceMatchdayLayered` usa el motor rápido también en la liga del usuario cuando son partidos IA, manteniendo eventos, estadísticas, tarjetas, lesiones, sustituciones y MVP.
+- La acción "Simular partido" entra directamente por el motor rápido; los partidos jugados en directo siguen usando el motor completo.
+- `advanceTime` cachea los XI calculados por equipo durante el día para evitar reconstruir la misma plantilla y formación.
+- Se cachean las tácticas de los clubes durante una tanda de simulación y en `loadTactics` para evitar lecturas repetidas de `localStorage`.
+- Se cachea el número de equipos por liga usado por el motor de lesiones.
+- Se redujeron logs de diagnóstico del avance diario que penalizaban especialmente el modo desarrollo.

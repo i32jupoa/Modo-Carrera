@@ -163,28 +163,48 @@ export function createTacticPlan(input: Partial<TacticPlan> & Pick<TacticPlan, "
   };
 }
 
+const TACTICS_CACHE = new Map<string, TeamTactics>();
+
 export function loadTactics(teamId: string): TeamTactics {
+  const cached = TACTICS_CACHE.get(teamId);
+  if (cached) return { ...cached };
+
   const state = loadTacticPlans(teamId);
   const active = state?.plans.find((plan) => plan.id === state.activeId);
-  if (active) return { ...active.tactics };
+  if (active) {
+    const tactics = { ...active.tactics };
+    TACTICS_CACHE.set(teamId, tactics);
+    return { ...tactics };
+  }
 
-  if (typeof window === "undefined") return { ...DEFAULT_TACTICS };
+  if (typeof window === "undefined") {
+    TACTICS_CACHE.set(teamId, { ...DEFAULT_TACTICS });
+    return { ...DEFAULT_TACTICS };
+  }
   try {
     const raw = window.localStorage.getItem(tacticsStorageKey(teamId));
-    if (!raw) return { ...DEFAULT_TACTICS };
-    return normalizeTactics(JSON.parse(raw));
+    if (!raw) {
+      TACTICS_CACHE.set(teamId, { ...DEFAULT_TACTICS });
+      return { ...DEFAULT_TACTICS };
+    }
+    const tactics = normalizeTactics(JSON.parse(raw));
+    TACTICS_CACHE.set(teamId, tactics);
+    return { ...tactics };
   } catch {
+    TACTICS_CACHE.set(teamId, { ...DEFAULT_TACTICS });
     return { ...DEFAULT_TACTICS };
   }
 }
 
 export function saveTactics(teamId: string, tactics: TeamTactics): void {
+  const normalized = normalizeTactics(tactics);
+  TACTICS_CACHE.set(teamId, normalized);
   const state = loadTacticPlans(teamId);
   if (state && state.plans.length > 0) {
     saveTacticPlans(teamId, {
       ...state,
       plans: state.plans.map((plan) =>
-        plan.id === state.activeId ? { ...plan, tactics: normalizeTactics(tactics) } : plan,
+        plan.id === state.activeId ? { ...plan, tactics: normalized } : plan,
       ),
     });
     return;
@@ -192,7 +212,7 @@ export function saveTactics(teamId: string, tactics: TeamTactics): void {
 
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(tacticsStorageKey(teamId), JSON.stringify(normalizeTactics(tactics)));
+    window.localStorage.setItem(tacticsStorageKey(teamId), JSON.stringify(normalized));
   } catch {
     /* ignore quota errors */
   }

@@ -19,7 +19,7 @@ import type { MarketValuation } from "./types";
 import { getClubProfile } from "./ClubStrategy";
 import { needsToSell } from "./BudgetManager";
 import { getPlayer } from "./PlayerIndex";
-import { isPlayerSettled } from "./MarketLocks";
+import { isPlayerSettled, movedInSummerThisSeason } from "./MarketLocks";
 import { getSquadReport } from "./SquadAnalyzer";
 import { wantsOut } from "./PlayerDecision";
 import { clamp, seededUnit } from "./random";
@@ -339,6 +339,10 @@ export function isAvailable(
   // Recién fichado en esta misma ventana: acaba de firmar contrato y no se
   // vuelve a mover hasta el siguiente mercado.
   if (isPlayerSettled(playerId)) return false;
+  // Un jugador que ya cambió de club durante el verano no vuelve a salir en
+  // firme en enero de la misma temporada: evita las cadenas irreales de
+  // traspasos grandes del listado de invierno.
+  if (movedInSummerThisSeason(playerId, cacheKey)) return false;
   if (!player.clubId) return true;
   if (player.transferListed) return true;
   if (player.contract.yearsLeft <= 1) return true;

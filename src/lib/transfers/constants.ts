@@ -33,8 +33,17 @@ export const MARKET_TIMING = {
    * ya cubre holgadamente hasta las ventanas de reconstrucción más locas.
    */
   maxSigningsPerWindow: 10,
-  /** Mínimo de fichajes que todo club de la IA debe cerrar en la ventana de invierno. */
-  minSigningsPerWindow: 2,
+  /** Mínimo de fichajes en invierno: 0, salvo una necesidad real. */
+  minSigningsPerWindow: 0,
+  /**
+   * Fichajes de invierno: no existe un máximo rígido por ventana. La
+   * frecuencia se controla con probabilidades decrecientes a medida que el
+   * club ya ha incorporado jugadores, de modo que enero sea mucho más
+   * tranquilo sin bloquear una necesidad real.
+   */
+  /** Máximo de fichajes permanentes que un club puede cerrar en un día de invierno.
+   * Es un freno de ritmo diario, no un límite de la ventana. */
+  maxSigningsPerDayWinter: 1,
   /**
    * Mínimo de fichajes que todo club de la IA (menos el del usuario) debe
    * cerrar en la ventana de verano. Un mercado de verano real mueve muchos
@@ -564,7 +573,7 @@ export const BALANCE = {
    */
   dormantClubChance: 0.02,
   /** Multiplicador de actividad de la ventana de invierno. */
-  winterFactor: 0.55,
+  winterFactor: 0.18,
   /**
    * Multiplicador de actividad de la ventana de verano. La pretemporada es,
    * con diferencia, el momento de más movimiento del mercado: se aplica
@@ -580,6 +589,36 @@ export const BALANCE = {
    * vez necesite firmar varios jugadores el mismo día.
    */
   summerSigningBurst: 1.0,
+} as const;
+
+/**
+ * Perfil específico del mercado de invierno. El objetivo es que enero sea una
+ * ventana de ajuste: menos operaciones, predominio de cesiones y sustitutos
+ * de lesiones, y muy pocos traspasos caros.
+ */
+export const WINTER_MARKET = {
+  /** Probabilidad diaria de un fichaje permanente no reactivo. */
+  normalSigningChance: 0.018,
+  /** Probabilidad adicional para un club ambicioso cuando ha pasado la primera semana. */
+  interestingSigningChance: 0.022,
+  /** Ratio máximo de gasto para una compra normal en enero. */
+  normalSpendRatio: 0.30,
+  /** Ratio máximo de gasto para una reposición reactiva. */
+  reactiveSpendRatio: 0.55,
+  /** Precio absoluto máximo de una compra normal de invierno. */
+  normalFeeCap: 35_000_000,
+  /** Precio absoluto máximo para una sustitución realmente reactiva. */
+  reactiveFeeCap: 60_000_000,
+  /** A partir de aquí un OVR se considera demasiado alto para una compra normal de enero. */
+  normalOvrCap: 86,
+  /** Umbral de días para considerar una lesión suficientemente larga. */
+  longTermInjuryDays: 42,
+  /** Máximo de apariciones con las que un joven puede seguir considerándose falto de minutos. */
+  lowMinutesMaxAppearances: 6,
+  /** Cuota de minutos frente al jugador con más uso de su club. */
+  lowMinutesShare: 0.38,
+  /** Edad máxima para la cesión motivada principalmente por falta de minutos. */
+  lowMinutesMaxAge: 24,
 } as const;
 
 /**

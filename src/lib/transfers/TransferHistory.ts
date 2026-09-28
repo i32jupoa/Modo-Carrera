@@ -7,7 +7,7 @@
  */
 
 import { teamById } from "@/data/teams";
-import { lockPlayer, registerArrival, registerCoreSigning, registerDeparture } from "./MarketLocks";
+import { lockPlayer, registerArrival, registerCoreSigning, registerDeparture, registerHistoricalMove } from "./MarketLocks";
 import { getPlayer } from "./PlayerIndex";
 import type { TransferRecord, TransferType } from "./types";
 
@@ -29,6 +29,7 @@ function pushInto(map: Map<string, TransferRecord[]>, key: string, record: Trans
 /** Añade un traspaso al historial y actualiza los índices. */
 export function recordTransfer(record: TransferRecord): TransferRecord {
   history.push(record);
+  registerHistoricalMove(record.playerId, record.date);
   // El jugador queda asentado en su nuevo club: no se moverá otra vez en la
   // misma ventana de mercado.
   lockPlayer(record.playerId, record.type);

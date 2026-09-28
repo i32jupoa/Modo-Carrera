@@ -13,7 +13,7 @@
  */
 
 import { teamById } from "@/data/teams";
-import { CONTRACT_RULES, LOAN_RULES, MARKET_TIMING, SQUAD_LIMITS, WAGE_RULES } from "./constants";
+import { CONTRACT_RULES, LOAN_RULES, MARKET_TIMING, SQUAD_LIMITS, WAGE_RULES, WINTER_MARKET } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
 import { getUserClubId, maxWageOffer, registerLoanOut, registerSale, registerSigning } from "./BudgetManager";
 import {
@@ -30,9 +30,10 @@ import { buildLoanTerms, createTransferOffer, emptyClauses } from "./Negotiation
 import { completeTransfer } from "./TransferEngine";
 import { contractYearsForAge } from "./ContractEngine";
 import { recordTransfer, transfersForPlayer } from "./TransferHistory";
-import { arrivalsFor, isPlayerLoanSettled } from "./MarketLocks";
+import { arrivalsFor, isPlayerLoanSettled, movedInSummerThisSeason } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import { windowForDate } from "@/lib/transferWindows";
+import { getPlayerUsage } from "./MarketPlayerSignals";
 import type { MarketPlayer, TransferRecord, TransferType } from "./types";
 
 /** Llegadas máximas por club y ventana (compras + cesiones). */
@@ -81,8 +82,25 @@ export function wantsToLoanOut(clubId: string, playerId: string, cacheKey: strin
   const player = getPlayer(playerId);
   if (!player || player.clubId !== clubId || player.loanClubId) return false;
   if (isKeyPlayer(playerId, cacheKey)) return false;
+  // Un jugador que ya cambió de club en verano no vuelve a ser fichado ni
+  // cedido inmediatamente en enero: evitamos las cadenas de movimientos de
+  // un mismo jugador dentro de la misma temporada.
+  if (windowForDate(cacheKey) === "winter" && movedInSummerThisSeason(playerId, cacheKey)) return false;
 
   const report = getSquadReport(clubId, cacheKey);
+  const winter = windowForDate(cacheKey) === "winter";
+  const usage = getPlayerUsage(playerId, clubId, cacheKey);
+  const lowMinutesWinter =
+    winter &&
+    player.age <= WINTER_MARKET.lowMinutesMaxAge &&
+    usage.appearances <= WINTER_MARKET.lowMinutesMaxAppearances &&
+    usage.minutesShare <= WINTER_MARKET.lowMinutesShare;
+
+  // En enero una cesión de un joven que apenas ha jugado tiene prioridad sobre
+  // la antigua regla de "OVR demasiado bajo para el once": precisamente ahí
+  // buscamos minutos fuera para que vuelva mejor preparado.
+  if (lowMinutesWinter) return true;
+
   const gap = report.startingRating - player.ovr;
   if (gap < LOAN_RULES.ratingGap) return false;
 
@@ -93,9 +111,17 @@ export function wantsToLoanOut(clubId: string, playerId: string, cacheKey: strin
 
 /** Jugadores que el club pondría en el mercado de cesiones hoy. */
 export function loanCandidates(clubId: string, cacheKey: string): MarketPlayer[] {
+  const winter = windowForDate(cacheKey) === "winter";
   return getClubPlayers(clubId)
     .filter((player) => !isPlayerLoanSettled(player.id) && wantsToLoanOut(clubId, player.id, cacheKey))
-    .sort((a, b) => b.potential - a.potential);
+    .sort((a, b) => {
+      if (!winter) return b.potential - a.potential;
+      const aUsage = getPlayerUsage(a.id, clubId, cacheKey);
+      const bUsage = getPlayerUsage(b.id, clubId, cacheKey);
+      if (aUsage.minutesShare !== bUsage.minutesShare) return aUsage.minutesShare - bUsage.minutesShare;
+      if (aUsage.appearances !== bUsage.appearances) return aUsage.appearances - bUsage.appearances;
+      return b.potential - a.potential;
+    });
 }
 
 /** Tipo de cesión que se pacta, según lo que interesa al propietario. */
@@ -206,6 +232,9 @@ export function arrangeLoan(
   };
   if (!player || !player.clubId || player.loanClubId) return base;
   if (player.clubId === borrowerClubId) return base;
+  if (windowForDate(options.date) === "winter" && movedInSummerThisSeason(playerId, options.date)) {
+    return { ...base, message: "El jugador ya cambió de club en verano y no puede volver a moverse en enero." };
+  }
 
   const durationMonths = loanDurationMonthsForDate(options.date);
   const clauses = {

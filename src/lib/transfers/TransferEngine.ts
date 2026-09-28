@@ -28,6 +28,7 @@ import {
   SQUAD_LIMITS,
   STAR_THRESHOLD,
   WAGE_RULES,
+  WINTER_MARKET,
 } from "./constants";
 import { getClubProfile } from "./ClubStrategy";
 import { bigSigningSpendCapRatio } from "./MarketPacing";
@@ -483,6 +484,10 @@ export function buildShortlist(
   const userClubId = getUserClubId();
   const excludeClubIds = userClubId && userClubId !== clubId ? [clubId, userClubId] : [clubId];
 
+  const winterMarket = windowForDate(options.cacheKey) === "winter";
+  const recentLossOvrForNeed = recentCoreLossOvr(clubId, need.group);
+  const reactiveWinterNeed = winterMarket && (recentLossOvrForNeed > 0 || need.priority === "critical");
+
   const candidates = findCandidates({
     clubId,
     group: need.group,
@@ -576,6 +581,13 @@ export function buildShortlist(
     });
     if (entry.score < SEARCH_LIMITS.minimumScore) continue;
     if (entry.askingPrice > effectiveSpendCeiling) continue;
+    if (winterMarket) {
+      const winterFeeCap = reactiveWinterNeed
+        ? WINTER_MARKET.reactiveFeeCap
+        : WINTER_MARKET.normalFeeCap;
+      if (entry.askingPrice > winterFeeCap) continue;
+      if (!reactiveWinterNeed && player.ovr > WINTER_MARKET.normalOvrCap) continue;
+    }
     scored.push(entry);
   }
 
@@ -1386,6 +1398,7 @@ export function signEmergencyMarketCandidate(
       if (!isAvailable(player.id, date, { clubId, spendCeiling, critical: true })) return false;
       const valuation = valuePlayer(player.id, { cacheKey: date, competition: competitionFor(player.id, clubId), deadlineDay: true });
       if (valuation.listPrice > spendCeiling) return false;
+      if (windowForDate(date) === "winter" && valuation.listPrice > WINTER_MARKET.reactiveFeeCap) return false;
       if (isPursuitOnCooldown(clubId, player.id, date)) return false;
       return true;
     })

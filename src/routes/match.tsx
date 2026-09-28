@@ -3673,7 +3673,7 @@ function MatchPage() {
     const tactics = loadTactics(myId || "");
     const designatedId = source.team === mySide ? tactics.penaltyTakerId : null;
     const shootingScore = (p: any) => {
-      const s = getPlayerShootingStats(p?.id);
+      const s = getPlayerShootingStats(p?.id, p?.attributes);
       const penalties = Number(p?.penaltyRating ?? p?.penalties ?? s.penalties ?? 0);
       return (penalties * 0.45) + (s.finishing * 0.22) + (s.shooting * 0.13) +
         (s.composure * 0.10) + (s.shotPower * 0.05) + (s.volleys * 0.03) +
@@ -3798,7 +3798,7 @@ function MatchPage() {
         .slice()
         .sort((a, b) => {
           const score = (p: any) => {
-            const s = getPlayerShootingStats(p?.id);
+            const s = getPlayerShootingStats(p?.id, p?.attributes);
             const penalties = Number(p?.penaltyRating ?? p?.penalties ?? s.penalties ?? 0);
             return (penalties * 0.45) + (s.finishing * 0.22) + (s.shooting * 0.13) +
               (s.composure * 0.10) + (s.shotPower * 0.05) + (s.volleys * 0.03) +

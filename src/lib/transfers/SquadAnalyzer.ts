@@ -7,10 +7,11 @@
  * busca un jugador para una posición que no aparezca en `needs`.
  */
 
-import { IDEAL_SQUAD_SHAPE, SQUAD_LIMITS } from "./constants";
+import { IDEAL_SQUAD_SHAPE, SQUAD_LIMITS, WINTER_MARKET } from "./constants";
 import { recentCoreLossOvr, recentCoreSigningOvr } from "./MarketLocks";
 import { getClubPlayers, onSquadChanged } from "./PlayerIndex";
 import { clamp } from "./random";
+import { getLongTermInjuredPlayerIds } from "./MarketPlayerSignals";
 import {
   POSITION_GROUPS,
   type MarketPlayer,
@@ -54,6 +55,7 @@ function computeUrgency(
   players: MarketPlayer[],
   squadRating: number,
   recentLossOvr: number,
+  hasLongTermInjury = false,
 ): number {
   const shape = IDEAL_SQUAD_SHAPE[group];
   const count = players.length;
@@ -67,7 +69,12 @@ function computeUrgency(
   const qualityGap = squadRating > 0 ? clamp((squadRating - quality) / 8, 0, 1) : 0;
 
   const baseUrgency = clamp(shortage * 0.6 + qualityGap * 0.4, 0, 1);
-  if (recentLossOvr <= 0) return baseUrgency;
+  if (recentLossOvr <= 0) {
+    // Una lesión de seis semanas o más crea una necesidad reactiva real en
+    // invierno aunque el cupo numérico siga completo. Así el mercado puede
+    // buscar un recambio temporal/asequible en vez de fichar por capricho.
+    return hasLongTermInjury ? Math.max(baseUrgency, 0.86) : baseUrgency;
+  }
 
   // Reemplazo reactivo: si el club acaba de perder a un jugador de nivel en
   // esta demarcación (p. ej. su extremo estrella), la urgencia sube aunque
@@ -113,8 +120,13 @@ function isLoanable(player: MarketPlayer, startingRating: number): boolean {
 }
 
 /** Genera el informe completo de una plantilla. */
-export function analyzeSquad(clubId: string): SquadReport {
+export function analyzeSquad(clubId: string, cacheKey = ""): SquadReport {
   const squad = getClubPlayers(clubId);
+  const injuredIds = new Set(
+    cacheKey
+      ? getLongTermInjuredPlayerIds(clubId, cacheKey, WINTER_MARKET.longTermInjuryDays)
+      : [],
+  );
   const sorted = squad.slice().sort((a, b) => b.ovr - a.ovr);
   const starters = sorted.slice(0, 11);
   const bench = sorted.slice(11, 22);
@@ -136,12 +148,14 @@ export function analyzeSquad(clubId: string): SquadReport {
     ratingByGroup[group] = Math.round(average(players.map((p) => p.ovr)) * 10) / 10;
 
     const recentLoss = recentCoreLossOvr(clubId, group);
+    const hasLongTermInjury = players.some((player) => injuredIds.has(player.id));
     const urgency = computeUrgency(
       clubId,
       group,
       players,
       startingRating,
       recentLoss,
+      hasLongTermInjury,
     );
     if (urgency > 0.15 || recentLoss > 0) {
       needs.push({
@@ -232,7 +246,7 @@ onSquadChanged((clubIds) => {
 export function getSquadReport(clubId: string, cacheKey: string): SquadReport {
   const cached = reportCache.get(clubId);
   if (cached && cached.key === cacheKey) return cached.report;
-  const report = analyzeSquad(clubId);
+  const report = analyzeSquad(clubId, cacheKey);
   reportCache.set(clubId, { key: cacheKey, report });
   return report;
 }

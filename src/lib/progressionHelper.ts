@@ -21,6 +21,7 @@ export function applyMonthlyProgressionToPlayer(
   dynamicStats: DynamicPlayerStats,
   currentMonth: number,
   currentYear: number,
+  context?: { teamAverageOVR?: number; injuryDaysRemaining?: number; dateIso?: string },
 ): { updatedStats: DynamicPlayerStats; newOVR: number } {
   const updatedStats = applyMonthlyProgression(
     dynamicStats,
@@ -28,6 +29,7 @@ export function applyMonthlyProgressionToPlayer(
     player.positions,
     currentMonth,
     currentYear,
+    context,
   );
 
   return {
@@ -44,6 +46,7 @@ export function applySeasonEndProgressionToPlayer(
   player: Player,
   dynamicStats: DynamicPlayerStats,
   seasonNumber: number,
+  context?: { teamAverageOVR?: number; injuryDaysRemaining?: number; dateIso?: string },
 ): { updatedStats: DynamicPlayerStats; newOVR: number } {
   const updatedStats = applySeasonEndProgression(
     dynamicStats,
@@ -51,6 +54,7 @@ export function applySeasonEndProgressionToPlayer(
     player.positions,
     seasonNumber,
     player.teamId,
+    context,
   );
 
   return {
