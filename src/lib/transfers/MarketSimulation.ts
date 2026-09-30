@@ -13,7 +13,7 @@
  * Todo lo que ocurre se vuelca en `TransferHistory` y `RumorEngine`.
  */
 
-import { BALANCE, ELITE_EXIT, MARKET_TIMING, WINTER_MARKET } from "./constants";
+import { BALANCE, ELITE_EXIT, MARKET_TIMING, MARKET_VARIATION, WINTER_MARKET } from "./constants";
 import {
   TRANSFER_WINDOWS,
   isSummerTransferWindow,
@@ -24,7 +24,7 @@ import { getMarketIndex } from "./PlayerIndex";
 import { listAllBids } from "./BidWar";
 import { getClubProfile } from "./ClubStrategy";
 import { shoppingRamp } from "./MarketPacing";
-import { getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
+import { getFinances, getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
 import {
   attemptEliteDeparture,
@@ -47,6 +47,7 @@ import {
   recentCoreLossOvr,
   recentCoreSigningOvr,
   departuresFor,
+  arrivalsFor,
   coreDeparturesFor,
 } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
@@ -184,10 +185,41 @@ function intensityFor(date: string): number {
 }
 
 /** Mínimo de fichajes exigido a un club de la IA según la ventana. */
-function minSigningsFor(window: MarketWindow): number {
-  return window === "summer"
-    ? MARKET_TIMING.minSigningsPerWindowSummer
-    : MARKET_TIMING.minSigningsPerWindow;
+function minSigningsFor(window: MarketWindow, clubId?: string, date?: string): number {
+  if (window !== "summer") return MARKET_TIMING.minSigningsPerWindow;
+  if (!clubId || !date) return MARKET_TIMING.minSigningsPerWindowSummer;
+  const profile = getClubProfile(clubId);
+  const marketKey = windowKey(date);
+  const roll = seededUnit(clubId, marketKey, "summer-target");
+  let finance: ReturnType<typeof getFinances> | null = null;
+  try {
+    finance = getFinances(clubId);
+  } catch (error) {
+    // Un save antiguo puede no tener todavía finanzas materializadas.
+    // El objetivo del mercado no debe abortar toda la sincronización diaria.
+    console.warn(`[market] finance fallback for ${clubId}:`, error);
+  }
+  const elite = profile.reputation >= 0.82 && profile.financialPower >= 0.62 && profile.ambition >= 0.78;
+
+  // Cada verano conserva una personalidad distinta. Las ventas grandes,
+  // además, elevan de forma visible la intención de reinversión de un gigante.
+  let target =
+    roll < 0.12 ? 0 :
+    roll < 0.28 ? 1 :
+    roll < 0.75 ? 2 :
+    roll < 0.93 ? 3 :
+    MARKET_VARIATION.summerTargetMax;
+
+  if (elite) {
+    if (finance && finance.earned >= finance.initialBudget * 0.5) target += 1;
+    if (finance && finance.earned >= finance.initialBudget * 1.25) target += 1;
+    if (finance && profile.aggression > 0.82 && finance.earned >= finance.initialBudget * 0.75) target += 1;
+    target = Math.min(MARKET_VARIATION.summerTargetMax, target);
+  } else {
+    target = Math.min(3, target);
+  }
+
+  return target;
 }
 
 /**
@@ -208,6 +240,34 @@ function unreplacedCoreGroupsFor(clubId: string): number {
 /** Mínimo de ventas exigido a un club de la IA según la ventana (0 fuera de verano). */
 function minSalesFor(window: MarketWindow): number {
   return window === "summer" ? MARKET_TIMING.minSalesPerWindowSummer : 0;
+}
+
+/**
+ * Objetivo dinámico de altas de verano.
+ *
+ * El mínimo fijo es sólo el punto de partida: si un club pierde varios
+ * jugadores, necesita transformar una parte razonable de esas salidas en
+ * reposición. No se hace una sustitución 1:1 (las ventas de descartes no
+ * obligan a comprar otro jugador), pero a partir de 2 salidas netas la
+ * presión de plantilla aumenta de forma visible.
+ */
+function requiredSummerSignings(clubId: string, date: string): number {
+  const base = minSigningsFor("summer", clubId, date);
+  const netDepartures = Math.max(0, departuresFor(clubId) - arrivalsFor(clubId));
+  const lostCoreGroups = unreplacedCoreGroupsFor(clubId);
+
+  if (netDepartures <= 0 && lostCoreGroups <= 0) return base;
+
+  // Las salidas netas añaden actividad al objetivo base, pero de forma
+  // sublineal: vender seis jugadores no obliga a comprar seis, aunque sí
+  // debería elevar mucho el número de altas respecto a un verano normal.
+  const netReplacementBonus =
+    netDepartures >= 2 ? Math.min(4, Math.ceil(netDepartures * 0.5)) : 0;
+  const coreReplacementBonus = Math.min(2, Math.max(0, lostCoreGroups - 1));
+  const replacementTarget = base + netReplacementBonus + coreReplacementBonus;
+
+  return Math.min(MARKET_TIMING.maxSigningsPerWindow, replacementTarget);
+
 }
 
 /**
@@ -333,8 +393,9 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
   // vida real todos los equipos acaban haciendo algún movimiento.
   const urgency = clamp((state.windowDay - 5) / 25, 0, 1);
   return allClubIds().filter((clubId) => {
-    if (clubWantsToActToday(clubId, date, share)) return true;
-    const window = clubWindowState(clubId);
+    try {
+      if (clubWantsToActToday(clubId, date, share)) return true;
+      const window = clubWindowState(clubId);
 
     // Las redes de seguridad son obligaciones, no una lotería: si un club ya
     // alcanzó su día asignado y aún no cumple el mínimo de fichajes/ventas,
@@ -349,7 +410,7 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
         ? longTermInjury || coreDeparturesFor(clubId) > 0
           ? 1
           : 0
-        : Math.max(minSigningsFor(state.window), departuresFor(clubId), coreDeparturesFor(clubId));
+        : requiredSummerSignings(clubId, date);
     if (
       window.signings < requiredSignings &&
       (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
@@ -361,8 +422,15 @@ export function activeClubsForDate(date: string, state: MarketSimulationState): 
     ) return true;
 
     if (urgency <= 0) return false;
-    if (window.signings + window.sales + window.loans > 0) return false;
-    return seededUnit(clubId, date, "catch-up") < share + urgency * 0.5;
+      if (window.signings + window.sales + window.loans > 0) return false;
+      return seededUnit(clubId, date, "catch-up") < share + urgency * 0.5;
+    } catch (error) {
+      // Un dato de un club concreto no puede bloquear la selección diaria del
+      // resto del mercado. Si el club está en un estado migrado, simplemente
+      // se deja para el siguiente día.
+      console.warn(`[market] active-club check skipped ${clubId}:`, error);
+      return false;
+    }
   });
 }
 
@@ -504,7 +572,11 @@ function runClubDay(
   // a reponer sí o sí: ni la caja ni la pasividad de la temporada le frenan.
   const deficit = windowDeficit(clubId);
   const idleTooLong = state.window === "summer" && window.signings === 0 && window.sales === 0 && state.windowDay > 8;
-  const belowMinimum = window.signings < minSigningsFor(state.window);
+  const requiredSigningsForWindow =
+    state.window === "summer"
+      ? requiredSummerSignings(clubId, date)
+      : minSigningsFor(state.window, clubId, date);
+  const belowMinimum = window.signings < requiredSigningsForWindow;
   // Una necesidad "crítica" (ver `SquadAnalyzer.computeUrgency`) puede venir
   // de dos sitios muy distintos: (a) haber perdido a un titular de nivel
   // hace poco (reposición reactiva de verdad, debe ir ya), o (b) la simple
@@ -598,12 +670,37 @@ function runClubDay(
       state.window === "winter"
         ? MARKET_TIMING.maxSigningsPerDayWinter
         : Math.max(1, Math.round(baseSignings * burst));
-    const cycle = runClubTransferCycle(clubId, {
-      date,
-      deadlineDay: state.deadlineDay,
-      maxSignings,
-      belowMinimum,
-    });
+    const strategic =
+      state.window === "summer" &&
+      profile.reputation >= 0.82 &&
+      profile.financialPower >= 0.62 &&
+      profile.ambition >= 0.78;
+    let cycle: ReturnType<typeof runClubTransferCycle>;
+    try {
+      cycle = runClubTransferCycle(clubId, {
+        date,
+        deadlineDay: state.deadlineDay,
+        maxSignings,
+        belowMinimum,
+        strategic,
+      });
+    } catch (error) {
+      // Una anomalía en la ruta estratégica de un club no puede detener el
+      // mercado mundial entero. Se rebaja a la búsqueda normal para ese club.
+      console.warn(`[market] strategic cycle fallback for ${clubId}:`, error);
+      try {
+        cycle = runClubTransferCycle(clubId, {
+          date,
+          deadlineDay: state.deadlineDay,
+          maxSignings,
+          belowMinimum,
+          strategic: false,
+        });
+      } catch (fallbackError) {
+        console.warn(`[market] club cycle skipped for ${clubId}:`, fallbackError);
+        cycle = { clubId, transfers: [], attempts: [], shortlisted: 0 };
+      }
+    }
     result.offersMade += cycle.attempts.length;
     for (const attempt of cycle.attempts) {
       publishPursuitRumors(result, clubId, date, attempt);
@@ -694,7 +791,7 @@ function runClubDay(
   const requiredSignings =
     state.window === "winter"
       ? unreplacedCoreGroups
-      : Math.max(minSigningsFor(state.window), unreplacedCoreGroups);
+      : Math.max(requiredSummerSignings(clubId, date), unreplacedCoreGroups);
   if (
     window.signings < requiredSignings &&
     (state.deadlineDay || state.windowDay >= window.nextSigningAttempt)
@@ -811,7 +908,13 @@ export function simulateDay(date: string): MarketDayResult {
   publishLiveBidRumors(result, date);
 
   for (const clubId of activeClubsForDate(date, state)) {
-    runClubDay(clubId, date, state, result);
+    try {
+      runClubDay(clubId, date, state, result);
+    } catch (error) {
+      // Robustez de simulación: un club corrupto/migrado nunca puede dejar
+      // sin mercado a los otros 117 equipos de la partida.
+      console.warn(`[market] skipped club ${clubId} on ${date}:`, error);
+    }
   }
 
   // Incluye también las pujas abiertas hoy, que no existían en el primer pase.

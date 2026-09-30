@@ -202,8 +202,11 @@ export function useMarketClock(): void {
       flushWorldMoves();
     } catch (error) {
       // Un fallo puntual del motor mundial no debe tirar abajo la aplicación ni
-      // resetear el estado de las negociaciones del usuario.
+      // resetear el estado de las negociaciones del usuario. Dejamos también
+      // el detalle para poder detectar rápidamente una anomalía concreta de
+      // una partida migrada.
       console.error("[MarketClock] Error al sincronizar el mercado con la fecha.", error);
+      if (error instanceof Error && error.stack) console.error(error.stack);
     }
   }, [ready, currentDate]);
 }

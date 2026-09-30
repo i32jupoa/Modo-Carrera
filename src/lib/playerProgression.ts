@@ -14,7 +14,6 @@
 
 import type {
   DynamicPlayerStats,
-  MonthlyStats,
   PlayerAttributeRatings,
   SeasonStats,
 } from "@/types/playerStats";
@@ -52,7 +51,9 @@ export function normalizeDynamicStats(
     PHY: Math.max(1, Math.min(99, n(sourceAttributes.PHY, fallbackAttributes.PHY))),
   };
 
-  const currentOVR = Math.round(Math.max(50, Math.min(99, n(source.currentOVR, baseOVR))));
+  // Conservamos los decimales del OVR dinámico. La interfaz sigue mostrando
+  // un entero, pero el motor acumula la evolución real mes a mes y entre temporadas.
+  const currentOVR = clamp(n(source.currentOVR, baseOVR), 50, 99);
   // Saves creados antes del sistema de progresión persistente podían mover
   // `baseOVR` al final de cada temporada. Cuando falta `lastProgressionDelta`
   // sabemos que aún no llevan el nuevo esquema y restauramos como referencia
@@ -93,7 +94,7 @@ export function normalizeDynamicStats(
     potentialOVR: Math.round(normalizedPotential),
     attributes,
     formHistory: arr(source.formHistory).map((v) => n(v)).slice(-10),
-    careerSeasons: arr<SeasonStats>(source.careerSeasons),
+    careerSeasons: arr(source.careerSeasons) as SeasonStats[],
     lastProgressionMonth: n(source.lastProgressionMonth, -1),
     lastProgressionYear: n(source.lastProgressionYear, -1),
     lastProgressionDelta: n(source.lastProgressionDelta),
@@ -106,45 +107,77 @@ export function normalizeDynamicStats(
 }
 
 function ageGrowthFactor(age: number): number {
-  if (age <= 18) return 1.55;
-  if (age <= 20) return 1.4;
-  if (age <= 22) return 1.25;
-  if (age <= 24) return 1.12;
-  if (age <= 27) return 0.95;
-  if (age <= 29) return 0.72;
-  if (age <= 31) return 0.48;
-  if (age <= 33) return 0.27;
-  if (age <= 35) return 0.12;
-  return 0;
-}
-
-function ageDeclineFactor(age: number): number {
-  if (age <= 23) return 0.15;
-  if (age <= 27) return 0.25;
-  if (age <= 29) return 0.45;
-  if (age <= 31) return 0.75;
-  if (age <= 33) return 1.0;
-  if (age <= 35) return 1.35;
-  return 1.8;
+  // La edad es un modificador suave: el rendimiento de la temporada manda.
+  if (age <= 18) return 1.18;
+  if (age <= 20) return 1.14;
+  if (age <= 22) return 1.10;
+  if (age <= 24) return 1.07;
+  if (age <= 27) return 1.03;
+  if (age <= 30) return 1.00;
+  if (age <= 32) return 0.97;
+  if (age <= 34) return 0.93;
+  if (age <= 36) return 0.87;
+  return 0.80;
 }
 
 function roleFromPositions(positions: PosCode[]): "GK" | "DEF" | "MID" | "FWD" {
   if (positions.includes("GK")) return "GK";
-  if (positions.some((p) => ["DC", "ED", "EI", "MCO"].includes(p))) return "FWD";
-  if (positions.some((p) => ["MCD", "MC", "MD", "MI"].includes(p))) return "MID";
+
+  // La demarcación principal manda. Esto evita clasificar a un CAM/MC que
+  // también puede jugar de delantero como atacante a tiempo completo (caso
+  // especialmente importante para centrocampistas como Bellingham).
+  const primary = positions[0];
+  if (["MCO", "MCD", "MC", "MD", "MI"].includes(primary)) return "MID";
+  if (["DFC", "LD", "LI"].includes(primary)) return "DEF";
+  if (["DC", "ED", "EI"].includes(primary)) return "FWD";
+
+  if (positions.some((p) => ["MCO", "MCD", "MC", "MD", "MI"].includes(p))) return "MID";
+  if (positions.some((p) => ["DFC", "LD", "LI"].includes(p))) return "DEF";
+  if (positions.some((p) => ["DC", "ED", "EI"].includes(p))) return "FWD";
   return "DEF";
 }
 
 function roleWeights(role: "GK" | "DEF" | "MID" | "FWD") {
+  // Umbrales aproximados por 90 minutos/partido para medir producción sin
+  // castigar a un centrocampista o defensa por no tener cifras de delantero.
+  // Los pesos siguientes hacen que la producción dependa de la demarcación real.
   switch (role) {
     case "GK":
-      return { goal: 0.01, assist: 0.015, clean: 0.55 };
+      return {
+        goal: 0.01,
+        assist: 0.03,
+        clean: 0.32,
+        goalWeight: 0.10,
+        assistWeight: 0.15,
+        cleanWeight: 0.75,
+      };
     case "DEF":
-      return { goal: 0.08, assist: 0.12, clean: 0.26 };
+      return {
+        goal: 0.08,
+        assist: 0.12,
+        clean: 0.32,
+        goalWeight: 0.20,
+        assistWeight: 0.20,
+        cleanWeight: 0.60,
+      };
     case "MID":
-      return { goal: 0.16, assist: 0.2, clean: 0.08 };
+      return {
+        goal: 0.20,
+        assist: 0.28,
+        clean: 0.20,
+        goalWeight: 0.42,
+        assistWeight: 0.40,
+        cleanWeight: 0.18,
+      };
     default:
-      return { goal: 0.34, assist: 0.18, clean: 0.01 };
+      return {
+        goal: 0.48,
+        assist: 0.22,
+        clean: 0.10,
+        goalWeight: 0.62,
+        assistWeight: 0.33,
+        cleanWeight: 0.05,
+      };
   }
 }
 
@@ -159,59 +192,58 @@ function calculateProductionImpact(
   const role = roleFromPositions(positions);
   const weights = roleWeights(role);
   const apps = Math.max(1, stats.seasonAppearances);
-  const goalsPerMatch = stats.seasonGoals / apps;
-  const assistsPerMatch = stats.seasonAssists / apps;
-  const cleanPerMatch = stats.seasonCleanSheets / apps;
+  const minutes = Math.max(90, Number(stats.seasonMinutes) || apps * 75);
+  const goalsPer90 = (Math.max(0, stats.seasonGoals) / minutes) * 90;
+  const assistsPer90 = (Math.max(0, stats.seasonAssists) / minutes) * 90;
+  const cleanPerMatch = Math.max(0, stats.seasonCleanSheets) / apps;
 
-  // Comparamos con una producción razonable para el rol. No hace falta que un
-  // central marque como un delantero para progresar: se le evalúa por su propio rol.
-  const goalNorm = goalsPerMatch / Math.max(weights.goal, 0.01);
-  const assistNorm = assistsPerMatch / Math.max(weights.assist, 0.01);
-  const cleanNorm = cleanPerMatch / Math.max(weights.clean, 0.01);
+  // Se compara la producción por 90 con una referencia razonable para el rol.
+  // Puede superar 1 en temporadas excepcionales; no hay un techo artificial
+  // que impida que una campaña histórica destaque.
+  const goalRatio = clamp(goalsPer90 / Math.max(weights.goal, 0.01), 0, 2.5);
+  const assistRatio = clamp(assistsPer90 / Math.max(weights.assist, 0.01), 0, 2.5);
+  const cleanRatio = clamp(cleanPerMatch / Math.max(weights.clean, 0.01), 0, 2.0);
 
-  const production = goalNorm * 0.45 + assistNorm * 0.35 + cleanNorm * 0.2;
-  return clamp(production, 0, 2);
+  return clamp(
+    goalRatio * weights.goalWeight +
+      assistRatio * weights.assistWeight +
+      cleanRatio * weights.cleanWeight,
+    0,
+    2.5,
+  );
 }
 
 function calculatePerformanceIndex(
   stats: DynamicPlayerStats,
   positions: PosCode[],
-  context?: { teamAverageOVR?: number },
+  _context?: { teamAverageOVR?: number },
 ): number {
-  if (stats.seasonAppearances <= 0) return -0.05;
+  if (stats.seasonAppearances <= 0) return -0.10;
 
-  const averageRating = stats.seasonAverageRating || 6;
-  const teamAverage = Number(context?.teamAverageOVR);
-  // En equipos de menor nivel el estándar de actuación es ligeramente menor,
-  // porque el jugador suele disponer de menos recursos y oportunidades. A la
-  // vez, un jugador que sobresale claramente sobre sus compañeros recibe un
-  // pequeño extra por rendimiento relativo. El ajuste es deliberadamente suave.
-  const standardRelief = Number.isFinite(teamAverage)
-    ? clamp((74 - teamAverage) / 20, -0.12, 0.22)
-    : 0;
-  const relativeTeamPerformance = Number.isFinite(teamAverage)
-    ? clamp((stats.currentOVR - teamAverage) / 14, -1, 1)
-    : 0;
-  const ratingPart = clamp((averageRating - (6.6 - standardRelief)) / 1.1, -1, 1);
-  const productionMultiplier = 1 + standardRelief * 0.35 + Math.max(0, relativeTeamPerformance) * 0.08;
-  const productionPart = clamp(
-    (calculateProductionImpact(stats, positions) * productionMultiplier) - 0.75,
-    -1,
-    1,
-  );
+  const averageRating = Number(stats.seasonAverageRating) || 6;
+  // 6.7 es una actuación correcta; 7.0+ ya debe empujar con claridad y 7.5+
+  // representa una campaña de élite. La producción puede compensar una media
+  // de partido irregular, pero no ocultar una temporada realmente mala.
+  const ratingPart = clamp((averageRating - 6.50) / 0.90, -1, 1);
+
+  const productionIndex = calculateProductionImpact(stats, positions);
+  const productionPart = clamp((productionIndex - 0.42) / 1.15, -0.60, 1);
+
   const mvpRate = stats.seasonMVPs / Math.max(1, stats.seasonAppearances);
-  const mvpPart = clamp(mvpRate / 0.16, 0, 1);
-  const consistency = clamp(stats.seasonAppearances / 24, 0, 1);
+  const mvpPart = clamp((mvpRate - 0.02) / 0.12, 0, 1);
+  const availability = clamp(stats.seasonAppearances / 24, 0, 1);
   const minutesPerAppearance = stats.seasonMinutes / Math.max(1, stats.seasonAppearances);
-  const minuteQuality = clamp((minutesPerAppearance - 35) / 55, 0, 1);
+  const minuteQuality = clamp((minutesPerAppearance - 45) / 45, 0, 1);
 
+  // El rendimiento real manda. La edad no entra aquí a propósito: dos jugadores
+  // que rinden igual deben recibir una evolución parecida con independencia de
+  // que tengan 22, 29 o 31 años.
   return clamp(
-    ratingPart * 0.44 +
-      productionPart * 0.24 +
-      mvpPart * 0.14 +
-      consistency * 0.08 +
-      minuteQuality * 0.06 +
-      relativeTeamPerformance * 0.04,
+    ratingPart * 0.22 +
+      productionPart * 0.60 +
+      mvpPart * 0.13 +
+      availability * 0.03 +
+      minuteQuality * 0.02,
     -1,
     1,
   );
@@ -231,13 +263,6 @@ function getAttributeWeights(positions: PosCode[]): PlayerAttributeRatings {
   }
 }
 
-function getLatestMonthlyStats(stats: DynamicPlayerStats): MonthlyStats | null {
-  if (!stats.monthlyStats.length) return null;
-  return [...stats.monthlyStats].sort(
-    (a, b) => a.year * 12 + a.month - (b.year * 12 + b.month),
-  )[stats.monthlyStats.length - 1] ?? null;
-}
-
 function calculateYouthPlayingTimeFactor(stats: DynamicPlayerStats, age: number): number {
   if (age > 25) return 0;
   const appearanceFactor = clamp(stats.seasonAppearances / (age <= 21 ? 20 : 24), 0, 1);
@@ -251,9 +276,24 @@ function calculateYouthPlayingTimeFactor(stats: DynamicPlayerStats, age: number)
 }
 
 function developmentHeadroomFactor(stats: DynamicPlayerStats): number {
-  // El jugador que está claramente por debajo de su proyección estimada tiene
-  // mucho más margen de crecimiento que uno que ya está cerca o por encima de ella.
-  return clamp(0.75 + (stats.potentialOVR - stats.currentOVR) / 10, 0.52, 1.48);
+  const gap = stats.potentialOVR - stats.currentOVR;
+
+  // El margen importa mucho más en un prospecto de media baja que en una
+  // estrella que ya está en 87-91. Llegar al potencial no es automático:
+  // cuanto más alto es el OVR actual, más exigente es la progresión.
+  if (stats.currentOVR >= 88) return clamp(0.52 + gap / 16, 0.42, 0.88);
+  if (stats.currentOVR >= 84) return clamp(0.64 + gap / 13, 0.52, 1.02);
+  if (stats.currentOVR >= 80) return clamp(0.76 + gap / 11, 0.60, 1.18);
+  return clamp(0.88 + gap / 8, 0.62, 1.48);
+}
+
+function isHighLevelYoungStar(stats: DynamicPlayerStats, age: number): boolean {
+  return age <= 25 && stats.currentOVR >= 87;
+}
+
+function isYoungProspect(stats: DynamicPlayerStats, age: number): boolean {
+  const gap = stats.potentialOVR - stats.currentOVR;
+  return age <= 23 && (stats.currentOVR <= 82 || gap >= 8);
 }
 
 function updatePotentialEstimate(
@@ -263,35 +303,30 @@ function updatePotentialEstimate(
   performance: number,
 ): number {
   const playingTime = calculateYouthPlayingTimeFactor(stats, age);
-  const trajectory = clamp((stats.currentOVR - stats.baseOVR) / 6, -1, 1);
+  const trajectory = clamp((stats.currentOVR - stats.baseOVR) / 5, -1, 1);
   let delta = 0;
 
-  if (age <= 23) {
-    // Para un joven, el potencial estimado debe reaccionar de verdad a lo que
-    // está ocurriendo: muchos minutos + buen rendimiento pueden convertir una
-    // antigua previsión de 78 en una previsión de 82-85. Sin minutos o con una
-    // mala temporada, esa previsión también puede bajar.
-    delta += (playingTime - 0.45) * 0.44;
-    delta += performance * 0.22;
-    delta += trajectory * 0.18;
-    if (age <= 21 && playingTime > 0.75 && performance > -0.15) delta += 0.10;
-    if (age <= 23 && performance > 0.60) delta += 0.10;
-    if (age <= 23 && performance < -0.55 && playingTime < 0.45) delta -= 0.16;
-    if (stats.seasonAppearances === 0) delta -= 0.08;
-  } else if (age <= 26) {
-    delta += (playingTime - 0.45) * 0.18;
-    delta += performance * 0.09;
-    delta += trajectory * 0.06;
-  } else if (age >= 31) {
-    delta += performance * 0.035;
-    delta += trajectory * 0.03;
-    if (performance < -0.45) delta -= 0.05;
+  // El potencial es una previsión dinámica, no un techo. Una temporada enorme
+  // permite descubrir que un jugador estaba infravalorado, aunque ya partiera
+  // de una media alta o tuviera potencial inicial igual a su OVR.
+  if (performance >= 0.70) {
+    delta += 0.10 + (performance - 0.70) * 0.10;
+    if (playingTime > 0.55) delta += 0.025;
+    if (trajectory > 0.20) delta += (trajectory - 0.20) * 0.03;
+  } else if (performance >= 0.40) {
+    delta += performance * 0.08;
+    if (playingTime > 0.65 && age <= 24) delta += 0.03;
+  } else if (performance <= -0.45) {
+    delta += performance * 0.07;
   } else {
-    delta += performance * 0.05;
-    delta += trajectory * 0.035;
+    delta += performance * 0.025;
   }
 
-  return clamp(potential + clamp(delta, -0.42, 0.52), 50, 99);
+  // Solo la juventud puede aportar un pequeño extra por proyección; nunca
+  // basta por sí sola para disparar el potencial.
+  if (age <= 23 && performance >= 0.20) delta += 0.02;
+
+  return clamp(potential + clamp(delta, -0.18, 0.20), 50, 99);
 }
 
 function applyAttributeProgression(
@@ -333,33 +368,60 @@ export function calculateMonthlyProgression(
   const safe = normalizeDynamicStats(stats, stats?.baseOVR ?? 70, stats?.potentialOVR ?? 80, stats?.attributes);
   const injuryDaysRemaining = Math.max(0, Number(context?.injuryDaysRemaining) || 0);
   const performance = calculatePerformanceIndex(safe, positions, context);
-
   const playingTime = calculateYouthPlayingTimeFactor(safe, age);
   const headroomFactor = developmentHeadroomFactor(safe);
+  const prospect = isYoungProspect(safe, age);
+  const ageModifier = clamp(ageGrowthFactor(age), 0.94, 1.05);
 
-  // La exposición competitiva tiene un peso propio en los jóvenes. Un chico de
-  // 18-23 años que juega mucho puede mejorar aunque su rendimiento sea simplemente
-  // normal; hacerlo muy bien acelera todavía más la progresión.
-  let delta = performance * 0.15;
-  if (age <= 25) {
-    const youthFactor = ageGrowthFactor(age);
-    const developmentBonus = playingTime * (0.10 + 0.08 * youthFactor) * headroomFactor;
-    const trainingBase = (1 - playingTime) * 0.025 * Math.max(0.7, youthFactor);
-    delta += developmentBonus + trainingBase;
-    if (performance > 0.55) delta += 0.04 * headroomFactor;
-  } else if (performance > 0) {
-    delta *= ageGrowthFactor(age) * Math.max(0.65, headroomFactor);
+  let delta: number;
+
+  if (prospect) {
+    // Una promesa con media baja y margen alto recibe además un empujón de
+    // desarrollo, pero la temporada sigue mandando sobre la evolución.
+    delta = performance * 0.24;
+    delta += playingTime * 0.10 * headroomFactor;
+    delta += headroomFactor * 0.028;
+    if (performance >= 0.55) delta += 0.045 * headroomFactor;
   } else {
-    delta *= Math.max(0.2, ageDeclineFactor(age));
+    // Estrellas y jugadores establecidos: el rendimiento explica casi toda la
+    // evolución. El potencial solo aporta un pequeño extra y nunca bloquea una
+    // subida por encima de la valoración inicial/potencial.
+    delta = performance * 0.22 * ageModifier;
+    delta += Math.max(0, performance - 0.30) * 0.045 * Math.max(0.70, headroomFactor);
+    if (performance >= 0.70) delta += 0.015;
   }
 
-  if (injuryDaysRemaining >= 60) delta *= 0.35;
-  else if (injuryDaysRemaining >= 30) delta *= 0.55;
-  else if (injuryDaysRemaining >= 14) delta *= 0.75;
+  // El ritmo de desarrollo por edad es un modulador pequeño. No existe un
+  // "muro" a los 28-30 años: un veterano puede subir si rinde a nivel élite.
+  if (age >= 31 && performance < -0.10) {
+    delta -= 0.012 * Math.min(3, age - 30) * Math.abs(performance);
+  }
 
-  if (age >= 31 && performance < -0.45) delta -= 0.02;
+  // La falta total de minutos sí debe tener una consecuencia clara y gradual.
+  if (safe.seasonAppearances === 0) {
+    delta -= 0.055;
+  } else if (safe.seasonAppearances < 4 && performance < 0.05) {
+    delta -= 0.015;
+  }
 
-  return clamp(delta, -0.32, 0.42);
+  // Las campañas malas pueden bajar la media a cualquier edad.
+  if (performance < -0.20 && safe.seasonAppearances > 0) {
+    delta -= Math.min(0.085, (Math.abs(performance) - 0.20) * 0.14);
+  }
+
+  // Garantías de coherencia: una temporada claramente buena no puede cerrar el
+  // mes en negativo por un ajuste pequeño de disponibilidad/edad.
+  if (safe.seasonAppearances >= 8 && performance >= 0.65) {
+    delta = Math.max(delta, 0.085);
+  } else if (safe.seasonAppearances >= 8 && performance >= 0.40) {
+    delta = Math.max(delta, 0.04);
+  }
+
+  if (injuryDaysRemaining >= 60) delta *= 0.45;
+  else if (injuryDaysRemaining >= 30) delta *= 0.65;
+  else if (injuryDaysRemaining >= 14) delta *= 0.82;
+
+  return clamp(delta, -0.30, 0.34);
 }
 
 export function calculateSeasonEndProgression(
@@ -373,22 +435,42 @@ export function calculateSeasonEndProgression(
   const performance = calculatePerformanceIndex(safe, positions, context);
   const headroomFactor = developmentHeadroomFactor(safe);
   const playingTime = calculateYouthPlayingTimeFactor(safe, age);
+  const prospect = isYoungProspect(safe, age);
 
-  let delta = performance * 0.65;
-  if (age <= 25) {
-    delta += playingTime * (0.45 + ageGrowthFactor(age) * 0.15) * headroomFactor;
-  } else if (performance > 0) {
-    delta *= ageGrowthFactor(age) * Math.max(0.65, headroomFactor);
+  // El cierre consolida la temporada, por eso tiene más peso que un mes aislado.
+  let delta = performance * 0.78;
+
+  if (prospect) {
+    delta += 0.24 * headroomFactor + 0.06 * playingTime;
+    if (performance >= 0.60) delta += 0.14 * headroomFactor;
   } else {
-    delta *= Math.max(0.3, ageDeclineFactor(age));
+    delta += Math.max(0, performance - 0.30) * 0.10 * Math.max(0.70, headroomFactor);
+  }
+
+  // No disputar prácticamente ningún minuto debe producir una pérdida clara,
+  // pero no una caída exagerada por edad.
+  if (safe.seasonAppearances === 0) {
+    delta -= 0.32;
+  } else if (safe.seasonAppearances < 6 && performance < 0) {
+    delta -= 0.12;
+  }
+
+  if (performance < -0.20) {
+    delta -= Math.min(0.26, (Math.abs(performance) - 0.20) * 0.38);
+  }
+
+  // Buenas temporadas = cierre positivo. Temporadas extraordinarias = subida
+  // visible incluso para jugadores de 88-91 OVR.
+  if (safe.seasonAppearances >= 8 && performance >= 0.65) {
+    delta = Math.max(delta, 0.55);
+  } else if (safe.seasonAppearances >= 8 && performance >= 0.40) {
+    delta = Math.max(delta, 0.22);
   }
 
   const injuryDaysRemaining = Math.max(0, Number(context?.injuryDaysRemaining) || 0);
-  if (injuryDaysRemaining >= 30) delta *= 0.65;
+  if (injuryDaysRemaining >= 30) delta *= 0.70;
 
-  // La progresión mensual ya hace el trabajo fino; el cierre de temporada solo
-  // consolida la tendencia para evitar saltos artificiales de 4-5 puntos.
-  return clamp(delta, -1.5, 1.75);
+  return clamp(delta, -1.45, 2.00);
 }
 
 export function initializeDynamicStats(
@@ -396,9 +478,9 @@ export function initializeDynamicStats(
   potentialOVR = Math.min(baseOVR + 10, 99),
   attributes?: Partial<PlayerAttributeRatings>,
 ): DynamicPlayerStats {
-  const safeBase = Math.round(Math.max(50, Math.min(99, Number(baseOVR) || 70)));
+  const safeBase = clamp(Number(baseOVR) || 70, 50, 99);
   const attrs = normalizeDynamicStats(
-    { currentOVR: safeBase, baseOVR: safeBase, potentialOVR, attributes },
+    { currentOVR: safeBase, baseOVR: safeBase, potentialOVR },
     safeBase,
     potentialOVR,
     attributes,
@@ -513,14 +595,9 @@ export function applyMonthlyProgression(
   const oldProgressionOvr = Number.isFinite(Number(latestMonthlyOvr))
     ? Number(latestMonthlyOvr)
     : updated.currentOVR;
-  let rawNextOvr = clamp(oldProgressionOvr + change, 50, 99);
-
-  // La media visible es entera. Los atributos pueden seguir progresando aunque
-  // ese pequeño avance todavía no alcance el siguiente punto de OVR.
-  const nextOvr = Math.round(rawNextOvr);
+  const rawNextOvr = clamp(oldProgressionOvr + change, 50, 99);
   const rawDelta = rawNextOvr - oldProgressionOvr;
-  const finalDelta = nextOvr - updated.currentOVR;
-  updated.currentOVR = nextOvr;
+  updated.currentOVR = Number(rawNextOvr.toFixed(3));
   updated.attributes = applyAttributeProgression(
     updated,
     positions,
@@ -538,7 +615,7 @@ export function applyMonthlyProgression(
 
   updated.lastProgressionMonth = currentMonth;
   updated.lastProgressionYear = currentYear;
-  updated.lastProgressionDelta = finalDelta;
+  updated.lastProgressionDelta = rawDelta;
   updated.lastProgressionDate = context?.dateIso;
 
   // Guardamos un punto de OVR por mes para poder pintar una línea temporal real
@@ -564,8 +641,8 @@ export function applyMonthlyProgression(
   }
   updated.monthlyStats = monthly;
 
-  if (finalDelta > 0.02) updated.lastProgressionReason = "Buen rendimiento y margen de desarrollo";
-  else if (finalDelta < -0.02) updated.lastProgressionReason = "Rendimiento, edad o falta de continuidad";
+  if (rawDelta > 0.02) updated.lastProgressionReason = "Buen rendimiento y margen de desarrollo";
+  else if (rawDelta < -0.02) updated.lastProgressionReason = "Rendimiento, edad o falta de continuidad";
   else if ((context?.injuryDaysRemaining ?? 0) >= 30) updated.lastProgressionReason = "Progresión limitada por lesión larga";
   else updated.lastProgressionReason = "Evolución estable";
 
@@ -586,17 +663,16 @@ export function applySeasonEndProgression(
   const change = calculateSeasonEndProgression(updated, age, positions, seasonNumber, context);
   const oldOvr = updated.currentOVR;
   const rawNextOvr = clamp(oldOvr + change, 50, 99);
-  const nextOvr = Math.round(rawNextOvr);
   const rawDelta = rawNextOvr - oldOvr;
 
-  updated.currentOVR = nextOvr;
+  updated.currentOVR = Number(rawNextOvr.toFixed(3));
   updated.attributes = applyAttributeProgression(
     updated,
     positions,
     rawDelta,
     Number(context?.injuryDaysRemaining) || 0,
   );
-  updated.lastProgressionDelta = nextOvr - oldOvr;
+  updated.lastProgressionDelta = rawDelta;
   updated.lastProgressionDate = context?.dateIso;
   updated.lastProgressionReason = "Ajuste de cierre de temporada";
 
@@ -610,7 +686,7 @@ export function applySeasonEndProgression(
     mvpCount: updated.seasonMVPs,
     cleanSheets: updated.seasonCleanSheets,
     trophies: updated.seasonTrophies,
-    finalOVR: updated.currentOVR,
+    finalOVR: Math.round(updated.currentOVR),
   };
 
   updated.careerSeasons = [...updated.careerSeasons.filter((s) => s.season !== seasonNumber), seasonRecord];

@@ -130,6 +130,7 @@ export function rescheduleLeagueAroundSpecialFixtures(
 /** Assign realistic dates across the week with 72h rest per team. */
 export function assignFixtureDates(
   raw: Pick<Fixture, "id" | "matchday" | "homeId" | "awayId">[],
+  protectedDates?: Map<string, Set<string>>,
 ): Map<string, string> {
   const byMatchday = new Map<number, typeof raw>();
   for (const f of raw) {
@@ -146,11 +147,36 @@ export function assignFixtureDates(
     const matches = byMatchday.get(md)!;
     const friday = matchdayFriday(md);
     const offsets = slotOffsetsForCount(matches.length);
+    // A league matchday gets a fixed calendar window. We may choose a different
+    // weekday inside this window to protect a European/cup fixture, but we never
+    // move the fixture into another league matchday. Once generated, these dates
+    // are frozen and are not re-scheduled later.
+    const windowDates = [...new Set(offsets.map((offset) => addDaysToIso(friday, offset)))];
 
     for (let i = 0; i < matches.length; i++) {
       const f = matches[i];
       const preferred = addDaysToIso(friday, offsets[i]);
-      const iso = assignDate(f.homeId, f.awayId, preferred, lastPlayed);
+      const candidates = windowDates
+        .slice()
+        .sort((a, b) => Math.abs(daysBetween(preferred, a)) - Math.abs(daysBetween(preferred, b)));
+
+      let chosen: string | null = null;
+      for (const iso of candidates) {
+        if (
+          teamCanPlayWithProtections(f.homeId, iso, lastPlayed, protectedDates) &&
+          teamCanPlayWithProtections(f.awayId, iso, lastPlayed, protectedDates)
+        ) {
+          chosen = iso;
+          break;
+        }
+      }
+
+      // The fixed league window is wide enough for the protected UEFA/cup
+      // calendar. This fallback is only a defensive guard for malformed legacy
+      // data; it deliberately does not spill into another matchday.
+      const iso = chosen ?? preferred;
+      lastPlayed.set(f.homeId, iso);
+      lastPlayed.set(f.awayId, iso);
       dates.set(f.id, iso);
     }
   }

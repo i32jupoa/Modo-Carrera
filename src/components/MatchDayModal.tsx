@@ -19,9 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Zap } from "lucide-react";
 import { loadSave, type SaveGame } from "@/lib/store";
-import { UCL_START } from "@/data/ucl";
-import { EUROPEAN_START } from "@/data/europeanCompetitions";
-import { toDateOnly } from "@/lib/transferWindows";
+import { getEuropeanFixtureDateIso, getCupFixtureDateIso } from "@/lib/fixtureDates";
 import { themeForScheduleFixture } from "@/lib/seasonExtras";
 
 // Helper to get league name from league ID
@@ -66,8 +64,6 @@ export function MatchDayModal() {
 
     // Check cup fixtures if no league match today
     if (save) {
-      const cupStart = new Date("2026-07-07T00:00:00Z");
-
       // Check cup fixtures
       for (const lg of Object.keys(save.cupFixtures || {})) {
         const cupList = save.cupFixtures[lg as LeagueId];
@@ -79,9 +75,7 @@ export function MatchDayModal() {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
 
-          // Calculate cup match date: matchday = day offset from July 7th
-          const cupMatchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
-          const cupMatchDateIso = toDateOnly(cupMatchDate);
+          const cupMatchDateIso = getCupFixtureDateIso(f);
 
           if (cupMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
@@ -105,14 +99,11 @@ export function MatchDayModal() {
 
       // Check UCL fixtures
       if (save.uclFixtures) {
-        const uclStart = new Date(UCL_START + "T00:00:00Z");
         for (const f of save.uclFixtures) {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
 
-          // UCL matchday = absolute day offset from UCL_START
-          const uclMatchDate = new Date(uclStart.getTime() + f.matchday * 86400000);
-          const uclMatchDateIso = toDateOnly(uclMatchDate);
+          const uclMatchDateIso = getEuropeanFixtureDateIso(f, "ucl");
 
           if (uclMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
@@ -136,7 +127,6 @@ export function MatchDayModal() {
 
 
       // Check Europa League / Conference League fixtures
-      const europeanStart = new Date(EUROPEAN_START + "T00:00:00Z");
       const europeanCompetitions = [
         ["uel", save.uelFixtures ?? []] as const,
         ["uecl", save.ueclFixtures ?? []] as const,
@@ -145,8 +135,8 @@ export function MatchDayModal() {
         for (const f of europeanFixtures) {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
-          const matchDate = new Date(europeanStart.getTime() + f.matchday * 86400000);
-          if (toDateOnly(matchDate) === currentDate && !dismissedMatchIds.includes(f.id)) {
+          const matchDate = getEuropeanFixtureDateIso(f, competition);
+          if (matchDate === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
               pendingUserMatch: {
                 id: f.id,
@@ -208,7 +198,12 @@ export function MatchDayModal() {
       const cupRound = pending.competition === "cup" ? `R${pending.matchday}` : undefined;
       navigate({
         to: "/match",
-        state: { matchType, cupRound, fixtureId: pending.id } as any,
+        state: {
+          matchType,
+          cupRound,
+          fixtureId: pending.id,
+          europeanCompetition: (pending as any).europeanCompetition,
+        } as any,
       });
     }
   }

@@ -5,6 +5,7 @@ import { Trophy } from "lucide-react";
 import { loadSave, saveSave, SaveGame, simulatePendingEuropeanThroughDay, initializeEuropeanCompetition } from "@/lib/store";
 import { uclDayOffset } from "@/data/ucl";
 import { EUROPEAN_CONFIGS, EUROPEAN_START } from "@/data/europeanCompetitions";
+import { getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 import { usePlayersStore } from "@/store/playersStore";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
@@ -30,10 +31,22 @@ function getLeagueName(leagueId: string): string {
 }
 
 function europeanFixtureDate(matchday: number): string {
-  const start = new Date(EUROPEAN_START + "T00:00:00Z");
-  const d = new Date(start.getTime() + matchday * 86400000);
-  return d.toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: "UTC" });
+  const iso = getEuropeanFixtureDateIso(
+    { matchday, competition: "ucl", round: undefined, europeanCompetition: "uel" } as any,
+    "uel",
+  );
+  if (iso) return new Date(`${iso}T00:00:00Z`).toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: "UTC" });
+  return "";
 }
+function europeanFixtureDateFromFixture(fixture: any, competition: "uel" | "uecl"): string {
+  const iso = getEuropeanFixtureDateIso(fixture, competition);
+  if (iso) {
+    const date = new Date(`${iso}T00:00:00Z`);
+    return date.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+  }
+  return europeanFixtureDate(Number(fixture.matchday ?? 0));
+}
+
 
 function Result({ f }: { f: Fixture }) {
   if (!f.result) return <span className="text-muted-foreground text-xs">vs</span>;

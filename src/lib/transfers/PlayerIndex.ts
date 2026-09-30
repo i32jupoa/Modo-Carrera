@@ -49,8 +49,12 @@ export function positionGroupOf(position: string): PositionGroup {
   if (up === "GK") return "GK";
   if (up === "CB") return "CB";
   if (["LB", "RB", "LWB", "RWB"].includes(up)) return "FB";
-  if (["CM", "CDM", "CAM", "LM", "RM"].includes(up)) return "CM";
-  if (["LW", "RW", "LF", "RF"].includes(up)) return "WING";
+  if (["CM", "CDM", "CAM"].includes(up)) return "CM";
+  // LM/RM se consideran jugadores de banda para el mercado: evita que
+  // fichajes como Michael Olise se interpreten como centrocampistas cuando
+  // el club está buscando extremos y, sobre todo, permite detectar
+  // correctamente el overbooking de jugadores de banda.
+  if (["LW", "RW", "LF", "RF", "LM", "RM"].includes(up)) return "WING";
   if (["ST", "CF"].includes(up)) return "ST";
   return "CM";
 }

@@ -81,32 +81,26 @@ export function loanDurationMonthsForDate(date: string): number {
 export function wantsToLoanOut(clubId: string, playerId: string, cacheKey: string): boolean {
   const player = getPlayer(playerId);
   if (!player || player.clubId !== clubId || player.loanClubId) return false;
+  // En enero el mercado de cesiones de la IA queda reservado para operaciones
+  // extraordinarias que gestiona el usuario. Un club no manda a un titular o
+  // a un jugador de rotación consolidado a mitad de temporada sólo porque el
+  // algoritmo vea un hueco numérico. Las cesiones automáticas vuelven a ser
+  // una herramienta de verano para dar minutos a promesas.
+  if (windowForDate(cacheKey) === "winter") return false;
   if (isKeyPlayer(playerId, cacheKey)) return false;
-  // Un jugador que ya cambió de club en verano no vuelve a ser fichado ni
-  // cedido inmediatamente en enero: evitamos las cadenas de movimientos de
-  // un mismo jugador dentro de la misma temporada.
-  if (windowForDate(cacheKey) === "winter" && movedInSummerThisSeason(playerId, cacheKey)) return false;
-
   const report = getSquadReport(clubId, cacheKey);
-  const winter = windowForDate(cacheKey) === "winter";
   const usage = getPlayerUsage(playerId, clubId, cacheKey);
-  const lowMinutesWinter =
-    winter &&
-    player.age <= WINTER_MARKET.lowMinutesMaxAge &&
-    usage.appearances <= WINTER_MARKET.lowMinutesMaxAppearances &&
-    usage.minutesShare <= WINTER_MARKET.lowMinutesShare;
-
-  // En enero una cesión de un joven que apenas ha jugado tiene prioridad sobre
-  // la antigua regla de "OVR demasiado bajo para el once": precisamente ahí
-  // buscamos minutos fuera para que vuelva mejor preparado.
-  if (lowMinutesWinter) return true;
-
   const gap = report.startingRating - player.ovr;
   if (gap < LOAN_RULES.ratingGap) return false;
+  if (player.age > LOAN_RULES.maxAge) return false;
+  if (player.ovr > LOAN_RULES.maxOvr) return false;
+  if (player.potential < player.ovr + LOAN_RULES.minPotentialGap) return false;
+  if (usage.minutesShare > LOAN_RULES.maxMinutesShare && usage.appearances > 0) return false;
 
-  const youngWithRoom = player.age <= LOAN_RULES.maxAge && player.potential > player.ovr + 2;
+  // Incluso con hueco de plantilla, una cesión automática sólo afecta a una
+  // promesa de desarrollo, nunca a un jugador asentado en la rotación.
   const surplus = report.surplus.includes(player.group);
-  return youngWithRoom || surplus;
+  return surplus || usage.appearances <= WINTER_MARKET.lowMinutesMaxAppearances || usage.minutesShare <= LOAN_RULES.maxMinutesShare;
 }
 
 /** Jugadores que el club pondría en el mercado de cesiones hoy. */

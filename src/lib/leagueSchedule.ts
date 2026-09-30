@@ -4,7 +4,6 @@ import {
   assignFixtureDates,
   LEAGUE_MD1_FRIDAY,
   rawToSchedule,
-  rescheduleUnplayedFixtures,
   scheduleNeedsRealisticDates,
 } from "@/lib/fixtureScheduler";
 
@@ -27,14 +26,21 @@ export type ScheduleFixture = {
 };
 
 /** Full league calendar with realistic weekday spread + 72h rest. */
-export function buildFullLeagueSchedule(league: LeagueId): ScheduleFixture[] {
+export function buildFullLeagueSchedule(
+  league: LeagueId,
+  protectedDates?: Map<string, Set<string>>,
+): ScheduleFixture[] {
   const raw = generateLeagueFixtures(league);
-  const dates = assignFixtureDates(raw);
+  const dates = assignFixtureDates(raw, protectedDates);
   return rawToSchedule(raw, dates);
 }
 
-export function buildUserLeagueSchedule(myTeamId: string, league: LeagueId): ScheduleFixture[] {
-  return buildFullLeagueSchedule(league).filter(
+export function buildUserLeagueSchedule(
+  myTeamId: string,
+  league: LeagueId,
+  protectedDates?: Map<string, Set<string>>,
+): ScheduleFixture[] {
+  return buildFullLeagueSchedule(league, protectedDates).filter(
     (f) => f.homeTeam === myTeamId || f.awayTeam === myTeamId,
   );
 }
@@ -56,9 +62,9 @@ export function mergeScheduleWithPlayed(
       awayScore: prev.awayScore,
     };
   });
-  if (scheduleNeedsRealisticDates(merged)) {
-    merged = rescheduleUnplayedFixtures(merged, generateLeagueFixtures(league));
-  }
+  // Existing dates are part of the fixed season calendar. Never shift an
+  // unplayed fixture after the season has started. The optional `full` schedule
+  // already contains the canonical dates for newly-added fixtures.
   return merged;
 }
 

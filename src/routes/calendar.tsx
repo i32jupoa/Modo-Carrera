@@ -61,6 +61,7 @@ import {
 import { involvesTeam, unplayedOnDate } from "@/lib/matchEngine";
 
 import { opponentLabel, scheduleFixturesByDate, userFixtures } from "@/lib/leagueSchedule";
+import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -460,9 +461,8 @@ function CalendarPage() {
     const cupStart = new Date("2026-07-07T00:00:00Z");
 
     for (const f of myCupFixtures) {
-      const matchDate = new Date(cupStart.getTime() + f.matchday * 86400000);
-
-      const dateIso = toDateOnly(matchDate);
+      const dateIso = getCupFixtureDateIso(f);
+      if (!dateIso) continue;
 
       const list = map.get(dateIso) ?? [];
 
@@ -591,19 +591,11 @@ function CalendarPage() {
   const uclMatchDays = useMemo(() => {
     const map = new Map<string, typeof uclMyFixtures>();
 
-    const start = new Date(UCL_START + "T00:00:00Z");
-
     for (const f of uclMyFixtures) {
-      // f.matchday = day offset from UCL_START
-
-      const matchDate = new Date(start.getTime() + f.matchday * 86400000);
-
-      const iso = toDateOnly(matchDate);
-
+      const iso = getEuropeanFixtureDateIso(f, "ucl");
+      if (!iso) continue;
       const list = map.get(iso) ?? [];
-
       list.push(f);
-
       map.set(iso, list);
     }
 
@@ -621,9 +613,10 @@ function CalendarPage() {
   );
   const makeEuropeanMatchDays = (list: typeof uelMyFixtures) => {
     const map = new Map<string, typeof uelMyFixtures>();
-    const start = new Date(EUROPEAN_START + "T00:00:00Z");
     for (const f of list) {
-      const iso = toDateOnly(new Date(start.getTime() + f.matchday * 86400000));
+      const competition = f.europeanCompetition === "uecl" ? "uecl" : "uel";
+      const iso = getEuropeanFixtureDateIso(f, competition);
+      if (!iso) continue;
       const group = map.get(iso) ?? [];
       group.push(f);
       map.set(iso, group);

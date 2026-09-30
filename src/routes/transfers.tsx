@@ -36,6 +36,7 @@ import { NegotiationDetailsModal } from "@/components/market/NegotiationDetailsM
 import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import { getClubScout } from "@/lib/transfers";
+import { windowForDate } from "@/lib/transferWindows";
 import type { ScoutingReport, UserDeal } from "@/lib/transfers";
 import {
   AlertDialog,
@@ -60,6 +61,8 @@ type SortOrder = "asc" | "desc";
 
 type NumericFilterValue = number | "";
 type ClubStatus = "all" | "free";
+type HistoryWindowFilter = "all" | "summer" | "winter";
+type HistoryOperationFilter = "all" | "permanent" | "loan" | "free";
 
 interface FilterState {
   positions: PosCode[];
@@ -333,6 +336,8 @@ function TransfersPage() {
     sortField: "ovr",
     sortOrder: "desc",
   });
+  const [historyWindowFilter, setHistoryWindowFilter] = useState<HistoryWindowFilter>("all");
+  const [historyOperationFilter, setHistoryOperationFilter] = useState<HistoryOperationFilter>("all");
 
   useEffect(() => {
     setFilters((prev) => ({ ...prev, team: "all" }));
@@ -409,16 +414,41 @@ function TransfersPage() {
   const leagueOptions = useMemo(() => getLeaguesFromTeams(), []);
   const teamOptions = useMemo(() => getTeamsForLeague(filters.league), [filters.league]);
 
+  const historyMatches = useMemo(() => (record: import("@/lib/transfers").TransferRecord) => {
+    if (historyWindowFilter !== "all" && windowForDate(record.date) !== historyWindowFilter) return false;
+    if (historyOperationFilter === "permanent" && !["permanent"].includes(record.type)) return false;
+    if (historyOperationFilter === "loan" && !record.type.startsWith("loan")) return false;
+    if (historyOperationFilter === "free" && record.type !== "free") return false;
+    return true;
+  }, [historyWindowFilter, historyOperationFilter]);
   const userEntries = useMemo(
     () =>
       market.history.filter(
-        (record) => record.toClubId === myTeamId && record.fromClubId !== myTeamId,
+        (record) =>
+          record.toClubId === myTeamId &&
+          record.fromClubId !== myTeamId &&
+          historyMatches(record),
       ),
-    [market.history, myTeamId],
+    [market.history, myTeamId, historyMatches],
   );
   const userExits = useMemo(
-    () => market.history.filter((record) => record.fromClubId === myTeamId && record.toClubId !== myTeamId),
-    [market.history, myTeamId],
+    () =>
+      market.history.filter(
+        (record) => record.fromClubId === myTeamId && record.toClubId !== myTeamId && historyMatches(record),
+      ),
+    [market.history, myTeamId, historyMatches],
+  );
+  const filteredMarketHistory = useMemo(
+    () => market.history.filter(historyMatches),
+    [market.history, historyMatches],
+  );
+  const filteredMarketRumors = useMemo(
+    () => market.rumors.filter((rumor) => historyWindowFilter === "all" || windowForDate(rumor.date) === historyWindowFilter),
+    [market.rumors, historyWindowFilter],
+  );
+  const filteredWindowRumors = useMemo(
+    () => market.windowRumors.filter((rumor) => historyWindowFilter === "all" || windowForDate(rumor.date) === historyWindowFilter),
+    [market.windowRumors, historyWindowFilter],
   );
 
   const resetFilters = () => {
@@ -1272,6 +1302,39 @@ function TransfersPage() {
         </div>
       )}
 
+      {(tab === "entries" || tab === "exits" || tab === "feed") && (
+        <div className="mb-4 rounded-2xl border border-border/60 bg-card/80 p-3 shadow-sm">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[180px]">
+              <label className="mb-1 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Ventana</label>
+              <Select value={historyWindowFilter} onValueChange={(value) => setHistoryWindowFilter(value as HistoryWindowFilter)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todo el mercado</SelectItem>
+                  <SelectItem value="summer">Mercado de verano</SelectItem>
+                  <SelectItem value="winter">Mercado de invierno</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-[180px]">
+              <label className="mb-1 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Operación</label>
+              <Select value={historyOperationFilter} onValueChange={(value) => setHistoryOperationFilter(value as HistoryOperationFilter)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="permanent">Fichajes</SelectItem>
+                  <SelectItem value="loan">Cesiones</SelectItem>
+                  <SelectItem value="free">Agentes libres</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="pb-2 text-xs text-muted-foreground">
+              Puedes separar rápidamente qué operaciones pertenecen al verano y cuáles al mercado de enero.
+            </p>
+          </div>
+        </div>
+      )}
+
       {tab === "entries" && (
         <div className="space-y-5">
           <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-r from-emerald-500/10 via-card to-card p-5 shadow-sm">
@@ -1334,9 +1397,9 @@ function TransfersPage() {
 
       {tab === "feed" && (
         <MarketFeed
-          rumors={market.rumors}
-          windowRumors={market.windowRumors}
-          history={market.history}
+          rumors={filteredMarketRumors}
+          windowRumors={filteredWindowRumors}
+          history={filteredMarketHistory}
           summary={market.summary}
           userDeals={market.deals}
           myTeamId={myTeamId}

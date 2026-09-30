@@ -1,5 +1,5 @@
 import { Team, teamsByLeague } from "@/data/teams";
-import { Player, getPlayerShootingStats } from "@/data/players";
+import { Player, getPlayerShootingStats, getPlayerCreativeStats } from "@/data/players";
 import {
   buildMatchStats,
   computePlayerRatings,
@@ -54,52 +54,102 @@ function penaltyTakerScore(player: Player): number {
     (stats.shotPower * 0.05) + (stats.volleys * 0.03) + (stats.longShots * 0.02);
 }
 
-function scorerGoalThreat(player: Player): number {
+export function scorerGoalThreat(player: Player): number {
   const stats = getPlayerShootingStats(player.id, player.attributes);
   const finishing = Number(stats.finishing) || 0;
   const shooting = Number(stats.shooting) || 0;
-  const positioning = Number((player as any).positioning ?? (player as any).Positioning ?? 0);
+  const positioning = Number(stats.positioning) || 0;
   const composure = Number(stats.composure) || 0;
   const shotPower = Number(stats.shotPower) || 0;
 
-  // The scorer model is deliberately driven by attributes that explain why a
-  // good finisher scores more often: finishing, positioning, shooting,
-  // composure and power. This prevents a merely high-OVR midfielder from
-  // taking roughly as many goals as an elite centre-forward.
   return (
-    finishing * 0.34 +
-    positioning * 0.24 +
-    shooting * 0.18 +
-    composure * 0.14 +
-    shotPower * 0.10
+    finishing * 0.39 +
+    positioning * 0.25 +
+    shooting * 0.16 +
+    composure * 0.12 +
+    shotPower * 0.08
   );
 }
 
 function scorerPositionFactor(player: Player): number {
   const positions = player.positions ?? [];
-  // Central strikers are the primary goal outlet. Wingers and attacking
-  // midfielders still score regularly, but less often than a true 9.
-  if (positions.includes("DC")) return 8.5;
-  if (positions.some((p) => ["ED", "EI"].includes(p))) return 5.2;
-  if (positions.includes("MCO")) return 4.4;
-  if (positions.some((p) => ["MC", "MD", "MI", "MCD"].includes(p))) return 1.8;
-  return 0.45;
+  // El delantero centro es el principal rematador. Los extremos y mediapuntas
+  // siguen teniendo una cuota importante, y un jugador polivalente no pierde
+  // amenaza por tener una segunda posición.
+  if (positions.includes("DC")) return 9.8;
+  if (positions.some((p) => ["ED", "EI"].includes(p))) return 5.8;
+  if (positions.includes("MCO")) return 4.6;
+  if (positions.some((p) => ["MC", "MD", "MI", "MCD"].includes(p))) return 1.65;
+  return 0.40;
+}
+
+export function goalScorerWeight(player: Player): number {
+  if (isGoalkeeper(player.positions)) return 0;
+
+  const goalThreat = scorerGoalThreat(player);
+  const shooting = getPlayerShootingStats(player.id, player.attributes);
+  const threatFactor = 0.44 + (goalThreat / 100) * 1.10;
+  const ratingFactor = Math.max(0.50, effectivePlayerRating(player) / 84);
+
+  // Los goleadores de élite deben concentrar una parte importante de los goles
+  // de su equipo. La producción del equipo sigue dependiendo del xG colectivo,
+  // pero dentro de ese xG Haaland/Mbappe/Kane y perfiles similares reciben una
+  // ventaja clara por definición + nivel general. No es determinista: un jugador
+  // mediocre todavía puede marcar y una estrella puede tener un mal partido.
+  const eliteRating = Math.max(0, Math.min(1, (effectivePlayerRating(player) - 84) / 10));
+  const eliteFinishing = Math.max(0, Math.min(1, ((Number(shooting.finishing) || 0) - 80) / 20));
+  const eliteBoost = 1 + eliteRating * 0.32 + eliteFinishing * 0.36;
+
+  return Math.max(
+    0.05,
+    scorerPositionFactor(player) *
+      threatFactor *
+      Math.pow(ratingFactor, 2.30) *
+      eliteBoost,
+  );
+}
+
+export function assistCreatorWeight(player: Player): number {
+  if (isGoalkeeper(player.positions)) return 0;
+  const creative = getPlayerCreativeStats(player.id, player.attributes);
+  const creation =
+    creative.vision * 0.34 +
+    creative.shortPassing * 0.30 +
+    creative.crossing * 0.18 +
+    creative.dribbling * 0.10 +
+    creative.ballControl * 0.08;
+  const positions = player.positions ?? [];
+  const positionFactor = positions.includes("MCO")
+    ? 4.0
+    : positions.some((p) => ["ED", "EI", "MD", "MI"].includes(p))
+      ? 3.2
+      : positions.some((p) => ["MC", "MCD"].includes(p))
+        ? 2.7
+        : positions.includes("DC")
+          ? 1.65
+          : 0.85;
+  const ratingFactor = Math.max(0.55, effectivePlayerRating(player) / 82);
+  return Math.max(0.05, positionFactor * (0.50 + creation / 100) * Math.pow(ratingFactor, 1.55));
+}
+
+export function weightedPlayerPick(players: Player[], weightFn: (player: Player) => number): Player | undefined {
+  const candidates = players.filter((p) => Number.isFinite(weightFn(p)) && weightFn(p) > 0);
+  if (!candidates.length) return undefined;
+  const weights = candidates.map(weightFn);
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = rand() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
 }
 
 function fastPickScorerWeighted(xi: Player[]): Player | undefined {
   const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   if (candidates.length === 0) return xi[0];
 
-  // Weight the probability of being the scorer using both role and actual
-  // finishing quality. Physical energy still matters, but it is not enough for
-  // a non-attacking player to compete with an elite striker for goals.
-  const weights = candidates.map((p) => {
-    const goalThreat = scorerGoalThreat(p);
-    const threatFactor = 0.55 + (goalThreat / 100) * 0.90;
-    const ratingFactor = Math.max(0.55, effectivePlayerRating(p) / 88);
-    return scorerPositionFactor(p) * threatFactor * Math.pow(ratingFactor, 1.35);
-  });
-
+  const weights = candidates.map(goalScorerWeight);
   const total = weights.reduce((a, b) => a + b, 0);
   let r = rand() * total;
   for (let i = 0; i < candidates.length; i++) {
@@ -109,26 +159,13 @@ function fastPickScorerWeighted(xi: Player[]): Player | undefined {
   return candidates[candidates.length - 1];
 }
 
-// Fast assister pick with 75% probability, excluding scorer
+// Fast assister pick: creation quality matters more than raw OVR alone.
 function fastPickAssister(xi: Player[], scorerId: string): Player | null {
-  if (rand() > 0.75) return null; // 75% of goals have an assist
-  const candidates = xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions));
-  if (candidates.length === 0) return null;
-
-  // Weight toward midfielders and high-OVR players
-  const weights = candidates.map((p) => {
-    const posFactor = isMidfield(p.positions) ? 3 : isAttacking(p.positions) ? 2 : 1;
-    const ratingFactor = effectivePlayerRating(p) / 70;
-    return posFactor * ratingFactor;
-  });
-
-  const total = weights.reduce((a, b) => a + b, 0);
-  let r = rand() * total;
-  for (let i = 0; i < candidates.length; i++) {
-    r -= weights[i];
-    if (r <= 0) return candidates[i];
-  }
-  return candidates[candidates.length - 1];
+  if (rand() > 0.77) return null;
+  return weightedPlayerPick(
+    xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions)),
+    assistCreatorWeight,
+  ) ?? null;
 }
 
 function poisson(lambda: number): number {
@@ -233,20 +270,27 @@ export function expectedGoals(
   const homeTacticalStrength = homeStrength * ((hMod.attack + hMod.defense) / 2);
   const awayTacticalStrength = awayStrength * ((aMod.attack + aMod.defense) / 2);
 
-  // Una diferencia de calidad debe notarse claramente tras varias jornadas:
-  // equipos 5-10 puntos mejores generan bastante más xG, pero siguen existiendo
-  // empates y sorpresas puntuales.
-  const qualityDiff = Math.max(-28, Math.min(28, homeTacticalStrength - awayTacticalStrength));
+  // La jerarquía de calidad debe notarse de verdad a lo largo de una temporada.
+  // Un grande con una plantilla claramente superior tiene que generar bastante
+  // más ocasiones que un rival modesto, pero el rival debe conservar suficiente
+  // amenaza para marcar y dar la sorpresa. La curva es deliberadamente más
+  // fuerte que en V5, aunque limitada para evitar partidos convertidos en
+  // goleadas automáticas.
+  const qualityDiff = Math.max(-30, Math.min(30, homeTacticalStrength - awayTacticalStrength));
   const HOME_MATCH_ADVANTAGE = 2.0;
   const effectiveDiff = qualityDiff + HOME_MATCH_ADVANTAGE;
 
-  // Curva logística más marcada que antes. Esto reduce que plantillas muy
-  // inferiores se mantengan sistemáticamente arriba por azar acumulado.
-  const share = 0.5 + 0.32 * Math.tanh(effectiveDiff / 7.5);
-  // Mantener un total de goles cercano al de un partido profesional evita que
-  // los favoritos ganen por pura inflación de xG. La diferencia de calidad se
-  // expresa principalmente en cómo se reparte ese total entre ambos equipos.
-  const totalXg = 2.55;
+  // 34% de reparto por diferencia de fuerza, con un techo de 78/22. Esto deja
+  // a un gran favorito con una ventaja clara (aprox. 2.6 xG vs 0.7-0.9 xG),
+  // pero incluso el débil mantiene una probabilidad real de marcar.
+  const rawShare = 0.5 + 0.34 * Math.tanh(effectiveDiff / 8.5);
+  const share = Math.max(0.22, Math.min(0.78, rawShare));
+
+  // Entorno de goles algo más alto: alrededor de 3.35 goles esperados por
+  // partido antes de los pequeños modificadores tácticos/aleatorios. Así una
+  // estrella de un equipo dominante puede acercarse a cifras de élite sin que
+  // los partidos equilibrados se conviertan en una lluvia de goles.
+  const totalXg = 3.35;
 
   let lh = totalXg * share;
   let la = totalXg * (1 - share);
@@ -265,8 +309,8 @@ export function expectedGoals(
   la *= 0.97 + rand() * 0.06;
 
   return {
-    lh: Math.max(0.18, Math.min(3.25, lh)),
-    la: Math.max(0.14, Math.min(2.95, la)),
+    lh: Math.max(0.22, Math.min(3.65, lh)),
+    la: Math.max(0.20, Math.min(3.35, la)),
   };
 }
 
@@ -393,24 +437,14 @@ export type SimResult = {
 function pickScorer(xi: Player[]): Player {
   const candidates = xi.filter((p) => !isGoalkeeper(p.positions));
   if (candidates.length === 0) return xi[0];
-  const weights = candidates.map((p) => {
-    const goalThreat = scorerGoalThreat(p);
-    const threatFactor = 0.55 + (goalThreat / 100) * 0.90;
-    const ratingFactor = Math.max(0.55, effectivePlayerRating(p) / 88);
-    return scorerPositionFactor(p) * threatFactor * Math.pow(ratingFactor, 1.45);
-  });
-  return weightedPick(candidates, weights);
+  return weightedPick(candidates, candidates.map(goalScorerWeight));
 }
 
 function pickAssister(xi: Player[], scorerId: string): Player | null {
-  if (rand() > 0.72) return null;
+  if (rand() > 0.77) return null;
   const candidates = xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions));
   if (candidates.length === 0) return null;
-  const weights = candidates.map((p) => {
-    const posBonus = isMidfield(p.positions) ? 3 : isAttacking(p.positions) ? 2 : 1;
-    return Math.pow(p.rating / 70, 2) * posBonus;
-  });
-  return weightedPick(candidates, weights);
+  return weightedPick(candidates, candidates.map(assistCreatorWeight));
 }
 
 function weightedPick<T>(items: T[], weights: number[]): T {

@@ -58,6 +58,7 @@ export interface DynamicPlayerStats {
   monthlyStats: MonthlyStats[];
 
   // Media y potencial dinámicos
+  /** OVR dinámico interno; puede conservar decimales aunque la interfaz muestre un entero. */
   currentOVR: number;
   /** Media de referencia con la que arrancó la carrera. No sube con la progresión. */
   baseOVR: number;

@@ -13,7 +13,7 @@ import type { PositionGroup } from "./types";
 
 export const MARKET_TIMING = {
   /** Porcentaje de clubes que actúan cada día de mercado. */
-  dailyActiveClubShare: 0.32,
+  dailyActiveClubShare: 0.42,
   /** Porcentaje de clubes activos durante el deadline day. */
   deadlineActiveClubShare: 0.85,
   /** Días finales de ventana considerados deadline day. */
@@ -32,7 +32,7 @@ export const MARKET_TIMING = {
    * — nada realista ni siquiera para los clubes más activos del mercado. 10
    * ya cubre holgadamente hasta las ventanas de reconstrucción más locas.
    */
-  maxSigningsPerWindow: 10,
+  maxSigningsPerWindow: 18,
   /** Mínimo de fichajes en invierno: 0, salvo una necesidad real. */
   minSigningsPerWindow: 0,
   /**
@@ -45,20 +45,20 @@ export const MARKET_TIMING = {
    * Es un freno de ritmo diario, no un límite de la ventana. */
   maxSigningsPerDayWinter: 1,
   /**
-   * Mínimo de fichajes que todo club de la IA (menos el del usuario) debe
-   * cerrar en la ventana de verano. Un mercado de verano real mueve muchos
-   * más nombres que el de invierno, así que el suelo es bastante más alto.
+   * Objetivo base de fichajes de verano. El motor lo modula por club y por
+   * ventana para que unos veranos sean de 0-1 movimientos y otros de 2-3,
+   * en lugar de forzar siempre el mismo número y los mismos nombres.
    */
-  minSigningsPerWindowSummer: 2,
+  minSigningsPerWindowSummer: 3,
   /**
    * Mínimo de ventas que todo club de la IA (menos el del usuario) debe
    * cerrar en verano. Sin este suelo, un club podía vender jugadores porque
    * otros los reclamaban y no reponer nunca por su cuenta, o al revés:
    * fichar sin soltar lastre. En la vida real todo equipo mueve salidas.
    */
-  minSalesPerWindowSummer: 2,
+  minSalesPerWindowSummer: 3,
   /** Máximo de ventas por club y ventana. */
-  maxSalesPerWindow: 12,
+  maxSalesPerWindow: 18,
   /**
    * Máximo de cesiones por club y ventana. Antes reutilizaba
    * `maxSalesPerWindow` (12), demasiado alto: un club real cede a un puñado
@@ -67,7 +67,7 @@ export const MARKET_TIMING = {
    * su nivel de plantilla se desplome y acabe "necesitando" fichar
    * cualquier cosa para tapar agujeros.
    */
-  maxLoansPerWindow: 5,
+  maxLoansPerWindow: 8,
   /**
    * Saldo negativo máximo de una ventana: un club no puede terminar el
    * mercado con más de estas salidas por encima de sus llegadas. Sin este
@@ -354,7 +354,20 @@ export const DECISION_ACCURACY = {
    * orden entre candidatos de nivel similar para que no gane siempre el
    * mismo nombre.
    */
-  scoutingNoise: 0.16,
+  scoutingNoise: 0.24,
+} as const;
+
+/**
+ * Variación real entre ventanas. La semilla incluye la ventana (temporada +
+ * verano/invierno), así que un nuevo mercado puede descubrir otros nombres
+ * sin convertir la IA en una lotería absurda.
+ */
+export const MARKET_VARIATION = {
+  /** Peso máximo del gusto específico de ese mercado sobre la puntuación. */
+  windowAffinityWeight: 0.18,
+  /** Rango de objetivos de verano: cada mercado tiene una mezcla distinta. */
+  summerTargetMin: 0,
+  summerTargetMax: 5,
 } as const;
 
 // ============================================================================
@@ -373,17 +386,17 @@ export const DECISION_ACCURACY = {
  * la posición) pese de verdad en la puntuación final.
  */
 export const SCORE_WEIGHTS = {
-  need: 0.2,
-  quality: 0.16,
-  potential: 0.12,
-  age: 0.1,
-  price: 0.1,
-  wage: 0.05,
+  need: 0.17,
+  quality: 0.22,
+  potential: 0.18,
+  age: 0.07,
+  price: 0.06,
+  wage: 0.04,
   nationality: 0.04,
-  league: 0.06,
-  prestige: 0.1,
+  league: 0.05,
+  prestige: 0.11,
   /** Encaje con la identidad táctica del club (posesión, pace, físico...). */
-  style: 0.07,
+  style: 0.06,
 } as const;
 
 export const SEARCH_LIMITS = {
@@ -478,7 +491,7 @@ export const BUDGET_RULES = {
    * límite. Sólo aplica a clubes de la IA: el presupuesto del club del
    * usuario lo gestiona la partida y nunca se recorta aquí.
    */
-  maxBudgetMultiple: 3,
+  maxBudgetMultiple: 4,
 } as const;
 
 // ============================================================================
@@ -515,10 +528,16 @@ export const CONTRACT_RULES = {
 // ============================================================================
 
 export const LOAN_RULES = {
-  /** Edad máxima del cedido habitual. */
-  maxAge: 23,
-  /** Diferencia con el once que justifica una cesión. */
+  /** Edad máxima del cedido IA en verano. */
+  maxAge: 21,
+  /** OVR máximo para una cesión automática de IA. */
+  maxOvr: 78,
+  /** Diferencia mínima con el once que justifica una cesión. */
   ratingGap: 4,
+  /** Cuota de minutos máxima para considerar que necesita salir a buscar minutos. */
+  maxMinutesShare: 0.42,
+  /** Brecha mínima de potencial para proteger al jugador de una cesión absurda. */
+  minPotentialGap: 3,
   /** Reparto salarial por defecto que asume el club receptor. */
   defaultWageShare: 0.6,
   /** Coste de la opción de compra como múltiplo del valor. */
@@ -581,14 +600,14 @@ export const BALANCE = {
    * el resto del año (más clubes activos cada día y más operaciones por
    * ciclo, ver `MarketSimulation.runClubDay`).
    */
-  summerFactor: 1.08,
+  summerFactor: 1.18,
   /**
    * Multiplicador sobre el número de fichajes que un club puede intentar
    * cerrar en un mismo ciclo diario durante el verano. En invierno no se
    * aplica: la ventana corta y el mercado más parado hacen que un club rara
    * vez necesite firmar varios jugadores el mismo día.
    */
-  summerSigningBurst: 1.0,
+  summerSigningBurst: 1.18,
 } as const;
 
 /**

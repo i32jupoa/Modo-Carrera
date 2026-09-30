@@ -16,6 +16,7 @@ import { transferWindowKey, windowForDate } from "../transferWindows";
 import {
   BIG_DEAL_DAILY_LIMIT,
   CONTRACT_RULES,
+  MARKET_VARIATION,
   DECISION_ACCURACY,
   ELITE_EXIT,
   IDEAL_SQUAD_SHAPE,
@@ -34,6 +35,7 @@ import { getClubProfile } from "./ClubStrategy";
 import { bigSigningSpendCapRatio } from "./MarketPacing";
 import {
   canAfford,
+  getFinances,
   getUserClubId,
   maxSpend,
   maxWageOffer,
@@ -138,6 +140,35 @@ function recordBuyerSellerDeal(date: string, buyerId: string, sellerId: string):
 onSquadChanged((clubIds) => {
   for (const clubId of clubIds) dominantNations.delete(clubId);
 });
+
+/** Protege titulares/núcleo frente a ventas forzadas de seguridad. */
+function isCoreProtectedFromForcedSale(player: MarketPlayer, date: string): boolean {
+  if (!player.clubId) return false;
+  const report = getSquadReport(player.clubId, date);
+  const aboveSquad = player.ovr >= report.startingRating + 1;
+  const scarce = report.countByGroup[player.group] <= 2;
+  const veteranCore =
+    player.age >= 34 &&
+    player.ovr >= Math.max(75, report.startingRating - 3);
+  const teamStars = teamById(player.clubId).stars ?? [];
+  const normalizedName = player.name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const designatedStar = teamStars.some((star) =>
+    normalizedName.includes(
+      star
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, ""),
+    ),
+  );
+  const protectedCore = aboveSquad || (scarce && player.ovr >= report.startingRating - 1) || veteranCore || designatedStar;
+  // Un jugador de núcleo puede salir si él mismo fuerza la salida; lo que
+  // evitamos es que la red de seguridad lo venda sólo para cumplir un cupo
+  // artificial de ventas.
+  return protectedCore && desireToLeave(player.id, date) < 0.78;
+}
 
 /** Nacionalidad predominante de la plantilla: define el "jugador de casa". */
 export function clubDominantNation(clubId: string): string {
@@ -266,11 +297,14 @@ export function scoreCandidate(input: {
   });
   const wage = wageDemand(player.id, input.clubId);
 
+  const absolutePotential = normalize(player.potential, Math.max(76, report.startingRating - 8), 97);
+  const upside = normalize(player.potential - player.ovr, 0, 12);
+  const potentialAgeFactor = player.age <= 23 ? 1 : player.age <= 26 ? 0.95 : 0.84;
+
   const breakdown: ScoreBreakdown = {
     need: need.urgency,
-    quality: normalize(player.ovr - report.startingRating, -6, 6),
-    potential:
-      normalize(player.potential - player.ovr, 0, 10) * (0.4 + profile.youthPreference * 0.6),
+    quality: normalize(player.ovr - report.startingRating, -8, 7),
+    potential: clamp((absolutePotential * 0.68 + upside * 0.32) * potentialAgeFactor, 0, 1),
     age: ageScore(player, profile),
     price: 1 - normalize(valuation.listPrice, 0, Math.max(1, input.spendCeiling)),
     wage: 1 - normalize(wage, 0, Math.max(1, input.wageCeiling)),
@@ -313,14 +347,18 @@ export function scoreCandidate(input: {
   const replacementBonus =
     lossOvr > 0 ? clamp(1 - Math.abs(player.ovr - lossOvr) / 10, 0, 1) * 0.2 : 0;
 
-  // Ruido de ojeador: baraja el orden entre candidatos de nivel similar de
-  // forma estable dentro de una misma partida (ver `DECISION_ACCURACY.
-  // scoutingNoise`), para que no sea siempre el mismo puñado de nombres el
-  // que se lleva todos los traspasos caros en cada partida nueva.
+  // Ruido de ojeador: cambia de una ventana a otra (pero sigue siendo
+  // reproducible dentro de una partida). Así un verano no queda condenado a
+  // repetir exactamente los mismos objetivos del verano anterior.
+  const marketKey = transferWindowKey(cacheKey);
   const scoutingNoise =
-    (seededUnit(input.clubId, player.id, "scout-noise") - 0.5) * DECISION_ACCURACY.scoutingNoise;
+    (seededUnit(input.clubId, player.id, marketKey, "scout-noise") - 0.5) *
+    DECISION_ACCURACY.scoutingNoise;
+  const windowAffinity =
+    (seededUnit(marketKey, input.clubId, player.id, "window-affinity") - 0.5) * 2 *
+    MARKET_VARIATION.windowAffinityWeight;
 
-  const withBonuses = withStarstruck + replacementBonus + scoutingNoise;
+  const withBonuses = withStarstruck + replacementBonus + scoutingNoise + windowAffinity;
   const finalScore = isDirectDomesticRival(input.clubId, player)
     ? withBonuses - DECISION_ACCURACY.domesticRivalScorePenalty
     : withBonuses;
@@ -432,6 +470,8 @@ export interface ShortlistOptions {
    * máximo nivel con el once ya completo de estrellas.
    */
   lenient?: boolean;
+  /** Búsqueda estratégica de verano para clubes ambiciosos: admite proyectos de élite. */
+  strategic?: boolean;
 }
 
 /**
@@ -439,6 +479,139 @@ export interface ShortlistOptions {
  * La búsqueda usa los índices por demarcación y rating, filtra por
  * disponibilidad real y descarta lo que no mejora la plantilla.
  */
+function isEliteRecruiter(profile: ClubProfile): boolean {
+  return profile.reputation >= 0.82 && profile.financialPower >= 0.62 && profile.ambition >= 0.78;
+}
+
+function groupIsSaturatedForEliteRecruitment(
+  clubId: string,
+  group: PositionGroup,
+  player: MarketPlayer,
+  report: SquadReport,
+): boolean {
+  const shape = IDEAL_SQUAD_SHAPE[group];
+  const squad = getClubPlayers(clubId)
+    .filter((p) => p.group === group)
+    .sort((a, b) => b.ovr - a.ovr);
+  if (squad.length < shape.ideal) return false;
+  if (recentCoreLossOvr(clubId, group) > 0) return false;
+
+  const best = squad[0]?.ovr ?? 0;
+  const averageTop =
+    squad.slice(0, shape.ideal).reduce((sum, p) => sum + p.ovr, 0) /
+    Math.max(1, Math.min(shape.ideal, squad.length));
+
+  const clearUpgrade = player.ovr >= best + 2 || player.ovr >= averageTop + 3;
+  const eliteProject =
+    player.age <= 21 &&
+    player.potential >= 94 &&
+    player.ovr >= report.startingRating - 2;
+  return !clearUpgrade && !eliteProject;
+}
+
+/** Necesidades estratégicas de un club grande: calidad, huecos y proyectos. */
+export function strategicRecruitmentNeeds(
+  clubId: string,
+  cacheKey: string,
+  limit = 4,
+): SquadNeed[] {
+  const report = getSquadReport(clubId, cacheKey);
+  const profile = getClubProfile(clubId);
+  const scored = POSITION_GROUPS
+    .map((group) => {
+      const shape = IDEAL_SQUAD_SHAPE[group];
+      const countGap = Math.max(0, shape.ideal - report.countByGroup[group]);
+      const qualityGap = Math.max(0, report.startingRating - report.ratingByGroup[group]);
+      const loss = recentCoreLossOvr(clubId, group);
+      const room = Math.max(0, shape.max - report.countByGroup[group]);
+      const groupPlayers = getClubPlayers(clubId)
+        .filter((p) => p.group === group)
+        .sort((a, b) => b.ovr - a.ovr);
+      const eliteDepth = groupPlayers.filter((p) => p.ovr >= report.startingRating - 1).length;
+      const hardOverbook = report.countByGroup[group] > shape.max && loss <= 0;
+      const coveredByEliteDepth = report.countByGroup[group] >= shape.ideal && eliteDepth >= 2 && loss <= 0;
+      const overbookPenalty =
+        hardOverbook
+          ? 4
+          : coveredByEliteDepth
+            ? 2.6
+            : report.countByGroup[group] >= shape.ideal + 1 && qualityGap < 1
+              ? 1.8
+              : 0;
+      const strategicScore =
+        loss * 0.12 +
+        qualityGap * 0.38 +
+        countGap * 1.2 +
+        room * 0.12 -
+        overbookPenalty;
+      return {
+        group,
+        strategicScore,
+        qualityGap,
+        loss,
+        count: report.countByGroup[group],
+        eliteDepth,
+        coveredByEliteDepth,
+      };
+    })
+    .sort((a, b) => b.strategicScore - a.strategicScore);
+
+  const needs: SquadNeed[] = [];
+  for (const item of scored) {
+    const shape = IDEAL_SQUAD_SHAPE[item.group];
+    const hardOverbook = item.count > shape.max && item.loss <= 0;
+    const shouldInclude =
+      !hardOverbook &&
+      !item.coveredByEliteDepth &&
+      (item.loss > 0 ||
+        item.count < shape.ideal ||
+        item.qualityGap >= 1.5 ||
+        (profile.ambition > 0.9 && item.count < shape.max && needs.length === 0));
+    if (!shouldInclude) continue;
+
+    const urgency = clamp(0.25 + item.qualityGap / 8 + (item.loss > 0 ? 0.35 : 0), 0, 1);
+    needs.push({
+      group: item.group,
+      urgency,
+      count: item.count,
+      quality: report.ratingByGroup[item.group],
+      priority: priorityOf(urgency),
+    });
+    if (needs.length >= limit) break;
+  }
+
+  // Un gigante con caja extraordinaria puede hacer una operación de
+  // oportunidad aunque sus huecos estructurales ya estén cubiertos. Se limita
+  // a UNA zona y sólo aparece con una caja extraordinaria para evitar que el
+  // sistema convierta a todos los grandes en coleccionistas de estrellas.
+  const finances = getFinances(clubId);
+  const warChest =
+    profile.ambition >= 0.9 &&
+    profile.reputation >= 0.9 &&
+    finances.earned >= finances.initialBudget * 0.75;
+  if (warChest && needs.length < limit) {
+    const existing = new Set(needs.map((need) => need.group));
+    const opportunity = scored.find((item) => {
+      const shape = IDEAL_SQUAD_SHAPE[item.group];
+      return !existing.has(item.group) &&
+        item.count < shape.max &&
+        item.loss <= 0 &&
+        !item.coveredByEliteDepth;
+    });
+    if (opportunity) {
+      needs.push({
+        group: opportunity.group,
+        urgency: 0.24,
+        count: opportunity.count,
+        quality: report.ratingByGroup[opportunity.group],
+        priority: "low",
+      });
+    }
+  }
+
+  return needs;
+}
+
 export function buildShortlist(
   clubId: string,
   need: SquadNeed,
@@ -467,11 +640,13 @@ export function buildShortlist(
   // ligas menores sólo porque acaba de perder a varios titulares seguidos en
   // la misma ventana.
   const minOvr = Math.round(
-    Math.max(
-      58,
-      report.startingRating - 4,
-      reputationOvrFloor(profile) - REPUTATION_OVR_FLOOR.shortlistSlack,
-    ),
+    options.strategic && isEliteRecruiter(profile)
+      ? Math.max(70, report.startingRating - 11, reputationOvrFloor(profile) - 14)
+      : Math.max(
+          58,
+          report.startingRating - 4,
+          reputationOvrFloor(profile) - REPUTATION_OVR_FLOOR.shortlistSlack,
+        ),
   );
   const maxOvr = Math.round(
     clamp(report.startingRating + 6 + profile.reputation * 4, minOvr + 2, 99),
@@ -510,7 +685,13 @@ export function buildShortlist(
     if (!isAvailable(player.id, options.cacheKey, buyerContext)) continue;
     if (isPursuitOnCooldown(clubId, player.id, options.cacheKey)) continue;
     const recentLossOvr = recentCoreLossOvr(clubId, need.group);
-    if (!playerImprovesSquad(report, player, options.lenient || recentLossOvr > 0)) continue;
+    if (!playerImprovesSquad(report, player, options.lenient || recentLossOvr > 0, options.strategic)) continue;
+
+    if (
+      options.strategic &&
+      isEliteRecruiter(profile) &&
+      groupIsSaturatedForEliteRecruitment(clubId, need.group, player, report)
+    ) continue;
 
     // Verificar compatibilidad de posición específica para laterales
     // Un lateral izquierdo no puede cubrir un hueco de lateral derecho a menos que tenga posiciones alternativas
@@ -647,12 +828,17 @@ export function runClubOpportunisticCycle(
   options: ClubCycleOptions,
 ): ClubCycleResult {
   const result: ClubCycleResult = { clubId, transfers: [], attempts: [], shortlisted: 0 };
-  const need = weakestGroupNeed(clubId, options.date);
+  const profile = getClubProfile(clubId);
+  const strategic = isEliteRecruiter(profile) && windowForDate(options.date) === "summer";
+  const need = strategic
+    ? strategicRecruitmentNeeds(clubId, options.date, 1)[0] ?? null
+    : weakestGroupNeed(clubId, options.date);
   if (!need || need.urgency <= 0.1) return result;
 
   const shortlist = buildShortlist(clubId, need, {
     cacheKey: options.date,
     deadlineDay: options.deadlineDay,
+    strategic,
   });
   result.shortlisted = shortlist.length;
   const candidate = shortlist[0];
@@ -1231,6 +1417,8 @@ export interface ClubCycleOptions {
    * quedar bloqueado indefinidamente por la salud financiera del club.
    */
   belowMinimum?: boolean;
+  /** Mercado estratégico: el club puede atacar proyectos de élite además de urgencias. */
+  strategic?: boolean;
 }
 
 /**
@@ -1245,7 +1433,10 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
 
   // Con la plantilla saturada sólo se ficha para tapar un agujero grave, y
   // ningún club compra mientras necesite hacer caja.
-  const needs = priorityNeeds(clubId, cacheKey);
+  const strategic = options.strategic ?? false;
+  const needs = strategic
+    ? strategicRecruitmentNeeds(clubId, cacheKey, 4)
+    : priorityNeeds(clubId, cacheKey);
 
   // Techo duro de plantilla: por muy "crítica" que el análisis marque una
   // necesidad, en general ningún club ficha por encima de este tamaño. Sin
@@ -1306,6 +1497,7 @@ export function runClubTransferCycle(clubId: string, options: ClubCycleOptions):
       // plantilla completa sigue exigiendo una mejora de verdad salvo que
       // de verdad necesite cerrar el cupo.
       lenient: options.belowMinimum || understaffed,
+      strategic,
     });
     result.shortlisted += shortlist.length;
 
@@ -1437,8 +1629,12 @@ export function signBestMarketCandidate(
   const report = getSquadReport(clubId, date);
   if (report.size >= SQUAD_LIMITS.maxSquadSize + 2) return null;
 
-  const needs = priorityNeeds(clubId, date, 4);
-  const fallback = weakestGroupNeed(clubId, date);
+  const profile = getClubProfile(clubId);
+  const strategic = isEliteRecruiter(profile) && windowForDate(date) === "summer";
+  const needs = strategic
+    ? strategicRecruitmentNeeds(clubId, date, 5)
+    : priorityNeeds(clubId, date, 4);
+  const fallback = strategic ? null : weakestGroupNeed(clubId, date);
   let targets: SquadNeed[] = needs.slice();
 
   if (fallback && !targets.some((need) => need.group === fallback.group)) {
@@ -1448,7 +1644,7 @@ export function signBestMarketCandidate(
   // Incluso una plantilla perfectamente equilibrada debe poder cumplir el
   // mínimo anual: se ataca el grupo con peor media antes que forzar un agente
   // libre de nivel muy inferior. Esto afecta sobre todo a clubes de élite.
-  if (targets.length === 0) {
+  if (targets.length === 0 && !strategic) {
     const weakest = POSITION_GROUPS
       .filter((group) => report.countByGroup[group] > 0)
       .sort((a, b) => report.ratingByGroup[a] - report.ratingByGroup[b])[0];
@@ -1469,6 +1665,7 @@ export function signBestMarketCandidate(
       deadlineDay,
       lenient: true,
       size: 10,
+      strategic,
     });
 
     for (const candidate of shortlist) {
@@ -1496,14 +1693,17 @@ export function signBestFreeAgent(
 
   const wageCeiling = maxWageOffer(clubId);
   const profile = getClubProfile(clubId);
-  let needs: SquadNeed[] = priorityNeeds(clubId, date, 3);
+  const strategic = isEliteRecruiter(profile) && windowForDate(date) === "summer";
+  let needs: SquadNeed[] = strategic
+    ? strategicRecruitmentNeeds(clubId, date, 3)
+    : priorityNeeds(clubId, date, 3);
   // Cuando el análisis de plantilla no ve ningún agujero pero el club sigue
   // por debajo de su cupo mínimo de fichajes de la ventana, se ignora el
   // filtro de "hueco libre por demarcación": un club de sobra completo
   // también ficha profundidad de vez en cuando en la vida real. El único
   // límite real sigue siendo el tamaño máximo de plantilla, ya comprobado
   // arriba.
-  const ignoreShapeCap = needs.length === 0;
+  const ignoreShapeCap = needs.length === 0 && !strategic;
   if (ignoreShapeCap) {
     needs = POSITION_GROUPS.map((group) => ({
       group,
@@ -1621,7 +1821,8 @@ export function forceSellSurplusPlayer(clubId: string, date: string): TransferRe
       .filter(
         (player) =>
           report.countByGroup[player.group] > IDEAL_SQUAD_SHAPE[player.group].min &&
-          player.ovr <= fallbackFloor,
+          player.ovr <= fallbackFloor &&
+          !isCoreProtectedFromForcedSale(player, date),
       )
       .sort((a, b) => a.ovr - b.ovr)
       .slice(0, 5)
@@ -1633,6 +1834,7 @@ export function forceSellSurplusPlayer(clubId: string, date: string): TransferRe
   const candidates = pool
     .map((id) => getPlayer(id))
     .filter((player): player is MarketPlayer => Boolean(player))
+    .filter((player) => !isCoreProtectedFromForcedSale(player, date))
     .sort((a, b) => a.ovr - b.ovr);
   if (candidates.length === 0) return null;
 

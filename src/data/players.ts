@@ -25,9 +25,22 @@ export type PlayerShootingStats = {
   volleys: number;
   penalties: number;
   composure: number;
+  positioning: number;
+};
+
+export type PlayerCreativeStats = {
+  vision: number;
+  crossing: number;
+  shortPassing: number;
+  longPassing: number;
+  dribbling: number;
+  ballControl: number;
 };
 
 const SHOOTING_STATS_BY_ID = new Map<string, PlayerShootingStats>();
+const CREATIVE_STATS_BY_ID = new Map<string, PlayerCreativeStats>();
+const BASE_SHO_BY_ID = new Map<string, number>();
+const BASE_PAS_BY_ID = new Map<string, number>();
 
 for (const raw of Array.isArray(playersData) ? playersData : []) {
   if (raw?.ID == null) continue;
@@ -39,7 +52,18 @@ for (const raw of Array.isArray(playersData) ? playersData : []) {
     volleys: Number(raw.Volleys ?? raw.volleys ?? 0),
     penalties: Number(raw.Penalties ?? raw.penalties ?? 0),
     composure: Number(raw.Composure ?? raw.composure ?? 0),
+    positioning: Number(raw.Positioning ?? raw.positioning ?? 0),
   });
+  CREATIVE_STATS_BY_ID.set(String(raw.ID), {
+    vision: Number(raw.Vision ?? raw.vision ?? 0),
+    crossing: Number(raw.Crossing ?? raw.crossing ?? 0),
+    shortPassing: Number(raw["Short Passing"] ?? raw.shortPassing ?? raw.PAS ?? 0),
+    longPassing: Number(raw["Long Passing"] ?? raw.longPassing ?? 0),
+    dribbling: Number(raw.Dribbling ?? raw.dribbling ?? 0),
+    ballControl: Number(raw["Ball Control"] ?? raw.ballControl ?? 0),
+  });
+  BASE_SHO_BY_ID.set(String(raw.ID), Number(raw.SHO ?? raw.shooting ?? 0));
+  BASE_PAS_BY_ID.set(String(raw.ID), Number(raw.PAS ?? raw.passing ?? raw["Short Passing"] ?? 0));
 }
 
 export function getPlayerShootingStats(
@@ -54,23 +78,54 @@ export function getPlayerShootingStats(
     volleys: 0,
     penalties: 0,
     composure: 0,
+    positioning: 0,
   };
 
-  const scale = (baseValue: number, nextValue: unknown) => {
-    const n = Number(nextValue);
-    if (!Number.isFinite(n)) return baseValue;
-    return Math.max(1, Math.min(99, n));
-  };
+  // El OVR dinámico no debe borrar el perfil real del futbolista. Por ejemplo,
+  // Kane (96 finishing) sigue siendo mejor finalizador que otro 90 OVR aunque
+  // ambos tengan ahora mismo la misma media. El atributo SHO solo mueve el perfil
+  // hacia arriba/abajo a medida que progresa.
+  const baseSHO = playerId != null ? BASE_SHO_BY_ID.get(String(playerId)) : undefined;
+  const dynamicSHO = Number(dynamicAttributes?.SHO);
+  const deltaSHO = Number.isFinite(baseSHO) && Number.isFinite(dynamicSHO) ? (dynamicSHO - baseSHO) : 0;
+  const adjust = (value: number, influence: number) => Math.max(1, Math.min(99, value + deltaSHO * influence));
 
   return {
-    ...base,
-    shooting: scale(base.shooting, dynamicAttributes?.SHO),
-    finishing: scale(base.finishing, dynamicAttributes?.SHO),
-    shotPower: scale(base.shotPower, dynamicAttributes?.SHO),
-    longShots: scale(base.longShots, dynamicAttributes?.SHO),
-    volleys: scale(base.volleys, dynamicAttributes?.SHO),
-    penalties: scale(base.penalties, dynamicAttributes?.SHO),
-    composure: scale(base.composure, dynamicAttributes?.SHO),
+    shooting: adjust(base.shooting, 0.70),
+    finishing: adjust(base.finishing, 0.82),
+    shotPower: adjust(base.shotPower, 0.55),
+    longShots: adjust(base.longShots, 0.60),
+    volleys: adjust(base.volleys, 0.65),
+    penalties: adjust(base.penalties, 0.35),
+    composure: adjust(base.composure, 0.45),
+    positioning: adjust(base.positioning, 0.60),
+  };
+}
+
+export function getPlayerCreativeStats(
+  playerId: string | number | undefined,
+  dynamicAttributes?: Partial<PlayerAttributeRatings>,
+): PlayerCreativeStats {
+  const base = (playerId != null ? CREATIVE_STATS_BY_ID.get(String(playerId)) : undefined) ?? {
+    vision: 0,
+    crossing: 0,
+    shortPassing: 0,
+    longPassing: 0,
+    dribbling: 0,
+    ballControl: 0,
+  };
+  const basePAS = playerId != null ? BASE_PAS_BY_ID.get(String(playerId)) : undefined;
+  const dynamicPAS = Number(dynamicAttributes?.PAS);
+  const deltaPAS = Number.isFinite(basePAS) && Number.isFinite(dynamicPAS) ? (dynamicPAS - basePAS) : 0;
+  const adjust = (value: number, influence: number) => Math.max(1, Math.min(99, value + deltaPAS * influence));
+
+  return {
+    vision: adjust(base.vision, 0.75),
+    crossing: adjust(base.crossing, 0.65),
+    shortPassing: adjust(base.shortPassing, 0.80),
+    longPassing: adjust(base.longPassing, 0.55),
+    dribbling: adjust(base.dribbling, 0.60),
+    ballControl: adjust(base.ballControl, 0.55),
   };
 }
 

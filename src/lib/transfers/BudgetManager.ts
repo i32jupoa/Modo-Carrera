@@ -567,8 +567,17 @@ export function registerSale(clubId: string, fee: number, wage: number): void {
     return;
   }
 
-  // La IA reinvierte sólo una parte de sus ventas.
-  entry.budget += Math.round(cleanFee * BUDGET_RULES.saleReinvestment);
+  // Los gigantes reinvierten prácticamente todo lo obtenido por ventas; en
+  // clubes medianos se mantiene una parte de colchón. Así una venta masiva
+  // transforma de verdad el mercado del verano del club.
+  const profile = getClubProfile(clubId);
+  const reinvestmentRate =
+    profile.reputation >= 0.9 && profile.financialPower >= 0.78
+      ? 0.97
+      : profile.reputation >= 0.78 && profile.financialPower >= 0.62
+        ? 0.92
+        : BUDGET_RULES.saleReinvestment;
+  entry.budget += Math.round(cleanFee * reinvestmentRate);
   entry.earned += cleanFee;
   entry.wageBill = Math.max(0, entry.wageBill - cleanWage);
   entry.totalBudget = entry.budget + entry.wageBudget;

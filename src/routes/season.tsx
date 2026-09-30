@@ -15,6 +15,7 @@ import {
   getMyRecentResults,
   getTeamRecentResults,
   simulateCupMatchday,
+  simulateNationalCupsThroughDate,
   simulateUCLMatchday,
   simulateEuropeanLeagueMatchday,
   simulatePendingEuropeanThroughDay,
@@ -34,8 +35,10 @@ import {
   LEAGUES_BY_COUNTRY,
 } from "@/data/teams";
 import { UCL_START, UCL_CALENDAR } from "@/data/ucl";
+import { europeanCalendar } from "@/data/europeanCompetitions";
 
 import { type Fixture } from "@/lib/season";
+import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 
 import { usePlayersStore, ensureStatsForLeague, useCurrentDate } from "@/store/playersStore";
 
@@ -395,6 +398,18 @@ function SeasonPage() {
       while (cur.currentMatchday[cur.myLeague] <= myLeagueTotalMatchdays && safety < 100) {
         cur = await advanceMatchdayLayered(cur);
 
+        // "Saltar al final" is an explicit full-season simulation, so national
+        // cup matches involving the user's own club must also be resolved.
+        const leagueDates = (cur.fixtures?.[cur.myLeague] ?? [])
+          .filter((f) => f.result)
+          .map((f) => f.date)
+          .filter((d): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d))
+          .sort();
+        const cupCutoff = leagueDates.at(-1);
+        if (cupCutoff) {
+          cur = simulateNationalCupsThroughDate(cur, cupCutoff, true);
+        }
+
         safety++;
 
         // Yield control every 5 matchdays
@@ -689,60 +704,22 @@ function NextMatchCard({
   let matchDate: Date;
 
   if (fixture.competition === "league") {
-    // For league fixtures, use the actual fixture date from the calendar fixtures
-    const scheduleFixture = fixtures.find(
-      (f: any) =>
-        f.homeTeam === fixture.homeId &&
-        f.awayTeam === fixture.awayId &&
-        f.matchday === fixture.matchday,
-    );
-    matchDateIso = scheduleFixture?.date || currentDate;
+    // La fixture de la partida es la fuente de verdad. El store secundario de
+    // jugadores puede quedarse atrasado después de migrar/recargar una carrera
+    // y no debe hacer desaparecer ni cambiar la fecha del próximo partido.
+    matchDateIso = fixture.date || currentDate;
     matchDate = new Date(matchDateIso + "T12:00:00Z");
   } else if (fixture.competition === "cup") {
-    // For cup: matchday = day offset from July 7th
-    matchDate = new Date(cupStart.getTime() + fixture.matchday * 86400000);
-    matchDateIso =
-      matchDate.getFullYear() +
-      "-" +
-      String(matchDate.getMonth() + 1).padStart(2, "0") +
-      "-" +
-      String(matchDate.getDate()).padStart(2, "0");
+    matchDateIso = getCupFixtureDateIso(fixture) || currentDate;
+    matchDate = new Date(`${matchDateIso}T12:00:00Z`);
   } else {
-    // European fixtures must use their real calendar date when available.
-    // Knockout fixtures also carry an absolute UCL-style day offset in
-    // `matchday`, but legacy UEL/UECL saves may have a shifted/temporary
-    // matchday after passing through the shared Champions engine. The round
-    // label is therefore the authoritative fallback for the date.
-    const uclStart = new Date(UCL_START + "T00:00:00Z");
-    const europeanRoundOffsets: Record<string, number> = {
-      ...Object.fromEntries(UCL_CALENDAR.leagueDay.map((offset, index) => [`Jornada ${index + 1}`, offset])),
-      "Playoff-Leg1": UCL_CALENDAR.playoffLeg1,
-      "Playoff-Leg2": UCL_CALENDAR.playoffLeg2,
-      "R16-Leg1": UCL_CALENDAR.r16Leg1,
-      "R16-Leg2": UCL_CALENDAR.r16Leg2,
-      "QF-Leg1": UCL_CALENDAR.qfLeg1,
-      "QF-Leg2": UCL_CALENDAR.qfLeg2,
-      "SF-Leg1": UCL_CALENDAR.sfLeg1,
-      "SF-Leg2": UCL_CALENDAR.sfLeg2,
-      Final: UCL_CALENDAR.final,
-    };
-    const storedDate = fixture.date
-      ? Date.parse(`${String(fixture.date).slice(0, 10)}T12:00:00Z`)
-      : NaN;
-    const roundOffset = europeanRoundOffsets[String(fixture.round ?? "")];
-    if (Number.isFinite(storedDate)) {
-      matchDate = new Date(storedDate);
-    } else if (roundOffset != null) {
-      matchDate = new Date(uclStart.getTime() + roundOffset * 86400000);
-    } else {
-      matchDate = new Date(uclStart.getTime() + fixture.matchday * 86400000);
-    }
-    matchDateIso =
-      matchDate.getUTCFullYear() +
-      "-" +
-      String(matchDate.getUTCMonth() + 1).padStart(2, "0") +
-      "-" +
-      String(matchDate.getUTCDate()).padStart(2, "0");
+    const competition = fixture.europeanCompetition === "uecl"
+      ? "uecl"
+      : fixture.europeanCompetition === "uel"
+        ? "uel"
+        : "ucl";
+    matchDateIso = getEuropeanFixtureDateIso(fixture, competition) || currentDate;
+    matchDate = new Date(`${matchDateIso}T12:00:00Z`);
   }
 
   const isMatchDay = currentDate === matchDateIso;

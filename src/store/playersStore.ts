@@ -82,16 +82,11 @@ import { recoverStamina, STAMINA_START } from "@/lib/liveMatch";
 import {
   buildFullLeagueSchedule,
   mergeScheduleWithPlayed,
-  scheduleNeedsRealisticDates,
   type ScheduleFixture,
 } from "@/lib/leagueSchedule";
 
-import {
-  rescheduleUnplayedFixtures,
-  rescheduleLeagueAroundSpecialFixtures,
-} from "@/lib/fixtureScheduler";
-
-import { generateLeagueFixtures } from "@/lib/season";
+import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
+import type { Fixture } from "@/lib/season";
 
 import type { SimResult } from "@/lib/simulation";
 
@@ -1021,6 +1016,9 @@ type PlayersState = {
 
   fixtures: ScheduleFixture[];
 
+  /** Fixed calendar migration/version. Once current season reaches this version, dates never shift. */
+  leagueScheduleVersion: number;
+
   /** Partido del usuario pendiente de simular (día de partido) */
 
   pendingUserMatch: ScheduleFixture | null;
@@ -1307,8 +1305,6 @@ function buildProtectedCompetitionDates(
   league: LeagueId,
 ): Map<string, Set<string>> {
   const protectedDates = new Map<string, Set<string>>();
-  if (!save) return protectedDates;
-
   const add = (teamId: string, dateIso: string) => {
     const team = teamById(teamId);
     if (!team || team.league !== league) return;
@@ -1317,39 +1313,109 @@ function buildProtectedCompetitionDates(
     protectedDates.set(teamId, set);
   };
 
-  const cupStart = new Date(`${NATIONAL_CUP_START}T00:00:00Z`).getTime();
-  for (const list of Object.values(save.cupFixtures ?? {})) {
+  const addAllLeagueTeams = (dateIso: string) => {
+    for (const team of teamsByLeague(league)) add(team.id, dateIso);
+  };
+
+  // National cup dates are fixed by the cup structure. Reserve them for the
+  // domestic league teams before the league calendar is generated so a later
+  // cup draw can never force a league fixture to move across matchdays.
+  const country = LEAGUES[league]?.country;
+  if (country) {
+    const primaryLeague = getPrimaryLeagueForCountry(country) as LeagueId | undefined;
+    const structure =
+      (primaryLeague && (save?.cupFixtures as any)?.[`${primaryLeague}_structure`]) ||
+      getCupStructureForCountry(country);
+    for (const step of structure?.schedule ?? []) {
+      if (typeof step?.matchday !== "number") continue;
+      addAllLeagueTeams(addDaysToIso(NATIONAL_CUP_START, step.matchday));
+    }
+  }
+
+  // Existing/custom cup fixtures are also protected, but their date is always
+  // resolved from the canonical round schedule before falling back to persisted
+  // data for legacy/custom rounds.
+  for (const [leagueKey, list] of Object.entries(save?.cupFixtures ?? {})) {
     if (!Array.isArray(list)) continue;
+    const fixtureCountry = LEAGUES[leagueKey as LeagueId]?.country;
+    const fixtureStructure = fixtureCountry ? getCupStructureForCountry(fixtureCountry) : null;
     for (const fixture of list as any[]) {
       if (fixture.result || fixture.homeId == null || fixture.awayId == null) continue;
-      const dateIso = fixture.date
-        ? String(fixture.date).slice(0, 10)
-        : new Date(cupStart + Number(fixture.matchday || 0) * 86400000)
-            .toISOString()
-            .slice(0, 10);
+      const canonicalStep = fixtureStructure?.schedule?.find((step: any) => step.round === fixture.round);
+      const dateIso = canonicalStep?.matchday != null
+        ? addDaysToIso(NATIONAL_CUP_START, canonicalStep.matchday)
+        : getCupFixtureDateIso(fixture);
+      if (!dateIso) continue;
       add(fixture.homeId, dateIso);
       add(fixture.awayId, dateIso);
     }
   }
 
-  const addEuropean = (list: any[]) => {
+  const uclCalendarData = [
+    ...UCL_CALENDAR.leagueDay,
+    UCL_CALENDAR.playoffLeg1,
+    UCL_CALENDAR.playoffLeg2,
+    UCL_CALENDAR.r16Leg1,
+    UCL_CALENDAR.r16Leg2,
+    UCL_CALENDAR.qfLeg1,
+    UCL_CALENDAR.qfLeg2,
+    UCL_CALENDAR.sfLeg1,
+    UCL_CALENDAR.sfLeg2,
+    UCL_CALENDAR.final,
+  ];
+  const europeanCalendarData = europeanCalendar();
+  const europeanOffsets = [
+    ...europeanCalendarData.leagueDay,
+    europeanCalendarData.playoffLeg1,
+    europeanCalendarData.playoffLeg2,
+    europeanCalendarData.r16Leg1,
+    europeanCalendarData.r16Leg2,
+    europeanCalendarData.qfLeg1,
+    europeanCalendarData.qfLeg2,
+    europeanCalendarData.sfLeg1,
+    europeanCalendarData.sfLeg2,
+    europeanCalendarData.final,
+  ];
+
+  // Reserve fixed UEFA dates for the competition participant pool. At schedule
+  // generation time knockout participants are not known yet, so protecting the
+  // possible pool is the deterministic way to guarantee 72h rest without ever
+  // moving an already-created league fixture later in the season.
+  const uclParticipants = Array.isArray((save as any)?.ucl?.participants) && (save as any).ucl.participants.length
+    ? (save as any).ucl.participants as string[]
+    : UCL_SEASON1_IDS;
+  for (const offset of uclCalendarData) {
+    const dateIso = addDaysToIso(UCL_START, offset);
+    for (const teamId of uclParticipants) add(teamId, dateIso);
+  }
+
+  for (const comp of ["uel", "uecl"] as const) {
+    const participants = Array.isArray((save as any)?.[comp]?.participants) && (save as any)[comp].participants.length
+      ? (save as any)[comp].participants as string[]
+      : EUROPEAN_CONFIGS[comp].participants;
+    for (const offset of europeanOffsets) {
+      const dateIso = addDaysToIso(EUROPEAN_START, offset);
+      for (const teamId of participants) add(teamId, dateIso);
+    }
+  }
+
+  // Existing UEFA fixtures remain a compatibility layer for dynamically
+  // generated saves. Their date is always resolved through the canonical UEFA
+  // round calendar, never by trusting a stale persisted +/-1 day value.
+  const addEuropean = (list: any[], competition: "ucl" | "uel" | "uecl") => {
     if (!Array.isArray(list)) return;
-    const start = new Date(`${UCL_START}T00:00:00Z`).getTime();
     for (const fixture of list) {
       if (fixture.result || fixture.homeId == null || fixture.awayId == null) continue;
-      const dateIso = new Date(
-        start + Number(fixture.matchday || 0) * 86400000,
-      )
-        .toISOString()
-        .slice(0, 10);
+      const dateIso = getEuropeanFixtureDateIso(fixture, competition);
+      if (!dateIso) continue;
       add(fixture.homeId, dateIso);
       add(fixture.awayId, dateIso);
     }
   };
 
-  addEuropean(save.uclFixtures ?? []);
-  addEuropean(save.uelFixtures ?? []);
-  addEuropean(save.ueclFixtures ?? []);
+  addEuropean(save?.uclFixtures ?? [], "ucl");
+  addEuropean(save?.uelFixtures ?? [], "uel");
+  addEuropean(save?.ueclFixtures ?? [], "uecl");
 
   return protectedDates;
 }
@@ -1495,6 +1561,8 @@ export const usePlayersStore = create<PlayersState>()(
 
       fixtures: [],
 
+      leagueScheduleVersion: 0,
+
       pendingUserMatch: null,
 
       lastUserMatchResult: null,
@@ -1510,48 +1578,59 @@ export const usePlayersStore = create<PlayersState>()(
       dismissedMatchIds: [],
 
       generateLeagueSchedule: (_myTeamId, league) => {
+        const save = loadSave();
+        const protectedDates = buildProtectedCompetitionDates(save, league);
         set({
-          fixtures: buildFullLeagueSchedule(league),
-
+          fixtures: buildFullLeagueSchedule(league, protectedDates),
+          leagueScheduleVersion: 3,
           pendingUserMatch: null,
-
           lastUserMatchResult: null,
         });
       },
 
       ensureLeagueSchedule: () => {
-        const { myTeamId, fixtures } = get();
-
+        const { myTeamId, fixtures, leagueScheduleVersion } = get();
         if (!myTeamId) return;
 
         const team = teamById(myTeamId);
         const league = team.league;
+
+        // Version 2+ is frozen. Do not rebuild the complete calendar on every
+        // day: that is unnecessary work and makes accidental re-dating much
+        // easier. Existing fixtures are the source of truth once migrated.
+        if ((leagueScheduleVersion ?? 0) >= 3 && fixtures.length > 0) return;
+
         const save = loadSave();
         const protectedDates = buildProtectedCompetitionDates(save, league);
-        const full = buildFullLeagueSchedule(league);
-
-        let nextFixtures: ScheduleFixture[];
+        const full = buildFullLeagueSchedule(league, protectedDates);
 
         if (fixtures.length === 0) {
-          nextFixtures = full;
-        } else if (fixtures.length < full.length) {
-          nextFixtures = mergeScheduleWithPlayed(full, fixtures, league);
-        } else if (scheduleNeedsRealisticDates(fixtures)) {
-          nextFixtures = rescheduleUnplayedFixtures(fixtures, generateLeagueFixtures(league));
-        } else {
-          nextFixtures = fixtures;
+          set({ fixtures: full, leagueScheduleVersion: 3 });
+          return;
         }
 
-        const aligned = rescheduleLeagueAroundSpecialFixtures(nextFixtures, protectedDates);
+        if (fixtures.length < full.length) {
+          const merged = mergeScheduleWithPlayed(full, fixtures, league);
+          set({ fixtures: merged, leagueScheduleVersion: 3 });
+          return;
+        }
 
-        const changed = aligned.some((f, index) =>
-          f.date !== fixtures[index]?.date ||
-          f.isPlayed !== fixtures[index]?.isPlayed ||
-          f.homeScore !== fixtures[index]?.homeScore ||
-          f.awayScore !== fixtures[index]?.awayScore,
-        ) || aligned.length !== fixtures.length;
+        if ((leagueScheduleVersion ?? 0) < 3) {
+          // One-time migration for saves generated by the old dynamic scheduler:
+          // rebuild only the unplayed dates from the protected fixed calendar,
+          // preserve every played result/date, then freeze the schedule.
+          const canonicalById = new Map(full.map((f) => [f.id, f]));
+          const migrated = fixtures.map((fixture) => {
+            if (fixture.isPlayed) return fixture;
+            const canonical = canonicalById.get(fixture.id);
+            return canonical ? { ...fixture, date: canonical.date } : fixture;
+          });
+          set({ fixtures: migrated, leagueScheduleVersion: 3 });
+          return;
+        }
 
-        if (fixtures.length === 0 || changed) set({ fixtures: aligned });
+        // Version 2+ is immutable. No later cup/European change is allowed to
+        // move an existing league fixture.
       },
 
       clearPendingMatch: () => set({ pendingUserMatch: null, lastUserMatchResult: null }),
@@ -1719,43 +1798,66 @@ export const usePlayersStore = create<PlayersState>()(
             if (isCupSeason) {
               try {
                 currentSave = autoDrawForeignCups(fixCupDraws(rawSave), nextDate);
-              } catch {
-                /* keep rawSave */
+
+                // National cups use the fixture's actual date as the only source
+                // of truth. Queue every round fixture scheduled for today, while
+                // excluding the user's own match so MatchDayModal can open it.
+                const pending = [...(currentSave.pendingBackgroundSims ?? [])];
+                const scheduledKeys = new Set(
+                  pending
+                    .filter((entry) => entry.isCup)
+                    .map((entry) => `${entry.league}:${entry.matchday}:${entry.date}`),
+                );
+                for (const lg of Object.keys(currentSave.cupFixtures ?? {}) as LeagueId[]) {
+                  const list = currentSave.cupFixtures[lg];
+                  if (!Array.isArray(list)) continue;
+                  const dueDates = new Set<string>();
+                  for (const fixture of list) {
+                    if (fixture.result) continue;
+                    if (fixture.homeId === currentSave.myTeamId || fixture.awayId === currentSave.myTeamId) continue;
+                    const fixtureDate = getCupFixtureDateIso(fixture);
+                    if (fixtureDate !== nextDate) continue;
+                    dueDates.add(fixtureDate);
+                  }
+                  for (const date of dueDates) {
+                    const matchdays = new Set(
+                      list
+                        .filter((fixture) => !fixture.result)
+                        .filter((fixture) => getCupFixtureDateIso(fixture) === date)
+                        .map((fixture) => Number(fixture.matchday)),
+                    );
+                    for (const matchday of matchdays) {
+                      const key = `${lg}:${matchday}:${date}`;
+                      if (!scheduledKeys.has(key)) {
+                        pending.push({ league: lg, matchday, isCup: true, date });
+                        scheduledKeys.add(key);
+                      }
+                    }
+                  }
+                }
+                currentSave = processScheduledBackgroundSims(
+                  { ...currentSave, pendingBackgroundSims: pending },
+                  nextDate,
+                  currentSave.myTeamId,
+                );
+                saveSave(currentSave);
+              } catch (err) {
+                console.error('[advanceTime] cup processing failed:', err);
               }
             }
 
             // 3. Programar ligas background alrededor del próximo partido del usuario
 
             try {
-              // Get next match date from schedule fixtures (ScheduleFixture[] with real ISO dates)
-
+              // Programar y resolver ligas en segundo plano sin tocar sus fechas.
+              // Las copas se resuelven por `fixture.date` de forma determinista
+              // más abajo; no existe un segundo calendario que pueda moverlas.
               const storeState = usePlayersStore.getState();
-
               const nextScheduledMatch = storeState.fixtures.find((f) => !f.isPlayed);
-
               const nextMatchDate = nextScheduledMatch?.date;
 
-              simulateBackgroundLeaguesOnly(currentSave, nextDate, nextMatchDate)
-                .then((result) => {
-                  if (!result) return;
-
-                  // Programar copas background también.
-                  return scheduleBackgroundCupsOnly(
-                    result,
-                    result.currentMatchday[result.myLeague],
-                    nextDate,
-                  );
-                })
-                .then((withCups) => {
-                  if (!withCups) return;
-                  const withProcessed = processScheduledBackgroundSims(withCups, nextDate);
-                  saveSave(withProcessed);
-                })
-                .catch((err) => {
-                  // Nunca dejar una promesa de simulación de fondo rechazada:
-                  // el avance del día principal ya se ha ejecutado.
-                  console.error('[advanceTime] background scheduling failed:', err);
-                });
+              currentSave = simulateBackgroundLeaguesOnly(currentSave, nextDate, nextMatchDate);
+              saveSave(currentSave);
             } catch {
               /* keep currentSave */
             }
@@ -1843,15 +1945,16 @@ export const usePlayersStore = create<PlayersState>()(
                 }
               }
 
-              // Compatibilidad con partidas antiguas sin `date` en los fixtures.
-              if (dueUserCupMatchdays.size === 0 && todayMatchday !== undefined) {
-                const legacyDue = cupFixtures.some(
-                  (f: any) =>
-                    !f.result &&
-                    f.matchday === todayMatchday &&
-                    !f.date,
-                );
-                if (legacyDue) dueUserCupMatchdays.add(Number(todayMatchday));
+              // Compatibility with old saves without persisted cup dates.
+              // The canonical round schedule remains the only source of truth.
+              if (dueUserCupMatchdays.size === 0) {
+                for (const f of cupFixtures) {
+                  if (f.result) continue;
+                  if (f.homeId !== currentSave.myTeamId && f.awayId !== currentSave.myTeamId) continue;
+                  if (getCupFixtureDateIso(f) === nextDate) {
+                    dueUserCupMatchdays.add(Number(f.matchday));
+                  }
+                }
               }
 
               for (const dueMatchday of dueUserCupMatchdays) {
@@ -3239,6 +3342,7 @@ export const usePlayersStore = create<PlayersState>()(
           currentDate: restoredDate,
 
           fixtures: (persisted as Partial<PlayersState>)?.fixtures ?? [],
+          leagueScheduleVersion: Number((persisted as Partial<PlayersState>)?.leagueScheduleVersion ?? 0),
         };
       },
 
@@ -3253,6 +3357,7 @@ export const usePlayersStore = create<PlayersState>()(
               wageBudget: s.wageBudget,
               wageBill: s.wageBill,
               currentDate: s.currentDate,
+              leagueScheduleVersion: s.leagueScheduleVersion,
               dismissedMatchIds: s.dismissedMatchIds,
             }
           : {
@@ -3268,6 +3373,7 @@ export const usePlayersStore = create<PlayersState>()(
               wageBill: s.wageBill,
 
               currentDate: s.currentDate,
+              leagueScheduleVersion: s.leagueScheduleVersion,
 
               fixtures: s.fixtures,
 

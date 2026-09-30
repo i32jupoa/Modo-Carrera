@@ -112,10 +112,15 @@ function isTransferable(
 
 /** ¿Es un joven al que le conviene una cesión? */
 function isLoanable(player: MarketPlayer, startingRating: number): boolean {
+  // Las cesiones automáticas de la IA están reservadas a auténticos
+  // proyectos: jugadores muy jóvenes, lejos del once y con margen claro.
+  // Un titular o un jugador de rotación consolidado no debe acabar cedido
+  // por una lectura demasiado agresiva de la plantilla.
   return (
-    player.age <= SQUAD_LIMITS.youngAge &&
-    player.ovr < startingRating - 2 &&
-    player.potential > player.ovr + 2
+    player.age <= 21 &&
+    player.ovr <= 78 &&
+    player.ovr <= startingRating - 4 &&
+    player.potential >= player.ovr + 3
   );
 }
 
@@ -212,11 +217,29 @@ export function playerImprovesSquad(
   report: SquadReport,
   player: MarketPlayer,
   lenient = false,
+  strategic = false,
 ): boolean {
   const groupRating = report.ratingByGroup[player.group];
   const margin = lenient ? -3 : SQUAD_LIMITS.improvementMargin;
   const bar = Math.max(groupRating, report.startingRating - 2) + margin;
   if (player.ovr >= bar) return true;
+
+  // Los grandes clubes también fichan para el futuro. La oportunidad no se
+  // limita al "mejora el once hoy": una promesa con potencial de estrella
+  // puede entrar aunque todavía esté 8-10 puntos por debajo del once, siempre
+  // que sea realmente joven y el techo sea extraordinario.
+  if (strategic) {
+    const eliteProject =
+      player.age <= 23 &&
+      player.potential >= Math.max(90, report.startingRating + 2) &&
+      player.ovr >= report.startingRating - 11;
+    if (eliteProject) return true;
+
+    const strategicUpgrade =
+      player.ovr >= report.startingRating + 1 && player.potential >= player.ovr;
+    if (strategicUpgrade) return true;
+  }
+
   // Una promesa con recorrido también encaja aunque hoy no sea titular.
   return player.age <= SQUAD_LIMITS.youngAge && player.potential >= report.startingRating + 1;
 }

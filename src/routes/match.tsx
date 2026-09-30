@@ -76,7 +76,7 @@ import {
   segmentItem,
 } from "@/components/match/matchUi";
 import { Pause, Play, FastForward, ClipboardList } from "lucide-react";
-import { isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
+import { isPlayerInjuredAtDate, usePlayersStore, withPlayerStatsBatch } from "@/store/playersStore";
 import { addDaysToIso } from "@/lib/transferWindows";
 import { getPlayerShootingStats } from "@/data/players";
 import { MiniPitch } from "@/components/MiniPitch";
@@ -2441,6 +2441,7 @@ function MatchPage() {
     playerId: string,
     playerName?: string,
     reason: "red_card" | "injury" | "other" = "other",
+    persistSnapshot = true,
   ) {
     const currentIndex = myXIRef.current.indexOf(playerId);
     // A player who leaves because of a red card or injury is permanently out
@@ -2478,7 +2479,7 @@ function MatchPage() {
 
     goneRef.current = Array.from(new Set([...goneRef.current, playerId]));
     setGoneIds(goneRef.current);
-    persistLive();
+    if (persistSnapshot) persistLive();
   }
 
   // ------------------------------------- chronicle consistency (played match)
@@ -2871,6 +2872,7 @@ function MatchPage() {
     const store = usePlayersStore.getState();
     const participants = [...performance.homeParticipants, ...performance.awayParticipants];
 
+    withPlayerStatsBatch(() => {
     // Every player who actually appeared gets one appearance, regardless of
     // whether he started or entered from the bench. Do this for BOTH teams.
     for (const p of participants) {
@@ -2904,6 +2906,7 @@ function MatchPage() {
     if (performance.mvp) {
       store.recordMotm(performance.mvp.playerId, statsCompetition);
     }
+    });
 
     // Match energy is physical state, independent from form. Persist the
     // exact final stamina for the manager's XI and reconstruct the opponent's
@@ -2988,10 +2991,15 @@ function MatchPage() {
         ev.scorerId,
       );
 
-      for (const ev of scoringEvents) {
-        store.recordGoal(ev.scorerId, statsCompetition);
-        if (ev.assistId) store.recordAssist(ev.assistId, statsCompetition);
-      }
+      // Goal/assist mutations can touch the persisted player store several
+      // times per match. Batch them so a 4-5 goal game still produces one
+      // reactive/persisted stats update instead of a cascade of writes.
+      withPlayerStatsBatch(() => {
+        for (const ev of scoringEvents) {
+          store.recordGoal(ev.scorerId, statsCompetition);
+          if (ev.assistId) store.recordAssist(ev.assistId, statsCompetition);
+        }
+      });
 
       playerScoringStatsRecordedRef.current = true;
     }
@@ -5078,7 +5086,15 @@ function MatchPage() {
     handledInjuriesRef.current = [...handledInjuriesRef.current, injury.playerId];
 
     // The injured player always leaves the pitch, even when no legal change remains.
-    playWithOneLess(injury.playerId, injury.playerName, "injury");
+    // During "Saltar" we defer persistence until the final chronicle is committed;
+    // writing localStorage once per injury makes fast-forward unnecessarily slow.
+    const persistDuringFastForward = false;
+    playWithOneLess(
+      injury.playerId,
+      injury.playerName,
+      "injury",
+      persistDuringFastForward,
+    );
 
     const check = canSubstitute(
       {
@@ -5358,6 +5374,9 @@ function MatchPage() {
   }
 
   function skipToEnd(includeOpponentSubs = true) {
+    // Fast-forward must be a single synchronous resolution, not a headless
+    // replay of the live clock. The result has already been simulated by the
+    // match engine before the user reaches this screen.
     if (clockTimeoutRef.current !== null) {
       window.clearTimeout(clockTimeoutRef.current);
       clockTimeoutRef.current = null;
@@ -5367,202 +5386,297 @@ function MatchPage() {
     pauseReasonRef.current = "manual";
 
     const fx = fixtureRef.current;
-    if (!fx) return;
-
-    // `Saltar al final` always requires an authoritative simulated result.
-    // Older saves can arrive here without one; finish safely instead of leaving
-    // a half-initialised live match running at 0'.
-    if (!fx.result) {
-      console.error("skipToEnd: fixture has no simulated result", fx.id);
+    if (!fx?.result) {
+      console.error("skipToEnd: fixture has no simulated result", fx?.id);
       setMinute(90);
       minuteRef.current = 90;
       setPhase("done");
       return;
     }
 
-    const currentMinute = Math.max(0, Math.min(90, minuteRef.current));
+    const currentMinute = Math.max(0, Math.min(90, Number(minuteRef.current) || 0));
+    const result = fx.result;
+    const mySide = mySideOf(fx);
+    const opponentSide: "home" | "away" = mySide === "home" ? "away" : "home";
 
-    const uniq = (items: any[], key: (x: any) => string) => {
-      const out: any[] = [];
-      const seen = new Set<string>();
-      for (const item of items) {
+    const eventKey = (e: any) =>
+      `${e?.minute}|${e?.team}|${e?.type}|${e?.scorerId ?? e?.playerId ?? ""}|${e?.assistId ?? ""}|${e?.detail ?? ""}`;
+    const cardKey = (c: any) =>
+      `${c?.minute}|${c?.team}|${c?.cardType}|${c?.playerId}`;
+    const highlightKey = (h: any) =>
+      `${h?.minute}|${h?.team}|${h?.type}|${h?.playerId ?? ""}|${h?.detail ?? ""}`;
+
+    const appendUnique = <T,>(target: T[], source: T[], key: (item: T) => string) => {
+      const seen = new Set(target.map(key));
+      for (const item of source) {
         const k = key(item);
         if (seen.has(k)) continue;
         seen.add(k);
-        out.push(item);
+        target.push(item);
       }
-      return out;
     };
-    const eventKey = (e: any) =>
-      `${e.minute}|${e.team}|${e.type}|${e.scorerId ?? e.playerId ?? ""}|${e.assistId ?? ""}|${e.detail ?? ""}`;
-    const cardKey = (c: any) => `${c.minute}|${c.team}|${c.cardType}|${c.playerId}`;
-    const highlightKey = (h: any) =>
-      `${h.minute}|${h.team}|${h.type}|${h.playerId ?? ""}|${h.detail ?? ""}`;
 
-    // The React feed is a second source of truth for the first half. This is
-    // crucial because those events may have been remapped to the players actually on the pitch
-    // after the original pre-simulation was generated. Never throw them away.
-    const feedEvents = (feed || []).filter((e: any) => Number(e.minute ?? 0) <= currentMinute);
-    const feedCards = (cardFeed || []).filter((c: any) => Number(c.minute ?? 0) <= currentMinute);
-    const feedHighlights = (highlightFeed || []).filter(
-      (h: any) => Number(h.minute ?? 0) <= currentMinute,
+    // Preserve what was already played interactively, then append the
+    // authoritative pre-simulated remainder in one pass. No 90-minute loop,
+    // no React state updates per minute, no repeated filtering.
+    appendUnique(
+      playedEventsRef.current,
+      (feed || []).filter((e: any) => Number(e?.minute ?? 0) <= currentMinute),
+      eventKey,
     );
-    playedEventsRef.current = uniq([...playedEventsRef.current, ...feedEvents], eventKey);
-    playedCardsRef.current = uniq([...playedCardsRef.current, ...feedCards], cardKey);
-    playedHighlightsRef.current = uniq(
-      [...playedHighlightsRef.current, ...feedHighlights],
+    appendUnique(
+      playedCardsRef.current,
+      (cardFeed || []).filter((c: any) => Number(c?.minute ?? 0) <= currentMinute),
+      cardKey,
+    );
+    appendUnique(
+      playedHighlightsRef.current,
+      (highlightFeed || []).filter((h: any) => Number(h?.minute ?? 0) <= currentMinute),
       highlightKey,
     );
 
-    // Create the assistant's substitution plan once per simulated match. It is
-    // deliberately randomised so the same three minutes/players are not replayed.
-    autoSubPlanRef.current = buildAutoSubPlan(currentMinute);
+    appendUnique(
+      playedEventsRef.current,
+      normalizeLiveArray(result.events).filter((e: any) => Number(e?.minute ?? 0) > currentMinute && Number(e?.minute ?? 0) <= 90),
+      eventKey,
+    );
+    appendUnique(
+      playedCardsRef.current,
+      normalizeLiveArray(result.cards).filter((c: any) => Number(c?.minute ?? 0) > currentMinute && Number(c?.minute ?? 0) <= 90),
+      cardKey,
+    );
+    appendUnique(
+      playedHighlightsRef.current,
+      normalizeLiveArray(result.highlights)
+        .filter((h: any) => Number(h?.minute ?? 0) > currentMinute && Number(h?.minute ?? 0) <= 90)
+        .filter((h: any) => !(h.type === "forced_sub" && h.team === mySide)),
+      highlightKey,
+    );
 
-    const madeWhileSkipping: any[] = [];
-    for (let m = currentMinute + 1; m <= 90; m++) {
-      drainStamina();
+    // The live chronicle already contains any substitutions actually made by
+    // the manager. Complete it with future engine substitutions in one pass.
+    // We do not call autoSubMyTeamAt()/applyOpponentSubsAt() per minute: the
+    // pre-simulated fixture already contains the authoritative planned changes.
+    const existingMySubKeys = new Set(
+      (subsRef.current || []).map((s: any) =>
+        `${Number(s.minute) || 0}|${s.outId ?? s.playerOutId}|${s.inId ?? s.playerInId}`,
+      ),
+    );
+    const existingOppSubKeys = new Set(
+      (oppSubsDoneRef.current || []).map((s: any) =>
+        `${Number(s.minute) || 0}|${s.outId ?? s.playerOutId}|${s.inId ?? s.playerInId}`,
+      ),
+    );
 
-      // Injuries are emergency events: resolve them before ordinary planned
-      // substitutions so the injured player can never remain on the pitch.
-      const forcedInjurySubs = autoResolveMyInjuryAt(m);
-      if (forcedInjurySubs.length > 0) {
-        madeWhileSkipping.push(...forcedInjurySubs);
-      }
+    const futureSubstitutions = normalizeLiveArray(result.substitutions)
+      .filter((s: any) => Number(s?.minute ?? 0) > currentMinute && Number(s?.minute ?? 0) <= 90)
+      .sort((a: any, b: any) => Number(a?.minute ?? 0) - Number(b?.minute ?? 0));
 
-      const opponentInjuryAtMinute = allHighlightsRef.current.some(
-        (h: any) =>
-          h.minute === m &&
-          h.type === "injury" &&
-          h.team !== mySideOf(fixtureRef.current),
-      );
-      if (autoSubPlanRef.current.includes(m)) {
-        // A minute can contain 2-3 substitutions in the same legal window.
-        const plannedCount = autoSubPlanRef.current.filter((minute) => minute === m).length;
-        for (let i = 0; i < plannedCount; i++) {
-          madeWhileSkipping.push(...autoSubMyTeamAt(m));
-        }
-      }
-
-      const evs = allEventsRef.current.filter((e) => e.minute === m).map(remapEventToPitch);
-      playedEventsRef.current = uniq([...playedEventsRef.current, ...evs], eventKey);
-      for (const ev of evs) {
-        if (!["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(ev.type)) continue;
-        if (ev.team === "home") homeScoreRef.current += 1;
-        else if (ev.team === "away") awayScoreRef.current += 1;
-      }
-
-      const cds = allCardsRef.current.filter((c) => c.minute === m).map(remapCardToPitch);
-      playedCardsRef.current = uniq([...playedCardsRef.current, ...cds], cardKey);
-
-      const hls = allHighlightsRef.current
-        .filter((h) => h.minute === m)
-        .filter((h) => !(h.type === "forced_sub" && h.team === mySideOf(fixtureRef.current)))
-        .filter((h) => !(opponentInjuryAtMinute && h.type === "forced_sub"));
-      playedHighlightsRef.current = uniq([...playedHighlightsRef.current, ...hls], highlightKey);
-      if (includeOpponentSubs) {
-        if (opponentInjuryAtMinute) {
-          applyOpponentForcedInjurySubsAt(m);
-        }
-        applyOpponentSubsAt(m);
-      }
-    }
-
-    if (madeWhileSkipping.length > 0) {
-      setSubFeed((prev) => [...madeWhileSkipping.slice().reverse(), ...prev]);
-    }
-
-    // Some older European saves contain a valid final score but an incomplete
-    // events array. Never let that turn "Saltar al final" into "only changes":
-    // reconstruct the missing goal entries from the final score before closing
-    // the chronicle.
-    {
-      const ensureGoalEvents = (team: "home" | "away", expectedGoals: number) => {
-        if (expectedGoals <= 0) return;
-        const current = playedEventsRef.current.filter(
-          (e: any) =>
-            e.team === team &&
-            ["goal", "own_goal", "free_kick_goal", "penalty_goal"].includes(e.type),
-        ).length;
-        let missing = expectedGoals - current;
-        if (missing <= 0) return;
-        const sideXI = team === "home" ? homeXIRef.current : awayXIRef.current;
-        const candidates = sideXI.filter(Boolean);
-        if (candidates.length === 0) return;
-        for (let i = 0; i < missing; i++) {
-          const p = candidates[(current + i) % candidates.length];
-          const minute = Math.min(90, Math.max(1, 5 + Math.floor((84 * (i + 1)) / (missing + 1))));
-          playedEventsRef.current.push({
-            minute,
-            team,
-            type: "goal",
-            scorerId: p.id,
-            scorerName: p.name,
-            detail: "Gol generado al cerrar la simulación",
-          });
-        }
+    const newMySubs: any[] = [];
+    const newOppSubs: any[] = [];
+    for (const sub of futureSubstitutions) {
+      const normalized = {
+        minute: Number(sub.minute) || 0,
+        outId: sub.playerOutId ?? sub.outId,
+        inId: sub.playerInId ?? sub.inId,
+        outName: sub.playerOutName ?? sub.outName ?? "",
+        inName: sub.playerInName ?? sub.inName ?? "",
+        team: sub.team,
       };
-      ensureGoalEvents("home", Number(fx.result.homeGoals) || 0);
-      ensureGoalEvents("away", Number(fx.result.awayGoals) || 0);
-
-      // Once missing events have been restored, derive the regular-time score
-      // from the chronicle itself. This prevents finalizePlayedChronicle() from
-      // persisting 0-0 merely because the live loop had no goal event for an
-      // older European fixture.
-      const chronicleGoals = (team: "home" | "away") =>
-        playedEventsRef.current.filter(
-          (e: any) =>
-            e.team === team &&
-            ["goal", "own_goal", "free_kick_goal", "penalty_goal"].includes(e.type),
-        ).length;
-      homeScoreRef.current = chronicleGoals("home");
-      awayScoreRef.current = chronicleGoals("away");
+      const key = `${normalized.minute}|${normalized.outId}|${normalized.inId}`;
+      if (normalized.team === mySide) {
+        if (!existingMySubKeys.has(key) && normalized.outId && normalized.inId) {
+          existingMySubKeys.add(key);
+          newMySubs.push(normalized);
+        }
+      } else if (includeOpponentSubs && normalized.team === opponentSide) {
+        if (!existingOppSubKeys.has(key) && normalized.outId && normalized.inId) {
+          existingOppSubKeys.add(key);
+          newOppSubs.push(normalized);
+        }
+      }
     }
 
-    // From this point on there is only one authoritative timeline: what has
-    // actually been resolved. The future pre-simulation is never displayed.
+    if (newMySubs.length) {
+      subsRef.current = [
+        ...(subsRef.current || []),
+        ...newMySubs.map((s) => ({
+          minute: s.minute,
+          outId: s.outId,
+          outName: s.outName,
+          inId: s.inId,
+          inName: s.inName,
+        })),
+      ].sort((a, b) => Number(a.minute) - Number(b.minute));
+    }
+    if (newOppSubs.length) {
+      oppSubsDoneRef.current = [
+        ...(oppSubsDoneRef.current || []),
+        ...newOppSubs.map((s) => ({
+          minute: s.minute,
+          team: opponentSide,
+          playerOutId: s.outId,
+          playerOutName: s.outName,
+          playerInId: s.inId,
+          playerInName: s.inName,
+          outId: s.outId,
+          outName: s.outName,
+          inId: s.inId,
+          inName: s.inName,
+        })),
+      ].sort((a, b) => Number(a.minute) - Number(b.minute));
+    }
+
+    const allNewSubs = [
+      ...newMySubs.map((s) => ({ ...s, team: mySide })),
+      ...newOppSubs.map((s) => ({ ...s, team: opponentSide })),
+    ];
+    if (allNewSubs.length) {
+      setSubFeed((prev) => [
+        ...allNewSubs
+          .slice()
+          .sort((a, b) => Number(b.minute) - Number(a.minute))
+          .map((s) => ({
+            minute: s.minute,
+            team: s.team,
+            inName: s.inName,
+            outName: s.outName,
+            playerInId: s.inId,
+            playerOutId: s.outId,
+          })),
+        ...prev,
+      ]);
+    }
+
+    // Update the current XIs once with the future substitutions. This keeps the
+    // post-match lineup/stats coherent without firing React updates for every
+    // simulated minute.
+    const applySubsToXI = (initialXI: any[], subs: any[], side: "home" | "away") => {
+      const xi = [...initialXI];
+      for (const sub of subs.filter((s: any) => s.team === side)) {
+        const outIndex = xi.findIndex((p: any) => p?.id === sub.outId);
+        const incoming = playerById(sub.inId);
+        if (outIndex >= 0 && incoming) xi[outIndex] = incoming;
+      }
+      return xi;
+    };
+    const allFutureSubs = allNewSubs.concat(
+      (subsRef.current || []).map((s: any) => ({ ...s, team: mySide })),
+      (oppSubsDoneRef.current || []).map((s: any) => ({
+        ...s,
+        team: opponentSide,
+        outId: s.outId ?? s.playerOutId,
+        inId: s.inId ?? s.playerInId,
+      })),
+    );
+    myXIRef.current = applySubsToXI(myXIRef.current, allFutureSubs, mySide);
+    oppXIRef.current = applySubsToXI(oppXIRef.current, allFutureSubs, opponentSide);
+
+    // Compute stamina by intervals rather than subtracting it 90 times. The
+    // number of substitutions/cards/injuries is tiny, so this is effectively O(events).
+    const skipTactics = myTeamIdRef.current ? loadTactics(myTeamIdRef.current) : null;
+    const skipPressure = (skipTactics?.pressure ?? "medium") as "low" | "medium" | "high";
+    const skipStaminaMult = tacticsModifiers(skipTactics).stamina * managerEffectsRef.current.staminaMultiplier;
+    const stamina = { ...staminaRef.current };
+    const playerCache = new Map(mySquad().map((p: any) => [p.id, p]));
+    const currentPlayers = new Map<string, any>();
+    for (const id of myXIRef.current) {
+      const p = playerCache.get(id) ?? playerById(id);
+      if (p) currentPlayers.set(id, p);
+    }
+
+    const drainPlayers = (minutes: number) => {
+      if (minutes <= 0) return;
+      for (const [id, p] of currentPlayers) {
+        const current = Number(stamina[id] ?? STAMINA_START);
+        stamina[id] = Math.max(
+          0,
+          current - minutes * drainPerMinute(p.position, skipPressure, skipStaminaMult),
+        );
+      }
+    };
+
+    const myFutureSubsSorted = (subsRef.current || [])
+      .filter((s: any) => Number(s.minute) > currentMinute && Number(s.minute) <= 90)
+      .slice()
+      .sort((a: any, b: any) => Number(a.minute) - Number(b.minute));
+    let staminaMinute = currentMinute;
+    for (const sub of myFutureSubsSorted) {
+      const m = Math.max(staminaMinute, Number(sub.minute) || staminaMinute);
+      drainPlayers(m - staminaMinute);
+      staminaMinute = m;
+      currentPlayers.delete(sub.outId);
+      const incoming = playerCache.get(sub.inId) ?? playerById(sub.inId);
+      if (incoming) {
+        currentPlayers.set(sub.inId, incoming);
+        stamina[sub.inId] = STAMINA_START;
+      }
+    }
+    drainPlayers(90 - staminaMinute);
+    staminaRef.current = stamina;
+
+    if (newMySubs.length || newOppSubs.length) {
+      const myCount = (subsRef.current || []).length;
+      subsUsedRef.current = Math.max(subsUsedRef.current, myCount);
+    }
+
+    // Score directly from the chronicle; no minute-by-minute score mutation.
+    const regularGoalTypes = new Set(["goal", "penalty_goal", "free_kick_goal", "own_goal"]);
+    const countChronicleGoals = (team: "home" | "away") =>
+      playedEventsRef.current.filter((e: any) => e.team === team && regularGoalTypes.has(e.type)).length;
+
+    // Legacy European saves can contain a final score without every goal event.
+    // Restore only the missing goal records once, then continue to the normal
+    // finalization path.
+    for (const team of ["home", "away"] as const) {
+      const expected = Number(team === "home" ? result.homeGoals : result.awayGoals) || 0;
+      const existing = countChronicleGoals(team);
+      if (expected <= existing) continue;
+      const sideXI = team === "home" ? homeXIRef.current : awayXIRef.current;
+      const candidates = sideXI.filter(Boolean);
+      for (let i = existing; i < expected && candidates.length; i++) {
+        const p = candidates[i % candidates.length];
+        playedEventsRef.current.push({
+          minute: Math.min(90, Math.max(1, 5 + Math.floor((84 * (i - existing + 1)) / Math.max(1, expected - existing + 1)))),
+          team,
+          type: "goal",
+          scorerId: p.id,
+          scorerName: p.name,
+          detail: "Gol generado al cerrar la simulación",
+        });
+      }
+    }
+
+    homeScoreRef.current = countChronicleGoals("home");
+    awayScoreRef.current = countChronicleGoals("away");
+    const finalHome = Number(result.homeGoals);
+    const finalAway = Number(result.awayGoals);
+    if (Number.isFinite(finalHome)) homeScoreRef.current = finalHome;
+    if (Number.isFinite(finalAway)) awayScoreRef.current = finalAway;
+
     try {
       finalizePlayedChronicle();
     } catch (error) {
-      // A malformed historical stat must never leave the match route without
-      // a finish button. Preserve the authoritative fixture result and close
-      // the live session even if an optional post-match stat pass fails.
       console.error("skipToEnd: error closing chronicle", error);
       fixtureRef.current = { ...fx, result: { ...fx.result } } as any;
       persistResultToSave(fx.id, fx.result);
     }
+
     setHomeScore(homeScoreRef.current);
     setAwayScore(awayScoreRef.current);
-    setFeed(
-      playedEventsRef.current
-        .slice()
-        .sort((a: any, b: any) => a.minute - b.minute)
-        .reverse(),
-    );
-    setCardFeed(
-      playedCardsRef.current
-        .slice()
-        .sort((a: any, b: any) => a.minute - b.minute)
-        .reverse(),
-    );
-    setHighlightFeed(
-      playedHighlightsRef.current
-        .slice()
-        .sort((a: any, b: any) => a.minute - b.minute)
-        .reverse(),
-    );
-
-    // The stored final score is authoritative. This also protects legacy or
-    // provisional results whose event list did not contain every goal.
-    const finalHome = Number(fx.result.homeGoals);
-    const finalAway = Number(fx.result.awayGoals);
-    if (Number.isFinite(finalHome)) homeScoreRef.current = finalHome;
-    if (Number.isFinite(finalAway)) awayScoreRef.current = finalAway;
-    setHomeScore(homeScoreRef.current);
-    setAwayScore(awayScoreRef.current);
-
+    setFeed(playedEventsRef.current.slice().sort((a: any, b: any) => b.minute - a.minute));
+    setCardFeed(playedCardsRef.current.slice().sort((a: any, b: any) => b.minute - a.minute));
+    setHighlightFeed(playedHighlightsRef.current.slice().sort((a: any, b: any) => b.minute - a.minute));
+    setStamina(staminaRef.current);
+    setMyXI(myXIRef.current);
+    setMyBench(myBenchRef.current);
     setMinute(90);
     minuteRef.current = 90;
     setPhase("done");
+    pausedRef.current = true;
+    pauseReasonRef.current = null;
+    setIsPaused(false);
+    setPauseReason(null);
     clearMatchSnapshot();
     clearLive();
   }
@@ -5698,16 +5812,6 @@ function MatchPage() {
   const injuries = fixture.result?.injuries ?? [];
   const savedFormations = save.formations ?? {};
   const savedLineups = save.lineups ?? {};
-
-  // Debug: log fixture info
-  console.log("Match fixture:", {
-    homeId: fixture.homeId,
-    awayId: fixture.awayId,
-    myId,
-    isHome,
-    homeName: home?.name,
-    awayName: away?.name,
-  });
 
   // The preview must never fail just because a legacy save contains an
   // incomplete/missing squad. Keep rendering the match and fall back to an

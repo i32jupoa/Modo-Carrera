@@ -207,7 +207,9 @@ export function clubWantsToRenew(clubId: string, playerId: string, cacheKey: str
   if (!isYoungProspect && !isUseful && !isKeyPlayer(playerId, cacheKey)) return false;
 
   // Un club ambicioso renueva antes; uno conservador deja correr el contrato.
-  const chance = clamp(0.45 + profile.ambition * 0.4 + (isYoungProspect ? 0.15 : 0), 0, 1);
+  const veteranKeyBoost = isKeyPlayer(playerId, cacheKey) && player.age >= 32 ? 0.22 : 0;
+  const keyBoost = isKeyPlayer(playerId, cacheKey) ? 0.12 : 0;
+  const chance = clamp(0.45 + profile.ambition * 0.4 + (isYoungProspect ? 0.15 : 0) + keyBoost + veteranKeyBoost, 0, 0.97);
   return seededUnit(clubId, playerId, cacheKey, "renew") < chance;
 }
 
