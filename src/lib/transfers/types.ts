@@ -255,6 +255,8 @@ export interface OfferClauses {
   squadRole?: SquadRole;
   /** Duración del contrato permanente ofrecido al jugador, en años. */
   contractYears?: number;
+  /** Prima de fichaje propuesta a un agente libre (campo de negociación del usuario). */
+  signingBonus?: number;
   /** Jugadores incluidos en el trato. */
   playerSwapIds: string[];
 }

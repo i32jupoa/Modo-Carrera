@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { getUserDeal, type UserDealEventKind } from "@/lib/transfers/UserNegotiation";
 
-export type NotificationKind = UserDealEventKind;
+export type NotificationKind = UserDealEventKind | "mailbox";
 
 export interface MarketNotification {
   id: string;
@@ -15,13 +15,15 @@ export interface MarketNotification {
   read: boolean;
 }
 
-export type MarketNotificationSection = "deals" | "offers";
+export type MarketNotificationSection = "deals" | "offers" | "mailbox";
 
 interface NotificationsState {
   items: MarketNotification[];
   /** Novedades sin leer separadas entre negociaciones y ofertas recibidas. */
   counts: Record<MarketNotificationSection, number>;
   add: (events: Array<{ dealId?: string; direction: "in" | "out"; kind: NotificationKind; text: string }>, date: string) => void;
+  addMailbox: (playerName: string, date: string) => void;
+  markMailboxRead: () => void;
   markSectionRead: (section: MarketNotificationSection) => void;
   refreshCounts: () => void;
   markAllRead: () => void;
@@ -35,7 +37,7 @@ const STORAGE_PREFIX = "fcsim:market-notifications:v1";
 let currentSaveId: string | null = null;
 
 function emptyCounts(): Record<MarketNotificationSection, number> {
-  return { deals: 0, offers: 0 };
+  return { deals: 0, offers: 0, mailbox: 0 };
 }
 
 function sectionForNotification(item: MarketNotification): MarketNotificationSection {
@@ -110,6 +112,28 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     const items = [...fresh, ...existing].slice(0, MAX_ITEMS);
     persist(items);
     set({ items, counts: countUnread(items) });
+  },
+
+  addMailbox: (playerName, date) => {
+    const existing = get().items;
+    const event: MarketNotification = {
+      id: `mailbox-${date}-${playerName}-${Date.now().toString(36)}`,
+      section: "mailbox",
+      kind: "mailbox",
+      text: `Nuevo mensaje de ${playerName}`,
+      date,
+      read: false,
+    };
+    const items = [event, ...existing].slice(0, MAX_ITEMS);
+    persist(items);
+    set({ items, counts: countUnread(items) });
+  },
+
+  markMailboxRead: () => {
+    const { items } = get();
+    const read = items.map((item) => sectionForNotification(item) === "mailbox" ? { ...item, read: true } : item);
+    persist(read);
+    set({ items: read, counts: countUnread(read) });
   },
 
   markSectionRead: (section) => {

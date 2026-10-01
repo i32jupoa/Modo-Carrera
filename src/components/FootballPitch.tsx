@@ -2,6 +2,9 @@ import { PositionCoordinate } from "@/lib/formations";
 import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 import { Zap } from "lucide-react";
+import { MoodFace, moodLabel } from "@/components/MoodFace";
+import type { SquadRole } from "@/lib/transfers/types";
+import { SQUAD_ROLE_LABELS } from "@/lib/squadRoles";
 
 interface FootballPitchProps {
   children: React.ReactNode;
@@ -63,6 +66,8 @@ interface PlayerNodeProps {
     forcedInjury?: boolean;
     suspended?: boolean;
     cardImage?: string;
+    morale?: number;
+    squadRole?: SquadRole;
   };
   coordinates: PositionCoordinate;
   isSelected: boolean;
@@ -82,6 +87,7 @@ function getShortName(name: string): string {
   // Return first 8 chars of last name
   return lastName.substring(0, 8);
 }
+
 
 export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerNodeProps) {
   const shortName = getShortName(player.name);
@@ -125,6 +131,11 @@ export function PlayerNode({ player, coordinates, isSelected, onClick }: PlayerN
           <Zap className="h-2.5 w-2.5 fill-current" />
           <span>{Math.round(player.energy ?? 100)}</span>
         </span>
+        {typeof player.morale === "number" && (
+          <span className="absolute -bottom-1 -left-1 rounded-full border border-background/80 bg-background/90 p-0.5 shadow" title={`${player.squadRole ? `Rol: ${SQUAD_ROLE_LABELS[player.squadRole]}` : ""} · ${moodLabel(player.morale ?? 70).label}`}>
+            <MoodFace morale={player.morale} size={12} />
+          </span>
+        )}
         <span
           className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1.5 text-[0.6rem] font-black leading-tight tabular-nums text-foreground shadow"
           title={`Media: ${player.rating}`}

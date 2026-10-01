@@ -25,7 +25,7 @@ export const MARKET_TIMING = {
   /** Días que una negociación puede quedarse parada antes de expirar. */
   negotiationExpiryDays: 7,
   /** Máximo de propuestas del usuario durante la negociación directa con el jugador. */
-  maxPlayerNegotiationRounds: 4,
+  maxPlayerNegotiationRounds: 5,
   /**
    * Máximo de fichajes por club y ventana. Antes no tenía tope real (99), lo
    * que permitía a un club encadenar decenas de fichajes en una sola ventana
@@ -421,6 +421,14 @@ export const PRICE_MULTIPLIERS = {
 
 export const STAR_THRESHOLD = 88;
 export const WORLD_CLASS_THRESHOLD = 84;
+
+/**
+ * OVR a partir del cual un agente libre se considera suficientemente
+ * importante como para negociar también la prima de fichaje. Los jugadores
+ * por debajo de este nivel pueden recibir una prima, pero esa condición no
+ * abre una negociación adicional con el jugador.
+ */
+export const FREE_AGENT_IMPORTANT_OVR = 80;
 
 /** Ofertas por debajo de este ratio sobre el mínimo son insultantes. */
 export const INSULTING_OFFER_RATIO = 0.6;

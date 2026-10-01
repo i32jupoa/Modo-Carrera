@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { getAllTeams, teamById, LEAGUES } from "@/data/teams";
-import { loadSave, newSave, saveSave } from "@/lib/store";
+import { loadSave, newSave, saveSave, initializeUserSquadRoles } from "@/lib/store";
 import {
   loadAllSaves,
   addSaveToMultiple,
@@ -99,7 +99,7 @@ function Index() {
       resetClubOverrides();
 
       initPlayers();
-      const s = newSave(id);
+      const s = initializeUserSquadRoles(newSave(id));
       setMyTeam(id);
       // addSaveToMultiple captura el estado del playersStore para independencia
       addSaveToMultiple(s);
@@ -142,6 +142,7 @@ function Index() {
     // Restaurar el snapshot completo (NO llamar a setMyTeam ni init después:
     // ambas reescribirían rosterIds/squad y perderías los fichajes).
     restorePlayersStoreState(save);
+    save = initializeUserSquadRoles(save);
 
     // Sincronizar el sistema antiguo (clave única) con la partida cargada
     saveSave(save);

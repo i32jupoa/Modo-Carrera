@@ -334,7 +334,8 @@ export function MarketFeed({
                   const marketPlayer = getPlayer(deal.playerId);
                   const rawPlayer = fcPlayerById(deal.playerId);
                   const playerPosition = rawPlayer?.Position ?? marketPlayer?.position ?? "MID";
-                  const sellerClubId = deal.direction === "in" ? deal.otherClubId : deal.userClubId;
+                  const isFreeAgentDeal = deal.offer.type === "free";
+                  const sellerClubId = isFreeAgentDeal ? null : (deal.direction === "in" ? deal.otherClubId : deal.userClubId);
                   const buyerClubId = deal.direction === "in" ? deal.userClubId : deal.otherClubId;
                   return (
                     <li
@@ -349,18 +350,24 @@ export function MarketFeed({
                         showRing={false}
                       />
                       <div className="flex items-center gap-1 shrink-0">
-                        <ClubBadge clubId={sellerClubId} size={20} />
+                        {sellerClubId ? (
+                          <ClubBadge clubId={sellerClubId} size={20} />
+                        ) : (
+                          <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[0.55rem] font-black uppercase text-primary">Libre</span>
+                        )}
                         <span className="text-muted-foreground text-xs">→</span>
                         <ClubBadge clubId={buyerClubId} size={20} />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold leading-snug">
                           {deal.direction === "in"
-                            ? `Tu club negocia el fichaje de ${deal.playerName} con el ${clubName(deal.otherClubId)}.`
+                            ? (isFreeAgentDeal
+                              ? `Tu club negocia el fichaje de ${deal.playerName} directamente con el jugador (agente libre).`
+                              : `Tu club negocia el fichaje de ${deal.playerName} con el ${clubName(deal.otherClubId)}.`)
                             : `El ${clubName(deal.otherClubId)} negocia el fichaje de ${deal.playerName}.`}
                         </p>
                         <p className="mt-1 text-[0.65rem] text-muted-foreground">
-                          {clubName(sellerClubId)} → {clubName(buyerClubId)} · {deal.updatedOn} · fiabilidad 100%
+                          {isFreeAgentDeal ? `Agente libre → ${clubName(buyerClubId)}` : `${clubName(sellerClubId!)} → ${clubName(buyerClubId)}`} · {deal.updatedOn} · fiabilidad 100%
                         </p>
                       </div>
                     </li>

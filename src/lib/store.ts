@@ -56,7 +56,7 @@ import {
   Standing,
 } from "@/lib/season";
 
-import { addDaysToIso } from "@/lib/transferWindows";
+import { addDaysToIso, transferWindowKey } from "@/lib/transferWindows";
 import {
   NATIONAL_CUP_START,
   getSafeNationalCupDatesBetween,
@@ -128,6 +128,10 @@ import {
   type EuropeanCompetitionConfig,
 } from "@/data/europeanCompetitions";
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
+import { assignSquadRoles } from "@/lib/squadRoles";
+import { SATISFACTION_CONFIG, computePostMatchSatisfaction, clampMorale, hydrateMailboxWantsOutOverrides, injuryWasActiveBeforeMatch, wasSuspendedBeforeMatch } from "@/lib/satisfaction";
+import { createEmptyMailbox, generateMailboxMessages, resolveMailboxPromises, releasePendingMailboxResolutions, type MailboxState } from "@/lib/mailbox";
+import { useNotificationsStore } from "@/store/notificationsStore";
 
 import {
   ALL_FORMATIONS,
@@ -860,6 +864,12 @@ export type SaveGame = {
   uel: import("@/data/ucl").UCLState | null;
   uecl: import("@/data/ucl").UCLState | null;
 
+  /** Mensajería persistente y acotada del vestuario. */
+  mailbox?: MailboxState;
+
+  /** Ventana de mercado para la que ya se recalcularon los roles automáticos. */
+  squadRoleRecalculationKey?: string;
+
   /** Version of the appearance-counter repair already applied to this save. */
   appearanceStatsRepairVersion?: number;
 };
@@ -1085,6 +1095,44 @@ function rebuildAppearanceCountersFromFixtures(save: SaveGame): boolean {
   return changed;
 }
 
+
+export function recalculateUserSquadRoles(save: SaveGame, force = false): SaveGame {
+  const store = usePlayersStore.getState();
+  const squad = store.getSimSquad(save.myTeamId);
+  if (squad.length === 0) return save;
+  const roleWindowKey = `${save.season}:${transferWindowKey(store.currentDate)}`;
+  if (!force && save.squadRoleRecalculationKey === roleWindowKey) {
+    hydrateMailboxWantsOutOverrides(store.stats ?? {});
+    return save;
+  }
+  const typicalXIIds = new Set((save.lineups?.[save.myTeamId] ?? []).slice(0, 11));
+  const stats = { ...(store.stats ?? {}) };
+  const negotiated = new Map<string, import("@/lib/transfers/types").SquadRole>();
+  for (const player of squad) {
+    const current = stats[player.id];
+    if (current?.squadRoleIsNegotiated && current.squadRole) negotiated.set(player.id, current.squadRole);
+  }
+  const roles = assignSquadRoles(squad, typicalXIIds, negotiated);
+  let changed = false;
+  const nextStats = { ...stats };
+  for (const player of squad) {
+    const previous = nextStats[player.id];
+    if (!previous) continue;
+    const role = roles[player.id];
+    if (force || previous.squadRole !== role) {
+      nextStats[player.id] = { ...previous, squadRole: role };
+      changed = true;
+    }
+  }
+  hydrateMailboxWantsOutOverrides(nextStats);
+  if (changed) usePlayersStore.setState({ stats: nextStats });
+  return { ...save, squadRoleRecalculationKey: roleWindowKey };
+}
+
+export function initializeUserSquadRoles(save: SaveGame): SaveGame {
+  return recalculateUserSquadRoles(save, true);
+}
+
 export function loadSave(): SaveGame | null {
   if (typeof window === "undefined") return null;
 
@@ -1159,6 +1207,32 @@ export function loadSave(): SaveGame | null {
     if (parsed.ueclPrizesAwarded == null) { parsed.ueclPrizesAwarded = []; needsMigrationSave = true; }
     if (parsed.uel === undefined) { parsed.uel = null; needsMigrationSave = true; }
     if (parsed.uecl === undefined) { parsed.uecl = null; needsMigrationSave = true; }
+    if (parsed.mailbox == null) { parsed.mailbox = createEmptyMailbox(); needsMigrationSave = true; }
+    if (!Array.isArray(parsed.mailbox.conversations)) { parsed.mailbox.conversations = []; needsMigrationSave = true; }
+    if (!Array.isArray(parsed.mailbox.promises)) { parsed.mailbox.promises = []; needsMigrationSave = true; }
+    if (!Number.isFinite(Number(parsed.mailbox.sequence))) { parsed.mailbox.sequence = 0; needsMigrationSave = true; }
+    parsed.mailbox.generatedDate = typeof parsed.mailbox.generatedDate === "string" ? parsed.mailbox.generatedDate : undefined;
+    parsed.mailbox.generatedCount = Math.max(0, Math.min(2, Number(parsed.mailbox.generatedCount) || 0));
+    parsed.mailbox.conversations = parsed.mailbox.conversations.slice(0, 40);
+    parsed.mailbox.conversations.forEach((conversation: any) => {
+      const rawMessages = Array.isArray(conversation.messages) ? conversation.messages.slice(-30) : [];
+      const normalizedMessages: any[] = [];
+      for (const message of rawMessages) {
+        const previous = normalizedMessages.at(-1);
+        const isDuplicateManagerReply = Boolean(
+          previous &&
+          previous.sender === "manager" &&
+          message?.sender === "manager" &&
+          previous.playerId === message.playerId &&
+          previous.text === message.text,
+        );
+        if (!isDuplicateManagerReply) normalizedMessages.push(message);
+        needsMigrationSave = needsMigrationSave || isDuplicateManagerReply;
+      }
+      conversation.messages = normalizedMessages.slice(-30);
+      conversation.unreadCount = conversation.messages.filter((message: any) => message?.sender === "player" && !message?.read).length;
+    });
+    parsed.mailbox.promises = parsed.mailbox.promises.slice(-40);
 
     // MIGRATION: repair league fixtures created by the broken calendar bridge.
     // That bridge copied homeId/awayId from ScheduleFixture, but ScheduleFixture
@@ -1320,7 +1394,13 @@ export function loadSave(): SaveGame | null {
       needsMigrationSave = true;
     }
 
-    const save = parsed as SaveGame;
+    let save = parsed as SaveGame;
+    if (usePlayersStore.getState().myTeamId === save.myTeamId) {
+      save = recalculateUserSquadRoles(save, false);
+      if (save.squadRoleRecalculationKey !== (parsed as SaveGame).squadRoleRecalculationKey) needsMigrationSave = true;
+    } else {
+      hydrateMailboxWantsOutOverrides(usePlayersStore.getState().stats ?? {});
+    }
 
     parsedSaveCache = {
       saveId: activeId,
@@ -1797,6 +1877,7 @@ export function newSave(myTeamId: string): SaveGame {
     ueclPrizesAwarded: [],
     uel: null,
     uecl: null,
+    mailbox: createEmptyMailbox(),
   };
 }
 
@@ -2445,6 +2526,13 @@ function applyMatchToStats(
 
   const statsCompetition = fixture.europeanCompetition ?? fixture.competition;
   const store = usePlayersStore.getState();
+  const isUserFixture = fixture.homeId === save.myTeamId || fixture.awayId === save.myTeamId;
+  const preMatchUserStats = isUserFixture ? { ...store.stats } : store.stats;
+  const preMatchUserSuspensions = isUserFixture
+    ? Object.fromEntries(
+        Object.entries(save.suspensions ?? {}).map(([teamId, list]) => [teamId, (list ?? []).map((item) => ({ ...item }))]),
+      )
+    : save.suspensions ?? {};
 
   // IMPORTANT: existing suspensions must still be active while selecting the
   // XI for THIS fixture. Consuming first made a one-match ban disappear before
@@ -2850,8 +2938,191 @@ function applyMatchToStats(
     } catch {}
   }
 
+  if ((fixture.homeId === save.myTeamId || fixture.awayId === save.myTeamId) && !r.satisfactionApplied) {
+    updatedSave = applyUserMatchPlayerSystems(updatedSave, fixture, preMatchUserStats, preMatchUserSuspensions);
+  }
+
   r.matchStatsApplied = true;
   return updatedSave;
+}
+
+
+function userMatchMinuteMap(fixture: Fixture, userTeamId: string): Map<string, number> {
+  const result = fixture.result;
+  const minutes = new Map<string, number>();
+  if (!result) return minutes;
+  const isHome = fixture.homeId === userTeamId;
+  const starters = isHome ? result.homeStartingLineup ?? result.homeLineup ?? [] : result.awayStartingLineup ?? result.awayLineup ?? [];
+  for (const player of starters) minutes.set(player.id, 90);
+  for (const rating of result.ratings ?? []) {
+    if (rating.team && ((isHome && rating.team !== "home") || (!isHome && rating.team !== "away"))) continue;
+    minutes.set(rating.playerId, Math.max(0, Math.round(Number(rating.minutes) || 0)));
+  }
+  for (const substitution of result.substitutions ?? []) {
+    if ((isHome && substitution.team !== "home") || (!isHome && substitution.team !== "away")) continue;
+    minutes.set(substitution.playerOutId, Math.max(0, Math.min(90, Math.round(substitution.minute))));
+    minutes.set(substitution.playerInId, Math.max(1, 90 - Math.round(substitution.minute)));
+  }
+  return minutes;
+}
+
+function applyUserMatchPlayerSystems(
+  save: SaveGame,
+  fixture: Fixture,
+  preMatchStats: Record<string, any>,
+  preMatchSuspensions: Record<string, Suspension[]>,
+): SaveGame {
+  if (!fixture.result || fixture.result.satisfactionApplied) return save;
+  const userTeamId = save.myTeamId;
+  if (fixture.homeId !== userTeamId && fixture.awayId !== userTeamId) return save;
+  const store = usePlayersStore.getState();
+  const squad = store.getSimSquad(userTeamId);
+  if (squad.length === 0) {
+    fixture.result.satisfactionApplied = true;
+    return save;
+  }
+  const typicalXIIds = new Set((save.lineups?.[userTeamId] ?? []).slice(0, 11));
+  const computed = computePostMatchSatisfaction({
+    teamId: userTeamId,
+    homeTeamId: fixture.homeId,
+    squad,
+    stats: store.stats,
+    matchDate: fixture.date ?? store.currentDate,
+    competition: fixture.europeanCompetition ?? fixture.competition,
+    result: fixture.result,
+    suspensions: preMatchSuspensions,
+    typicalXIIds,
+    calledUpIds: new Set([
+      ...(save.lineups?.[userTeamId] ?? []),
+      ...(save.substitutes?.[userTeamId] ?? []),
+    ]),
+  });
+  usePlayersStore.setState({ stats: computed.updatedStats });
+
+  let mailbox = save.mailbox ?? createEmptyMailbox();
+  const playerAvailability = new Map<string, { minutes: number; started: boolean; available: boolean; rating?: number; isMvp?: boolean; scored?: boolean }>();
+  const mailboxUnavailable = new Set<string>();
+  const mailboxInjured = new Set<string>();
+  const mailboxSuspended = new Set<string>();
+  const minutes = userMatchMinuteMap(fixture, userTeamId);
+  for (const player of squad) {
+    const previous = preMatchStats[player.id] ?? {};
+    const preMatchUnavailable = wasSuspendedBeforeMatch(preMatchSuspensions, userTeamId, player.id, fixture.europeanCompetition ?? fixture.competition) || injuryWasActiveBeforeMatch(previous, fixture.date ?? store.currentDate);
+    const postMatchSuspended = (save.suspensions?.[userTeamId] ?? []).some((s) => s.playerId === player.id && s.matchdaysRemaining > 0 && s.competition === (fixture.europeanCompetition ?? fixture.competition));
+    const currentPlayerStats = usePlayersStore.getState().stats[player.id] ?? previous;
+    const postMatchInjured = preMatchUnavailable || (
+      currentPlayerStats.injuryStartDate === (fixture.date ?? store.currentDate) &&
+      Boolean(currentPlayerStats.injuredUntilDate && currentPlayerStats.injuredUntilDate > (fixture.date ?? store.currentDate))
+    );
+    const available = !preMatchUnavailable;
+    if (!available || postMatchSuspended || postMatchInjured) mailboxUnavailable.add(player.id);
+    if (postMatchInjured) mailboxInjured.add(player.id);
+    if (postMatchSuspended) mailboxSuspended.add(player.id);
+    const isHome = fixture.homeId === userTeamId;
+    const starters = isHome ? fixture.result?.homeStartingLineup ?? fixture.result?.homeLineup ?? [] : fixture.result?.awayStartingLineup ?? fixture.result?.awayLineup ?? [];
+    const started = starters.some((candidate) => candidate.id === player.id);
+    const playerRating = fixture.result?.ratings?.find((rating) => rating.playerId === player.id && (!rating.team || (isHome ? rating.team === "home" : rating.team === "away")));
+    const scored = (fixture.result?.events ?? []).some((event) => event.scorerId === player.id && event.type !== "own_goal");
+    const isMvp = fixture.result?.mvp?.playerId === player.id;
+    playerAvailability.set(player.id, {
+      minutes: minutes.get(player.id) ?? 0,
+      started,
+      available,
+      rating: playerRating?.rating,
+      scored,
+      isMvp,
+    });
+  }
+  const resolved = resolveMailboxPromises(mailbox, fixture.id, playerAvailability, squad, fixture.date ?? store.currentDate);
+  mailbox = resolved.state;
+  if (Object.keys(resolved.moraleDeltas).length > 0) {
+    const adjusted = { ...usePlayersStore.getState().stats };
+    for (const [playerId, delta] of Object.entries(resolved.moraleDeltas)) {
+      const previous = adjusted[playerId];
+      const preMatch = preMatchStats[playerId];
+      if (!previous) continue;
+      const isPromiseFailure = delta === SATISFACTION_CONFIG.mailboxPromiseFailurePenalty;
+      const targetMorale = isPromiseFailure && preMatch
+        ? clampMorale(preMatch.morale + delta)
+        : clampMorale(previous.morale + delta);
+      const reason = delta === SATISFACTION_CONFIG.mailboxPromiseGreatBonus
+        ? "Cumplió una promesa de minutos y rindió a gran nivel."
+        : delta === SATISFACTION_CONFIG.mailboxPromisePoorBonus
+          ? "Cumplió una promesa de minutos, aunque tuvo un partido discreto."
+          : delta === SATISFACTION_CONFIG.mailboxPromiseFailurePenalty
+            ? "No cumplió una promesa de minutos."
+            : "Cumplió una promesa de minutos.";
+      adjusted[playerId] = { ...previous, morale: targetMorale, satisfactionLastReason: reason };
+    }
+    usePlayersStore.setState({ stats: adjusted });
+  }
+
+  fixture.result.satisfactionApplied = true;
+
+  if (resolved.messages.length) {
+    const notifications = useNotificationsStore.getState();
+    const names = resolved.messages
+      .map((message) => squad.find((player) => player.id === message.playerId)?.name)
+      .filter((name): name is string => !!name);
+    for (const name of [...new Set(names)]) {
+      notifications.addMailbox(name, fixture.date ?? store.currentDate);
+    }
+  }
+  return { ...save, mailbox };
+}
+
+export function applyDailyMailboxMessages(save: SaveGame, date: string): SaveGame {
+  const userTeamId = save.myTeamId;
+  const allFixtures: Fixture[] = [
+    ...(save.fixtures?.[save.myLeague] ?? []),
+    ...Object.values(save.cupFixtures ?? {}).flat(),
+    ...(save.uclFixtures ?? []),
+    ...(save.uelFixtures ?? []),
+    ...(save.ueclFixtures ?? []),
+  ];
+  const hasUserMatch = allFixtures.some(
+    (fixture) => fixture.date === date && (fixture.homeId === userTeamId || fixture.awayId === userTeamId),
+  );
+  if (hasUserMatch) return save;
+
+  const store = usePlayersStore.getState();
+  const squad = store.getSimSquad(userTeamId);
+  if (squad.length === 0) return save;
+  const injured = new Set<string>();
+  for (const player of squad) {
+    const stat = store.stats[player.id];
+    if (stat?.injuredUntilDate && stat.injuredUntilDate > date) injured.add(player.id);
+  }
+  const suspended = new Set<string>(
+    (save.suspensions?.[userTeamId] ?? [])
+      .filter((entry) => entry.matchdaysRemaining > 0)
+      .map((entry) => entry.playerId),
+  );
+  const unavailable = new Set([...injured, ...suspended]);
+  const teamNames = new Map(TEAMS.map((team) => [team.id, team.name]));
+  let mailbox = save.mailbox ?? createEmptyMailbox();
+  const released = releasePendingMailboxResolutions(mailbox, squad, date, allFixtures, userTeamId);
+  mailbox = released.state;
+  const generated = generateMailboxMessages(mailbox, {
+    teamId: userTeamId,
+    players: squad,
+    stats: store.stats,
+    fixtures: allFixtures,
+    matchDate: date,
+    currentFixtureId: `day-${date}`,
+    unavailablePlayerIds: unavailable,
+    injuredPlayerIds: injured,
+    suspendedPlayerIds: suspended,
+  }, teamNames);
+  mailbox = generated.state;
+  if (released.messages.length || generated.messages.length) {
+    const notifications = useNotificationsStore.getState();
+    const names = [...released.messages, ...generated.messages]
+      .map((message) => squad.find((player) => player.id === message.playerId)?.name)
+      .filter((name): name is string => !!name);
+    for (const name of [...new Set(names)]) notifications.addMailbox(name, date);
+  }
+  return { ...save, mailbox };
 }
 
 function simulateFixtureInline(
@@ -8058,6 +8329,13 @@ function applyEuropeanFastResult(
 
   (next as any)[fixtureKey][idx] = simmed;
   const store = usePlayersStore.getState();
+  const isUserFixture = simmed.homeId === save.myTeamId || simmed.awayId === save.myTeamId;
+  const preMatchUserStats = isUserFixture ? { ...store.stats } : store.stats;
+  const preMatchUserSuspensions = isUserFixture
+    ? Object.fromEntries(
+        Object.entries(save.suspensions ?? {}).map(([teamId, list]) => [teamId, (list ?? []).map((item) => ({ ...item }))]),
+      )
+    : save.suspensions ?? {};
 
   // Batch-friendly stat recording: unlike applyMatchToStats, this does not
   // resolve both lineups a second time for the same fixture.
@@ -8097,6 +8375,10 @@ function applyEuropeanFastResult(
         );
       }
     }
+  }
+
+  if ((simmed.homeId === save.myTeamId || simmed.awayId === save.myTeamId) && !simmed.result.satisfactionApplied) {
+    next = applyUserMatchPlayerSystems(next, simmed, preMatchUserStats, preMatchUserSuspensions);
   }
 
   next = applyUCLMatchAftermath(next, simmed.homeId, simmed.awayId);
@@ -8366,6 +8648,9 @@ export function processUCLKnockoutProgress(save: SaveGame, throughOffset: number
       next.uelPrizesAwarded = syncProgressionLedger(next.uelPrizesAwarded);
       next.ueclPrizesAwarded = syncProgressionLedger(next.ueclPrizesAwarded);
     }
+    // Los roles automáticos solo se recalculan en hitos controlados. El final
+    // de temporada es uno de ellos; los roles pactados se conservan.
+    recalculateUserSquadRoles(next, true);
   }
 
   return next;

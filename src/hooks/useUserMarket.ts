@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { loadSave, recalculateUserSquadRoles } from "@/lib/store";
 import { formatEuro, usePlayersStore } from "@/store/playersStore";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import {
@@ -266,7 +267,11 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         clauses,
       });
       commit(
-        result.ok ? "Oferta enviada. El club responderá en unos días." : undefined,
+        result.ok
+          ? result.deal?.offer.type === "free"
+            ? "Propuesta enviada al agente libre. La negociación pasa directamente al jugador."
+            : "Oferta enviada. El club responderá en unos días."
+          : undefined,
         result.reason,
       );
     },
@@ -333,7 +338,14 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         refresh();
         return;
       }
-      commit(result.ok ? "Nueva ficha ofrecida al jugador." : undefined, result.reason);
+      commit(
+        result.ok
+          ? result.deal?.offer.type === "free" && clauses?.signingBonus !== undefined
+            ? "Nueva propuesta al agente libre enviada."
+            : "Nueva ficha ofrecida al jugador."
+          : undefined,
+        result.reason,
+      );
     },
     [currentDate, commit, refresh, syncBudget],
   );
@@ -424,6 +436,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
 
       flushWorldMoves();
       syncBudget();
+      const currentSaveAfterExit = loadSave();
+      if (currentSaveAfterExit) recalculateUserSquadRoles(currentSaveAfterExit, true);
 
       // Solo es un error real si, después de reconciliar, el jugador sigue
       // siendo tuyo en el motor.
@@ -534,6 +548,22 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         commit(undefined, bought.reason ?? "La plantilla no admite el fichaje.");
         return;
       }
+      const agreedRole = result.record.clauses?.squadRole ?? deal.offer?.clauses?.squadRole;
+      if (agreedRole) {
+        const currentStats = usePlayersStore.getState().stats;
+        const currentPlayerStats = currentStats[result.record.playerId];
+        usePlayersStore.setState({
+          stats: {
+            ...currentStats,
+            [result.record.playerId]: {
+              ...(currentPlayerStats ?? ({} as any)),
+              squadRole: agreedRole,
+              squadRoleIsNegotiated: true,
+            },
+          },
+        });
+      }
+
       const feePaid = result.fee;
       const wagePaid = isLoan
         ? wageCommitment
@@ -546,6 +576,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         budget: nextBudget,
         wageBudget: Math.round(nextBudget * nextRatio),
       });
+      const currentSaveAfterEntry = loadSave();
+      if (currentSaveAfterEntry) recalculateUserSquadRoles(currentSaveAfterEntry, true);
       flushWorldMoves();
       syncBudget();
       commit(`Fichaje cerrado por ${(result.fee / 1_000_000).toFixed(1)}M €.`);

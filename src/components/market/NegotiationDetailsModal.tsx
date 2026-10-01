@@ -77,7 +77,7 @@ export function NegotiationDetailsModal({
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <Info label={isLoan ? "Prima de cesión" : "Importe"} value={formatEuro(record.fee)} />
+          <Info label={isLoan ? "Prima de cesión" : record.type === "free" ? "Prima de fichaje" : "Importe"} value={formatEuro(record.fee)} />
           <Info label="Ficha anual" value={`${formatEuro(record.wage)}/año`} />
           <Info label="Rol acordado" value={role ? ROLE_LABELS[role] : "No especificado"} />
           <Info label="Rondas" value={String(snapshot?.rounds ?? "—")} />

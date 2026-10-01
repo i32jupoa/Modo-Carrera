@@ -77,6 +77,11 @@ export function DealCard({
   const [wage, setWage] = useState(Math.round(deal.offer.wageOffer / 100_000) / 10);
   const [playerRole, setPlayerRole] = useState<SquadRole>(initialLoanClauses.squadRole ?? "rotation");
   const [contractYears, setContractYears] = useState(deal.offer.clauses.contractYears ?? deal.playerYearsDemand ?? 4);
+  const [signingBonus, setSigningBonus] = useState(
+    deal.offer.type === "free"
+      ? Math.round((deal.playerSigningBonusDemand ?? deal.offer.amount) / 100_000) / 10
+      : Math.round(deal.offer.amount / 100_000) / 10,
+  );
   const [demand, setDemand] = useState(
     (deal.offer.type === "loan" || deal.offer.type === "loan-option" || deal.offer.type === "loan-obligation")
       ? Math.round(deal.offer.amount / 100_000) / 10
@@ -106,6 +111,11 @@ export function DealCard({
   useEffect(() => {
     const nextAmount = Math.round(deal.offer.amount / 100_000) / 10;
     setAmount(nextAmount);
+    setSigningBonus(
+      deal.offer.type === "free"
+        ? Math.round((deal.playerSigningBonusDemand ?? deal.offer.amount) / 100_000) / 10
+        : nextAmount,
+    );
     const dealIsLoan = deal.offer.type === "loan" || deal.offer.type === "loan-option" || deal.offer.type === "loan-obligation";
     if (dealIsLoan) {
       // En cesiones, la prima inicial de la contraoferta debe partir siempre
@@ -114,7 +124,7 @@ export function DealCard({
     } else if (deal.stage === "club-counter") {
       setDemand(Math.round((deal.clubDemand || deal.offer.amount) / 100_000) / 10);
     }
-  }, [deal.id, deal.stage, deal.offer.amount, deal.clubDemand]);
+  }, [deal.id, deal.stage, deal.offer.amount, deal.playerSigningBonusDemand, deal.clubDemand, deal.offer.type]);
   const [loanOptionFee, setLoanOptionFee] = useState(
     Math.round((deal.offer.clauses.optionFee ?? 0) / 100_000) / 10,
   );
@@ -131,6 +141,7 @@ export function DealCard({
   const closed = deal.stage === "completed" || deal.stage === "failed";
   const rawPlayer = fcPlayerById(deal.playerId);
   const marketPlayer = getPlayer(String(deal.playerId));
+  const freeAgentDeal = deal.offer.type === "free" && !marketPlayer?.clubId;
   const totalEconomicBudget = usePlayersStore((s) => s.budget);
   const wageBudget = usePlayersStore((s) => s.wageBudget);
   const transferBudget = Math.max(0, totalEconomicBudget - wageBudget);
@@ -161,7 +172,7 @@ export function DealCard({
   // ESTE jugador, sí limita el salario máximo: total disponible - precio del
   // traspaso ya acordado, además del presupuesto salarial elegido en la barra.
   const playerPhase = deal.stage === "player-terms" || deal.stage === "player-decision";
-  const agreedTransferFee = deal.direction === "in" && !isLoan && playerPhase
+  const agreedTransferFee = deal.direction === "in" && !isLoan && playerPhase && !freeAgentDeal
     ? Math.max(0, Math.round(deal.offer.amount))
     : 0;
   const effectivePlayerWageBudget = Math.min(
@@ -194,6 +205,10 @@ export function DealCard({
     deal.stage === "player-terms" &&
     !isLoan &&
     Math.max(0, Math.round(wage * 1_000_000)) > Math.max(0, effectivePlayerWageBudget);
+  const signingBonusOverBudget =
+    freeAgentDeal &&
+    deal.stage === "player-terms" &&
+    Math.max(0, Math.round(signingBonus * 1_000_000)) > transferBudget;
   const playerFinanciallySealed =
     playerPhase &&
     playerFinanciallyBlocked;
@@ -203,15 +218,19 @@ export function DealCard({
   const visiblePlayerMessage = !playerFinanciallySealed && playerMessageIsFinancialLock
     ? "Ya podemos continuar la negociación. Estoy listo para valorar vuestra propuesta."
     : deal.playerMessage;
-  const operationLabel = isLoan
-    ? deal.direction === "in"
-      ? "Cesión desde "
-      : "Cesión a "
-    : deal.direction === "in"
-      ? "Compra a "
-      : "Venta a ";
+  const isFreeAgentDeal = deal.offer.type === "free";
+  const operationLabel = isFreeAgentDeal
+    ? "Fichaje directo · "
+    : isLoan
+      ? deal.direction === "in"
+        ? "Cesión desde "
+        : "Cesión a "
+      : deal.direction === "in"
+        ? "Compra a "
+        : "Venta a ";
+  const displayOtherClubName = isFreeAgentDeal ? "Agente libre" : clubName(deal.otherClubId);
   const duration = deal.offer.clauses.loanDurationMonths || 0;
-  const otherClub = teamById(deal.otherClubId);
+  const otherClub = isFreeAgentDeal ? null : teamById(deal.otherClubId);
   const otherClubLeague = otherClub ? leagueName(deal.otherClubId) : "";
   const roleClubName = deal.direction === "out"
     ? (otherClub?.name ?? deal.otherClubId)
@@ -252,7 +271,7 @@ export function DealCard({
                 />
               )}
               <div className="min-w-0">
-                <p className="text-xs font-semibold truncate">{operationLabel}{clubName(deal.otherClubId)}</p>
+                <p className="text-xs font-semibold truncate">{operationLabel}{displayOtherClubName}</p>
                 <p className="text-[0.68rem] text-muted-foreground">
                   Ronda {deal.stage === "player-terms" ? (deal.playerNegotiationRounds ?? 0) : deal.rounds}
                 </p>
@@ -274,7 +293,7 @@ export function DealCard({
       <div className="p-4 space-y-3">
 
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <Cell label={isLoan ? "Prima de cesión" : deal.direction === "out" ? "Oferta del club" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
+        <Cell label={isLoan ? "Prima de cesión" : deal.offer.type === "free" ? "Prima de fichaje acordada" : deal.direction === "out" ? "Oferta del club" : "Tu oferta"} value={formatEuro(deal.offer.amount)} />
         {deal.clubDemand > 0 && !(deal.direction === "in" && deal.stage === "player-terms") && (
           <Cell label="El club pide" value={formatEuro(deal.clubDemand)} />
         )}
@@ -490,7 +509,18 @@ export function DealCard({
               <p className="mt-1 text-sm leading-relaxed font-medium">{playerFinanciallySealed ? "Actualmente no se dispone de dinero suficiente para realizar la operación. La negociación queda bloqueada temporalmente hasta recuperar presupuesto salarial." : visiblePlayerMessage}</p>
             </div>
           )}
-          <div className={isLoan ? "grid grid-cols-2 gap-2" : "grid grid-cols-3 gap-2"}>
+          <div className={isLoan ? "grid grid-cols-2 gap-2" : freeAgentDeal ? "grid grid-cols-2 sm:grid-cols-4 gap-2" : "grid grid-cols-3 gap-2"}>
+            {!isLoan && freeAgentDeal && (
+              <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
+                Prima de fichaje
+                <NumberInput
+                  label="Prima de fichaje (M €)"
+                  value={signingBonus}
+                  onChange={setSigningBonus}
+                  step={0.1}
+                />
+              </label>
+            )}
             <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
               Rol ofrecido
               <select value={playerRole} onChange={(e) => setPlayerRole(e.target.value as SquadRole)} className="mt-1 w-full bg-secondary border border-border rounded-lg px-2 py-1.5 text-sm font-bold">
@@ -526,8 +556,11 @@ export function DealCard({
           )}
           <div className="flex flex-wrap gap-2">
             {!isLoan && (
-              <div className={`rounded-lg border px-3 py-2 text-xs ${playerFinanciallyBlocked || playerSalaryOverBudget ? "border-destructive/35 bg-destructive/5 text-destructive" : "border-border/60 bg-secondary/30 text-muted-foreground"}`}>
+              <div className={`rounded-lg border px-3 py-2 text-xs ${playerFinanciallyBlocked || playerSalaryOverBudget || signingBonusOverBudget ? "border-destructive/35 bg-destructive/5 text-destructive" : "border-border/60 bg-secondary/30 text-muted-foreground"}`}>
                 <span className="font-bold text-foreground">Máximo salarial para este fichaje: {formatEuro(effectivePlayerWageBudget)}</span>
+                {freeAgentDeal && (
+                  <span className="block mt-1 text-muted-foreground">Prima propuesta: {formatEuro(Math.max(0, Math.round(signingBonus * 1_000_000)))} · disponible para fichajes: {formatEuro(transferBudget)}</span>
+                )}
               </div>
             )}
             {playerFinanciallyBlocked && (
@@ -538,8 +571,16 @@ export function DealCard({
             <Action
               label="Negociar con el jugador"
               primary
-              disabled={playerFinanciallyBlocked || playerSalaryOverBudget}
-              onClick={() => onImproveWage(deal.id, isLoan ? deal.offer.wageOffer : Math.round(wage * 1_000_000), { squadRole: playerRole, contractYears })}
+              disabled={playerFinanciallyBlocked || playerSalaryOverBudget || signingBonusOverBudget}
+              onClick={() => onImproveWage(
+                deal.id,
+                isLoan ? deal.offer.wageOffer : Math.round(wage * 1_000_000),
+                {
+                  squadRole: playerRole,
+                  contractYears,
+                  ...(freeAgentDeal ? { signingBonus: Math.round(signingBonus * 1_000_000) } : {}),
+                },
+              )}
             />
             <Action label="Abandonar" onClick={() => onAbandon(deal.id)} />
           </div>

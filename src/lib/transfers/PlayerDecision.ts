@@ -16,6 +16,7 @@ import { getPlayer } from "./PlayerIndex";
 import { getSquadReport } from "./SquadAnalyzer";
 import { clamp, lerp, normalize, seededPick, seededRange } from "./random";
 import type { MarketPlayer, PlayerDecision, PlayerDecisionVerdict, SquadRole } from "./types";
+import { hasMailboxWantsOut } from "@/lib/satisfaction";
 
 // ============================================================================
 // SALARIO PEDIDO
@@ -170,7 +171,7 @@ export function desireToLeave(playerId: string, cacheKey: string): number {
 
 /** ¿Ha pedido públicamente salir del club? */
 export function wantsOut(playerId: string, cacheKey: string): boolean {
-  return desireToLeave(playerId, cacheKey) >= 0.68;
+  return hasMailboxWantsOut(playerId) || desireToLeave(playerId, cacheKey) >= 0.68;
 }
 
 // ============================================================================

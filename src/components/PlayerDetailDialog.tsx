@@ -21,9 +21,6 @@ import {
   Trophy,
   Users,
   X,
-  Smile,
-  Meh,
-  Frown,
 } from "lucide-react";
 import {
   Dialog,
@@ -33,6 +30,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { TeamLogo } from "@/components/TeamLogo";
+import { MoodFace } from "@/components/MoodFace";
+import { RoleBadge } from "@/components/RoleBadge";
 import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 import type { FcPlayer, PlayerStats } from "@/store/playersStore";
@@ -55,13 +54,7 @@ function ovrTone(ovr: number): string {
   return "bg-muted text-muted-foreground border-border/40";
 }
 
-function moodLabel(m: number) {
-  if (m >= 80) return { label: "Encantado", Icon: Smile, tone: "text-emerald-400" };
-  if (m >= 60) return { label: "Satisfecho", Icon: Smile, tone: "text-primary" };
-  if (m >= 40) return { label: "Indiferente", Icon: Meh, tone: "text-yellow-300" };
-  if (m >= 20) return { label: "Descontento", Icon: Frown, tone: "text-orange-400" };
-  return { label: "Furioso", Icon: Frown, tone: "text-destructive" };
-}
+
 
 function formatBirthdate(birthdate?: string): string {
   if (!birthdate) return "No disponible";
@@ -453,7 +446,6 @@ export function PlayerDetailDialog({
 
   const pos = mapEaPosition(selected.Position);
   const morale = selectedStats?.morale ?? 70;
-  const mood = moodLabel(morale);
   const injured = !!selectedStats?.injuredUntilDate || (selectedStats?.injuredUntil ?? 0) > 0;
   const marketPlayer = getPlayer(String(selected.ID));
   const marketContract = marketPlayer?.contract;
@@ -572,10 +564,17 @@ export function PlayerDetailDialog({
           {showMorale && (
             <section className="rounded-xl border border-border/60 bg-card/55 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div><p className="text-[0.58rem] font-black uppercase tracking-[0.18em] text-muted-foreground">Estado de ánimo</p><p className="mt-1 text-xs text-muted-foreground">{morale}/100 · impacto de la satisfacción</p></div>
-                <span className={`flex items-center gap-1.5 text-sm font-black ${mood.tone}`}><mood.Icon className="h-4 w-4" />{mood.label}</span>
+                <div>
+                  <p className="text-[0.58rem] font-black uppercase tracking-[0.18em] text-muted-foreground">Satisfacción</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{morale}/100 · impacto de la satisfacción</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RoleBadge role={selectedStats?.squadRole} compact />
+                  <MoodFace morale={morale} size={17} showLabel />
+                </div>
               </div>
-              <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted/40"><div className={`h-full ${morale >= 60 ? "bg-emerald-400" : morale >= 40 ? "bg-yellow-400" : "bg-destructive"}`} style={{ width: `${Math.max(4, Math.min(100, morale))}%` }} /></div>
+              <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted/40"><div className={`h-full ${morale >= 60 ? "bg-emerald-400" : morale >= 40 ? "bg-yellow-400" : morale >= 20 ? "bg-orange-400" : "bg-destructive"}`} style={{ width: `${Math.max(4, Math.min(100, morale))}%` }} /></div>
+              <p className="mt-2 text-[0.65rem] text-muted-foreground">{selectedStats?.satisfactionLastReason ?? "Satisfacción estable."}</p>
             </section>
           )}
 

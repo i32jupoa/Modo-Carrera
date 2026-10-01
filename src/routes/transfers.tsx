@@ -36,6 +36,7 @@ import { NegotiationDetailsModal } from "@/components/market/NegotiationDetailsM
 import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import { getClubScout } from "@/lib/transfers";
+import { FREE_AGENT_IMPORTANT_OVR } from "@/lib/transfers/constants";
 import { windowForDate } from "@/lib/transferWindows";
 import type { ScoutingReport, UserDeal } from "@/lib/transfers";
 import {
@@ -1459,6 +1460,8 @@ function TransfersPage() {
           ovr={target.OVR}
           age={target.Age}
           clubName={target ? (teamById(clubOfPlayer(String(target.ID)) ?? TEAM_NAME_TO_ID[target.Team])?.name ?? target.Team) : ""}
+          isFreeAgent={target ? !(clubOfPlayer(String(target.ID)) ?? TEAM_NAME_TO_ID[target.Team]) : false}
+          importantFreeAgent={target ? !(clubOfPlayer(String(target.ID)) ?? TEAM_NAME_TO_ID[target.Team]) && target.OVR >= FREE_AGENT_IMPORTANT_OVR : false}
           report={report}
           scoutingEntry={target ? scoutingMap.get(String(target.ID)) ?? null : null}
           budget={budget}

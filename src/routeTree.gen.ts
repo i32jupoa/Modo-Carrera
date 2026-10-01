@@ -19,6 +19,7 @@ import { Route as EuropaLeagueRouteImport } from './routes/europa-league'
 import { Route as FixturesRouteImport } from './routes/fixtures'
 import { Route as InjuriesRouteImport } from './routes/injuries'
 import { Route as LineupRouteImport } from './routes/lineup'
+import { Route as MailboxRouteImport } from './routes/mailbox'
 import { Route as MatchRouteImport } from './routes/match'
 import { Route as ScorersRouteImport } from './routes/scorers'
 import { Route as ScoutingRouteImport } from './routes/scouting'
@@ -78,6 +79,11 @@ const InjuriesRoute = InjuriesRouteImport.update({
 const LineupRoute = LineupRouteImport.update({
   id: '/lineup',
   path: '/lineup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MailboxRoute = MailboxRouteImport.update({
+  id: '/mailbox',
+  path: '/mailbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MatchRoute = MatchRouteImport.update({
@@ -142,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
   '/lineup': typeof LineupRoute
+  '/mailbox': typeof MailboxRoute
   '/match': typeof MatchRoute
   '/scorers': typeof ScorersRoute
   '/scouting': typeof ScoutingRoute
@@ -164,6 +171,7 @@ export interface FileRoutesByTo {
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
   '/lineup': typeof LineupRoute
+  '/mailbox': typeof MailboxRoute
   '/match': typeof MatchRoute
   '/scorers': typeof ScorersRoute
   '/scouting': typeof ScoutingRoute
@@ -187,6 +195,7 @@ export interface FileRoutesById {
   '/fixtures': typeof FixturesRoute
   '/injuries': typeof InjuriesRoute
   '/lineup': typeof LineupRoute
+  '/mailbox': typeof MailboxRoute
   '/match': typeof MatchRoute
   '/scorers': typeof ScorersRoute
   '/scouting': typeof ScoutingRoute
@@ -211,6 +220,7 @@ export interface FileRouteTypes {
     | '/fixtures'
     | '/injuries'
     | '/lineup'
+    | '/mailbox'
     | '/match'
     | '/scorers'
     | '/scouting'
@@ -233,6 +243,7 @@ export interface FileRouteTypes {
     | '/fixtures'
     | '/injuries'
     | '/lineup'
+    | '/mailbox'
     | '/match'
     | '/scorers'
     | '/scouting'
@@ -255,6 +266,7 @@ export interface FileRouteTypes {
     | '/fixtures'
     | '/injuries'
     | '/lineup'
+    | '/mailbox'
     | '/match'
     | '/scorers'
     | '/scouting'
@@ -278,6 +290,7 @@ export interface RootRouteChildren {
   FixturesRoute: typeof FixturesRoute
   InjuriesRoute: typeof InjuriesRoute
   LineupRoute: typeof LineupRoute
+  MailboxRoute: typeof MailboxRoute
   MatchRoute: typeof MatchRoute
   ScorersRoute: typeof ScorersRoute
   ScoutingRoute: typeof ScoutingRoute
@@ -360,6 +373,13 @@ declare module '@tanstack/react-router' {
       path: '/lineup'
       fullPath: '/lineup'
       preLoaderRoute: typeof LineupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mailbox': {
+      id: '/mailbox'
+      path: '/mailbox'
+      fullPath: '/mailbox'
+      preLoaderRoute: typeof MailboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/match': {
@@ -446,6 +466,7 @@ const rootRouteChildren: RootRouteChildren = {
   FixturesRoute: FixturesRoute,
   InjuriesRoute: InjuriesRoute,
   LineupRoute: LineupRoute,
+  MailboxRoute: MailboxRoute,
   MatchRoute: MatchRoute,
   ScorersRoute: ScorersRoute,
   ScoutingRoute: ScoutingRoute,

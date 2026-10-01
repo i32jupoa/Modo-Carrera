@@ -11,6 +11,8 @@ interface Props {
   ovr: number;
   age: number;
   clubName: string;
+  isFreeAgent?: boolean;
+  importantFreeAgent?: boolean;
   report: ScoutingReport | null;
   scoutingEntry?: ScoutingEntry | null;
   budget: number;
@@ -45,6 +47,8 @@ export function NegotiationModal({
   ovr,
   age,
   clubName,
+  isFreeAgent = false,
+  importantFreeAgent = false,
   report,
   scoutingEntry,
   budget,
@@ -64,6 +68,7 @@ export function NegotiationModal({
   const type = operation === "transfer" ? "permanent" : loanType;
   const [amount, setAmount] = useState(0);
   const [sellOn, setSellOn] = useState(0);
+
   const [wageShare, setWageShare] = useState(50);
   const [loanSellOn, setLoanSellOn] = useState(0);
   const [loanOptionFee, setLoanOptionFee] = useState(0);
@@ -90,7 +95,7 @@ export function NegotiationModal({
           <div className="flex-1 min-w-0">
             <h3 className="font-black text-lg leading-tight truncate">{playerName}</h3>
             <p className="text-xs text-muted-foreground">
-              {ovr} media · {age} años · {clubName}
+              {ovr} media · {age} años · {isFreeAgent ? "Agente libre" : clubName}
             </p>
           </div>
           <button
@@ -133,14 +138,26 @@ export function NegotiationModal({
         )}
 
         <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
-          <p className="text-[0.62rem] uppercase tracking-wider text-primary font-black">Paso 1 de 2</p>
-          <p className="mt-0.5 font-black text-sm">Negociación con el club</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Primero se acuerdan únicamente las condiciones de la operación con el club. El rol, el salario y la duración del contrato se negocian con el jugador después de la aceptación del club.
-          </p>
+          {isFreeAgent ? (
+            <>
+              <p className="text-[0.62rem] uppercase tracking-wider text-primary font-black">Negociación directa</p>
+              <p className="mt-0.5 font-black text-sm">Propuesta al agente libre</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                No hay club vendedor. La negociación pasa directamente al jugador y, en la misma pantalla, podrás ajustar salario, rol, duración y la prima de fichaje.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[0.62rem] uppercase tracking-wider text-primary font-black">Paso 1 de 2</p>
+              <p className="mt-0.5 font-black text-sm">Negociación con el club</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Primero se acuerdan únicamente las condiciones de la operación con el club. El rol, el salario y la duración del contrato se negocian con el jugador después de la aceptación del club.
+              </p>
+            </>
+          )}
         </div>
 
-        <div className="space-y-2">
+        {!isFreeAgent && <div className="space-y-2">
           <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
             Tipo de operación
           </label>
@@ -172,7 +189,7 @@ export function NegotiationModal({
               Cesión
             </button>
           </div>
-        </div>
+        </div>}
 
         {operation === "loan" && (
           <div className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-3">
@@ -258,7 +275,7 @@ export function NegotiationModal({
           </div>
         )}
 
-        {operation === "transfer" && (
+        {operation === "transfer" && !isFreeAgent && (
           <div className="grid grid-cols-2 gap-3">
             <Field
               label="Precio de traspaso (M €)"
@@ -292,15 +309,18 @@ export function NegotiationModal({
               <p>Mi club pagará el <span className="text-foreground font-bold">{wageShare}%</span> del sueldo actual y {clubName} pagará el <span className="text-foreground font-bold">{100 - wageShare}%</span>.</p>
             </>
           )}
-          {type === "permanent" && (
+          {type === "permanent" && !isFreeAgent && (
             <p>El salario y los años de contrato no forman parte de esta oferta: se negocian en el paso 2 con el jugador.</p>
+          )}
+          {isFreeAgent && (
+            <p>Salario, rol, años de contrato y prima de fichaje se negocian juntos directamente con el jugador.</p>
           )}
         </div>
 
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={overBudget || overWageBudget || amountEuros <= 0}
+            disabled={overBudget || overWageBudget || (!isFreeAgent && amountEuros <= 0)}
             onClick={() =>
               onSubmit({
                 amount: amountEuros,
@@ -319,7 +339,7 @@ export function NegotiationModal({
             }
             className="flex-1 bg-primary text-primary-foreground py-2 rounded-lg font-bold disabled:opacity-40"
           >
-            Enviar propuesta al club
+            {isFreeAgent ? "Enviar propuesta al jugador" : "Enviar propuesta al club"}
           </button>
           <button
             type="button"
@@ -330,7 +350,9 @@ export function NegotiationModal({
           </button>
         </div>
         <p className="text-[0.65rem] text-muted-foreground">
-          Si el club acepta, se abrirá el paso 2 para negociar directamente con el jugador.
+          {isFreeAgent
+            ? "Al ser agente libre no existe negociación con ningún club vendedor."
+            : "Si el club acepta, se abrirá el paso 2 para negociar directamente con el jugador."}
         </p>
       </div>
     </div>

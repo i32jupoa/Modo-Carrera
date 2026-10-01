@@ -16,6 +16,8 @@ import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { injuryRemainingDays, isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
 import { FootballPitch, PlayerNode } from "@/components/FootballPitch";
 import { PlayerFace } from "@/components/PlayerFace";
+import { MoodFace } from "@/components/MoodFace";
+import { SQUAD_ROLE_LABELS } from "@/lib/squadRoles";
 import { faceUrl } from "@/lib/playerFaces";
 import {
   ALL_FORMATIONS,
@@ -2061,6 +2063,8 @@ function LineupPage() {
                       forcedInjury: liveForcedInjury,
                       suspended: isSuspended,
                       cardImage: player.cardImage,
+                      morale: playerStats[player.id]?.morale ?? 70,
+                      squadRole: playerStats[player.id]?.squadRole,
                     }}
                     coordinates={coords}
                     isSelected={selectedPlayer === player.id}
@@ -2252,6 +2256,9 @@ function LineupPage() {
                       showRing={false}
                       className="bg-secondary shadow"
                     />
+                    <span className="absolute -bottom-1 -left-1 rounded-full border border-background bg-background/95 p-0.5 shadow" title={`${SQUAD_ROLE_LABELS[playerStats[player.id]?.squadRole ?? "secondary"]} · satisfacción ${Math.round(playerStats[player.id]?.morale ?? 70)}/100`}>
+                      <MoodFace morale={playerStats[player.id]?.morale ?? 70} size={12} />
+                    </span>
                     <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
                       {playerOverall(player) || "—"}
                     </span>
@@ -2360,6 +2367,12 @@ function LineupPage() {
                           showRing={false}
                           className="bg-secondary shadow"
                         />
+                        <span
+                          className="absolute -bottom-1 -left-1 rounded-full border border-background bg-background/95 p-0.5 shadow"
+                          title={`Satisfacción ${Math.round(playerStats[player.id]?.morale ?? 70)}/100`}
+                        >
+                          <MoodFace morale={playerStats[player.id]?.morale ?? 70} size={12} />
+                        </span>
                         <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
                           {playerOverall(player) || "—"}
                         </span>

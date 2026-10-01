@@ -19,9 +19,6 @@ import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { toast } from "sonner";
 import {
   Wallet,
-  Smile,
-  Meh,
-  Frown,
   HeartHandshake,
   Tag,
   X,
@@ -48,6 +45,8 @@ import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { useUserMarket } from "@/hooks/useUserMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
+import { MoodFace } from "@/components/MoodFace";
+import { RoleBadge } from "@/components/RoleBadge";
 import {
   getPlayer,
   getPlayerAnnualWage,
@@ -99,13 +98,7 @@ function ovrTone(ovr: number): string {
   return "bg-muted text-muted-foreground border-border/40";
 }
 
-function moodLabel(m: number) {
-  if (m >= 80) return { label: "Encantado", Icon: Smile, tone: "text-emerald-400" };
-  if (m >= 60) return { label: "Satisfecho", Icon: Smile, tone: "text-primary" };
-  if (m >= 40) return { label: "Indiferente", Icon: Meh, tone: "text-yellow-300" };
-  if (m >= 20) return { label: "Descontento", Icon: Frown, tone: "text-orange-400" };
-  return { label: "Furioso", Icon: Frown, tone: "text-destructive" };
-}
+
 
 function SummaryMetric({
   label,
@@ -391,7 +384,6 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
   const stats = usePlayersStore((s) => s.stats[String(p.ID)]);
   const pos = mapEaPosition(p.Position);
   const morale = stats?.morale ?? 70;
-  const mood = moodLabel(morale);
   const injured = (stats?.injuredUntil ?? 0) > 0;
   const contract = getPlayer(String(p.ID))?.contract;
   const wage = contract?.wage ?? getPlayerAnnualWage(String(p.ID));
@@ -448,6 +440,7 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
             <span className={`rounded bg-secondary/60 px-1.5 py-0.5 ${ROLE_TEXT[roleFromPosition(p.Position)]}`}>
               {POS_LABEL_ES[pos]}
             </span>
+            <RoleBadge role={stats?.squadRole} compact />
             <span>{p.Age} años</span>
             <span>{contract?.yearsLeft ?? "—"} temp.</span>
           </div>
@@ -456,9 +449,11 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
             <span className="scoreline text-xs font-black text-primary">{formatEuro(wage)}/año</span>
           </div>
         </div>
-        <div className={`hidden flex-col items-end gap-1 sm:flex ${mood.tone}`}>
-          <mood.Icon className="h-4 w-4" />
-          <span className="text-[0.5rem] font-bold uppercase tracking-wider">{mood.label}</span>
+        <div className="hidden flex-col items-end gap-1 sm:flex">
+          <MoodFace morale={morale} size={18} showLabel />
+          {stats?.satisfactionLastReason && (
+            <span className="max-w-[150px] text-right text-[0.5rem] leading-tight text-muted-foreground">{stats.satisfactionLastReason}</span>
+          )}
         </div>
       </div>
     </button>

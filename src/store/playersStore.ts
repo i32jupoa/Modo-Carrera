@@ -120,6 +120,7 @@ import {
   applyEuropeanKnockoutDraw,
   simulatePendingEuropeanThroughDay,
   type SaveGame,
+  applyDailyMailboxMessages,
 } from "@/lib/store";
 
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
@@ -377,6 +378,24 @@ export type PlayerStats = {
   injuryReason?: string;
 
   morale: number;
+
+  /** Rol estable dentro de la plantilla del usuario. */
+  squadRole?: import("@/lib/transfers/types").SquadRole;
+  /** true cuando el rol fue pactado explícitamente en una negociación. */
+  squadRoleIsNegotiated?: boolean;
+  /** Partidos consecutivos sin cumplir la expectativa del rol. */
+  satisfactionMissStreak?: number;
+  /** Partidos consecutivos sin ser convocado (ni XI ni banquillo). */
+  satisfactionNotCalledStreak?: number;
+  /** Partidos consecutivos convocado pero como suplente. */
+  satisfactionBenchStreak?: number;
+  /** Clave semanal usada para limitar caídas de satisfacción. */
+  satisfactionWeekKey?: string;
+  satisfactionWeeklyDrop?: number;
+  satisfactionLastReason?: string;
+  satisfactionLowMoraleStreak?: number;
+  /** Señal persistente del buzón conectada con PlayerDecision.wantsOut. */
+  mailboxWantsOut?: boolean;
 
   formHistory: number[];
 
@@ -2135,6 +2154,8 @@ export const usePlayersStore = create<PlayersState>()(
           const first = queue[0];
           const latest = loadSave();
           if (latest) saveSave(latest);
+          const mailboxSave = loadSave();
+          if (mailboxSave) saveSave(applyDailyMailboxMessages(mailboxSave, nextDate));
           syncPlayerAgesForDate(nextDate);
           set({
             currentDate: nextDate,
@@ -2301,6 +2322,12 @@ export const usePlayersStore = create<PlayersState>()(
           });
 
           date = nextDate;
+          try {
+            const dailySave = loadSave();
+            if (dailySave) saveSave(applyDailyMailboxMessages(dailySave, nextDate));
+          } catch (err) {
+            console.warn("[advanceTime] daily mailbox generation failed:", err);
+          }
           advanced++;
         }
 

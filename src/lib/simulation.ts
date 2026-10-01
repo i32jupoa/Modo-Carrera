@@ -432,6 +432,8 @@ export type SimResult = {
   substitutions?: SubstitutionEvent[];
   /** Final physical energy by player id. */
   energyAtEnd?: Record<string, number>;
+  /** Guard for the user-team post-match satisfaction/mailbox hook. */
+  satisfactionApplied?: boolean;
 };
 
 function pickScorer(xi: Player[]): Player {

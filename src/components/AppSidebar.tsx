@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Award,
   Swords,
+  MessageCircle,
 } from "lucide-react";
 import {
   Sidebar,
@@ -48,6 +49,7 @@ const MI_EQUIPO: Item[] = [
   { title: "Plantilla", url: "/squad", icon: Users },
   { title: "Ojeador", url: "/scouting", icon: Radar },
   { title: "Dirección de equipo", url: "/lineup", icon: ClipboardList },
+  { title: "Buzón", url: "/mailbox", icon: MessageCircle },
   { title: "Lesiones", url: "/injuries", icon: Activity },
   { title: "Estadísticas de equipo", url: "/team-stats", icon: BarChart3 },
 ];
@@ -106,6 +108,8 @@ export function AppSidebar() {
 
   const marketNotificationTotal = useNotificationsStore((s) => s.counts.deals + s.counts.offers);
   const markAllMarketNotificationsRead = useNotificationsStore((s) => s.markAllRead);
+  const mailboxNotificationCount = useNotificationsStore((s) => s.counts.mailbox);
+  const markMailboxRead = useNotificationsStore((s) => s.markMailboxRead);
   const currentDate = usePlayersStore((s) => s.currentDate);
   const scoutingHasNotifications = hasScoutingNotifications(currentDate);
 
@@ -123,7 +127,10 @@ export function AppSidebar() {
     if (pathname === "/scouting") {
       markScoutingNotificationsSeen(currentDate);
     }
-  }, [pathname, currentDate]);
+    if (pathname === "/mailbox" && mailboxNotificationCount > 0) {
+      markMailboxRead();
+    }
+  }, [pathname, currentDate, mailboxNotificationCount, markMailboxRead]);
 
   const isActive = (url: string) => pathname === url;
 
@@ -165,6 +172,10 @@ export function AppSidebar() {
               isActive={isActive}
               badges={{
                 "/scouting": pathname !== "/scouting" && scoutingHasNotifications,
+                "/mailbox": pathname !== "/mailbox" && mailboxNotificationCount > 0,
+              }}
+              badgeCounts={{
+                "/mailbox": mailboxNotificationCount,
               }}
             />
             <NavGroup
@@ -207,22 +218,20 @@ function NotificationDots({
   hasNotification,
   compact = false,
   label = "Nueva notificación",
+  count,
 }: {
   hasNotification: boolean;
   compact?: boolean;
   label?: string;
+  count?: number;
 }) {
   if (!hasNotification) return null;
   return (
     <span
       title={label}
-      aria-label={label}
-      className={
-        compact
-          ? "inline-block h-2 w-2 rounded-full bg-yellow-400 ring-2 ring-yellow-400/20"
-          : "inline-block h-2.5 w-2.5 rounded-full bg-yellow-400 ring-2 ring-yellow-400/20"
-      }
-    />
+      aria-label={count ? `${label}: ${count}` : label}
+      className={count ? "inline-flex min-w-5 items-center justify-center rounded-full bg-yellow-400 px-1.5 py-0.5 text-[0.55rem] font-black text-black" : compact ? "inline-block h-2 w-2 rounded-full bg-yellow-400 ring-2 ring-yellow-400/20" : "inline-block h-2.5 w-2.5 rounded-full bg-yellow-400 ring-2 ring-yellow-400/20"}
+    >{count ? count : null}</span>
   );
 }
 
@@ -232,12 +241,14 @@ function NavGroup({
   collapsed,
   isActive,
   badges,
+  badgeCounts,
 }: {
   label: string;
   items: Item[];
   collapsed: boolean;
   isActive: (url: string) => boolean;
   badges?: Record<string, boolean>;
+  badgeCounts?: Record<string, number>;
 }) {
   return (
     <SidebarGroup>
@@ -252,13 +263,13 @@ function NavGroup({
                   {collapsed ? (
                     badges?.[item.url] && (
                       <span className="absolute -top-1 right-0">
-                        <NotificationDots hasNotification compact label={`Novedades en ${item.title}`} />
+                        <NotificationDots hasNotification compact label={`Novedades en ${item.title}`} count={badgeCounts?.[item.url]} />
                       </span>
                     )
                   ) : (
                     <>
                       <span className="flex-1">{item.title}</span>
-                      {badges?.[item.url] && <NotificationDots hasNotification label={`Novedades en ${item.title}`} />}
+                      {badges?.[item.url] && <NotificationDots hasNotification label={`Novedades en ${item.title}`} count={badgeCounts?.[item.url]} />}
                       <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-50 transition" />
                     </>
                   )}

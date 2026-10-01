@@ -40,7 +40,7 @@ import { completeTransfer } from "./TransferEngine";
 import { recordTransfer } from "./TransferHistory";
 import { withUserApproval, isPlayerSettled } from "./MarketLocks";
 import { getSimulationState, isDeadlineDay, windowForDate } from "./MarketSimulation";
-import { MARKET_TIMING, WAGE_RULES } from "./constants";
+import { FREE_AGENT_IMPORTANT_OVR, MARKET_TIMING, WAGE_RULES } from "./constants";
 import { clamp, seededInt, seededPick, seededUnit } from "./random";
 import type {
   MarketPlayer,
@@ -117,6 +117,8 @@ export interface UserDeal {
   playerRoleDemand?: import("./types").SquadRole;
   /** Años de contrato que pide el jugador. */
   playerYearsDemand?: number;
+  /** Prima de fichaje que pide un agente libre importante. */
+  playerSigningBonusDemand?: number;
   /** Número de rondas ya disputadas en la fase de condiciones del jugador. */
   playerNegotiationRounds?: number;
   /** Primer día en que comenzó la negociación directa con el jugador. */
@@ -248,6 +250,33 @@ function marketWindowKey(date: string): string {
   return `${date.slice(0, 4)}:${windowForDate(date)}`;
 }
 
+function isImportantFreeAgent(player: MarketPlayer | undefined): boolean {
+  return Boolean(player && !player.clubId && player.ovr >= FREE_AGENT_IMPORTANT_OVR);
+}
+
+/**
+ * Prima de fichaje orientativa para un agente libre. La fórmula es deliberadamente
+ * progresiva: un jugador de 80 OVR se mueve alrededor del 20-25 % de su valor,
+ * mientras que una superestrella se acerca al 60 %. Esto mantiene referencias
+ * plausibles del mercado (p. ej. ~7-10 M€ para un Depay y alrededor de 117 M€
+ * para un Mbappé, dependiendo de la valoración dinámica de la partida).
+ */
+function freeAgentSigningBonusFor(player: MarketPlayer): number {
+  const rate = clamp(
+    0.25 + (player.ovr - FREE_AGENT_IMPORTANT_OVR) * (0.37 / 11),
+    0.25,
+    0.62,
+  );
+  return Math.max(0, Math.round((player.value * rate) / 100_000) * 100_000);
+}
+
+function freeAgentSigningBonusDemand(player: MarketPlayer): number {
+  if (player.clubId) return 0;
+  const base = freeAgentSigningBonusFor(player);
+  const greedPremium = 1 + player.personality.greed * (isImportantFreeAgent(player) ? 0.12 : 0.06);
+  return Math.max(base, Math.round((base * greedPremium) / 100_000) * 100_000);
+}
+
 function legacyPlayerNegotiationRounds(deal: UserDeal): number {
   return deal.log.filter((entry) => entry.text.startsWith("Nueva propuesta al jugador:")).length;
 }
@@ -265,6 +294,9 @@ function playerWageBudgetForDeal(deal: UserDeal): number {
   const totalBudget = Math.max(0, Math.round(finances.budget));
   const wageBudget = Math.max(0, Math.round(finances.wageBudget));
   const agreedFee = Math.max(0, Math.round(deal.offer.amount));
+  if (deal.offer.type === "free" && !getPlayer(deal.playerId)?.clubId) {
+    return wageBudget;
+  }
   return Math.min(wageBudget, Math.max(0, totalBudget - agreedFee));
 }
 
@@ -436,10 +468,13 @@ function playerNegotiationMessage(input: {
   round: number;
   date: string;
   forceRequest?: boolean;
+  signingBonusOffer?: number;
+  signingBonusRequested?: number;
 }): string {
   const {
     role, requiredRole, wageOffer, wageRequested, years, requiredYears,
     dealId, round, date, forceRequest = false,
+    signingBonusOffer = 0, signingBonusRequested = 0,
   } = input;
 
   const wageRatio = wageRequested > 0 ? wageOffer / wageRequested : 1;
@@ -479,6 +514,19 @@ function playerNegotiationMessage(input: {
     requests.push(`preferiría acercar la duración a ${Math.max(1, requiredYears - 1)} años`);
   } else {
     requests.push(`me gustaría que el contrato se acercara a ${requiredYears} años`);
+  }
+
+  if (signingBonusRequested > 0) {
+    const bonusRatio = signingBonusOffer / Math.max(1, signingBonusRequested);
+    if (bonusRatio >= 1.0) {
+      positives.push(`la prima de fichaje de ${fmt(signingBonusOffer)} me parece muy buena`);
+    } else if (bonusRatio >= 0.90) {
+      positives.push(`la prima de fichaje está bastante cerca de lo que esperaba`);
+    } else if (bonusRatio >= 0.75) {
+      requests.push(`me gustaría acercar la prima de fichaje a ${fmt(Math.round(signingBonusRequested * 0.94))}`);
+    } else {
+      requests.push(`necesito mejorar la prima de fichaje, idealmente hasta ${fmt(signingBonusRequested)}`);
+    }
   }
 
   // Si todas las condiciones ya son buenas pero todavía queremos negociar,
@@ -743,7 +791,7 @@ export interface SubmitOfferResult {
 export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   const player = getPlayer(input.playerId);
   if (!player) return { ok: false, reason: "Jugador no encontrado en el mercado." };
-  if (!player.clubId) return { ok: false, reason: "Es agente libre: negocia sólo la ficha." };
+  const isFreeAgent = !player.clubId;
   if (player.clubId === input.userClubId) return { ok: false, reason: "Ya es tu jugador." };
   if (player.loanClubId) return { ok: false, reason: "El jugador está cedido y no puede cambiar de operación ahora." };
   if (input.userClubId === "ath" && player.nation.trim().toLowerCase() !== "españa") {
@@ -773,7 +821,11 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     deadlineDay: deadlineToday(input.date),
   });
 
-  const type = input.type ?? "permanent";
+  const requestedType = input.type ?? "permanent";
+  if (isFreeAgent && isLoanOffer(requestedType)) {
+    return { ok: false, reason: "Un agente libre solo puede negociarse mediante fichaje directo." };
+  }
+  const type: TransferType = isFreeAgent ? "free" : requestedType;
   const isLoan = isLoanOffer(type);
   // Un jugador que ya ha cambiado de club esta misma ventana está "asentado":
   // ningún otro club puede ficharlo en firme hasta la siguiente. Sí puede
@@ -796,8 +848,9 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     ...emptyClauses(),
     ...(input.clauses ?? {}),
     sellOnPercent: clamp(input.clauses?.sellOnPercent ?? 0, 0, 0.5),
-    // En un traspaso el rol y los años pertenecen a la fase con el jugador.
-    // En una cesión, el rol sí forma parte del acuerdo entre clubes.
+    // En un fichaje permanente o de agente libre, el rol y los años pertenecen
+    // a la fase con el jugador. En una cesión, el rol sí forma parte del acuerdo
+    // entre clubes.
     squadRole: isLoan ? (input.clauses?.squadRole ?? "rotation") : undefined,
     contractYears: undefined,
   };
@@ -814,7 +867,7 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     playerName: player.name,
     buyerClubId: input.userClubId,
     sellerClubId: player.clubId ?? "",
-    amount: input.amount,
+    amount: isFreeAgent ? 0 : Math.max(0, Math.round(input.amount)),
     wageOffer: Math.max(
       WAGE_RULES.minimumWage,
       Math.round(isLoan ? player.contract.wage : input.wageOffer),
@@ -843,15 +896,17 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     playerId: player.id,
     playerName: player.name,
     userClubId: input.userClubId,
-    otherClubId: player.clubId,
+    otherClubId: player.clubId ?? "",
     offer,
     valuation,
-    stage: "waiting-club",
-    respondsOn: addDays(input.date, days),
+    stage: isFreeAgent ? "player-terms" : "waiting-club",
+    respondsOn: isFreeAgent ? input.date : addDays(input.date, days),
     clubDemand: 0,
-    clubMessage: isLoan
-      ? "Oferta de cesión enviada. El club la está estudiando."
-      : "Oferta enviada. El club la está estudiando.",
+    clubMessage: isFreeAgent
+      ? "Agente libre: no hay club vendedor. La negociación pasa directamente al jugador."
+      : isLoan
+        ? "Oferta de cesión enviada. El club la está estudiando."
+        : "Oferta enviada. El club la está estudiando.",
     playerWageDemand: wageDemand(player.id, input.userClubId),
     playerRoleDemand: minimumSquadRole(player.id, input.userClubId, cacheKeyFor(input.date)),
     playerYearsDemand: preferredContractYears(player.id),
@@ -863,13 +918,25 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
     log: [
       {
         date: input.date,
-        text: isLoan
-          ? `Oferta de cesión enviada: ${fmt(offer.amount)} de prima y mi club paga el ${myClubLoanWageSharePercent("in", offer.clauses.wageShare)}% de la ficha.`
-          : `Oferta enviada: ${fmt(offer.amount)} más ${fmt(offer.wageOffer)}/año de ficha.`,
+        text: isFreeAgent
+          ? `Negociación directa con agente libre. Primera propuesta económica al jugador: ${fmt(offer.wageOffer)}/año de ficha.`
+          : isLoan
+            ? `Oferta de cesión enviada: ${fmt(offer.amount)} de prima y mi club paga el ${myClubLoanWageSharePercent("in", offer.clauses.wageShare)}% de la ficha.`
+            : `Oferta enviada: ${fmt(offer.amount)} más ${fmt(offer.wageOffer)}/año de ficha.`,
       },
     ],
   };
   deals.set(deal.id, deal);
+
+  if (isFreeAgent) {
+    // Un agente libre entra directamente en la fase con el jugador, igual que
+    // un fichaje normal cuando el club vendedor ya ha aceptado. La primera
+    // propuesta la debe decidir el usuario desde la pantalla de salario/rol/años
+    // (y prima si es un agente libre importante); nunca se evalúa automáticamente
+    // al crear la negociación.
+    preparePlayerTerms(deal, input.date);
+  }
+
   return { ok: true, deal };
 }
 
@@ -1158,7 +1225,12 @@ export function acceptClubDemand(dealId: string, date: string): SubmitOfferResul
 /** Mejora la ficha ofrecida al jugador durante la fase de condiciones. */
 export function improvePlayerTerms(
   dealId: string,
-  input: { wageOffer?: number; squadRole?: import("./types").SquadRole; contractYears?: number },
+  input: {
+    wageOffer?: number;
+    signingBonus?: number;
+    squadRole?: import("./types").SquadRole;
+    contractYears?: number;
+  },
   date: string,
 ): SubmitOfferResult {
   const deal = deals.get(dealId);
@@ -1169,6 +1241,20 @@ export function improvePlayerTerms(
   if (!player) return { ok: false, reason: "Jugador no encontrado." };
 
   const loanDeal = isLoanOffer(deal.offer.type);
+
+  // La prima de fichaje forma parte de la misma negociación con el jugador.
+  // Nunca se fija antes de llegar a esta fase y el usuario puede modificarla
+  // en cada ronda de negociación.
+  if (!loanDeal && !player.clubId && input.signingBonus !== undefined) {
+    const nextBonus = Math.max(0, Math.round(input.signingBonus));
+    const finances = getFinances(deal.userClubId);
+    const transferRoom = Math.max(0, Math.round(finances.budget - finances.wageBudget));
+    if (nextBonus > transferRoom) {
+      return { ok: false, silent: true };
+    }
+    deal.offer.amount = nextBonus;
+  }
+
   if (!loanDeal && playerWageBudgetForDeal(deal) <= 0) {
     startPlayerFinancialBlock(deal, date);
     deal.playerMessage = `Ahora mismo no dispongo de dinero suficiente para realizar la operación. La negociación queda en espera por si recuperamos margen salarial.`;
@@ -1217,7 +1303,7 @@ export function improvePlayerTerms(
     date,
     loanDeal
       ? `La cesión mantiene la ficha vigente del jugador.`
-      : `Nueva propuesta al jugador: ${fmt(deal.offer.wageOffer)}/año · ${deal.offer.clauses.squadRole ?? "rotation"} · ${deal.offer.clauses.contractYears ?? preferredContractYears(deal.playerId)} años.`,
+      : `Nueva propuesta al jugador: ${fmt(deal.offer.wageOffer)}/año · ${deal.offer.clauses.squadRole ?? "rotation"} · ${deal.offer.clauses.contractYears ?? preferredContractYears(deal.playerId)} años${!isLoanOffer(deal.offer.type) && !getPlayer(deal.playerId)?.clubId ? ` · prima ${fmt(deal.offer.amount)}` : ""}.`,
   );
   processPlayerTerms(deal, date);
   if (deal.stage === "player-terms" && !deal.playerFinancialBlockStartedOn && !deal.playerFinancialBlockUntil) {
@@ -1324,12 +1410,13 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
     const finances = getFinances(deal.userClubId);
     const totalBudget = Math.max(0, Math.round(finances.budget));
     const wageBudget = Math.max(0, Math.round(finances.wageBudget));
+    const transferBudget = Math.max(0, totalBudget - wageBudget);
     const finalFee = Math.max(0, Math.round(deal.offer.amount));
     const finalWage = Math.max(0, Math.round(deal.offer.wageOffer));
     const maxPlayerWage = Math.min(wageBudget, Math.max(0, totalBudget - finalFee));
-    // Segunda barrera justo antes de hacer oficial el fichaje. El presupuesto
-    // sigue intacto hasta aquí; solo se comprueba que traspaso + ficha caben.
-    if (finalFee > totalBudget || finalWage > maxPlayerWage) {
+    // Segunda barrera justo antes de hacer oficial el fichaje. La prima de un
+    // agente libre consume específicamente el presupuesto de fichajes.
+    if (finalFee > totalBudget || (deal.offer.type === "free" && finalFee > transferBudget) || finalWage > maxPlayerWage) {
       return {
         ok: false,
         reason: "El fichaje supera el presupuesto disponible para esta operación.",
@@ -2044,6 +2131,9 @@ function preparePlayerTerms(deal: UserDeal, date: string): void {
   deal.playerWageDemand = wageDemand(player.id, deal.userClubId);
   deal.playerRoleDemand = minimumSquadRole(player.id, deal.userClubId, cacheKeyFor(date));
   deal.playerYearsDemand = preferredContractYears(player.id);
+  deal.playerSigningBonusDemand = !player.clubId
+    ? freeAgentSigningBonusDemand(player)
+    : undefined;
   deal.playerNegotiationRounds = 0;
   deal.playerTermsStartedOn = date;
 
@@ -2056,7 +2146,9 @@ function preparePlayerTerms(deal: UserDeal, date: string): void {
 
   deal.playerMessage = isLoanOffer(deal.offer.type)
     ? `Quiero valorar bien la cesión, pero mi ficha actual y el rol que tenga con vosotros serán importantes para mí.`
-    : `Quiero conocer bien las condiciones que me ofreces. Para mí son importantes el sueldo, el rol y la duración del contrato.`;
+    : !player.clubId
+      ? `Siendo agente libre, quiero negociar conjuntamente el sueldo, el rol, los años y la prima de fichaje.`
+      : `Quiero conocer bien las condiciones que me ofreces. Para mí son importantes el sueldo, el rol y la duración del contrato.`;
   deal.stage = "player-terms";
   deal.respondsOn = date;
   deal.playerResponseDeadline = addDays(date, 3);
@@ -2095,22 +2187,59 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
   const years = deal.offer.clauses.contractYears ?? 4;
   const yearsGap = requiredYears - years;
   const round = Math.max(1, deal.playerNegotiationRounds ?? 1);
+  const freeAgent = !loanDeal && !player.clubId;
+  const signingBonusOffer = freeAgent ? Math.max(0, Math.round(deal.offer.amount)) : 0;
+  const signingBonusRequested = freeAgent
+    ? Math.max(0, Math.round(deal.playerSigningBonusDemand ?? freeAgentSigningBonusDemand(player)))
+    : 0;
+  const signingBonusRatio = freeAgent
+    ? signingBonusOffer / Math.max(1, signingBonusRequested)
+    : 1;
 
   deal.playerWageDemand = wageRequested;
   deal.playerRoleDemand = requiredRole;
   deal.playerYearsDemand = requiredYears;
-
-  const hardRoleMismatch = !loanDeal && roleGap >= 4;
-  const veryLowWage = !loanDeal && wageRatio < 0.55;
-  const immediateBreak = hardRoleMismatch || veryLowWage;
+  if (freeAgent) deal.playerSigningBonusDemand = signingBonusRequested;
 
   // El jugador es flexible: solo rompe de inmediato ante una propuesta extrema.
-  // En cualquier otro caso intenta encontrar un punto medio antes del límite de
-  // cuatro rondas.
-  const wageAcceptable = loanDeal || wageRatio >= 0.90;
-  const roleAcceptable = loanDeal || roleGap <= 1 || (roleGap === 2 && wageRatio >= 1.00) || (roleGap === 3 && wageRatio >= 1.08);
-  const yearsAcceptable = loanDeal || yearsGap <= 2 || (yearsGap === 3 && wageRatio >= 1.02) || yearsGap < 0;
-  const conditionsAcceptable = wageAcceptable && roleAcceptable && yearsAcceptable;
+  // En cualquier otro caso intenta encontrar un punto medio antes del límite.
+  // Solo rompemos la negociación ante propuestas realmente extremas. Una
+  // oferta simplemente peor de lo que pide el jugador genera una contraoferta
+  // y permite acercar posturas.
+  const hardRoleMismatch = !loanDeal && roleGap >= 5;
+  const veryLowWage = !loanDeal && wageRatio < 0.38;
+  const veryLowSigningBonus = freeAgent && signingBonusRatio < 0.35;
+  const immediateBreak = hardRoleMismatch || veryLowWage || veryLowSigningBonus;
+
+  // Márgenes deliberadamente amplios: salario, rol y años pueden quedar
+  // ligeramente por debajo de la demanda si el conjunto es razonable.
+  const wageAcceptable = loanDeal || wageRatio >= 0.80;
+  const roleAcceptable =
+    loanDeal ||
+    roleGap <= 1 ||
+    (roleGap === 2 && wageRatio >= 0.88) ||
+    (roleGap === 3 && wageRatio >= 0.96) ||
+    roleGap < 0;
+  const yearsAcceptable =
+    loanDeal ||
+    yearsGap <= 2 ||
+    (yearsGap === 3 && wageRatio >= 0.90) ||
+    yearsGap < 0;
+  const signingBonusAcceptable =
+    !freeAgent || signingBonusRatio >= 0.78;
+  const conditionsAcceptable =
+    wageAcceptable && roleAcceptable && yearsAcceptable && signingBonusAcceptable;
+
+  // En la primera propuesta normal el jugador no debería decir ni "sí" ni
+  // "no" inmediatamente: responde con una contraoferta. Solo un auténtico
+  // ofertón cierra la negociación al instante.
+  const exceptionalOffer =
+    !loanDeal &&
+    wageRatio >= 1.12 &&
+    roleGap <= 0 &&
+    yearsGap <= 0 &&
+    (!freeAgent || signingBonusRatio >= 1.08);
+  const canAcceptNow = conditionsAcceptable && (round > 1 || exceptionalOffer);
 
   deal.playerWageDemand = wageRequested;
   deal.playerRoleDemand = requiredRole;
@@ -2126,6 +2255,8 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
     dealId: deal.id,
     round,
     date,
+    signingBonusOffer,
+    signingBonusRequested,
   });
 
   if (immediateBreak) {
@@ -2134,7 +2265,19 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
     deal.blockedForWindow = marketWindowKey(date);
     deal.offer.status = "final-rejection";
     deal.playerResponseDeadline = undefined;
-    deal.playerMessage = veryLowWage
+    deal.playerMessage = veryLowSigningBonus
+      ? seededPick(
+          [
+            `La prima de fichaje está demasiado lejos de lo que esperaba para dar este paso. Prefiero que la acerquemos antes de seguir.`,
+            `Para mí la prima de fichaje es importante en este caso y la propuesta se queda demasiado corta. Podemos hablarlo, pero necesito acercarla.`,
+            `El salario y el proyecto no son lo único: siendo agente libre, también valoro la prima de fichaje. En estas condiciones está demasiado lejos.`,
+          ],
+          deal.id,
+          "player-hard-bonus-rejection",
+          round,
+          date,
+        ) ?? `Necesito una prima de fichaje bastante más cercana a mis expectativas.`
+      : veryLowWage
       ? seededPick(
           [
             `Te soy sincero: con una ficha tan baja no puedo aceptar la propuesta. No me parece una oferta seria para mi situación.`,
@@ -2166,7 +2309,7 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
   // Si el contrato encaja, el jugador acepta directamente. El proyecto ya no
   // puede tumbar una propuesta contractual que sea razonable: el usuario debe
   // tener una salida clara y negociable en cada ronda.
-  if (conditionsAcceptable) {
+  if (canAcceptNow) {
     deal.stage = "ready";
     deal.playerResponseDeadline = undefined;
     deal.offer.status = "accepted";
@@ -2203,6 +2346,8 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
       round,
       date,
       forceRequest: true,
+      signingBonusOffer,
+      signingBonusRequested,
     });
     log(deal, date, deal.playerMessage);
     pushEvent(events, deal, deal.playerMessage, "info");
@@ -2220,7 +2365,8 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
   const finalReasons: string[] = [];
   if (!wageAcceptable) finalReasons.push("la ficha todavía se queda algo corta");
   if (!roleAcceptable) finalReasons.push("el rol que tendría sigue siendo menor del que busco");
-  if (!yearsAcceptable) finalReasons.push("la duración sigue siendo demasiado corta");
+  if (!yearsAcceptable) finalReasons.push("la duración sigue siendo algo más corta de lo que busco");
+  if (!signingBonusAcceptable) finalReasons.push("la prima de fichaje todavía está algo por debajo de mis expectativas");
   if (finalReasons.length === 0) finalReasons.push("necesito una pequeña mejora en alguna de las condiciones del contrato");
 
   deal.playerMessage = seededPick(
@@ -2247,6 +2393,7 @@ function processPlayerTerms(deal: UserDeal, date: string): UserDealEvent[] {
 }
 
 function clubNameSafe(clubId: string): string {
+  if (!clubId) return "Agente libre";
   return teamById(clubId)?.name ?? clubId;
 }
 
