@@ -26,6 +26,7 @@
  * nunca desde el arranque síncrono de la app.
  */
 
+import { restoreRenewals, snapshotRenewals, type RenewalRecord } from "./RenewalLog";
 import { restoreFinances, snapshotFinances } from "./BudgetManager";
 import { restorePlayerDeltas, snapshotPlayerDeltas, type PlayerDelta } from "./PlayerIndex";
 import {
@@ -99,6 +100,8 @@ export interface TransferSaveData {
   pursuits: PursuitMemoryEntry[];
   /** Ventanas de fichajes cuyo mercado vive en su propia clave. */
   archivedWindows?: string[];
+  /** Renovaciones de contrato registradas (para las noticias). */
+  renewals?: RenewalRecord[];
 }
 
 /** Construye la instantánea completa del sistema de mercado. */
@@ -113,6 +116,7 @@ export function snapshotTransferSystem(): TransferSaveData {
     rumors: snapshotRumors(),
     userDeals: snapshotUserDeals(),
     pursuits: snapshotPursuitMemory(),
+    renewals: snapshotRenewals(),
   };
 }
 
@@ -122,6 +126,7 @@ export function applyTransferSnapshot(data: TransferSaveData): boolean {
   restorePlayerDeltas(data.players ?? []);
   restoreFinances(data.finances ?? []);
   restoreTransferHistory(data.history ?? []);
+  restoreRenewals(data.renewals);
   restoreRumors(data.rumors ?? []);
   restoreUserDeals(data.userDeals ?? []);
   restorePursuitMemory(data.pursuits ?? []);

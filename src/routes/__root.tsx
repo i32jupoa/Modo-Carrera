@@ -14,7 +14,6 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { GameDayBar } from "@/components/GameDayBar";
 import { MatchDayModal } from "@/components/MatchDayModal";
 import { usePlayersReady } from "@/components/PlayersLoading";
-import { Toaster } from "@/components/ui/sonner";
 import { MarketClock } from "@/hooks/useMarketClock";
 import { MarketNotifier } from "@/components/MarketNotifier";
 import { useEffect, useState } from "react";
@@ -148,7 +147,6 @@ function RootComponent() {
       <AppShell />
       <MarketClock />
       <MarketNotifier />
-      <Toaster richColors position="top-center" />
       <MatchDayModal />
     </QueryClientProvider>
   );

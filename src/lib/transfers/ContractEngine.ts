@@ -34,6 +34,7 @@ import { getSquadReport } from "./SquadAnalyzer";
 import { isKeyPlayer } from "./MarketValuation";
 import { decideOnRenewal, wantsOut } from "./PlayerDecision";
 import { clamp, seededUnit } from "./random";
+import { logRenewal, setRenewalLogDate } from "./RenewalLog";
 import type { Contract, MarketPlayer, SquadReport, TransferListReason } from "./types";
 
 // ============================================================================
@@ -148,6 +149,16 @@ export function renewUserPlayer(input: UserRenewalInput): UserRenewalOutcome {
     listReason: null,
   });
   registerRenewal(input.clubId, previousWage, wage, signingBonus);
+  logRenewal({
+    playerId: input.playerId,
+    playerName: player.name,
+    clubId: input.clubId,
+    wage,
+    previousWage,
+    years,
+    releaseClause,
+    byUser: true,
+  });
 
   return {
     ...base,
@@ -360,6 +371,7 @@ export function runClubContractCycle(
   options: { date: string; maxRenewals?: number; reviewList?: boolean },
 ): ContractCycleResult {
   const cacheKey = options.date;
+  setRenewalLogDate(options.date);
   const maxRenewals = options.maxRenewals ?? 2;
   const result: ContractCycleResult = { clubId, renewals: [], listed: [] };
 
@@ -370,7 +382,19 @@ export function runClubContractCycle(
   for (const player of expiring) {
     if (result.renewals.filter((r) => r.renewed).length >= maxRenewals) break;
     if (!clubWantsToRenew(clubId, player.id, cacheKey)) continue;
-    result.renewals.push(attemptRenewal(clubId, player.id, cacheKey));
+    const outcome = attemptRenewal(clubId, player.id, cacheKey);
+    result.renewals.push(outcome);
+    if (outcome.renewed) {
+      logRenewal({
+        date: options.date,
+        playerId: outcome.playerId,
+        playerName: outcome.playerName,
+        clubId: outcome.clubId,
+        wage: outcome.wage,
+        previousWage: player.contract.wage,
+        years: outcome.years,
+      });
+    }
   }
 
   // Fuera de la ventana de fichajes no hace falta recalcular la lista completa

@@ -3071,11 +3071,12 @@ function applyUserMatchPlayerSystems(
 
   if (resolved.messages.length) {
     const notifications = useNotificationsStore.getState();
-    const names = resolved.messages
-      .map((message) => squad.find((player) => player.id === message.playerId)?.name)
-      .filter((name): name is string => !!name);
-    for (const name of [...new Set(names)]) {
-      notifications.addMailbox(name, fixture.date ?? store.currentDate);
+    const seenMsgPlayers = new Set<string>();
+    for (const message of resolved.messages) {
+      const player = squad.find((p) => p.id === message.playerId);
+      if (!player || seenMsgPlayers.has(player.id)) continue;
+      seenMsgPlayers.add(player.id);
+      notifications.addMailbox(player.name, fixture.date ?? store.currentDate, player.id);
     }
   }
   return { ...save, mailbox };
@@ -3127,10 +3128,13 @@ export function applyDailyMailboxMessages(save: SaveGame, date: string): SaveGam
   mailbox = generated.state;
   if (released.messages.length || generated.messages.length) {
     const notifications = useNotificationsStore.getState();
-    const names = [...released.messages, ...generated.messages]
-      .map((message) => squad.find((player) => player.id === message.playerId)?.name)
-      .filter((name): name is string => !!name);
-    for (const name of [...new Set(names)]) notifications.addMailbox(name, date);
+    const seenMsgPlayers = new Set<string>();
+    for (const message of [...released.messages, ...generated.messages]) {
+      const player = squad.find((p) => p.id === message.playerId);
+      if (!player || seenMsgPlayers.has(player.id)) continue;
+      seenMsgPlayers.add(player.id);
+      notifications.addMailbox(player.name, date, player.id);
+    }
   }
   return { ...save, mailbox };
 }

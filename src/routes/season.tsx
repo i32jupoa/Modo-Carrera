@@ -71,9 +71,10 @@ import {
   trackPosition,
   getPositionHistory,
   getTrend,
-  buildNews,
   type CentralTheme,
 } from "@/lib/seasonExtras";
+import { NewsCarousel } from "@/components/news/NewsCarousel";
+import { getCachedGameNews } from "@/lib/news/newsCache";
 
 // Helper to get league name from league ID
 
@@ -188,8 +189,8 @@ function SeasonPage() {
     /* intentionally ignored */
   }
 
-  // News (deterministic per matchday)
-  const news = buildNews(myTeam.name, `${save.myTeamId}:${currentMd}`);
+  // Noticias reales derivadas de lo ocurrido en la partida (con caché por estado)
+  const news = getCachedGameNews(save);
 
   // UCL phase table (only used when ucl theme)
   const uclTable = save.ucl?.leaguePhaseTable ?? save.ucl?.table ?? [];
@@ -574,7 +575,7 @@ function SeasonPage() {
               )}
             </div>
 
-            <NewsPanel news={news} theme={theme} />
+            <NewsCarousel news={news} theme={theme} myId={save.myTeamId} />
 
             <OtherLeaguesPanel save={save} />
           </div>
@@ -1226,47 +1227,6 @@ function NotificationsBar({
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function NewsPanel({ news, theme }: { news: ReturnType<typeof buildNews>; theme: CentralTheme }) {
-  const catMeta: Record<string, { icon: any; label: string; color: string }> = {
-    club: { icon: Building2, label: "Club", color: "text-primary" },
-    liga: { icon: Newspaper, label: "Liga", color: "text-blue-400" },
-    mercado: { icon: Briefcase, label: "Mercado", color: "text-amber-400" },
-  };
-  return (
-    <div className={`panel p-5 border ${theme.cardBorder}`}>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-bold">Noticias</h3>
-        <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
-          Resumen de la semana
-        </span>
-      </div>
-      <div className="grid sm:grid-cols-3 gap-3">
-        {news.map((n) => {
-          const meta = catMeta[n.cat];
-          const Icon = meta.icon;
-          return (
-            <div
-              key={n.id}
-              className="rounded-lg border border-border/50 bg-secondary/20 p-3 hover:border-primary/40 transition"
-            >
-              <div
-                className={`flex items-center gap-1.5 text-[0.6rem] uppercase tracking-wider font-bold mb-1 ${meta.color}`}
-              >
-                <Icon className="w-3 h-3" />
-                {meta.label}
-              </div>
-              <div className="text-sm font-bold leading-tight mb-1">
-                {n.icon} {n.title}
-              </div>
-              <p className="text-xs text-muted-foreground leading-snug">{n.text}</p>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }

@@ -1,10 +1,23 @@
 import { create } from "zustand";
 import { getUserDeal, type UserDealEventKind } from "@/lib/transfers/UserNegotiation";
+import { getPlayer } from "@/lib/transfers/PlayerIndex";
 
 export type NotificationKind = UserDealEventKind | "mailbox";
 
+/** Elementos gráficos de una notificación: escudos, jugadores y banderas. */
+export interface NotificationVisual {
+  teamIds: string[];
+  players: Array<{ id: string; name: string }>;
+  /** Nombres de país para las banderas (p. ej. "España"). */
+  countries: string[];
+}
+
 export interface MarketNotification {
   id: string;
+  /** Titular corto de la notificación (opcional en notificaciones antiguas). */
+  title?: string;
+  /** Imágenes asociadas. Las notificaciones antiguas no lo traen y se muestran solo con texto. */
+  visual?: NotificationVisual;
   /** Identificador estable de la negociación que originó el evento. */
   dealId?: string;
   /** Sección donde debe consumirse esta novedad. */
@@ -22,7 +35,7 @@ interface NotificationsState {
   /** Novedades sin leer separadas entre negociaciones y ofertas recibidas. */
   counts: Record<MarketNotificationSection, number>;
   add: (events: Array<{ dealId?: string; direction: "in" | "out"; kind: NotificationKind; text: string }>, date: string) => void;
-  addMailbox: (playerName: string, date: string) => void;
+  addMailbox: (playerName: string, date: string, playerId?: string) => void;
   markMailboxRead: () => void;
   markSectionRead: (section: MarketNotificationSection) => void;
   refreshCounts: () => void;
@@ -35,6 +48,39 @@ const MAX_ITEMS = 60;
 const STORAGE_PREFIX = "fcsim:market-notifications:v1";
 
 let currentSaveId: string | null = null;
+
+function dealVisual(dealId: string | undefined): { visual?: NotificationVisual; playerName?: string } {
+  if (!dealId) return {};
+  try {
+    const deal = getUserDeal(dealId);
+    if (!deal) return {};
+    const nation = getPlayer(deal.playerId)?.nation;
+    const teamIds =
+      deal.direction === "out" ? [deal.userClubId, deal.otherClubId] : [deal.otherClubId, deal.userClubId];
+    return {
+      playerName: deal.playerName,
+      visual: {
+        teamIds: teamIds.filter(Boolean),
+        players: [{ id: deal.playerId, name: deal.playerName }],
+        countries: nation && nation.trim() ? [nation] : [],
+      },
+    };
+  } catch {
+    return {};
+  }
+}
+
+function titleForDeal(kind: UserDealEventKind, direction: "in" | "out", playerName?: string): string {
+  const who = playerName ? ` · ${playerName}` : "";
+  if (direction === "out") {
+    if (kind === "good") return `Venta cerrada${who}`;
+    if (kind === "bad") return `Oferta rechazada${who}`;
+    return `Oferta recibida${who}`;
+  }
+  if (kind === "good") return `Fichaje cerrado${who}`;
+  if (kind === "bad") return `Negociación fallida${who}`;
+  return `Novedad en la negociación${who}`;
+}
 
 function emptyCounts(): Record<MarketNotificationSection, number> {
   return { deals: 0, offers: 0, mailbox: 0 };
@@ -95,10 +141,13 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
         )) continue;
       }
 
+      const enrich = dealVisual(event.dealId);
       fresh.push({
         id: event.dealId
           ? `deal-${event.dealId}-${event.kind}-${event.text}`
           : `${date}-${Date.now().toString(36)}-${index}`,
+        title: titleForDeal(event.kind as UserDealEventKind, event.direction, enrich.playerName),
+        visual: enrich.visual,
         dealId: event.dealId,
         section: event.direction === "out" ? "offers" : "deals",
         kind: event.kind,
@@ -114,10 +163,25 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     set({ items, counts: countUnread(items) });
   },
 
-  addMailbox: (playerName, date) => {
+  addMailbox: (playerName, date, playerId) => {
     const existing = get().items;
+    let visual: NotificationVisual | undefined;
+    if (playerId) {
+      try {
+        const p = getPlayer(playerId);
+        visual = {
+          teamIds: p?.clubId ? [p.clubId] : [],
+          players: [{ id: playerId, name: playerName }],
+          countries: p?.nation && p.nation.trim() ? [p.nation] : [],
+        };
+      } catch {
+        visual = { teamIds: [], players: [{ id: playerId, name: playerName }], countries: [] };
+      }
+    }
     const event: MarketNotification = {
       id: `mailbox-${date}-${playerName}-${Date.now().toString(36)}`,
+      title: "Nuevo mensaje en el buzón",
+      visual,
       section: "mailbox",
       kind: "mailbox",
       text: `Nuevo mensaje de ${playerName}`,

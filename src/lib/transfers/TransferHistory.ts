@@ -6,6 +6,7 @@
  * leen de aquí; nadie más guarda copias.
  */
 
+import { resetRenewals } from "./RenewalLog";
 import { teamById } from "@/data/teams";
 import { lockPlayer, registerArrival, registerCoreSigning, registerDeparture, registerHistoricalMove } from "./MarketLocks";
 import { getPlayer } from "./PlayerIndex";
@@ -134,6 +135,7 @@ function formatFee(fee: number, type: TransferType): string {
 
 /** Vacía el historial (al cargar otra partida). */
 export function resetTransferHistory(): void {
+  resetRenewals();
   history.length = 0;
   byPlayer.clear();
   byClub.clear();
