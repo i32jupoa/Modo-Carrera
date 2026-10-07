@@ -18,7 +18,7 @@ import { squadForTeam, marketValueEuros } from "@/store/playersStore";
 import { getClubProfile } from "@/lib/transfers/ClubStrategy";
 import { initialBudget } from "@/lib/transfers/BudgetManager";
 import { getClubWageBill } from "@/lib/transfers/PlayerIndex";
-import { formatPositionLabel } from "@/lib/positions";
+import { buildPositions, formatPositionLabel, formatShortPositions } from "@/lib/positions";
 import { Trophy, Users, Building2, Target, Wallet, Swords, History, Sparkles } from "lucide-react";
 
 export default function ClubPreviewModal({
@@ -584,7 +584,17 @@ function SquadView({
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-bold text-white truncate">{p.Name ?? "—"}</div>
                       <div className="text-[11px] text-white/55 flex items-center gap-2">
-                        <span className="font-mono">{formatPositionLabel(p.Position)}</span>
+                        {(() => {
+                          const positions = buildPositions(p.Position, p["Alternative positions"]);
+                          const primary = positions[0] ? formatShortPositions([positions[0]]) : formatPositionLabel(p.Position);
+                          const secondary = positions.length > 1 ? formatShortPositions(positions.slice(1)) : "";
+                          return (
+                            <span className="flex items-baseline gap-1.5 whitespace-nowrap">
+                              <span className="font-mono font-black text-white/90">{primary}</span>
+                              {secondary && <span className="font-mono text-[9px] text-white/40">{secondary}</span>}
+                            </span>
+                          );
+                        })()}
                         {p.Nation && <span className="truncate">· {p.Nation}</span>}
                         {typeof p.Age === "number" && <span>· {p.Age}a</span>}
                       </div>

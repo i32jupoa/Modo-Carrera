@@ -36,6 +36,7 @@ import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace
 import { faceUrl } from "@/lib/playerFaces";
 import type { FcPlayer, PlayerStats } from "@/store/playersStore";
 import { formatEuro, mapEaPosition, POS_LABEL_ES, marketValueEuros } from "@/store/playersStore";
+import { buildPositions, formatShortPositions } from "@/lib/positions";
 import { getPlayer, getPlayerAnnualWage } from "@/lib/transfers";
 import type { Team } from "@/data/teams";
 import type { LeagueId } from "@/data/teams";
@@ -445,6 +446,9 @@ export function PlayerDetailDialog({
   if (!selected || !team) return null;
 
   const pos = mapEaPosition(selected.Position);
+  const detailPositions = buildPositions(selected.Position, selected["Alternative positions"]);
+  const primaryPosition = detailPositions[0] ? formatShortPositions([detailPositions[0]]) : selected.Position;
+  const secondaryPositions = detailPositions.length > 1 ? formatShortPositions(detailPositions.slice(1)) : "";
   const morale = selectedStats?.morale ?? 70;
   const injured = !!selectedStats?.injuredUntilDate || (selectedStats?.injuredUntil ?? 0) > 0;
   const marketPlayer = getPlayer(String(selected.ID));
@@ -498,10 +502,13 @@ export function PlayerDetailDialog({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <DialogTitle className="text-2xl font-black tracking-tight">{selected.Name}</DialogTitle>
-                  <span className={`rounded-full border px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider ${ROLE_TEXT[roleFromPosition(selected.Position)]}`}>{POS_LABEL_ES[pos]}</span>
+                  <span className="flex items-baseline gap-1.5 rounded-full border border-border/50 bg-background/30 px-2 py-0.5">
+                    <span className={`text-sm font-black ${ROLE_TEXT[roleFromPosition(selected.Position)]}`}>{primaryPosition}</span>
+                    {secondaryPositions && <span className="text-[0.55rem] font-bold text-muted-foreground">{secondaryPositions}</span>}
+                  </span>
                   {privateMode && isListed && <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-amber-300">En venta</span>}
                 </div>
-                <DialogDescription className="mt-1 text-xs font-semibold uppercase tracking-wider">{selected.Position} · {selected.Age} años · {selected.Nation ?? "Nacionalidad no disponible"}</DialogDescription>
+                <DialogDescription className="mt-1 text-xs font-semibold uppercase tracking-wider">{selected.Age} años · {selected.Nation ?? "Nacionalidad no disponible"}</DialogDescription>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-background/35 px-2.5 py-2 backdrop-blur">
                     <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={30} className="rounded-md" />

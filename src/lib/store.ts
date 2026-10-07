@@ -1096,17 +1096,25 @@ function rebuildAppearanceCountersFromFixtures(save: SaveGame): boolean {
 }
 
 
+const SQUAD_ROLE_ALGORITHM_VERSION = 3;
+
 export function recalculateUserSquadRoles(save: SaveGame, force = false): SaveGame {
   const store = usePlayersStore.getState();
   const squad = store.getSimSquad(save.myTeamId);
   if (squad.length === 0) return save;
-  const roleWindowKey = `${save.season}:${transferWindowKey(store.currentDate)}`;
-  if (!force && save.squadRoleRecalculationKey === roleWindowKey) {
-    hydrateMailboxWantsOutOverrides(store.stats ?? {});
+
+  // The version is part of the key so careers created with the old role
+  // initialisation logic are repaired automatically on the next load.
+  const roleWindowKey = `${save.season}:${transferWindowKey(store.currentDate)}:v${SQUAD_ROLE_ALGORITHM_VERSION}`;
+  const stats = { ...(store.stats ?? {}) };
+  const rolesComplete = squad.every((player) => Boolean(stats[player.id]?.squadRole));
+
+  if (!force && save.squadRoleRecalculationKey === roleWindowKey && rolesComplete) {
+    hydrateMailboxWantsOutOverrides(stats);
     return save;
   }
+
   const typicalXIIds = new Set((save.lineups?.[save.myTeamId] ?? []).slice(0, 11));
-  const stats = { ...(store.stats ?? {}) };
   const negotiated = new Map<string, import("@/lib/transfers/types").SquadRole>();
   for (const player of squad) {
     const current = stats[player.id];
@@ -1116,10 +1124,12 @@ export function recalculateUserSquadRoles(save: SaveGame, force = false): SaveGa
   let changed = false;
   const nextStats = { ...stats };
   for (const player of squad) {
-    const previous = nextStats[player.id];
-    if (!previous) continue;
+    // A fresh career can have an empty stats object. Previously we skipped
+    // these players entirely, leaving RoleBadge without a role and therefore
+    // displaying its visual fallback: "Secundario" for everybody.
+    const previous = nextStats[player.id] ?? defaultStats();
     const role = roles[player.id];
-    if (force || previous.squadRole !== role) {
+    if (force || previous.squadRole !== role || !nextStats[player.id]) {
       nextStats[player.id] = { ...previous, squadRole: role };
       changed = true;
     }

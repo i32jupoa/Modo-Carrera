@@ -523,6 +523,25 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
           commit(undefined, loaned.reason ?? "No se pudo integrar el cedido en la plantilla.");
           return;
         }
+        // El rol pactado en la negociación es contractual para la cesión: debe
+        // aparecer exactamente igual en la plantilla y tener prioridad sobre
+        // cualquier recalculo automático por media/posición.
+        const agreedRole = result.record.clauses?.squadRole ?? deal.offer?.clauses?.squadRole;
+        if (agreedRole) {
+          const currentStats = usePlayersStore.getState().stats;
+          const currentPlayerStats = currentStats[result.record.playerId];
+          usePlayersStore.setState({
+            stats: {
+              ...currentStats,
+              [result.record.playerId]: {
+                ...currentPlayerStats,
+                squadRole: agreedRole,
+                squadRoleIsNegotiated: true,
+              },
+            },
+          });
+        }
+
         const loanWageShare = Math.max(0, Math.min(1, result.record.clauses?.wageShare ?? 0.5));
         const wagePaidByUser = Math.max(0, (result.wage ?? 0) * loanWageShare);
         const nextBudget = Math.max(0, startingBudget - result.fee - wagePaidByUser);
@@ -535,6 +554,8 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
           wageBudget: Math.round(nextBudget * nextRatio),
           wageBill: Math.round(startingWageBill + wagePaidByUser),
         });
+        const currentSaveAfterLoan = loadSave();
+        if (currentSaveAfterLoan) recalculateUserSquadRoles(currentSaveAfterLoan, true);
         flushWorldMoves();
         syncBudget();
         commit(`Cesión cerrada por ${(result.fee / 1_000_000).toFixed(1)}M € · vuelve el ${endDate}.`);
@@ -556,7 +577,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
           stats: {
             ...currentStats,
             [result.record.playerId]: {
-              ...(currentPlayerStats ?? ({} as any)),
+              ...currentPlayerStats,
               squadRole: agreedRole,
               squadRoleIsNegotiated: true,
             },

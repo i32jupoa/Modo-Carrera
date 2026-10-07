@@ -47,6 +47,7 @@ import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
 import { MoodFace } from "@/components/MoodFace";
 import { RoleBadge } from "@/components/RoleBadge";
+import { buildPositions, POS_SHORT } from "@/lib/positions";
 import {
   getPlayer,
   getPlayerAnnualWage,
@@ -383,6 +384,9 @@ function FormStrip({ values }: { values: number[] }) {
 function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
   const stats = usePlayersStore((s) => s.stats[String(p.ID)]);
   const pos = mapEaPosition(p.Position);
+  const detailedPositions = buildPositions(p.Position, p["Alternative positions"]);
+  const primaryPosition = detailedPositions[0] ?? null;
+  const secondaryPositions = detailedPositions.slice(1);
   const morale = stats?.morale ?? 70;
   const injured = (stats?.injuredUntil ?? 0) > 0;
   const contract = getPlayer(String(p.ID))?.contract;
@@ -436,13 +440,30 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
               </span>
             )}
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[0.62rem] font-bold uppercase tracking-wider text-muted-foreground">
-            <span className={`rounded bg-secondary/60 px-1.5 py-0.5 ${ROLE_TEXT[roleFromPosition(p.Position)]}`}>
-              {POS_LABEL_ES[pos]}
-            </span>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            {primaryPosition ? (
+              <span
+                title={`Posición principal: ${primaryPosition}`}
+                className={`rounded bg-secondary/70 px-1.5 py-0.5 text-[0.68rem] font-black uppercase tracking-wider ${ROLE_TEXT[roleFromPosition(p.Position)]}`}
+              >
+                {POS_SHORT[primaryPosition] ?? primaryPosition}
+              </span>
+            ) : (
+              <span className={`rounded bg-secondary/70 px-1.5 py-0.5 text-[0.68rem] font-black uppercase tracking-wider ${ROLE_TEXT[roleFromPosition(p.Position)]}`}>
+                {POS_LABEL_ES[pos]}
+              </span>
+            )}
+            {secondaryPositions.length > 0 && (
+              <span
+                title={`Posiciones secundarias: ${secondaryPositions.map((position) => POS_SHORT[position] ?? position).join(" · ")}`}
+                className="text-[0.5rem] font-black uppercase tracking-wider text-muted-foreground/80"
+              >
+                {secondaryPositions.map((position) => POS_SHORT[position] ?? position).join(" · ")}
+              </span>
+            )}
             <RoleBadge role={stats?.squadRole} compact />
-            <span>{p.Age} años</span>
-            <span>{contract?.yearsLeft ?? "—"} temp.</span>
+            <span className="text-[0.58rem] font-bold uppercase tracking-wider text-muted-foreground">{p.Age} años</span>
+            <span className="text-[0.58rem] font-bold uppercase tracking-wider text-muted-foreground">{contract?.yearsLeft ?? "—"} temp.</span>
           </div>
           <div className="mt-2 flex items-center gap-2">
             <span className="text-[0.58rem] uppercase tracking-wider text-muted-foreground">Salario</span>
