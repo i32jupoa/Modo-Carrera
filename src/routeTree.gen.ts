@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssistsRouteImport } from './routes/assists'
 import { Route as AwardsRouteImport } from './routes/awards'
 import { Route as CalendarRouteImport } from './routes/calendar'
+import { Route as CanteraRouteImport } from './routes/cantera'
 import { Route as ConferenceLeagueRouteImport } from './routes/conference-league'
 import { Route as CupRouteImport } from './routes/cup'
 import { Route as EuropaLeagueRouteImport } from './routes/europa-league'
@@ -49,6 +50,11 @@ const AwardsRoute = AwardsRouteImport.update({
 const CalendarRoute = CalendarRouteImport.update({
   id: '/calendar',
   path: '/calendar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CanteraRoute = CanteraRouteImport.update({
+  id: '/cantera',
+  path: '/cantera',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConferenceLeagueRoute = ConferenceLeagueRouteImport.update({
@@ -142,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/assists': typeof AssistsRoute
   '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
+  '/cantera': typeof CanteraRoute
   '/conference-league': typeof ConferenceLeagueRoute
   '/cup': typeof CupRoute
   '/europa-league': typeof EuropaLeagueRoute
@@ -165,6 +172,7 @@ export interface FileRoutesByTo {
   '/assists': typeof AssistsRoute
   '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
+  '/cantera': typeof CanteraRoute
   '/conference-league': typeof ConferenceLeagueRoute
   '/cup': typeof CupRoute
   '/europa-league': typeof EuropaLeagueRoute
@@ -189,6 +197,7 @@ export interface FileRoutesById {
   '/assists': typeof AssistsRoute
   '/awards': typeof AwardsRoute
   '/calendar': typeof CalendarRoute
+  '/cantera': typeof CanteraRoute
   '/conference-league': typeof ConferenceLeagueRoute
   '/cup': typeof CupRoute
   '/europa-league': typeof EuropaLeagueRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
     | '/assists'
     | '/awards'
     | '/calendar'
+    | '/cantera'
     | '/conference-league'
     | '/cup'
     | '/europa-league'
@@ -237,6 +247,7 @@ export interface FileRouteTypes {
     | '/assists'
     | '/awards'
     | '/calendar'
+    | '/cantera'
     | '/conference-league'
     | '/cup'
     | '/europa-league'
@@ -260,6 +271,7 @@ export interface FileRouteTypes {
     | '/assists'
     | '/awards'
     | '/calendar'
+    | '/cantera'
     | '/conference-league'
     | '/cup'
     | '/europa-league'
@@ -284,6 +296,7 @@ export interface RootRouteChildren {
   AssistsRoute: typeof AssistsRoute
   AwardsRoute: typeof AwardsRoute
   CalendarRoute: typeof CalendarRoute
+  CanteraRoute: typeof CanteraRoute
   ConferenceLeagueRoute: typeof ConferenceLeagueRoute
   CupRoute: typeof CupRoute
   EuropaLeagueRoute: typeof EuropaLeagueRoute
@@ -331,6 +344,13 @@ declare module '@tanstack/react-router' {
       path: '/calendar'
       fullPath: '/calendar'
       preLoaderRoute: typeof CalendarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cantera': {
+      id: '/cantera'
+      path: '/cantera'
+      fullPath: '/cantera'
+      preLoaderRoute: typeof CanteraRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/conference-league': {
@@ -460,6 +480,7 @@ const rootRouteChildren: RootRouteChildren = {
   AssistsRoute: AssistsRoute,
   AwardsRoute: AwardsRoute,
   CalendarRoute: CalendarRoute,
+  CanteraRoute: CanteraRoute,
   ConferenceLeagueRoute: ConferenceLeagueRoute,
   CupRoute: CupRoute,
   EuropaLeagueRoute: EuropaLeagueRoute,

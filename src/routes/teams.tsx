@@ -39,7 +39,9 @@ import { formatPositionLabel } from "@/lib/positions";
 import { TypicalElevenPitch } from "@/components/TypicalElevenPitch";
 import { getPlayerForm } from "@/lib/playerForm";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
-import { Search, X, Trophy, CalendarDays, ArrowUp, ArrowDown, Minus } from "lucide-react";
+import { useAcademyStore } from "@/lib/academy/academyStore";
+import type { AcademyPlayer } from "@/lib/academy/academyTypes";
+import { Search, X, Trophy, CalendarDays, ArrowUp, ArrowDown, Minus, GraduationCap, Sparkles } from "lucide-react";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -76,7 +78,42 @@ function norm(s: string): string {
 
 export const Route = createFileRoute("/teams")({ component: TeamsPage });
 
-type PanelTab = "squad" | "tactics";
+function AcademyMiniRow({ player, rank }: { player: AcademyPlayer; rank: number }) {
+  return (
+    <div className="grid grid-cols-[28px_1fr_auto_auto] items-center gap-3 rounded-xl border border-border/40 bg-secondary/10 p-3">
+      <div className="text-center text-xs font-black text-muted-foreground">{rank}</div>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-black">{player.name}</span>
+          {player.traits.includes("diamond") && <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" aria-label="Diamante en bruto" />}
+        </div>
+        <div className="mt-1 text-[0.65rem] text-muted-foreground">{player.positions.join(" / ")} · {player.age} años</div>
+      </div>
+      <div className="text-right"><div className="text-xs text-muted-foreground">OVR</div><div className="font-black scoreline">{Math.round(player.ovr)}</div></div>
+      <div className="text-right"><div className="text-xs text-muted-foreground">POT</div><div className="font-black text-primary">{player.potentialEstimate.min}–{player.potentialEstimate.max}</div></div>
+    </div>
+  );
+}
+
+function ClubAcademyPanel({ teamId, teamName, club, isUserTeam, onOpenAcademy }: { teamId: string; teamName: string; club?: ReturnType<typeof useAcademyStore.getState>["clubs"][string]; isUserTeam: boolean; onOpenAcademy: () => void }) {
+  const players = useMemo(() => (club?.players ?? []).filter((p) => ["academy", "called-up", "loaned", "listed"].includes(p.status)).slice().sort((a, b) => (b.potentialEstimate.max + b.ovr) - (a.potentialEstimate.max + a.ovr)).slice(0, 5), [club]);
+  if (!club) return <div className="rounded-2xl border border-border/50 bg-secondary/10 p-8 text-center text-sm text-muted-foreground">Preparando la cantera de {teamName}…</div>;
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Instalaciones</div><div className="mt-1 text-lg font-black">{club.facilityLevel}/5</div></div>
+        <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Jugadores</div><div className="mt-1 text-lg font-black">{club.players.length}</div></div>
+        <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Talento destacado</div><div className="mt-1 text-lg font-black text-primary">{players[0]?.potentialEstimate.max ?? "—"}</div></div>
+      </div>
+      <div className="rounded-xl border border-border/40 bg-card/40 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 font-black"><GraduationCap className="h-4 w-4 text-primary" />Las 5 promesas</div><div className="mt-1 text-[0.68rem] text-muted-foreground">Información parcial del nivel potencial de la cantera.</div></div><button type="button" onClick={onOpenAcademy} className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-black text-primary">{isUserTeam ? "Abrir cantera" : "Consultar cantera"}</button></div>
+        <div className="space-y-2">{players.map((player, index) => <AcademyMiniRow key={player.id} player={player} rank={index + 1} />)}</div>
+      </div>
+    </div>
+  );
+}
+
+type PanelTab = "squad" | "tactics" | "academy";
 
 function TeamsPage() {
   const navigate = useNavigate();
@@ -87,6 +124,15 @@ function TeamsPage() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<PanelTab>("squad");
+  const currentDate = usePlayersStore((s: any) => s.currentDate);
+  const playerStats = usePlayersStore((s: any) => s.stats);
+  const academyClub = useAcademyStore((state) => selectedTeam ? state.clubs[selectedTeam.id] : undefined);
+  const ensureAcademyClub = useAcademyStore((state) => state.ensureClub);
+
+  useEffect(() => {
+    if (!selectedTeam || tab !== "academy" || !save) return;
+    void ensureAcademyClub(selectedTeam.id, save.season, currentDate);
+  }, [selectedTeam, tab, save, currentDate, ensureAcademyClub]);
   const teamsSectionRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -142,9 +188,6 @@ function TeamsPage() {
   /* ------------------------------------------------- búsqueda global */
 
   const q = norm(query.trim());
-
-  const currentDate = usePlayersStore((s: any) => s.currentDate);
-  const playerStats = usePlayersStore((s: any) => s.stats);
 
   const rawPlayers = useMemo(() => {
     try {
@@ -540,6 +583,7 @@ function TeamsPage() {
             {[
               { id: "squad" as PanelTab, label: "Plantilla" },
               { id: "tactics" as PanelTab, label: "Táctica y 11 tipo" },
+              { id: "academy" as PanelTab, label: "Cantera" },
             ].map((t) => (
               <button
                 key={t.id}
@@ -554,6 +598,10 @@ function TeamsPage() {
               </button>
             ))}
           </div>
+
+          {tab === "academy" && selectedTeam && (
+            <ClubAcademyPanel teamId={selectedTeam.id} teamName={selectedTeam.name} club={academyClub} isUserTeam={isUserTeam} onOpenAcademy={() => navigate({ to: isUserTeam ? "/cantera" : "/teams" })} />
+          )}
 
           {tab === "tactics" && tactics && (
             <div className="space-y-4">

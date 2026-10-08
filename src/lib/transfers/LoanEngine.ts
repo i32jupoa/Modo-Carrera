@@ -275,6 +275,7 @@ export function arrangeLoan(
     loanListed: false,
     loanClubId: borrowerClubId,
     loanEndDate: addMonths(options.date, durationMonths),
+    ...(player.academyParentClubId ? { academyStatus: "loaned" as const } : {}),
   });
 
   return {
@@ -452,6 +453,7 @@ export function resolveLoansDue(date: string): LoanReturn[] {
       loanEndDate: null,
       loanListed: false,
       minutesShare: 0,
+      ...(player.academyParentClubId ? { academyStatus: "academy" as const } : {}),
     });
     returns.push({
       playerId: player.id,

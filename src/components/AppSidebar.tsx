@@ -16,6 +16,7 @@ import {
   Award,
   Swords,
   MessageCircle,
+  GraduationCap,
 } from "lucide-react";
 import {
   Sidebar,
@@ -33,6 +34,7 @@ import {
 import { loadSave } from "@/lib/store";
 import { loadAllSaves, loadSaveById } from "@/lib/savedGames";
 import { teamById } from "@/data/teams";
+import { useAcademyStore } from "@/lib/academy/academyStore";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import { usePlayersStore } from "@/store/playersStore";
 import { markScoutingNotificationsSeen, hasScoutingNotifications } from "@/lib/transfers/Scouting";
@@ -47,6 +49,7 @@ const PRINCIPAL: Item[] = [
 
 const MI_EQUIPO: Item[] = [
   { title: "Plantilla", url: "/squad", icon: Users },
+  { title: "Cantera", url: "/cantera", icon: GraduationCap },
   { title: "Ojeador", url: "/scouting", icon: Radar },
   { title: "Dirección de equipo", url: "/lineup", icon: ClipboardList },
   { title: "Buzón", url: "/mailbox", icon: MessageCircle },
@@ -77,6 +80,8 @@ export function AppSidebar() {
   const [teamName, setTeamName] = useState<string | null>(null);
   const [season, setSeason] = useState<string>("");
   const [hasSave, setHasSave] = useState(false);
+  const academyClubs = useAcademyStore((state) => state.clubs);
+  const ensureAcademyClub = useAcademyStore((state) => state.ensureClub);
 
   useEffect(() => {
     console.log("AppSidebar useEffect ejecutado, pathname:", pathname);
@@ -112,6 +117,18 @@ export function AppSidebar() {
   const markMailboxRead = useNotificationsStore((s) => s.markMailboxRead);
   const currentDate = usePlayersStore((s) => s.currentDate);
   const scoutingHasNotifications = hasScoutingNotifications(currentDate);
+  useEffect(() => {
+    const save = loadSave();
+    if (!save || pathname === "/") return;
+    void ensureAcademyClub(save.myTeamId, Number(String(save.season).slice(0, 4)) || 2026, currentDate);
+  }, [currentDate, ensureAcademyClub, pathname]);
+  const academyNotificationCount = (() => {
+    const save = loadSave();
+    if (!save) return 0;
+    const academy = academyClubs[save.myTeamId];
+    if (!academy) return 0;
+    return academy.players.filter((player) => player.status === "academy" && ((player.age >= 18 && player.ovr >= 55) || player.contractYearsLeft <= 1)).length;
+  })();
 
   // Mientras estás dentro del mercado, cualquier novedad se considera vista.
   // Así no aparece ningún punto al pasar días dentro de la propia sección.
@@ -173,9 +190,11 @@ export function AppSidebar() {
               badges={{
                 "/scouting": pathname !== "/scouting" && scoutingHasNotifications,
                 "/mailbox": pathname !== "/mailbox" && mailboxNotificationCount > 0,
+                "/cantera": pathname !== "/cantera" && academyNotificationCount > 0,
               }}
               badgeCounts={{
                 "/mailbox": mailboxNotificationCount,
+                "/cantera": academyNotificationCount,
               }}
             />
             <NavGroup

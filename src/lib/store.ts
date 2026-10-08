@@ -872,6 +872,9 @@ export type SaveGame = {
 
   /** Version of the appearance-counter repair already applied to this save. */
   appearanceStatsRepairVersion?: number;
+
+  /** Hechos estructurados de cantera, compactos y reutilizables por Noticias/Buzón. */
+  academyEvents?: import("@/lib/academy/academyTypes").AcademyPromotionEvent[];
 };
 
 const STORAGE_KEY = "fcsim:save:v2";
@@ -1218,6 +1221,8 @@ export function loadSave(): SaveGame | null {
     if (parsed.uel === undefined) { parsed.uel = null; needsMigrationSave = true; }
     if (parsed.uecl === undefined) { parsed.uecl = null; needsMigrationSave = true; }
     if (parsed.mailbox == null) { parsed.mailbox = createEmptyMailbox(); needsMigrationSave = true; }
+    if (!Array.isArray(parsed.academyEvents)) { parsed.academyEvents = []; needsMigrationSave = true; }
+    parsed.academyEvents = parsed.academyEvents.slice(-80);
     if (!Array.isArray(parsed.mailbox.conversations)) { parsed.mailbox.conversations = []; needsMigrationSave = true; }
     if (!Array.isArray(parsed.mailbox.promises)) { parsed.mailbox.promises = []; needsMigrationSave = true; }
     if (!Number.isFinite(Number(parsed.mailbox.sequence))) { parsed.mailbox.sequence = 0; needsMigrationSave = true; }

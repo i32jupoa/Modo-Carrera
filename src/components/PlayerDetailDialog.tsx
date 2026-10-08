@@ -425,6 +425,17 @@ export interface PlayerDetailDialogProps {
   isMarketOpen?: boolean;
   /** Oculta el estado de ánimo en fichas públicas de Centro de Clubes. */
   showMorale?: boolean;
+  academyMode?: boolean;
+  academyPotentialEstimate?: { min: number; max: number };
+  onPromote?: () => void;
+  onRelease?: () => void;
+  onRenewYouth?: () => void;
+  onCallUp?: () => void;
+  onLoan?: () => void;
+  onSellAcademy?: () => void;
+  onRetrain?: () => void;
+  academyStatusLabel?: string;
+  onDemoteToAcademy?: () => void;
 }
 
 export function PlayerDetailDialog({
@@ -442,6 +453,17 @@ export function PlayerDetailDialog({
   isListed = false,
   isMarketOpen = false,
   showMorale = true,
+  academyMode = false,
+  academyPotentialEstimate,
+  onPromote,
+  onRelease,
+  onRenewYouth,
+  onCallUp,
+  onLoan,
+  onSellAcademy,
+  onRetrain,
+  academyStatusLabel,
+  onDemoteToAcademy,
 }: PlayerDetailDialogProps) {
   if (!selected || !team) return null;
 
@@ -482,19 +504,15 @@ export function PlayerDetailDialog({
           <DialogHeader className="relative">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
               <div className="flex items-end gap-3">
-                <div className="w-28 shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-secondary/50 shadow-xl">
-                  {faceUrl(String(selected.ID), selected.card) ? (
-                    <img src={faceUrl(String(selected.ID), selected.card)} alt={selected.Name} className="h-36 w-full object-cover object-top" />
-                  ) : (
-                    <div className="grid h-36 place-items-center text-xs text-muted-foreground">Sin foto</div>
-                  )}
+                <div className="grid h-36 w-28 shrink-0 place-items-center overflow-hidden rounded-2xl border border-border/60 bg-secondary/50 shadow-xl">
+                  <PlayerFace name={selected.Name} image={faceUrl(String(selected.ID), selected.card)} role={roleFromPosition(selected.Position)} size={112} className="rounded-2xl" />
                 </div>
                 <div className="mb-1 flex flex-col items-center gap-2">
                   <div className={`grid h-16 w-16 place-items-center rounded-2xl border scoreline text-2xl font-black shadow-lg ${ovrTone(dynamicOvr)}`}>{dynamicOvr}</div>
                   {privateMode && (
                     <div className="rounded-xl border border-border/50 bg-background/45 px-2.5 py-1.5 text-center backdrop-blur">
-                      <p className="text-[0.48rem] font-black uppercase tracking-wider text-muted-foreground">POT</p>
-                      <p className="scoreline text-sm font-black">{Math.round(potential)}</p>
+                      <p className="text-[0.48rem] font-black uppercase tracking-wider text-muted-foreground">{academyMode ? "POT. ESTIMADO" : "POT"}</p>
+                      <p className="scoreline text-sm font-black">{academyMode && academyPotentialEstimate ? `${academyPotentialEstimate.min}–${academyPotentialEstimate.max}` : Math.round(potential)}</p>
                     </div>
                   )}
                 </div>
@@ -507,6 +525,7 @@ export function PlayerDetailDialog({
                     {secondaryPositions && <span className="text-[0.55rem] font-bold text-muted-foreground">{secondaryPositions}</span>}
                   </span>
                   {privateMode && isListed && <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-amber-300">En venta</span>}
+                  {(academyMode || selected.academyPromotionYear) && <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-emerald-300">Canterano{selected.academyPromotionYear ? ` · ${selected.academyPromotionYear}` : ""}</span>}
                 </div>
                 <DialogDescription className="mt-1 text-xs font-semibold uppercase tracking-wider">{selected.Age} años · {selected.Nation ?? "Nacionalidad no disponible"}</DialogDescription>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -524,10 +543,10 @@ export function PlayerDetailDialog({
         <div className="space-y-5 p-4 sm:p-5">
           {privateMode && (
             <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <DetailMetric icon={Target} label="Valor" value={formatEuro(value)} accent="text-emerald-300" hint="Valor de mercado" />
-              <DetailMetric icon={Banknote} label="Salario" value={`${formatEuro(wage)}/año`} accent="text-primary" />
-              <DetailMetric icon={CalendarDays} label="Contrato" value={`${marketContract?.yearsLeft ?? 0} temp.`} />
-              <DetailMetric icon={Shield} label="Cláusula" value={formatEuro(marketContract?.releaseClause ?? 0)} accent="text-amber-300" />
+              <DetailMetric icon={Target} label="Valor" value={formatEuro(value)} accent="text-emerald-300" hint="Valor estimado" />
+              <DetailMetric icon={Banknote} label="Salario" value={academyMode ? "Contrato juvenil" : `${formatEuro(wage)}/año`} accent="text-primary" />
+              <DetailMetric icon={CalendarDays} label="Contrato" value={`${marketContract?.yearsLeft ?? (academyMode ? "Juvenil" : 0)}${academyMode ? "" : " temp."}`} />
+              <DetailMetric icon={Shield} label={academyMode ? "Estado" : "Cláusula"} value={academyMode ? (academyStatusLabel ?? "En cantera") : formatEuro(marketContract?.releaseClause ?? 0)} accent="text-amber-300" />
             </section>
           )}
 
@@ -613,6 +632,26 @@ export function PlayerDetailDialog({
           )}
 
           {privateMode && !isMarketOpen && <p className="flex items-center gap-1 text-[0.65rem] text-muted-foreground"><ShieldAlert className="h-3 w-3" />Mercado cerrado. Las operaciones se reanudarán en la próxima ventana.</p>}
+          {privateMode && !academyMode && onDemoteToAcademy && selected.Age <= 21 && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3"><button type="button" onClick={onDemoteToAcademy} className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-black text-emerald-300">Bajar a la cantera</button></div>}
+          {academyMode && (
+            <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black">Gestión del canterano</p>
+                  <p className="mt-1 text-xs text-muted-foreground">La IA no puede moverlo. Tú decides cuándo promocionarlo, renovarlo o liberarlo.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {onPromote && <button type="button" onClick={onPromote} disabled={selected.Age < 18} className="rounded-xl bg-primary px-3 py-2 text-xs font-black text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40">Subir al primer equipo</button>}
+                  {onCallUp && <button type="button" onClick={onCallUp} className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black text-blue-300">Convocar</button>}
+                  {onLoan && <button type="button" onClick={onLoan} disabled={!isMarketOpen} title={!isMarketOpen ? "Mercado cerrado" : undefined} className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-primary disabled:cursor-not-allowed disabled:opacity-40">Buscar cesión</button>}
+                  {onSellAcademy && <button type="button" onClick={onSellAcademy} disabled={!isMarketOpen} title={!isMarketOpen ? "Mercado cerrado" : undefined} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-black text-amber-300 disabled:cursor-not-allowed disabled:opacity-40">Poner en venta</button>}
+                  {onRetrain && <button type="button" onClick={onRetrain} className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-300">Reconversión</button>}
+                  {onRenewYouth && <button type="button" onClick={onRenewYouth} className="rounded-xl border border-border bg-secondary px-3 py-2 text-xs font-black">Renovar juvenil</button>}
+                  {onRelease && <button type="button" onClick={onRelease} className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-black text-rose-300">Liberar</button>}
+                </div>
+              </div>
+            </section>
+          )}
         </div>
       </DialogContent>
     </Dialog>

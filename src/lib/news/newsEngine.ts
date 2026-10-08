@@ -1683,6 +1683,49 @@ function injuryNews(ctx: Ctx, leagueIds: string[]): NewsItem[] {
 }
 
 // ============================================================================
+// CANTERA
+// ============================================================================
+
+function academyPromotionNews(ctx: Ctx): NewsItem[] {
+  const events = Array.isArray(ctx.save.academyEvents) ? ctx.save.academyEvents : [];
+  return events
+    .slice()
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    .slice(0, 18)
+    .map((event) => {
+      const club = nameOf(event.teamId);
+      const mine = isMine(ctx, event.teamId);
+      const rng = rngFor(`news:academy:${event.id}`);
+      const decision = event.wasUserDecision ? "El cuerpo técnico ha decidido darle la oportunidad." : event.reason;
+      return {
+        id: `academy:${event.id}`,
+        cat: "jugadores",
+        icon: "🌱",
+        title: pick(rng, [
+          `${event.playerName} asciende al primer equipo de ${club}`,
+          `${club} promociona a ${event.playerName} desde la cantera`,
+          `Nueva promesa para ${club}: ${event.playerName} da el salto`,
+        ]),
+        lead: `${event.playerName} deja la cantera y pasa a formar parte de la primera plantilla.`,
+        body: [
+          `${event.playerName} ha sido promocionado por ${club}.`,
+          decision,
+        ],
+        facts: [
+          { label: "Jugador", value: event.playerName },
+          { label: "Club", value: club },
+          { label: "Motivo", value: event.reason },
+        ],
+        visual: visualFor({ teams: [event.teamId], players: [{ id: String(event.playerId), name: event.playerName }] }),
+        score: clamp(52 + (mine ? 28 : 0) + prestige(event.teamId) * 12, 10, 96),
+        when: `Cantera · ${prettyDate(event.date) ?? event.date}`,
+        mine,
+        theme: "jugador",
+      } satisfies NewsItem;
+    });
+}
+
+// ============================================================================
 // SELECCIÓN FINAL (relevancia + variedad)
 // ============================================================================
 
@@ -1755,6 +1798,11 @@ export function buildGameNews(save: SaveGame, opts: { limit?: number } = {}): Ne
   } catch (e) {
     console.warn("[news] error en noticias de lesiones", e);
   }
+  try {
+    all.push(...academyPromotionNews(ctx));
+  } catch (e) {
+    console.warn("[news] error en noticias de cantera", e);
+  }
   const chosen = selectVaried(all, limit);
   for (const it of chosen) it.theme = it.theme ?? themeOf(it);
   return chosen;
@@ -1768,6 +1816,7 @@ function themeOf(it: NewsItem): NewsTheme {
   if (id.startsWith("cup:") || id.startsWith("cup-champ:")) return "copa";
   if (id.startsWith("tr:")) return "fichaje";
   if (id.startsWith("ren:")) return "renovacion";
+  if (id.startsWith("academy:")) return "jugador";
   if (id.startsWith("inj:")) return "lesion";
   if (id.startsWith("scorer:")) return "jugador";
   return "liga";

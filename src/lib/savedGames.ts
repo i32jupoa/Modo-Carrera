@@ -1,4 +1,5 @@
 import { teamById } from "@/data/teams";
+import { DYNAMIC_BY_ID, getDynamicMarketPlayers, getAcademyPromotionEvents, hydrateAcademyPromotionEvents, hydrateDynamicMarketPlayers } from "@/lib/academy/academyRuntime";
 import { SaveGame } from "./store";
 import {
   baseClubOfPlayer,
@@ -52,10 +53,13 @@ function snapshotPlayersStore() {
     rosterIds: s.rosterIds,
     loanedPlayers: s.loanedPlayers,
     clubOverrides: s.clubOverrides,
+    dynamicPlayers: Object.fromEntries(DYNAMIC_BY_ID.entries()),
+    dynamicMarketPlayers: getDynamicMarketPlayers(),
     budget: s.budget,
     wageBudget: s.wageBudget,
     wageBill: s.wageBill,
     dismissedMatchIds: s.dismissedMatchIds,
+    academyEvents: getAcademyPromotionEvents(),
   };
 }
 
@@ -85,7 +89,7 @@ export function persistCurrentSave(
   if (!id) return false;
 
   const flush = (targetId: string, targetSave: SaveGame): boolean => {
-    const payload = { ...targetSave, playersStoreState: snapshotPlayersStore() };
+    const payload = { ...targetSave, academyEvents: getAcademyPromotionEvents(), playersStoreState: snapshotPlayersStore() };
     const ok = setSaveItem(saveKeyFor(targetId), JSON.stringify(payload));
     lastPersistAt = Date.now();
     const saves = loadAllSaves();
@@ -171,7 +175,7 @@ export function addSaveToMultiple(save: SaveGame) {
   // Activar esta partida como la actual ANTES de persistir el snapshot
   setCurrentSaveId(meta.id);
 
-  const payload = { ...save, playersStoreState: snapshotPlayersStore() };
+  const payload = { ...save, academyEvents: getAcademyPromotionEvents(), playersStoreState: snapshotPlayersStore() };
   // Nunca `localStorage.clear()`: eso borraba las demás partidas y el mercado
   // (rumores y traspasos). `safeSetItem` libera sólo cachés reconstruibles.
   if (!setSaveItem(saveKeyFor(meta.id), JSON.stringify(payload))) {
@@ -228,6 +232,12 @@ export async function deleteSave(id: string): Promise<void> {
   } catch (error) {
     console.warn("No se pudo limpiar inmediatamente el mercado de la partida eliminada:", error);
   }
+  try {
+    const { clearAcademySave } = await import("@/lib/academy/academyPersistence");
+    await clearAcademySave(id);
+  } catch (error) {
+    console.warn("No se pudo limpiar inmediatamente la cantera de la partida eliminada:", error);
+  }
 
   const saves = loadAllSaves().filter((s) => s.id !== id);
   saveMultipleSaves(saves);
@@ -276,12 +286,14 @@ export function updateSaveLastPlayed(id: string) {
 }
 
 export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: any }) {
+  hydrateAcademyPromotionEvents(save.academyEvents);
   // Limpia el estado persistido del playersStore para evitar fugas entre partidas
   localStorage.removeItem(PLAYERS_PERSIST_KEY);
 
   const snap = save.playersStoreState;
   if (!snap) {
     // Partidas antiguas sin snapshot: dejar el estado limpio con sólo el equipo
+    usePlayersStore.getState().hydrateDynamicPlayers({});
     usePlayersStore.setState({
       loaded: false,
       myTeamId: save.myTeamId ?? null,
@@ -291,6 +303,7 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
 
   const clubOverrides = snap.clubOverrides ?? {};
   const loanedPlayers = snap.loanedPlayers ?? {};
+  const dynamicPlayers = snap.dynamicPlayers ?? {};
   const myTeamId = snap.myTeamId ?? save.myTeamId ?? null;
   const validRosterIds = (snap.rosterIds ?? []).filter((playerId: string) => {
     if (!myTeamId) return true;
@@ -305,6 +318,8 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
   });
 
   setClubOverrides(clubOverrides);
+  usePlayersStore.getState().hydrateDynamicPlayers(dynamicPlayers);
+  hydrateDynamicMarketPlayers(snap.dynamicMarketPlayers);
 
   // Restaurar usando setState (mutar el objeto devuelto por getState NO notifica
   // a los componentes ni persiste). Mantener cualquier campo no incluido.
@@ -318,6 +333,7 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
     rosterIds: validRosterIds,
     loanedPlayers,
     clubOverrides,
+    dynamicPlayers,
     budget: snap.budget,
     wageBudget: snap.wageBudget,
     wageBill: snap.wageBill,

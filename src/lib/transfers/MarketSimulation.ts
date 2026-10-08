@@ -13,14 +13,14 @@
  * Todo lo que ocurre se vuelca en `TransferHistory` y `RumorEngine`.
  */
 
-import { BALANCE, ELITE_EXIT, MARKET_TIMING, MARKET_VARIATION, WINTER_MARKET } from "./constants";
+import { BALANCE, ELITE_EXIT, MARKET_TIMING, MARKET_VARIATION, WINTER_MARKET, SQUAD_LIMITS } from "./constants";
 import {
   TRANSFER_WINDOWS,
   isSummerTransferWindow,
   isWinterTransferWindow,
   parseDateOnly,
 } from "../transferWindows";
-import { getMarketIndex } from "./PlayerIndex";
+import { getMarketIndex, getClubPlayers } from "./PlayerIndex";
 import { listAllBids } from "./BidWar";
 import { getClubProfile } from "./ClubStrategy";
 import { shoppingRamp } from "./MarketPacing";
@@ -51,6 +51,8 @@ import {
   coreDeparturesFor,
 } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
+import { runAcademyPreseasonPromotions, runAcademyWindowPromotions, runAcademyEmergencyPromotion } from "@/lib/academy/academyPromotionEngine";
+import { reconcileAcademyLoans } from "@/lib/academy/academyLoanBridge";
 import { POSITION_GROUPS } from "./types";
 import { getLongTermInjuredPlayerIds } from "./MarketPlayerSignals";
 import type { MarketDayResult, MarketSimulationState, MarketWindow } from "./types";
@@ -856,13 +858,34 @@ export function simulateDay(date: string): MarketDayResult {
     advanceSeason(date);
     seasonLoanReturns = resolveLoansEndOfSeason(date);
     sim.lastSeasonRolled = season;
+    try {
+      const academy = runAcademyPreseasonPromotions(date);
+      if (academy.promoted.length) {
+        console.info(`[academy] ${academy.promoted.length} promociones de pretemporada`);
+      }
+    } catch (error) {
+      console.warn("[academy] fallo en promociones de pretemporada:", error);
+    }
   } else {
     seasonLoanReturns = resolveLoansDue(date);
   }
+  void reconcileAcademyLoans(date);
 
   // Cambio de ventana: presupuestos nuevos e intensidad nueva.
   const key = windowKey(date);
   if (key !== sim.windowKey) {
+    const previousWindow = sim.windowKey.split(":").pop();
+    const currentWindow = windowForDate(date);
+    if (currentWindow === "closed" && (previousWindow === "summer" || previousWindow === "winter")) {
+      try {
+        const academy = runAcademyWindowPromotions(date);
+        if (academy.promoted.length) {
+          console.info(`[academy] ${academy.promoted.length} promociones por necesidades de plantilla`);
+        }
+      } catch (error) {
+        console.warn("[academy] fallo en promociones de cierre de mercado:", error);
+      }
+    }
     const rolled = openWindow(date);
     rolled.lastSeasonRolled = sim.lastSeasonRolled;
     internals = rolled;
@@ -909,6 +932,13 @@ export function simulateDay(date: string): MarketDayResult {
 
   for (const clubId of activeClubsForDate(date, state)) {
     try {
+      const clubSize = getClubPlayers(clubId).length;
+      if (clubSize < SQUAD_LIMITS.minSquadSize) {
+        const emergency = runAcademyEmergencyPromotion(clubId, date);
+        if (emergency.promoted.length) {
+          console.info(`[academy] ${emergency.promoted.length} promoción de emergencia para ${clubId}`);
+        }
+      }
       runClubDay(clubId, date, state, result);
     } catch (error) {
       // Robustez de simulación: un club corrupto/migrado nunca puede dejar

@@ -30,7 +30,6 @@ import {
   CalendarDays,
   Banknote,
   CircleDollarSign,
-  Handshake,
   Cake,
   Star,
   Trophy,
@@ -45,6 +44,8 @@ import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { useUserMarket } from "@/hooks/useUserMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
+import { LoanSearchModal } from "@/components/LoanSearchModal";
+import { useAcademyStore } from "@/lib/academy/academyStore";
 import { MoodFace } from "@/components/MoodFace";
 import { RoleBadge } from "@/components/RoleBadge";
 import { buildPositions, POS_SHORT } from "@/lib/positions";
@@ -434,6 +435,9 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-black">{p.Name}</span>
+            {p.card === "academy" && (
+              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[0.48rem] font-black uppercase tracking-wider text-emerald-300">Canterano{p.academyPromotionYear ? ` · ${p.academyPromotionYear}` : ""}</span>
+            )}
             {injured && (
               <span title="Lesionado" className="text-destructive">
                 <Activity className="h-3 w-3" />
@@ -527,7 +531,7 @@ function RenewalModal({
               Renovar contrato
             </DialogTitle>
             <DialogDescription>
-              {p.Name} · {p.OVR} OVR · contrato actual {contract?.yearsLeft ?? 0} temporadas
+              {p.Name} · {Math.round(p.OVR)} OVR · contrato actual {contract?.yearsLeft ?? 0} temporadas
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -674,74 +678,6 @@ function NumberField({
   );
 }
 
-function LoanSearchModal({
-  p,
-  listed,
-  onToggle,
-  onClose,
-}: {
-  p: FcPlayer;
-  listed: boolean;
-  onToggle: () => void;
-  onClose: () => void;
-}) {
-  const marketPlayer = getPlayer(String(p.ID));
-  const loaned = !!marketPlayer?.loanClubId;
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-md overflow-hidden p-0">
-        <div className="bg-gradient-to-br from-primary/20 via-card to-transparent p-5">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl font-black">
-              <Handshake className="h-5 w-5 text-primary" />
-              Buscar cesión
-            </DialogTitle>
-            <DialogDescription>
-              {p.Name} · {p.OVR} OVR · {p.Age} años
-            </DialogDescription>
-          </DialogHeader>
-        </div>
-        <div className="space-y-4 p-5">
-          <div className="rounded-xl border border-border/60 bg-card/60 p-4 text-sm">
-            <p className="font-bold">Buscar destino temporal</p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Lista al jugador como disponible para una cesión. Los clubes interesados enviarán ofertas
-              y la negociación continuará desde Mercado → Ofertas recibidas. La prima suele ser gratis o
-              baja, y se negocia qué porcentaje del salario paga cada club. También pueden llegar ofertas
-              sin haberlo listado.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="rounded-lg border border-border/50 bg-secondary/40 p-3">
-              <p className="text-muted-foreground">Estado</p>
-              <p className="mt-1 font-black">{loaned ? "Ya está cedido" : listed ? "Buscando destino" : "Sin búsqueda"}</p>
-            </div>
-            <div className="rounded-lg border border-border/50 bg-secondary/40 p-3">
-              <p className="text-muted-foreground">Prima habitual</p>
-              <p className="mt-1 font-black">Gratis / baja</p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={loaned}
-              onClick={onToggle}
-              className={`flex-1 rounded-xl px-4 py-3 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                listed ? "border border-amber-500/40 bg-amber-500/15 text-amber-300" : "bg-primary text-primary-foreground"
-              }`}
-            >
-              {listed ? "Cancelar búsqueda" : "Buscar destino"}
-            </button>
-            <button type="button" onClick={onClose} className="rounded-xl bg-secondary px-4 py-3 text-sm font-bold">
-              Cerrar
-            </button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function SquadPage() {
   const navigate = useNavigate();
   const { loading } = usePlayersReady();
@@ -756,6 +692,7 @@ function SquadPage() {
   const wageBudget = usePlayersStore((s) => s.wageBudget);
   const renewPlayerContract = usePlayersStore((s) => s.renewPlayerContract);
   const syncWageStateFromMarket = usePlayersStore((s) => s.syncWageStateFromMarket);
+  const demoteToAcademy = useAcademyStore((s) => s.demoteToAcademy);
   const { isMarketOpen } = useTransferMarket();
   const market = useUserMarket(!!myTeamId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -811,6 +748,18 @@ function SquadPage() {
   const selectedStats = usePlayersStore((s) =>
     selectedId ? s.stats[selectedId] : undefined,
   );
+
+  const handleDemoteToAcademy = async () => {
+    if (!selected) return;
+    if (!window.confirm(`¿Bajar a ${selected.Name} a la cantera?`)) return;
+    const result = await demoteToAcademy(String(selected.ID), currentDate);
+    if (!result.ok) toast.error(result.reason);
+    else {
+      toast.success(`${selected.Name} vuelve a la cantera.`);
+      setSelectedId(null);
+      syncWageStateFromMarket();
+    }
+  };
 
   function handleRenewSubmit(input: {
     playerId: string;
@@ -956,6 +905,7 @@ function SquadPage() {
           setLoanSearchPlayerId(String(selected.ID));
           setLoanSearchListed(getPlayer(String(selected.ID))?.loanListed ?? false);
         }}
+        onDemoteToAcademy={handleDemoteToAcademy}
       />
 
       {loanSearchPlayerId && (() => {

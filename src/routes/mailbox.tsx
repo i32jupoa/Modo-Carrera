@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, CheckCheck, MessageCircle, Search, Send } from "lucide-react";
+import { ArrowLeft, Check, CheckCheck, GraduationCap, MessageCircle, Search, Send } from "lucide-react";
 import { loadSave, saveSaveWithRetry } from "@/lib/store";
 import { TEAMS } from "@/data/teams";
 import { usePlayersStore } from "@/store/playersStore";
@@ -17,6 +17,7 @@ import {
   type MailboxResponse,
 } from "@/lib/mailbox";
 import { useNotificationsStore } from "@/store/notificationsStore";
+import { useAcademyStore } from "@/lib/academy/academyStore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -49,6 +50,13 @@ function MailboxPage() {
   const [mobileChat, setMobileChat] = useState(false);
   const [typing, setTyping] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const academyClub = useAcademyStore((state) => save?.myTeamId ? state.clubs[save.myTeamId] : undefined);
+  const ensureAcademyClub = useAcademyStore((state) => state.ensureClub);
+
+  useEffect(() => {
+    if (!save?.myTeamId || !currentDate) return;
+    void ensureAcademyClub(save.myTeamId, save.season, currentDate);
+  }, [save?.myTeamId, save?.season, currentDate, ensureAcademyClub]);
 
   const playerMap = useMemo(() => new Map(squad.map((player) => [player.id, player])), [squad]);
   const conversations = useMemo(() => (save?.mailbox?.conversations ?? []).filter((conversation) => playerMap.has(conversation.playerId)), [save?.mailbox?.conversations, playerMap]);
@@ -131,6 +139,24 @@ function MailboxPage() {
         </div>
         <div className="hidden text-right text-xs text-muted-foreground sm:block">Mensajes de tus jugadores y conversaciones de confianza</div>
       </div>
+
+      {(academyClub?.players.some((player) => (player.loanReports?.length ?? 0) > 0) ?? false) && (
+        <section className="mb-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+          <div className="flex items-center gap-2 text-sm font-black"><GraduationCap className="h-4 w-4 text-primary" />Informes de cesiones de cantera</div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {(academyClub?.players ?? []).filter((player) => player.status === "loaned" && (player.loanReports?.length ?? 0) > 0).map((player) => {
+              const report = player.loanReports?.at(-1);
+              return report ? (
+                <div key={player.id} className="rounded-xl border border-border/50 bg-card/60 p-3">
+                  <div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-black">{player.name}</span><span className={`text-xs font-black ${report.delta >= 0 ? "text-emerald-400" : "text-rose-300"}`}>{report.delta >= 0 ? "+" : ""}{report.delta.toFixed(2)} OVR</span></div>
+                  <div className="mt-1 text-[0.65rem] text-muted-foreground">{report.minutes} min. último seguimiento · {report.averageRating.toFixed(2)} de valoración</div>
+                  <p className="mt-2 text-[0.68rem] leading-5 text-muted-foreground">{report.note}</p>
+                </div>
+              ) : null;
+            })}
+          </div>
+        </section>
+      )}
 
       <div className="grid min-h-0 flex-1 overflow-hidden rounded-2xl border border-border/60 bg-card/60 shadow-xl lg:grid-cols-[340px_minmax(0,1fr)]">
         <aside className={`${mobileChat ? "hidden lg:flex" : "flex"} min-h-0 flex-col border-r border-border/60`}>

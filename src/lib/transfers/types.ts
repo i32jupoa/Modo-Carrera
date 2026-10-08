@@ -28,6 +28,10 @@ export interface Contract {
   releaseClause: number;
   /** Prima de fichaje pactada en euros. */
   signingBonus: number;
+  /** Porcentaje de futura venta reservado por el club de origen (0..50). */
+  futureSalePercentage?: number;
+  /** Precio orientativo de una cláusula de recompra. */
+  buybackClause?: number;
 }
 
 /** Rasgos de personalidad que guían las decisiones del jugador (0..1). */
@@ -95,6 +99,9 @@ export interface MarketPlayer {
     physical: number;
     defending: number;
   };
+  /** Metadatos opcionales de jugadores procedentes de cantera. */
+  academyStatus?: "academy" | "loaned" | "listed" | "promoted";
+  academyParentClubId?: string | null;
 }
 
 // ============================================================================

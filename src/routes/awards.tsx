@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CalendarDays, Crown, Filter, Goal, ListOrdered, Medal, Shield, Swords, Star, Trophy } from "lucide-react";
+import { CalendarDays, Crown, Filter, Goal, ListOrdered, Medal, Shield, Swords, Sparkles, Star, Trophy } from "lucide-react";
 import { loadSave, type SaveGame } from "@/lib/store";
 import {
   getAllLeagueIds,
@@ -23,6 +23,7 @@ import { LeagueLogo } from "@/components/LeagueLogo";
 import { faceUrl } from "@/lib/playerFaces";
 import { LEAGUES, teamById, type LeagueId } from "@/data/teams";
 import { usePlayersStore } from "@/store/playersStore";
+import { getAcademyClubRanking, getAcademyHallOfFame, getAcademySeasonAward } from "@/lib/academy/academyAnalytics";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -502,6 +503,40 @@ function safeCalculateAwards(save: SaveGame, players: AwardPlayer[]) {
   }
 }
 
+function AcademyAwardsView({ date, season }: { date: string; season: number | string }) {
+  const award = useMemo(() => getAcademySeasonAward(date), [date]);
+  const bestAcademy = useMemo(() => getAcademyClubRanking(date, 1)[0] ?? null, [date]);
+  const hall = useMemo(() => getAcademyHallOfFame(20), [date, season]);
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="border-border/60 bg-card/70">
+          <CardHeader><CardTitle className="flex items-center gap-2 text-base font-black"><Sparkles className="h-4 w-4 text-primary" />Joya de la cantera</CardTitle></CardHeader>
+          <CardContent>
+            {award ? (
+              <div className="space-y-2"><div className="text-xl font-black">{award.player.name}</div><div className="text-sm text-muted-foreground">{award.teamName} · {award.leagueName}</div><div className="grid grid-cols-3 gap-2"><Metric label="OVR" value={`${Math.round(award.player.ovr)}`} /><Metric label="POT" value={`${award.player.potentialEstimate.min}–${award.player.potentialEstimate.max}`} /><Metric label="Edad" value={`${award.player.age}`} /></div></div>
+            ) : <div className="py-6 text-sm text-muted-foreground">Todavía no hay una promesa destacada para este período.</div>}
+          </CardContent>
+        </Card>
+        <Card className="border-border/60 bg-card/70">
+          <CardHeader><CardTitle className="flex items-center gap-2 text-base font-black"><Trophy className="h-4 w-4 text-primary" />Mejor cantera del período</CardTitle></CardHeader>
+          <CardContent>
+            {bestAcademy ? (
+              <div className="flex items-center gap-3"><TeamLogo teamName={bestAcademy.teamName} leagueName={bestAcademy.leagueName} size={38} /><div><div className="font-black">{bestAcademy.teamName}</div><div className="text-xs text-muted-foreground">Índice {bestAcademy.academyScore} · {bestAcademy.prospectCount} promesas destacadas · {bestAcademy.facilityLevel}/5 instalaciones</div></div></div>
+            ) : <div className="py-6 text-sm text-muted-foreground">Todavía no hay suficientes datos para este premio.</div>}
+          </CardContent>
+        </Card>
+        <Card className="border-border/60 bg-card/70">
+          <CardHeader><CardTitle className="flex items-center gap-2 text-base font-black"><Crown className="h-4 w-4" />Hijos de la cantera</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {hall.length ? hall.map((entry, index) => <div key={`${entry.playerId}-${entry.date}`} className="grid grid-cols-[30px_1fr_auto] items-center gap-3 rounded-xl border border-border/40 bg-secondary/10 p-3"><span className="text-xs font-black text-muted-foreground">{index + 1}</span><div className="min-w-0"><div className="truncate font-black">{entry.playerName}</div><div className="text-[0.65rem] text-muted-foreground">{entry.teamName} · {entry.detail}</div></div><div className="text-[0.65rem] text-muted-foreground">{entry.date}</div></div>) : <div className="py-6 text-sm text-muted-foreground">Todavía no hay promociones registradas.</div>}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 function AwardsPage() {
   const navigate = useNavigate();
   const { loading, ready } = usePlayersReady();
@@ -654,6 +689,7 @@ function AwardsPage() {
           <TabsTrigger value="europa">Europa League</TabsTrigger>
           <TabsTrigger value="conference">Conference League</TabsTrigger>
           <TabsTrigger value="ligas">Ligas</TabsTrigger>
+          <TabsTrigger value="cantera">Cantera</TabsTrigger>
         </TabsList>
 
         <TabsContent value="resumen">
@@ -685,6 +721,9 @@ function AwardsPage() {
           ) : (
             <LeagueView leagueId={leagueId} setLeagueId={setLeagueId} periods={periods} periodKey={selectedPeriod ? `${selectedPeriod.year}-${selectedPeriod.month}` : periodKey} setPeriodKey={setPeriodKey} monthly={monthly} />
           )}
+        </TabsContent>
+        <TabsContent value="cantera">
+          <AcademyAwardsView date={currentDate} season={save.season} />
         </TabsContent>
       </Tabs>
     </div>

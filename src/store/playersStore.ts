@@ -38,6 +38,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
 import playersData from "@/data/playersData";
+import { DYNAMIC_BY_ID, clearAcademyRuntime, getCalledUpPlayers } from "@/lib/academy/academyRuntime";
 import { buildPositions } from "@/lib/positions";
 import type { Position } from "@/data/players";
 
@@ -308,6 +309,9 @@ export type FcPlayer = {
   /** Fecha de nacimiento ISO (YYYY-MM-DD), cuando está disponible. */
   birthdate?: string;
 
+  /** Año en el que el jugador ascendió desde la cantera. */
+  academyPromotionYear?: number;
+
   Team: string;
 
   League: string;
@@ -486,12 +490,12 @@ function baseClubId(p: FcPlayer): string | null {
 }
 
 export function baseClubOfPlayer(playerId: string): string | null {
-  const raw = FC_BY_ID.get(playerId);
+  const raw = FC_BY_ID.get(playerId) ?? DYNAMIC_BY_ID.get(playerId);
   return raw ? baseClubId(raw) : null;
 }
 
 export function fcPlayerById(playerId: string): FcPlayer | undefined {
-  return FC_BY_ID.get(playerId);
+  return FC_BY_ID.get(playerId) ?? DYNAMIC_BY_ID.get(playerId);
 }
 
 for (const p of RAW_PLAYERS) {
@@ -505,6 +509,70 @@ for (const p of RAW_PLAYERS) {
 }
 
 const FC_BY_ID = new Map<string, FcPlayer>(RAW_PLAYERS.map((p) => [String(p.ID), p]));
+
+export function registerDynamicPlayer(player: FcPlayer, stats?: PlayerStats): void {
+  const id = String(player.ID);
+  if (FC_BY_ID.has(id) && !DYNAMIC_BY_ID.has(id)) {
+    throw new Error(`ID de jugador dinámico en conflicto con playersData: ${id}`);
+  }
+  DYNAMIC_BY_ID.set(id, { ...player });
+  if (typeof usePlayersStore !== "undefined") {
+    const current = usePlayersStore.getState();
+    usePlayersStore.setState({ dynamicPlayers: { ...(current.dynamicPlayers ?? {}), [id]: { ...player } } });
+  }
+  SQUAD_CACHE = new Map();
+  CLUB_MEMBERSHIP_VERSION += 1;
+  SIM_SQUAD_VIEW_CACHE.clear();
+  if (stats) {
+    const state = usePlayersStore.getState();
+    usePlayersStore.setState({ stats: { ...state.stats, [id]: stats } });
+  }
+  const club = baseClubId(player);
+  if (club) recomputeTeamRating(club);
+}
+
+export function unregisterDynamicPlayer(playerId: string): void {
+  const id = String(playerId);
+  const current = DYNAMIC_BY_ID.get(id);
+  DYNAMIC_BY_ID.delete(id);
+  if (typeof usePlayersStore !== "undefined") {
+    const state = usePlayersStore.getState();
+    const nextDynamic = { ...(state.dynamicPlayers ?? {}) };
+    delete nextDynamic[id];
+    usePlayersStore.setState({ dynamicPlayers: nextDynamic });
+  }
+  if (!current) return;
+  SQUAD_CACHE = new Map();
+  CLUB_MEMBERSHIP_VERSION += 1;
+  SIM_SQUAD_VIEW_CACHE.clear();
+  const club = baseClubId(current);
+  if (club) recomputeTeamRating(club);
+}
+
+export function getDynamicPlayers(): FcPlayer[] {
+  return Array.from(DYNAMIC_BY_ID.values());
+}
+
+export function getDynamicPlayer(playerId: string): FcPlayer | undefined {
+  return DYNAMIC_BY_ID.get(String(playerId));
+}
+
+export function clearDynamicPlayers(): void {
+  clearAcademyRuntime();
+  SQUAD_CACHE = new Map();
+  CLUB_MEMBERSHIP_VERSION += 1;
+  SIM_SQUAD_VIEW_CACHE.clear();
+}
+
+function restoreDynamicPlayers(players: Record<string, FcPlayer>): void {
+  DYNAMIC_BY_ID.clear();
+  for (const [id, player] of Object.entries(players || {})) {
+    if (!FC_BY_ID.has(String(id))) DYNAMIC_BY_ID.set(String(id), player);
+  }
+  SQUAD_CACHE = new Map();
+  CLUB_MEMBERSHIP_VERSION += 1;
+  SIM_SQUAD_VIEW_CACHE.clear();
+}
 
 // ============================================================================
 // REGISTRO CENTRAL DE PLANTILLAS
@@ -584,7 +652,7 @@ export function setPlayerClub(playerId: string, toClubId: string | null): void {
 export function clubOfPlayer(playerId: string): string | null {
   const override = CLUB_OVERRIDES[playerId];
   if (override !== undefined) return override === "" ? null : override;
-  const raw = FC_BY_ID.get(playerId);
+  const raw = fcPlayerById(playerId);
   return raw ? baseClubId(raw) : null;
 }
 
@@ -605,9 +673,14 @@ export function squadForTeam(teamId: string): FcPlayer[] {
   });
   for (const playerId of overrideIds) {
     if (CLUB_OVERRIDES[playerId] !== teamId) continue;
-    const raw = FC_BY_ID.get(playerId);
+    const raw = FC_BY_ID.get(playerId) ?? DYNAMIC_BY_ID.get(playerId);
     if (!raw) continue;
     if (baseClubId(raw) === teamId) continue; // ya estaba en `base`
+    squad.push(raw);
+  }
+  for (const raw of DYNAMIC_BY_ID.values()) {
+    if (baseClubId(raw) !== teamId) continue;
+    if (squad.some((p) => String(p.ID) === String(raw.ID))) continue;
     squad.push(raw);
   }
   SQUAD_CACHE.set(teamId, squad);
@@ -867,7 +940,7 @@ export const POS_LABEL_ES: Record<Position, string> = {
 
 export function syncSquadFromRoster(rosterIds: string[]): FcPlayer[] {
   return rosterIds
-    .map((id) => FC_BY_ID.get(id))
+    .map((id) => FC_BY_ID.get(id) ?? DYNAMIC_BY_ID.get(id))
     .filter((p): p is FcPlayer => !!p);
 }
 
@@ -1018,6 +1091,8 @@ type PlayersState = {
   loanedPlayers: Record<string, { fromClubId: string; endDate: string }>;
   /** Traspasos aplicados al mundo: id de jugador -> id de club ("" = libre). */
   clubOverrides: Record<string, string>;
+  /** Registro persistible de jugadores creados dinámicamente (cantera). */
+  dynamicPlayers: Record<string, FcPlayer>;
 
   budget: number;
 
@@ -1108,6 +1183,7 @@ type PlayersState = {
   ) => ReturnType<typeof renewUserPlayer>;
 
   importLegacyStats: (players: Record<string, Player>) => void;
+  hydrateDynamicPlayers: (players: Record<string, FcPlayer>) => void;
 
   buyPlayer: (playerId: string, cost: number) => TransferResult;
   /**
@@ -1202,7 +1278,7 @@ function mutatePlayerStat(
   // Any player can receive a stat event before another action has created its
   // dynamic season block. Initialise it here so appearances, minutes, goals,
   // ratings, MVP and clean sheets are never silently discarded on first use.
-  const fc = FC_BY_ID.get(String(playerId));
+  const fc = FC_BY_ID.get(String(playerId)) ?? DYNAMIC_BY_ID.get(String(playerId));
   const dynamicStats = existing.dynamicStats
     ? existing.dynamicStats
     : (() => {
@@ -1245,10 +1321,11 @@ function applyGlobalMonthlyProgression(currentMonth: number, currentYear: number
   const sourceStats = state.stats ?? {};
   const nextStats: Record<string, PlayerStats> = { ...sourceStats };
   let changed = false;
+  const progressionPlayers = [...RAW_PLAYERS, ...Array.from(DYNAMIC_BY_ID.values())];
 
   // Cada jugador se evalúa dentro del contexto de su club actual.
   const teamTotals = new Map<string, { sum: number; count: number }>();
-  for (const raw of RAW_PLAYERS) {
+  for (const raw of progressionPlayers) {
     const player = state.getSimPlayer(String(raw.ID));
     const teamId = player?.teamId;
     if (!teamId) continue;
@@ -1261,7 +1338,7 @@ function applyGlobalMonthlyProgression(currentMonth: number, currentYear: number
   }
 
   // TODOS los jugadores progresan, aunque todavía no tengan estadísticas.
-  for (const raw of RAW_PLAYERS) {
+  for (const raw of progressionPlayers) {
     const playerId = String(raw.ID);
     const existing = sourceStats[playerId] ?? defaultStats();
     const baseAttributes = { PAC: raw.PAC, SHO: raw.SHO, PAS: raw.PAS, DRI: raw.DRI, DEF: raw.DEF, PHY: raw.PHY };
@@ -1569,6 +1646,7 @@ export const usePlayersStore = create<PlayersState>()(
       rosterIds: [],
       loanedPlayers: {},
       clubOverrides: {},
+      dynamicPlayers: {},
 
       budget: INITIAL_BUDGET,
 
@@ -2434,6 +2512,7 @@ export const usePlayersStore = create<PlayersState>()(
 
       clear: () => {
         resetMarketPlayerSignals();
+        clearDynamicPlayers();
         syncPlayerAgesForDate(GAME_START_DATE);
         set({
           squad: [],
@@ -2441,6 +2520,7 @@ export const usePlayersStore = create<PlayersState>()(
           rosterIds: [],
           loanedPlayers: {},
           clubOverrides: {},
+          dynamicPlayers: {},
 
           myTeamId: null,
 
@@ -2577,7 +2657,7 @@ export const usePlayersStore = create<PlayersState>()(
           return { ok: false, reason: "El jugador ya está en tu plantilla." };
         }
 
-        const fc = FC_BY_ID.get(playerId);
+        const fc = FC_BY_ID.get(playerId) ?? DYNAMIC_BY_ID.get(playerId);
 
         if (!fc) return { ok: false, reason: "Jugador no encontrado." };
 
@@ -2729,7 +2809,15 @@ export const usePlayersStore = create<PlayersState>()(
       getRawPlayers: () => {
         const state = usePlayersStore.getState();
         syncPlayerAgesForDate(state.currentDate);
-        return RAW_PLAYERS.map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)]));
+        return [
+          ...RAW_PLAYERS.map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)])),
+          ...Array.from(DYNAMIC_BY_ID.values()).map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)])),
+        ];
+      },
+
+      hydrateDynamicPlayers: (players) => {
+        restoreDynamicPlayers(players ?? {});
+        set({ dynamicPlayers: { ...(players ?? {}) } });
       },
 
       importLegacyStats: (players) => {
@@ -2790,7 +2878,7 @@ export const usePlayersStore = create<PlayersState>()(
       },
 
       getSimPlayer: (playerId) => {
-        const fc = FC_BY_ID.get(playerId);
+        const fc = fcPlayerById(playerId);
 
         if (!fc) return undefined;
 
@@ -2847,8 +2935,10 @@ export const usePlayersStore = create<PlayersState>()(
 
         const posOrder: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
         const squad = state.getFcSquadByTeamId(teamId);
+        const calledUp = teamId === state.myTeamId ? getCalledUpPlayers(teamId).map((fc) => dynamicFcPlayerView(fc, state.stats[String(fc.ID)])) : [];
+        const extendedSquad = [...(squad ?? []), ...calledUp];
 
-        if (!squad || squad.length === 0) {
+        if (!extendedSquad || extendedSquad.length === 0) {
           const empty: Player[] = [];
           SIM_SQUAD_VIEW_CACHE.set(teamId, {
             statsRef: state.stats,
@@ -2860,7 +2950,7 @@ export const usePlayersStore = create<PlayersState>()(
           return empty;
         }
 
-        const built = squad
+        const built = extendedSquad
           .map((fc) => state.getSimPlayer(String(fc.ID)))
           .filter((p): p is Player => !!p)
           .sort((a, b) => posOrder[a.position] - posOrder[b.position] || b.rating - a.rating);

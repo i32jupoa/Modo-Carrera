@@ -68,7 +68,7 @@ export function LoanOutModal({
               Proponer cesión
             </p>
             <h3 className="text-xl font-black">{player.name}</h3>
-            <p className="text-xs text-muted-foreground">{player.ovr} media · {player.age} años</p>
+            <p className="text-xs text-muted-foreground">{Math.round(player.ovr)} media · {player.age} años</p>
           </div>
           <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />

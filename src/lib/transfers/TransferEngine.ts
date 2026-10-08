@@ -87,6 +87,7 @@ import {
   sellerShouldWait,
 } from "./BidWar";
 import { clamp, seededUnit } from "./random";
+import { promoteBestAcademySolutionForNeed } from "@/lib/academy/academyPromotionEngine";
 import {
   POSITION_GROUPS,
   type ClubProfile,
@@ -1660,6 +1661,11 @@ export function signBestMarketCandidate(
   }
 
   for (const need of targets) {
+    // Un club con buena cantera intenta primero solucionar una necesidad con un
+    // jugador propio antes de entrar en una negociación externa. Si funciona,
+    // no se genera el doble movimiento fichaje + promoción.
+    if (promoteBestAcademySolutionForNeed(clubId, date, need)) continue;
+
     const shortlist = buildShortlist(clubId, need, {
       cacheKey: date,
       deadlineDay,

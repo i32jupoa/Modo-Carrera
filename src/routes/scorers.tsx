@@ -13,7 +13,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
+import { GraduationCap, Sparkles } from "lucide-react";
 import { faceUrl } from "@/lib/playerFaces";
+import { getAcademyClubRanking, getAcademyProspectRanking, type AcademyClubRankingEntry, type AcademyProspectRankingEntry } from "@/lib/academy/academyAnalytics";
 import {
   selectTopScorers,
   selectTopAssisters,
@@ -52,7 +54,7 @@ function getLeagueName(leagueId: string): string {
 
 const PRIORITY_COUNTRIES = ["España", "Inglaterra", "Italia", "Alemania", "Francia"];
 
-type Tab = "scorers" | "assisters" | "cleansheets" | "motm" | "yellows" | "reds";
+type Tab = "scorers" | "assisters" | "cleansheets" | "motm" | "yellows" | "reds" | "academy";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "scorers", label: "Goleadores", icon: "" },
@@ -61,7 +63,44 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "motm", label: "MVP", icon: "" },
   { id: "yellows", label: "Amarillas", icon: "" },
   { id: "reds", label: "Rojas", icon: "" },
+  { id: "academy", label: "Canteras", icon: "" },
 ];
+
+function AcademyRankingsView({ date }: { date: string }) {
+  const clubs = useMemo<AcademyClubRankingEntry[]>(() => getAcademyClubRanking(date, 20), [date]);
+  const prospects = useMemo<AcademyProspectRankingEntry[]>(() => getAcademyProspectRanking(date, 30), [date]);
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
+        <div className="flex items-center gap-2 font-black"><GraduationCap className="h-5 w-5 text-primary" /> Ranking mundial de canteras</div>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">El ranking combina enfoque de cantera, instalaciones, profundidad y calidad de las mejores promesas. El potencial se muestra de forma estimada.</p>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="panel divide-y divide-border/40">
+          <div className="p-4 font-black">Mejores clubes formadores</div>
+          {clubs.map((entry, index) => (
+            <div key={entry.teamId} className="grid grid-cols-[28px_auto_1fr_auto] items-center gap-3 px-4 py-3">
+              <span className={`text-sm font-black ${index < 3 ? "text-primary" : "text-muted-foreground"}`}>{index + 1}</span>
+              <TeamLogo teamName={entry.teamName} leagueName={entry.leagueName} size={30} />
+              <div className="min-w-0"><div className="truncate font-bold">{entry.teamName}</div><div className="text-[0.65rem] text-muted-foreground">{entry.leagueName} · {entry.prospectCount} promesas destacadas · Instalaciones {entry.facilityLevel}/5</div></div>
+              <div className="text-right"><div className="scoreline text-xl font-black">{entry.academyScore}</div><div className="text-[0.58rem] text-muted-foreground">Índice</div></div>
+            </div>
+          ))}
+        </div>
+        <div className="panel divide-y divide-border/40">
+          <div className="p-4 font-black">Mejores promesas</div>
+          {prospects.map((entry, index) => (
+            <div key={entry.player.id} className="grid grid-cols-[28px_1fr_auto] items-center gap-3 px-4 py-3">
+              <span className={`text-sm font-black ${index < 3 ? "text-primary" : "text-muted-foreground"}`}>{index + 1}</span>
+              <div className="min-w-0"><div className="flex items-center gap-2"><span className="truncate font-bold">{entry.player.name}</span>{entry.player.traits.includes("diamond") && <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />}</div><div className="text-[0.65rem] text-muted-foreground">{entry.teamName} · {entry.player.positions.join("/")} · {entry.player.age} años</div></div>
+              <div className="text-right"><div className="font-black">{Math.round(entry.player.ovr)}</div><div className="text-[0.58rem] text-primary">POT {entry.player.potentialEstimate.min}–{entry.player.potentialEstimate.max}</div></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/scorers")({ component: ScorersPage });
 
@@ -73,6 +112,7 @@ function ScorersPage() {
   const [competition, setCompetition] = useState<"all" | "league" | "cup" | "ucl" | "uel" | "uecl">("all");
   const [league, setLeague] = useState<LeagueId | "all" | "big5">("all");
   const [cupCountry, setCupCountry] = useState<string>("all");
+  const currentDate = usePlayersStore((state) => state.currentDate) || save?.date || "2026-07-01";
 
   const isCardTab = tab === "yellows" || tab === "reds";
 
@@ -161,6 +201,7 @@ function ScorersPage() {
         ))}
       </div>
 
+      {tab !== "academy" && (<>
       {/* Filters row */}
       <div className="flex flex-wrap gap-3">
         {/* Competition filter */}
@@ -276,6 +317,9 @@ function ScorersPage() {
           emptyMsg="Aún no hay tarjetas rojas registradas."
         />
       )}
+      </>)}
+
+      {tab === "academy" && <AcademyRankingsView date={currentDate} />}
     </div>
   );
 }

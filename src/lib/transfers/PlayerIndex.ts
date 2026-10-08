@@ -17,6 +17,7 @@ import { CONTRACT_RULES, SQUAD_LIMITS, WAGE_RULES } from "./constants";
 import { estimateAnnualWage } from "./SalaryEngine";
 import { clamp, seededRange, seededUnit } from "./random";
 import { isBlockedUserMove } from "./MarketLocks";
+import { DYNAMIC_MARKET_BY_ID, getDynamicMarketPlayers } from "@/lib/academy/academyRuntime";
 import {
   POSITION_GROUPS,
   type Contract,
@@ -257,9 +258,22 @@ function buildIndex(): MarketIndex {
 
 let cached: MarketIndex | null = null;
 
+function insertDynamicMarketPlayer(index: MarketIndex, player: MarketPlayer): void {
+  if (index.byId.has(player.id)) return;
+  index.byId.set(player.id, player);
+  if (player.clubId) addTo(index.byClub, player.clubId, player.id);
+  else index.freeAgents.add(player.id);
+  addTo(index.byGroup, player.group, player.id);
+  addTo(index.byLeague, player.leagueId, player.id);
+  addTo(index.byRating, ratingBucket(player.ovr), player.id);
+}
+
 /** Devuelve los índices, construyéndolos la primera vez que se piden. */
 export function getMarketIndex(): MarketIndex {
-  if (!cached) cached = buildIndex();
+  if (!cached) {
+    cached = buildIndex();
+    for (const player of getDynamicMarketPlayers()) insertDynamicMarketPlayer(cached, player);
+  }
   return cached;
 }
 
@@ -268,6 +282,30 @@ export function resetMarketIndex(): void {
   cached = null;
   touched.clear();
 }
+
+
+/** Registra incrementalmente un jugador creado por la cantera/promoción. */
+export function registerDynamicMarketPlayer(player: MarketPlayer): void {
+  const normalized = { ...player, id: String(player.id) };
+  DYNAMIC_MARKET_BY_ID.set(normalized.id, normalized);
+  insertDynamicMarketPlayer(getMarketIndex(), normalized);
+}
+
+/** Elimina un jugador dinámico de todos los índices. */
+export function unregisterDynamicMarketPlayer(playerId: string): void {
+  const index = getMarketIndex();
+  const id = String(playerId);
+  const player = index.byId.get(id);
+  DYNAMIC_MARKET_BY_ID.delete(id);
+  if (!player) return;
+  index.byId.delete(id);
+  if (player.clubId) removeFrom(index.byClub, player.clubId, id);
+  index.freeAgents.delete(id);
+  removeFrom(index.byGroup, player.group, id);
+  removeFrom(index.byLeague, player.leagueId, id);
+  removeFrom(index.byRating, ratingBucket(player.ovr), id);
+}
+
 
 // ============================================================================
 // CONSULTAS
@@ -290,7 +328,8 @@ function idsToPlayers(index: MarketIndex, ids: Iterable<string>): MarketPlayer[]
 /** Plantilla completa de un club. */
 export function getClubPlayers(clubId: string): MarketPlayer[] {
   const index = getMarketIndex();
-  return idsToPlayers(index, index.byClub.get(clubId) ?? []);
+  return idsToPlayers(index, index.byClub.get(clubId) ?? [])
+    .filter((player) => !["academy", "loaned", "listed"].includes(player.academyStatus ?? ""));
 }
 
 
