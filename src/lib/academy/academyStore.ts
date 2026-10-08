@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { additionalWageCommitment } from "@/lib/transfers/BudgetManager";
 import { getCurrentSaveId } from "@/lib/savedGames";
 import { loadSave, saveSave } from "@/lib/store";
 import { teamById, LEAGUES } from "@/data/teams";
@@ -6,15 +7,17 @@ import { registerDynamicMarketPlayer, unregisterDynamicMarketPlayer } from "@/li
 import { registerDynamicPlayer, unregisterDynamicPlayer, usePlayersStore } from "@/store/playersStore";
 import { academyPlayerToFcPlayer, academyPlayerToStats, academyContract, academyMarketValue } from "./academyAdapters";
 import { ACADEMY_FACILITIES, ACADEMY_LIMITS, ACADEMY_ID_BASE } from "./academyConstants";
-import { SQUAD_LIMITS } from "@/lib/transfers/constants";
 import { generateAcademyState, generateAnnualIntake } from "./academyGenerator";
 import { advanceAcademyToDate } from "./academyProgression";
 import { loadAcademySave, saveAcademySave, clearAcademySave } from "./academyPersistence";
-import { DYNAMIC_BY_ID, DYNAMIC_MARKET_BY_ID, getAcademyPromotionEvents, recordAcademyPromotionEvent, setCalledUpPlayer, clearCalledUpPlayer } from "./academyRuntime";
+import { DYNAMIC_BY_ID, DYNAMIC_MARKET_BY_ID, getAcademyPromotionEvents, recordAcademyPromotionEvent, setCalledUpPlayer, getCalledUpPlayers, clearCalledUpPlayer } from "./academyRuntime";
 import { setUserPlayerLoanListed } from "@/lib/transfers/UserNegotiation";
+import { syncCalledUpAcademyPlayer } from "./academyCallUp";
 import { listForTransfer } from "@/lib/transfers/ContractEngine";
+import { getPlayer } from "@/lib/transfers/PlayerIndex";
 import { saveTransferSystem } from "@/lib/transfers/Persistence";
 import type { AcademyPlayer, AcademyCareerRecord, ClubAcademyState } from "./academyTypes";
+import type { MarketPlayer } from "@/lib/transfers/types";
 
 type AcademyState = {
   loaded: boolean;
@@ -23,14 +26,16 @@ type AcademyState = {
   loadForCurrentSave: (teamId: string, season: number | string, currentDate?: string) => Promise<ClubAcademyState>;
   ensureClub: (teamId: string, season: number | string, currentDate?: string) => Promise<ClubAcademyState>;
   save: () => Promise<void>;
-  promoteForUser: (playerId: number, options?: { years?: number; wage?: number; releaseClause?: number }) => { ok: true } | { ok: false; reason: string };
+  promoteForUser: (playerId: number, options?: { years?: number; wage?: number; releaseClause?: number; signingBonus?: number; squadRole?: import("@/lib/transfers/types").SquadRole }) => { ok: true } | { ok: false; reason: string };
   releaseForUser: (playerId: number) => Promise<{ ok: true } | { ok: false; reason: string }>;
-  renewYouthContract: (playerId: number, years?: number) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  renewYouthContract: (playerId: number, years?: number, squadRole?: import("@/lib/transfers/types").SquadRole) => Promise<{ ok: true } | { ok: false; reason: string }>;
   loanForUser: (playerId: number, borrowerClubId: string, date: string) => Promise<{ ok: true; clubId: string } | { ok: false; reason: string }>;
   setLoanSearchForUser: (playerId: number, listed: boolean, date: string) => Promise<{ ok: true; listed: boolean } | { ok: false; reason: string }>;
   listTransferForUser: (playerId: number, date: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   listForSale: (playerId: number, futurePercentage?: number, buybackClause?: number) => Promise<{ ok: true } | { ok: false; reason: string }>;
   callUpForUser: (playerId: number) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  prepareForInternalContractNegotiation: (playerId: number, date: string) => MarketPlayer | null;
+  uncallForUser: (playerId: number | string, date: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   demoteToAcademy: (playerId: string, date: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   assignMentor: (playerId: number, mentorId: number | null) => Promise<{ ok: true } | { ok: false; reason: string }>;
   retrainPosition: (playerId: number, position: AcademyPlayer["positions"][number], date: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
@@ -42,9 +47,10 @@ type AcademyState = {
   reset: () => Promise<void>;
 };
 
-function stateForPlayer(state: AcademyState, playerId: number): { club: ClubAcademyState; player: AcademyPlayer } | null {
+function stateForPlayer(state: AcademyState, playerId: number | string): { club: ClubAcademyState; player: AcademyPlayer } | null {
+  const normalizedId = Number(playerId);
   for (const club of Object.values(state.clubs)) {
-    const player = club.players.find((candidate) => candidate.id === playerId);
+    const player = club.players.find((candidate) => Number(candidate.id) === normalizedId);
     if (player) return { club, player };
   }
   return null;
@@ -54,17 +60,35 @@ function cloneClub(club: ClubAcademyState, players: AcademyPlayer[]): ClubAcadem
   return { ...club, players, updatedAt: new Date().toISOString() };
 }
 
-function dynamicMarketFromAcademy(player: AcademyPlayer, date: string, status: "academy" | "listed" | "loaned") {
+function dynamicMarketFromAcademy(player: AcademyPlayer, date: string, status: "academy" | "listed" | "loaned"): MarketPlayer | null {
   const team = teamById(player.teamId);
   const league = LEAGUES[team.league]?.name ?? team.league;
-  const fc = { ...academyPlayerToFcPlayer(player, team.name, league), academyPromotionYear: undefined };
+  const playersState = usePlayersStore.getState();
+  const existingFc = DYNAMIC_BY_ID.get(String(player.id));
+  const existingStats = playersState.stats[String(player.id)];
+  const liveAttributes = existingStats?.dynamicStats?.attributes;
+  const liveOvr = Math.round(Number(existingStats?.dynamicStats?.currentOVR ?? existingFc?.OVR ?? player.ovr));
+  const livePotential = Math.round(Number(existingStats?.dynamicStats?.potentialOVR ?? existingFc?.potential ?? player.potential));
+  const baseFc = existingFc ?? academyPlayerToFcPlayer(player, team.name, league);
+  const fc = {
+    ...baseFc,
+    OVR: liveOvr,
+    potential: livePotential,
+    PAC: Number(liveAttributes?.PAC ?? baseFc.PAC),
+    SHO: Number(liveAttributes?.SHO ?? baseFc.SHO),
+    PAS: Number(liveAttributes?.PAS ?? baseFc.PAS),
+    DRI: Number(liveAttributes?.DRI ?? baseFc.DRI),
+    DEF: Number(liveAttributes?.DEF ?? baseFc.DEF),
+    PHY: Number(liveAttributes?.PHY ?? baseFc.PHY),
+    academyPromotionYear: undefined,
+  };
   const contract = {
     ...academyContract(player),
     futureSalePercentage: player.saleFuturePercentage,
     buybackClause: player.buybackClause,
   };
   const marketValue = academyMarketValue(player);
-  registerDynamicPlayer(fc, academyPlayerToStats(player));
+  registerDynamicPlayer(fc, existingStats ?? academyPlayerToStats(player));
   registerDynamicMarketPlayer({
     id: String(fc.ID), name: fc.Name, age: fc.Age, ovr: fc.OVR, potential: fc.potential ?? fc.OVR,
     position: fc.Position, group: fc.Position === "GK" ? "GK" : ["CB"].includes(fc.Position) ? "CB" : ["LB", "RB"].includes(fc.Position) ? "FB" : ["ST", "CF"].includes(fc.Position) ? "ST" : ["LW", "RW"].includes(fc.Position) ? "WING" : "CM",
@@ -75,8 +99,13 @@ function dynamicMarketFromAcademy(player: AcademyPlayer, date: string, status: "
     academyStatus: status, academyParentClubId: team.id,
   });
   const market = DYNAMIC_MARKET_BY_ID.get(String(fc.ID));
-  if (market) DYNAMIC_MARKET_BY_ID.set(String(fc.ID), { ...market, academyStatus: status, academyParentClubId: team.id });
+  if (market) {
+    const normalized = { ...market, academyStatus: status, academyParentClubId: team.id };
+    DYNAMIC_MARKET_BY_ID.set(String(fc.ID), normalized);
+    return normalized;
+  }
   void date;
+  return null;
 }
 
 export const useAcademyStore = create<AcademyState>((set, get) => ({
@@ -159,29 +188,54 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
 
     const playersState = usePlayersStore.getState();
     const team = teamById(current.teamId);
-    const rosterSize = playersState.rosterIds.length;
-    if (rosterSize >= SQUAD_LIMITS.maxSquadSize) {
-      return { ok: false, reason: `La plantilla está completa (${SQUAD_LIMITS.maxSquadSize} jugadores). Debes liberar o transferir a un jugador antes de promocionarlo.` };
-    }
-
     const league = LEAGUES[team.league]?.name ?? team.league;
-    const fc = { ...academyPlayerToFcPlayer(current, team.name, league), academyPromotionYear: Number((usePlayersStore.getState().currentDate || new Date().toISOString().slice(0, 10)).slice(0, 4)) || undefined };
-    const stats = academyPlayerToStats(current);
+    const liveFc = DYNAMIC_BY_ID.get(String(current.id));
+    const liveStats = playersState.stats[String(current.id)];
+    const liveAttributes = liveStats?.dynamicStats?.attributes;
+    const fc = {
+      ...(liveFc ?? academyPlayerToFcPlayer(current, team.name, league)),
+      OVR: Math.round(Number(liveStats?.dynamicStats?.currentOVR ?? liveFc?.OVR ?? current.ovr)),
+      potential: Math.round(Number(liveStats?.dynamicStats?.potentialOVR ?? liveFc?.potential ?? current.potential)),
+      PAC: Number(liveAttributes?.PAC ?? liveFc?.PAC ?? current.attributes.PAC),
+      SHO: Number(liveAttributes?.SHO ?? liveFc?.SHO ?? current.attributes.SHO),
+      PAS: Number(liveAttributes?.PAS ?? liveFc?.PAS ?? current.attributes.PAS),
+      DRI: Number(liveAttributes?.DRI ?? liveFc?.DRI ?? current.attributes.DRI),
+      DEF: Number(liveAttributes?.DEF ?? liveFc?.DEF ?? current.attributes.DEF),
+      PHY: Number(liveAttributes?.PHY ?? liveFc?.PHY ?? current.attributes.PHY),
+      academyPromotionYear: Number((usePlayersStore.getState().currentDate || new Date().toISOString().slice(0, 10)).slice(0, 4)) || undefined,
+    };
+    const stats = liveStats ?? academyPlayerToStats(current);
+    const effectiveStats = options?.squadRole
+      ? { ...stats, squadRole: options.squadRole, squadRoleIsNegotiated: true }
+      : stats;
     const baseContract = academyContract(current);
     const professionalWage = Math.max(0, Math.round((options?.wage ?? baseContract.wage) / 1000) * 1000);
-    const availableWage = Math.max(0, playersState.wageBudget - playersState.wageBill);
-    if (playersState.wageBudget > 0 && professionalWage > availableWage) {
+    // El presupuesto salarial que aparece en Mercado es la fuente de verdad.
+    // No se crea una bolsa distinta ni se modifica el reparto al promocionar.
+    const effectiveWageBudget = Math.min(
+      Math.max(0, playersState.budget),
+      Math.max(0, playersState.wageBudget > 0 ? playersState.wageBudget : Math.round(playersState.budget * 0.05)),
+    );
+    const wageCommitment = additionalWageCommitment(0, professionalWage);
+    const availableWage = Math.max(0, Math.round(effectiveWageBudget));
+    if (wageCommitment > availableWage) {
       return { ok: false, reason: `No hay suficiente margen salarial. Disponible: ${availableWage.toLocaleString("es-ES")} €.` };
+    }
+    const signingBonus = Math.max(0, Math.round((options?.signingBonus ?? 0) / 1_000) * 1_000);
+    const transferBudget = Math.max(0, playersState.budget - effectiveWageBudget);
+    if (signingBonus > transferBudget) {
+      return { ok: false, reason: `No hay suficiente presupuesto de fichajes para una prima de ${signingBonus.toLocaleString("es-ES")} € (disponible: ${transferBudget.toLocaleString("es-ES")} €).` };
     }
     const contract = {
       ...baseContract,
       yearsLeft: Math.max(2, options?.years ?? baseContract.yearsLeft),
       wage: professionalWage,
       releaseClause: options?.releaseClause ?? baseContract.releaseClause,
+      signingBonus,
     };
-    const marketValue = academyMarketValue(current);
+    const marketValue = academyMarketValue({ ...current, ovr: fc.OVR, potential: fc.potential, attributes: { PAC: fc.PAC, SHO: fc.SHO, PAS: fc.PAS, DRI: fc.DRI, DEF: fc.DEF, PHY: fc.PHY } });
 
-    registerDynamicPlayer(fc, stats);
+    registerDynamicPlayer(fc, effectiveStats);
     registerDynamicMarketPlayer({
       id: String(fc.ID), name: fc.Name, age: fc.Age, ovr: fc.OVR, potential: fc.potential ?? fc.OVR,
       position: fc.Position, group: fc.Position === "GK" ? "GK" : ["CB"].includes(fc.Position) ? "CB" : ["LB", "RB"].includes(fc.Position) ? "FB" : ["ST", "CF"].includes(fc.Position) ? "ST" : ["LW", "RW"].includes(fc.Position) ? "WING" : "CM", nation: fc.Nation ?? "", clubId: team.id, leagueId: team.league, value: marketValue, contract: {
@@ -211,11 +265,18 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
 
     const rosterIds = playersState.rosterIds.includes(String(fc.ID)) ? playersState.rosterIds : [...playersState.rosterIds, String(fc.ID)];
     const wageBill = playersState.wageBill + professionalWage;
+    // Un profesional que parte de 0 € de ficha consume el salario completo
+    // como nueva obligación salarial. La prima sale exclusivamente del
+    // presupuesto de fichajes.
+    const budget = Math.max(0, playersState.budget - professionalWage - signingBonus);
+    const wageBudget = Math.max(0, Math.round(playersState.wageBudget - professionalWage));
     usePlayersStore.setState({
       rosterIds,
       squad: playersState.squad.concat(fc),
-      stats: { ...playersState.stats, [String(fc.ID)]: stats },
+      stats: { ...playersState.stats, [String(fc.ID)]: effectiveStats },
       wageBill,
+      budget,
+      wageBudget,
     });
 
     void get().save();
@@ -239,12 +300,32 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     return { ok: true };
   },
 
-  renewYouthContract: async (playerId, years = 2) => {
+  renewYouthContract: async (playerId, years = 2, squadRole) => {
     const state = get();
     const found = stateForPlayer(state, playerId);
     if (!found) return { ok: false, reason: "Canterano no encontrado." };
     const nextPlayer = { ...found.player, contractYearsLeft: Math.max(1, years) };
     const next = cloneClub(found.club, found.club.players.map((p) => p.id === playerId ? nextPlayer : p));
+    const market = DYNAMIC_MARKET_BY_ID.get(String(playerId));
+    if (market) {
+      DYNAMIC_MARKET_BY_ID.set(String(playerId), {
+        ...market,
+        contract: {
+          ...market.contract,
+          yearsLeft: nextPlayer.contractYearsLeft,
+        },
+      });
+    }
+    const playersState = usePlayersStore.getState();
+    const currentStats = playersState.stats[String(playerId)];
+    if (squadRole && currentStats) {
+      usePlayersStore.setState({
+        stats: {
+          ...playersState.stats,
+          [String(playerId)]: { ...currentStats, squadRole, squadRoleIsNegotiated: true },
+        },
+      });
+    }
     set({ clubs: { ...state.clubs, [found.club.teamId]: next } });
     await get().save();
     return { ok: true };
@@ -366,8 +447,19 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     if (found.player.age < 16) return { ok: false, reason: "El canterano todavía no puede entrenar con el primer equipo." };
     const team = teamById(found.player.teamId);
     const league = LEAGUES[team.league]?.name ?? team.league;
-    const fc = academyPlayerToFcPlayer(found.player, team.name, league);
-    registerDynamicPlayer(fc, academyPlayerToStats(found.player));
+    const playersState = usePlayersStore.getState();
+    const dynamicStats = playersState.stats[String(playerId)] ?? academyPlayerToStats(found.player);
+    const liveDynamic = DYNAMIC_BY_ID.get(String(playerId));
+    const fc = {
+      ...(liveDynamic ?? academyPlayerToFcPlayer(found.player, team.name, league)),
+      OVR: Math.round(Number(dynamicStats.dynamicStats?.currentOVR ?? liveDynamic?.OVR ?? found.player.ovr)),
+      potential: Math.round(Number(dynamicStats.dynamicStats?.potentialOVR ?? liveDynamic?.potential ?? found.player.potential)),
+    };
+    registerDynamicPlayer(fc, dynamicStats);
+    // Los convocados no deben conservar una entrada temporal de mercado
+    // (creada al negociar o buscar cesión), porque esa entrada marca al
+    // jugador como academy/loaned y podría impedir la progresión del primer equipo.
+    unregisterDynamicMarketPlayer(String(playerId));
     setCalledUpPlayer(found.player.teamId, fc);
     const next = cloneClub(found.club, found.club.players.map((p) => p.id === playerId ? { ...p, status: "called-up" } : p));
     set({ clubs: { ...get().clubs, [found.club.teamId]: next } });
@@ -375,32 +467,165 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     return { ok: true };
   },
 
+  prepareForInternalContractNegotiation: (playerId, date) => {
+    const found = stateForPlayer(get(), playerId);
+    if (!found) return null;
+    const existing = DYNAMIC_MARKET_BY_ID.get(String(playerId));
+    if (existing) return existing;
+    return dynamicMarketFromAcademy(found.player, date, "academy");
+  },
+
+  uncallForUser: async (playerId, date) => {
+    const state = get();
+    const normalizedPlayerId = Number(playerId);
+    const found = stateForPlayer(state, playerId);
+    if (!found) return { ok: false, reason: "Canterano no encontrado." };
+    const runtimeCalledUp = getCalledUpPlayers(found.club.teamId).some((player) => Number(player.ID) === normalizedPlayerId);
+    if (found.player.status !== "called-up" && !runtimeCalledUp) {
+      return { ok: false, reason: "El canterano no está convocado." };
+    }
+
+    const activeSave = loadSave();
+    const selectedXI = activeSave?.lineups?.[found.club.teamId] ?? [];
+    const selectedBench = activeSave?.substitutes?.[found.club.teamId] ?? [];
+    if (selectedXI.some((id) => Number(id) === normalizedPlayerId) || selectedBench.some((id) => Number(id) === normalizedPlayerId)) {
+      return { ok: false, reason: "Retíralo primero del once/banquillo." };
+    }
+
+    const playersState = usePlayersStore.getState();
+    const dynamicPlayer = DYNAMIC_BY_ID.get(String(normalizedPlayerId));
+    const stats = playersState.stats[String(normalizedPlayerId)];
+    const synced = syncCalledUpAcademyPlayer(found.player, dynamicPlayer, stats);
+    const nextClub = cloneClub(found.club, found.club.players.map((player) => Number(player.id) === normalizedPlayerId ? synced : player));
+
+    clearCalledUpPlayer(found.club.teamId, String(normalizedPlayerId));
+    unregisterDynamicMarketPlayer(String(normalizedPlayerId));
+    unregisterDynamicPlayer(String(normalizedPlayerId));
+    set({ clubs: { ...state.clubs, [found.club.teamId]: nextClub } });
+
+    // Conservamos stats y progresión para que, al volver a convocarlo más
+    // adelante, parta de la media/atributos ganados sin duplicarlos.
+    usePlayersStore.setState({
+      stats: {
+        ...playersState.stats,
+        [String(normalizedPlayerId)]: {
+          ...(stats ?? academyPlayerToStats(synced)),
+          dynamicStats: {
+            ...(stats?.dynamicStats ?? academyPlayerToStats(synced).dynamicStats!),
+            currentOVR: synced.ovr,
+            potentialOVR: synced.potential,
+            attributes: { ...synced.attributes },
+          },
+        },
+      },
+    });
+    await get().save();
+    void date;
+    return { ok: true };
+  },
+
   demoteToAcademy: async (playerId, date) => {
     const state = get();
     const playersState = usePlayersStore.getState();
     const fc = playersState.squad.find((player) => String(player.ID) === String(playerId));
-    if (!fc || !playersState.myTeamId) return { ok: false, reason: "Jugador no encontrado en tu plantilla." };
-    if (fc.Age > 21 || !(fc.academyPromotionYear || String(fc.ID).startsWith(String(ACADEMY_ID_BASE)))) return { ok: false, reason: "Solo puedes bajar a cantera a jóvenes de hasta 21 años." };
+    if (!fc || !playersState.myTeamId) {
+      return { ok: false, reason: "Jugador no encontrado en tu plantilla." };
+    }
+
+    const marketPlayer = getPlayer(String(playerId));
+    const isAcademyOrigin =
+      Boolean(fc.academyPromotionYear) ||
+      String(fc.ID).startsWith(String(ACADEMY_ID_BASE)) ||
+      marketPlayer?.academyStatus === "promoted";
+    if (fc.Age > 21 || !isAcademyOrigin) {
+      return { ok: false, reason: "Solo puedes bajar a cantera a jóvenes de hasta 21 años que hayan salido de la cantera." };
+    }
+
     const club = await get().ensureClub(playersState.myTeamId, Number(date.slice(0, 4)), date);
-    if (club.players.length >= ACADEMY_LIMITS.maxPlayers) return { ok: false, reason: "La cantera está llena." };
-    const base = DYNAMIC_BY_ID.get(String(playerId));
-    if (!base) return { ok: false, reason: "No se ha encontrado el perfil de cantera del jugador." };
+    if (club.players.length >= ACADEMY_LIMITS.maxPlayers) {
+      return { ok: false, reason: "La cantera está llena." };
+    }
+
+    // Nunca dependemos exclusivamente del Map en memoria: las partidas cargadas
+    // también guardan `dynamicPlayers`, así que usamos ese registro como fallback.
+    const base = DYNAMIC_BY_ID.get(String(playerId))
+      ?? playersState.dynamicPlayers?.[String(playerId)]
+      ?? fc;
     const stats = playersState.stats[String(playerId)];
-    const oldMarket = DYNAMIC_MARKET_BY_ID.get(String(playerId));
-    const oldWage = oldMarket?.contract.wage ?? 0;
+    const liveAttributes = stats?.dynamicStats?.attributes;
+    const currentOvr = Math.round(Number(stats?.dynamicStats?.currentOVR ?? fc.OVR));
+    const currentPotential = Math.round(Number(stats?.dynamicStats?.potentialOVR ?? fc.potential ?? fc.OVR));
+    const oldWage = Math.max(0, Math.round(Number(marketPlayer?.contract?.wage ?? 0)));
+
     const nextPlayer: AcademyPlayer = {
-      id: base.ID, teamId: playersState.myTeamId, name: base.Name, nation: base.Nation ?? "España", birthdate: base.birthdate ?? `${Math.max(2000, Number(date.slice(0,4)) - base.Age)}-06-01`, age: base.Age, positions: [base.Position as AcademyPlayer["positions"][number]], ovr: base.OVR, potential: base.potential ?? base.OVR, potentialEstimate: { min: Math.max(50, (base.potential ?? base.OVR) - 8), max: Math.min(90, (base.potential ?? base.OVR) + 3) }, attributes: { PAC: base.PAC, SHO: base.SHO, PAS: base.PAS, DRI: base.DRI, DEF: base.DEF, PHY: base.PHY }, traits: ["hard-worker"], growthProfile: "normal", joinedSeason: Number(date.slice(0, 4)), contractYearsLeft: 2, status: "academy", minutesThisSeason: stats?.dynamicStats?.seasonMinutes ?? 0,
+      id: Number(base.ID),
+      teamId: playersState.myTeamId,
+      name: base.Name,
+      nation: base.Nation ?? "España",
+      birthdate: base.birthdate ?? `${Math.max(2000, Number(date.slice(0, 4)) - base.Age)}-06-01`,
+      age: base.Age,
+      positions: [base.Position as AcademyPlayer["positions"][number]],
+      ovr: currentOvr,
+      potential: currentPotential,
+      potentialEstimate: {
+        min: Math.max(50, currentPotential - 8),
+        max: Math.min(90, currentPotential + 3),
+      },
+      attributes: {
+        PAC: Number(liveAttributes?.PAC ?? base.PAC),
+        SHO: Number(liveAttributes?.SHO ?? base.SHO),
+        PAS: Number(liveAttributes?.PAS ?? base.PAS),
+        DRI: Number(liveAttributes?.DRI ?? base.DRI),
+        DEF: Number(liveAttributes?.DEF ?? base.DEF),
+        PHY: Number(liveAttributes?.PHY ?? base.PHY),
+      },
+      traits: ["hard-worker"],
+      growthProfile: "normal",
+      joinedSeason: Number(date.slice(0, 4)),
+      contractYearsLeft: Math.max(1, Number(marketPlayer?.contract?.yearsLeft ?? 2)),
+      status: "academy",
+      minutesThisSeason: stats?.dynamicStats?.seasonMinutes ?? 0,
     };
+
     const nextClub = cloneClub(club, [...club.players, nextPlayer]);
     set({ clubs: { ...state.clubs, [club.teamId]: nextClub } });
+
+    // El jugador deja definitivamente la plantilla profesional y cualquier
+    // convocatoria guardada. Así no queda un ID fantasma en Dirección de equipo.
+    clearCalledUpPlayer(playersState.myTeamId, String(playerId));
     unregisterDynamicMarketPlayer(String(playerId));
     unregisterDynamicPlayer(String(playerId));
+
+    const nextStats = stats ?? academyPlayerToStats(nextPlayer);
     usePlayersStore.setState({
-      squad: playersState.squad.filter((p) => String(p.ID) !== String(playerId)),
+      squad: playersState.squad.filter((player) => String(player.ID) !== String(playerId)),
       rosterIds: playersState.rosterIds.filter((id) => String(id) !== String(playerId)),
       wageBill: Math.max(0, playersState.wageBill - oldWage),
-      stats: { ...playersState.stats, [String(playerId)]: stats ?? academyPlayerToStats(nextPlayer) },
+      wageBudget: playersState.wageBudget,
+      stats: {
+        ...playersState.stats,
+        [String(playerId)]: {
+          ...nextStats,
+          dynamicStats: {
+            ...(nextStats.dynamicStats ?? academyPlayerToStats(nextPlayer).dynamicStats!),
+            currentOVR,
+            potentialOVR: currentPotential,
+            attributes: { ...nextPlayer.attributes },
+          },
+        },
+      },
     });
+
+    // Limpia también XI y banquillo del SaveGame si el joven estaba configurado
+    // allí antes de bajarlo. El jugador queda automáticamente en Reservas de cantera.
+    const activeSave = loadSave();
+    if (activeSave) {
+      const teamId = playersState.myTeamId;
+      const nextLineups = { ...activeSave.lineups, [teamId]: (activeSave.lineups?.[teamId] ?? []).filter((id) => String(id) !== String(playerId)) };
+      const nextSubstitutes = { ...activeSave.substitutes, [teamId]: (activeSave.substitutes?.[teamId] ?? []).filter((id) => String(id) !== String(playerId)) };
+      saveSave({ ...activeSave, lineups: nextLineups, substitutes: nextSubstitutes });
+    }
+
     await get().save();
     return { ok: true };
   },

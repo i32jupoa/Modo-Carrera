@@ -5,7 +5,6 @@ import { getClubProfile } from "@/lib/transfers/ClubStrategy";
 import { analyzeSquad } from "@/lib/transfers/SquadAnalyzer";
 import { getClubPlayers, registerDynamicMarketPlayer } from "@/lib/transfers/PlayerIndex";
 import { registerDynamicPlayer, usePlayersStore } from "@/store/playersStore";
-import { SQUAD_LIMITS } from "@/lib/transfers/constants";
 import { seededInt } from "@/lib/transfers/random";
 import type { PositionGroup, SquadNeed } from "@/lib/transfers/types";
 import { DYNAMIC_BY_ID, recordAcademyPromotionEvent } from "./academyRuntime";
@@ -136,8 +135,6 @@ export function promoteAcademyPlayersForClub(teamId: string, date: string, mode:
   const team = teamById(teamId);
   const profile = getClubProfile(teamId);
   const report = analyzeSquad(teamId, `${date}:academy`);
-  const capacity = Math.max(0, SQUAD_LIMITS.maxSquadSize - getClubPlayers(teamId).length);
-  if (capacity <= 0) return { promoted: [], reasons: {} };
 
   const limit = mode === "preseason"
     ? Math.min(ACADEMY_PROMOTION_LIMITS.preSeasonMax, Math.max(ACADEMY_PROMOTION_LIMITS.preSeasonMin, Math.round(profile.academyFocus * 3)))
@@ -165,7 +162,6 @@ export function promoteAcademyPlayersForClub(teamId: string, date: string, mode:
   } else {
     for (const need of needs) {
       if (chosen.length >= limit) break;
-      if (capacity <= chosen.length) break;
       const candidate = chooseByGroup(ready.filter((p) => !chosen.some((x) => x.id === p.id)), need.group, report.startingRating, `${teamId}|${date}|${need.group}`);
       if (!candidate) continue;
       chosen.push(candidate);
@@ -193,7 +189,6 @@ export function promoteBestAcademySolutionForNeed(clubId: string, date: string, 
   let state = getState(saveId, clubId, season, date);
   const profile = getClubProfile(clubId);
   if (profile.academyFocus < 0.55) return false;
-  if (SQUAD_LIMITS.maxSquadSize <= getClubPlayers(clubId).length) return false;
 
   const report = analyzeSquad(clubId, `${date}:academy-internal:${need.group}`);
   const threshold = Math.max(40, report.startingRating - ACADEMY_LIMITS.promotionOvrGapToSquad);

@@ -10,6 +10,16 @@ describe("academy generator", () => {
     expect(a.players).toEqual(b.players);
   });
 
+  it("starts every new academy at level 1/5 for facilities and youth coach", () => {
+    const clubs = ["rma", "psg", "ars", "mil", "bar", "bri"];
+
+    for (const teamId of clubs) {
+      const state = generateAcademyState(`save-${teamId}`, teamId, 2026);
+      expect(state.facilityLevel).toBe(1);
+      expect(state.youthCoach?.level).toBe(1);
+    }
+  });
+
   it("keeps players inside the designed ranges and ids in the reserved block", () => {
     const state = generateAcademyState("save-2", "ath", 2026);
     expect(state.players.length).toBeGreaterThanOrEqual(ACADEMY_LIMITS.minPlayers);

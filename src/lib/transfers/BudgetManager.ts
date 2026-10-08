@@ -71,7 +71,7 @@ function leagueBudgetMultiplier(leagueId: string): number {
  */
 const CLUB_BUDGET_OVERRIDES: Record<string, number> = {
   // LaLiga
-  rma: 220,
+  rma: 200,
   bar: 180,
   atm: 125,
   vil: 60,
@@ -456,6 +456,16 @@ export function maxWageOffer(clubId: string): number {
   return Math.max(WAGE_RULES.minimumWage, Math.round(Math.min(room, singleCap)));
 }
 
+/**
+ * Coste salarial incremental que debe reservarse al cambiar un contrato.
+ * El salario anual completo ya está comprometido en una renovación: sólo
+ * la diferencia positiva respecto a la ficha actual consume margen salarial.
+ * En una promoción, el salario actual es 0 y por tanto consume la ficha completa.
+ */
+export function additionalWageCommitment(previousWage: number, newWage: number): number {
+  return Math.max(0, Math.round(newWage) - Math.round(previousWage));
+}
+
 /** ¿Puede el club asumir traspaso y salario? */
 export function canAfford(clubId: string, fee: number, wage: number): boolean {
   const entry = getFinances(clubId);
@@ -518,11 +528,14 @@ export function registerRenewal(
   const bridge = bridgeFor(clubId);
 
   if (bridge) {
-    const nextTotal = Math.max(0, entry.budget - bonus - Math.max(0, delta));
+    // Renovar no implica pagar el salario anual completo por adelantado. Sólo
+    // se compromete la diferencia entre la ficha nueva y la actual.
+    // 1M -> 20M consume 19M de presupuesto salarial. La prima se descuenta
+    // del presupuesto de fichajes. Restar el incremento de ambas bolsas hace
+    // que el dinero realmente disponible para fichajes sólo baje por la prima.
+    const nextTotal = Math.max(0, entry.budget - delta - bonus);
     const nextBill = Math.max(0, Math.round(entry.wageBill + delta));
-    const currentRatio =
-      entry.budget > 0 ? clamp(entry.wageBudget / entry.budget, 0.05, 0.30) : 0.05;
-    const nextWageBudget = Math.round(nextTotal * currentRatio);
+    const nextWageBudget = Math.max(0, Math.round(entry.wageBudget - delta));
     entry.budget = nextTotal;
     entry.wageBill = nextBill;
     entry.wageBudget = nextWageBudget;
@@ -533,10 +546,10 @@ export function registerRenewal(
     return;
   }
 
-  entry.budget = Math.max(0, entry.budget - bonus);
+  entry.budget = Math.max(0, entry.budget - delta - bonus);
   entry.spent += bonus;
   entry.wageBill = Math.max(0, Math.round(entry.wageBill + delta));
-  entry.wageBudget = Math.max(entry.wageBill, entry.wageBudget);
+  entry.wageBudget = Math.max(0, Math.round(entry.wageBudget - delta));
   entry.totalBudget = entry.budget + entry.wageBudget;
 }
 

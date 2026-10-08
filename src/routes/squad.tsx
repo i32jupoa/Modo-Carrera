@@ -19,7 +19,6 @@ import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { toast } from "sonner";
 import {
   Wallet,
-  HeartHandshake,
   Tag,
   X,
   Activity,
@@ -27,10 +26,6 @@ import {
   Goal,
   Sparkles,
   Shield,
-  CalendarDays,
-  Banknote,
-  CircleDollarSign,
-  Cake,
   Star,
   Trophy,
   Timer,
@@ -45,7 +40,7 @@ import { useUserMarket } from "@/hooks/useUserMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
 import { LoanSearchModal } from "@/components/LoanSearchModal";
-import { useAcademyStore } from "@/lib/academy/academyStore";
+import { ContractNegotiationModal } from "@/components/contracts/ContractNegotiationModal";
 import { MoodFace } from "@/components/MoodFace";
 import { RoleBadge } from "@/components/RoleBadge";
 import { buildPositions, POS_SHORT } from "@/lib/positions";
@@ -485,199 +480,6 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
   );
 }
 
-function RenewalModal({
-  p,
-  budget,
-  wageBill,
-  wageBudget,
-  onClose,
-  onConfirm,
-}: {
-  p: FcPlayer;
-  budget: number;
-  wageBill: number;
-  wageBudget: number;
-  onClose: () => void;
-  onConfirm: (input: {
-    playerId: string;
-    years: number;
-    wage: number;
-    releaseClause: number;
-    signingBonus: number;
-  }) => void;
-}) {
-  const contract = getPlayer(String(p.ID))?.contract;
-  const currentWage = contract?.wage ?? getPlayerAnnualWage(String(p.ID));
-  const [years, setYears] = useState(Math.max(2, Math.min(5, contract?.yearsLeft ?? 3)));
-  const [wageM, setWageM] = useState(currentWage / 1_000_000);
-  const [clauseM, setClauseM] = useState((contract?.releaseClause ?? marketValueEuros(p) * 1.8) / 1_000_000);
-  const [bonusM, setBonusM] = useState((contract?.signingBonus ?? currentWage * 0.2) / 1_000_000);
-
-  const wage = Math.round(Math.max(0, wageM) * 1_000_000);
-  const releaseClause = Math.round(Math.max(0, clauseM) * 1_000_000);
-  const signingBonus = Math.round(Math.max(0, bonusM) * 1_000_000);
-  const availableRoom = Math.max(0, wageBudget - wageBill + currentWage);
-  const wageDelta = wage - currentWage;
-  const invalidWage = wage > availableRoom;
-  const invalidBonus = signingBonus > budget;
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-xl overflow-hidden p-0">
-        <div className="bg-gradient-to-br from-emerald-500/20 via-primary/10 to-transparent p-5">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl font-black">
-              <HeartHandshake className="h-5 w-5 text-emerald-300" />
-              Renovar contrato
-            </DialogTitle>
-            <DialogDescription>
-              {p.Name} · {Math.round(p.OVR)} OVR · contrato actual {contract?.yearsLeft ?? 0} temporadas
-            </DialogDescription>
-          </DialogHeader>
-        </div>
-
-        <div className="space-y-5 p-5">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <ContractMetric icon={Banknote} label="Salario actual" value={`${formatEuro(currentWage)}/año`} />
-            <ContractMetric icon={CalendarDays} label="Duración" value={`${contract?.yearsLeft ?? 0} temp.`} />
-            <ContractMetric icon={Shield} label="Cláusula actual" value={formatEuro(contract?.releaseClause ?? 0)} />
-            <ContractMetric icon={CircleDollarSign} label="Prima actual" value={formatEuro(contract?.signingBonus ?? 0)} />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <NumberField label="Duración nueva (años)" value={years} onChange={setYears} min={1} max={5} step={1} suffix="años" />
-            <NumberField label="Salario anual" value={wageM} onChange={setWageM} min={0} step={0.05} suffix="M €" />
-            <NumberField label="Cláusula de rescisión" value={clauseM} onChange={setClauseM} min={0} step={0.1} suffix="M €" />
-            <NumberField label="Prima / ficha de renovación" value={bonusM} onChange={setBonusM} min={0} step={0.05} suffix="M €" />
-          </div>
-
-          <div className="rounded-xl border border-border/60 bg-secondary/40 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[0.65rem] font-bold uppercase tracking-wider text-muted-foreground">
-                Impacto económico
-              </span>
-              <span className="text-xs font-black">
-                {wageDelta >= 0 ? "+" : ""}
-                {formatEuro(wageDelta)}/año
-              </span>
-            </div>
-            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-              <div className="rounded-lg border border-border/50 bg-background/30 p-2.5">
-                <p className="text-muted-foreground">Margen salarial</p>
-                <p className={`mt-0.5 font-black ${invalidWage ? "text-destructive" : "text-emerald-300"}`}>
-                  {formatEuro(Math.max(0, availableRoom - wage))}
-                </p>
-              </div>
-              <div className="rounded-lg border border-border/50 bg-background/30 p-2.5">
-                <p className="text-muted-foreground">Presupuesto tras la prima</p>
-                <p className={`mt-0.5 font-black ${invalidBonus ? "text-destructive" : "text-emerald-300"}`}>
-                  {formatEuro(Math.max(0, budget - signingBonus))}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
-            Este contrato será el mismo que verá <strong className="text-foreground">Mercado</strong>:
-            salario, años, cláusula y prima quedan guardados en la ficha única del jugador.
-          </div>
-
-          {(invalidWage || invalidBonus) && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-              {invalidWage && `El salario supera tu margen salarial (${formatEuro(availableRoom)} disponibles). `}
-              {invalidBonus && `La prima supera tu presupuesto (${formatEuro(budget)} disponibles).`}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={invalidWage || invalidBonus || years < 1 || years > 5 || wage <= 0}
-              onClick={() =>
-                onConfirm({
-                  playerId: String(p.ID),
-                  years,
-                  wage,
-                  releaseClause,
-                  signingBonus,
-                })
-              }
-              className="flex-1 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-emerald-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Confirmar renovación
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl bg-secondary px-4 py-3 text-sm font-bold"
-            >
-              Cancelar
-            </button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ContractMetric({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Banknote;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-lg border border-border/60 bg-card/60 p-2.5">
-      <div className="flex items-center gap-1.5 text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">
-        <Icon className="h-3 w-3" />
-        {label}
-      </div>
-      <p className="mt-1 text-xs font-black">{value}</p>
-    </div>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  onChange,
-  min,
-  max,
-  step,
-  suffix,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-  min: number;
-  max?: number;
-  step: number;
-  suffix: string;
-}) {
-  return (
-    <label className="space-y-1.5">
-      <span className="text-[0.62rem] font-bold uppercase tracking-wider text-muted-foreground">{label}</span>
-      <div className="relative">
-        <input
-          type="number"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(e) => onChange(Math.max(min, Number(e.target.value)))}
-          className="w-full rounded-xl border border-border bg-secondary px-3 py-2.5 pr-12 text-sm font-black outline-none focus:border-primary"
-        />
-        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[0.65rem] font-bold text-muted-foreground">
-          {suffix}
-        </span>
-      </div>
-    </label>
-  );
-}
-
 function SquadPage() {
   const navigate = useNavigate();
   const { loading } = usePlayersReady();
@@ -689,10 +491,8 @@ function SquadPage() {
   const budget = usePlayersStore((s) => s.budget);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const hydrate = usePlayersStore((s) => s.hydrateMyTeam);
-  const wageBudget = usePlayersStore((s) => s.wageBudget);
   const renewPlayerContract = usePlayersStore((s) => s.renewPlayerContract);
   const syncWageStateFromMarket = usePlayersStore((s) => s.syncWageStateFromMarket);
-  const demoteToAcademy = useAcademyStore((s) => s.demoteToAcademy);
   const { isMarketOpen } = useTransferMarket();
   const market = useUserMarket(!!myTeamId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -740,7 +540,6 @@ function SquadPage() {
     : "—";
   const totalValue = squad.reduce((s, p) => s + marketValueEuros(p), 0);
   const currentWageBill = squad.reduce((sum, p) => sum + getPlayerAnnualWage(String(p.ID)), 0);
-  const effectiveWageBudget = Math.max(wageBudget || 0, currentWageBill);
 
   const selected = selectedId ? (squad.find((p) => String(p.ID) === selectedId) ?? null) : null;
   // Subscribe to the selected player's stats so the detail card always
@@ -749,35 +548,9 @@ function SquadPage() {
     selectedId ? s.stats[selectedId] : undefined,
   );
 
-  const handleDemoteToAcademy = async () => {
-    if (!selected) return;
-    if (!window.confirm(`¿Bajar a ${selected.Name} a la cantera?`)) return;
-    const result = await demoteToAcademy(String(selected.ID), currentDate);
-    if (!result.ok) toast.error(result.reason);
-    else {
-      toast.success(`${selected.Name} vuelve a la cantera.`);
-      setSelectedId(null);
-      syncWageStateFromMarket();
-    }
-  };
-
-  function handleRenewSubmit(input: {
-    playerId: string;
-    years: number;
-    wage: number;
-    releaseClause: number;
-    signingBonus: number;
-  }) {
-    const result = renewPlayerContract(input);
-    if (!result.renewed) {
-      toast.error("No se pudo renovar", { description: result.message });
-      return;
-    }
-    toast.success(`${result.playerName} renovado`, {
-      description: `${result.years} temporadas · ${formatEuro(result.wage)}/año · cláusula ${formatEuro(result.releaseClause)}`,
-    });
-    syncWageStateFromMarket();
-    setRenewalPlayerId(null);
+  function persistNegotiation(): void {
+    const save = loadSave();
+    if (save) saveSave(save);
   }
 
   function handleToggleListed(p: FcPlayer) {
@@ -905,7 +678,6 @@ function SquadPage() {
           setLoanSearchPlayerId(String(selected.ID));
           setLoanSearchListed(getPlayer(String(selected.ID))?.loanListed ?? false);
         }}
-        onDemoteToAcademy={handleDemoteToAcademy}
       />
 
       {loanSearchPlayerId && (() => {
@@ -923,15 +695,43 @@ function SquadPage() {
 
       {renewalPlayerId && (() => {
         const renewalPlayer = squad.find((p) => String(p.ID) === renewalPlayerId) ?? null;
-        if (!renewalPlayer) return null;
+        if (!renewalPlayer || !myTeamId) return null;
+        const marketPlayer = getPlayer(String(renewalPlayer.ID));
+        if (!marketPlayer) return null;
+        const stats = playerStats[String(renewalPlayer.ID)];
         return (
-          <RenewalModal
-            p={renewalPlayer}
-            budget={budget}
-            wageBill={currentWageBill}
-            wageBudget={effectiveWageBudget}
+          <ContractNegotiationModal
+            player={renewalPlayer}
+            clubId={myTeamId}
+            kind="renewal"
+            currentDate={currentDate}
+            currentContract={marketPlayer.contract}
+            context={{
+              morale: stats?.morale ?? 70,
+              satisfaction: Math.max(0, Math.min(100, 80 - Number(stats?.satisfactionMissStreak ?? 0) * 8 - Number(stats?.satisfactionBenchStreak ?? 0) * 4 - Number(stats?.satisfactionNotCalledStreak ?? 0) * 5)),
+              currentRole: stats?.squadRole ?? "rotation",
+              yearsAtClub: renewalPlayer.academyPromotionYear
+                ? Math.max(0, Number(currentDate.slice(0, 4)) - Number(renewalPlayer.academyPromotionYear))
+                : 0,
+              homegrown: !!renewalPlayer.academyPromotionYear,
+              cacheKey: currentDate.slice(0, 10),
+            }}
             onClose={() => setRenewalPlayerId(null)}
-            onConfirm={handleRenewSubmit}
+            onPersist={persistNegotiation}
+            onAccepted={async (offer) => {
+              const result = renewPlayerContract({
+                playerId: String(renewalPlayer.ID),
+                years: offer.years,
+                wage: offer.wage,
+                releaseClause: offer.releaseClause,
+                signingBonus: offer.signingBonus,
+                squadRole: offer.squadRole,
+              });
+              if (!result.renewed) return { ok: false, reason: result.message };
+              setRenewalPlayerId(null);
+              void saveTransferSystem();
+              return { ok: true };
+            }}
           />
         );
       })()}

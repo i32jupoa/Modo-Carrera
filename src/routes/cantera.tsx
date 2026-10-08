@@ -16,9 +16,11 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { teamById, LEAGUES } from "@/data/teams";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
+import { ContractNegotiationModal } from "@/components/contracts/ContractNegotiationModal";
 import { LoanSearchModal } from "@/components/LoanSearchModal";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { TeamLogo } from "@/components/TeamLogo";
+import { loadSave, saveSave } from "@/lib/store";
 import { usePlayersStore } from "@/store/playersStore";
 import { academyPlayerToFcPlayer, academyPlayerToStats, academyContract } from "@/lib/academy/academyAdapters";
 import { useAcademyStore } from "@/lib/academy/academyStore";
@@ -103,10 +105,12 @@ function AcademyPage() {
   const currentDate = usePlayersStore((state) => state.currentDate);
   const team = myTeamId ? teamById(myTeamId) : null;
   const userSquad = usePlayersStore((state) => state.squad);
-  const rosterIds = usePlayersStore((state) => state.rosterIds);
   const academy = useAcademyStore((state) => myTeamId ? state.clubs[myTeamId] : undefined);
   const ensureClub = useAcademyStore((state) => state.ensureClub);
   const promoteForUser = useAcademyStore((state) => state.promoteForUser);
+  const callUpForUser = useAcademyStore((state) => state.callUpForUser);
+  const uncallForUser = useAcademyStore((state) => state.uncallForUser);
+  const prepareForInternalContractNegotiation = useAcademyStore((state) => state.prepareForInternalContractNegotiation);
   const releaseForUser = useAcademyStore((state) => state.releaseForUser);
   const renewYouthContract = useAcademyStore((state) => state.renewYouthContract);
   const addAnnualIntake = useAcademyStore((state) => state.addAnnualIntake);
@@ -118,21 +122,17 @@ function AcademyPage() {
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [actionPlayerId, setActionPlayerId] = useState<number | null>(null);
+  const [contractKind, setContractKind] = useState<"promotion" | "youth-renewal" | null>(null);
   const [query, setQuery] = useState("");
   const [position, setPosition] = useState("ALL");
   const [sort, setSort] = useState<"ovr" | "potential" | "age">("ovr");
   const [compareId, setCompareId] = useState<number | null>(null);
-  const [promoteOpen, setPromoteOpen] = useState(false);
-  const [promotionYears, setPromotionYears] = useState(3);
-  const [promotionWage, setPromotionWage] = useState(0);
-  const [promotionClause, setPromotionClause] = useState(0);
   const [demotionId, setDemotionId] = useState("");
   const [loanSearchPlayerId, setLoanSearchPlayerId] = useState<number | null>(null);
   const [loanSearchListed, setLoanSearchListed] = useState(false);
-  const [renewOpen, setRenewOpen] = useState(false);
-  const [renewYears, setRenewYears] = useState(2);
   const [upgradeType, setUpgradeType] = useState<"facility" | "coach" | null>(null);
   const [intakeOpen, setIntakeOpen] = useState(false);
+  const [releaseConfirmId, setReleaseConfirmId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -158,8 +158,20 @@ function AcademyPage() {
 
   const selected = selectedId == null ? null : players.find((player) => player.id === selectedId) ?? null;
   const actionPlayer = actionPlayerId == null ? null : players.find((player) => player.id === actionPlayerId) ?? null;
-  const selectedFc = selected && team ? academyPlayerToFcPlayer(selected, team.name, LEAGUES[team.league]?.name ?? team.league) : null;
   const selectedStats = usePlayersStore((state) => selectedId != null ? (state.stats[String(selectedId)] ?? undefined) : undefined);
+  const selectedUncallBlocked = useMemo(() => {
+    if (!selected || selected.status !== "called-up" || !myTeamId) return false;
+    const save = loadSave();
+    const xi = save?.lineups?.[myTeamId] ?? [];
+    const bench = save?.substitutes?.[myTeamId] ?? [];
+    return xi.includes(String(selected.id)) || bench.includes(String(selected.id));
+  }, [myTeamId, selected, currentDate]);
+  const selectedFc = selected && team ? academyPlayerToFcPlayer({
+    ...selected,
+    ovr: Math.round(Number(selectedStats?.dynamicStats?.currentOVR ?? selected.ovr)),
+    potential: Math.round(Number(selectedStats?.dynamicStats?.potentialOVR ?? selected.potential)),
+    attributes: selectedStats?.dynamicStats?.attributes ?? selected.attributes,
+  }, team.name, LEAGUES[team.league]?.name ?? team.league) : null;
 
   const needsReport = useMemo(() => {
     if (!myTeamId) return null;
@@ -170,41 +182,36 @@ function AcademyPage() {
   const readyCount = players.filter((player) => player.age >= 18 && Math.round(player.ovr) >= 55).length;
   const highPotentialCount = players.filter((player) => player.potentialEstimate.min >= ACADEMY_LIMITS.notificationPotentialThreshold).length;
 
-  const handlePromote = () => {
+  const openContractNegotiation = (kind: "promotion" | "youth-renewal") => {
     if (!selected) return;
-    const target = academyContract(selected);
-    setPromotionYears(Math.max(2, Math.min(4, target.yearsLeft)));
-    setPromotionWage(target.wage);
-    setPromotionClause(target.releaseClause);
-    setDemotionId(youngSquad[0] ? String(youngSquad[0].ID) : "");
-    setActionPlayerId(selected.id);
-    setSelectedId(null);
-    setPromoteOpen(true);
-  };
-
-  const confirmPromotion = async () => {
-    const player = actionPlayer ?? (actionPlayerId != null ? players.find((p) => p.id === actionPlayerId) : null);
-    if (!player) return;
-    const roster = usePlayersStore.getState().rosterIds;
-    if (roster.length >= 28) {
-      if (!demotionId) {
-        toast.error("La plantilla está completa", { description: "Selecciona qué joven de 21 años o menos debe volver a la cantera." });
-        return;
-      }
-      const lowered = await useAcademyStore.getState().demoteToAcademy(demotionId, currentDate);
-      if (!lowered.ok) {
-        toast.error(lowered.reason);
-        return;
-      }
-    }
-    const result = promoteForUser(player.id, { years: promotionYears, wage: promotionWage, releaseClause: promotionClause });
-    if (!result.ok) {
-      toast.error(result.reason);
+    if (kind === "promotion" && selected.age < ACADEMY_LIMITS.professionalPromotionMinAge) {
+      toast.error("El canterano todavía no puede firmar un contrato profesional.");
       return;
     }
-    toast.success(`${player.name} ha firmado su primer contrato profesional.`);
-    setPromoteOpen(false);
-    setActionPlayerId(null);
+    prepareForInternalContractNegotiation(selected.id, currentDate);
+    setActionPlayerId(selected.id);
+    setContractKind(kind);
+    setSelectedId(null);
+  };
+
+  const handleCallUp = async () => {
+    if (!selected) return;
+    const player = selected;
+    setSelectedId(null);
+    const result = await callUpForUser(player.id);
+    if (!result.ok) toast.error(result.reason);
+    else toast.success(`${player.name} ha sido convocado al primer equipo.`, { description: "Aparecerá en Reservas de Dirección de equipo sin ocupar una plaza de plantilla." });
+  };
+
+  const handleUncall = async () => {
+    if (!selected) return;
+    const player = selected;
+    const result = await uncallForUser(player.id, currentDate);
+    if (!result.ok) toast.error(result.reason);
+    else {
+      toast.success(`${player.name} vuelve a la cantera.`, { description: "Su progreso del primer equipo se ha sincronizado y se conserva." });
+      setSelectedId(null);
+    }
   };
 
   const handleLoan = async () => {
@@ -245,35 +252,27 @@ function AcademyPage() {
     else toast.success(`${player.name} puesto en venta.`, { description: "Las ofertas aparecerán en Mercado → Ofertas recibidas." });
   };
 
-  const handleRenew = () => {
+  const handleRelease = () => {
     if (!selected) return;
-    setRenewYears(Math.max(1, Math.min(3, selected.contractYearsLeft || 2)));
-    setActionPlayerId(selected.id);
     setSelectedId(null);
-    setRenewOpen(true);
+    setReleaseConfirmId(selected.id);
   };
 
-  const confirmRenew = async () => {
-    const player = actionPlayer;
-    if (!player) return;
-    const result = await renewYouthContract(player.id, renewYears);
+  const handleConfirmRelease = async () => {
+    if (releaseConfirmId == null) return;
+    const player = players.find((candidate) => candidate.id === releaseConfirmId);
+    if (!player) {
+      setReleaseConfirmId(null);
+      return;
+    }
+    const result = await releaseForUser(player.id);
     if (!result.ok) {
       toast.error(result.reason);
       return;
     }
-    toast.success(`Contrato juvenil de ${player.name} renovado.`, { description: `${renewYears} temporada(s) más.` });
-    setRenewOpen(false);
-    setActionPlayerId(null);
-  };
-
-  const handleRelease = async () => {
-    if (!selected) return;
-    const player = selected;
-    if (!window.confirm(`¿Liberar a ${player.name} de la cantera?\n\nEsta acción no se puede deshacer.`)) return;
+    setReleaseConfirmId(null);
     setSelectedId(null);
-    const result = await releaseForUser(player.id);
-    if (!result.ok) toast.error(result.reason);
-    else toast.success(`${player.name} ha sido liberado de la cantera.`);
+    toast.success(`${player.name} ha sido liberado de la cantera.`);
   };
 
   const handleFacilityUpgrade = async () => {
@@ -415,10 +414,13 @@ function AcademyPage() {
         isMarketOpen={isMarketOpen}
         academyMode
         academyPotentialEstimate={selected?.potentialEstimate}
-        onPromote={selected?.status === "academy" ? handlePromote : undefined}
+        onPromote={selected && ["academy", "called-up"].includes(selected.status) ? () => openContractNegotiation("promotion") : undefined}
         onLoan={selected?.status === "academy" ? handleLoan : undefined}
         onSellAcademy={selected?.status === "academy" ? handleSale : undefined}
-        onRenewYouth={selected?.status === "academy" ? handleRenew : undefined}
+        onCallUp={selected?.status === "academy" ? handleCallUp : undefined}
+        onUncall={selected?.status === "called-up" ? handleUncall : undefined}
+        onUncallDisabled={selectedUncallBlocked}
+        onRenewYouth={selected?.status === "academy" ? () => openContractNegotiation("youth-renewal") : undefined}
         onRelease={selected?.status === "academy" ? handleRelease : undefined}
         academyStatusLabel={selected ? ({ academy: "En cantera", loaned: "Cedido", listed: "En venta", "called-up": "Convocado" } as Record<string, string>)[selected.status] ?? "Cantera" : "Cantera"}
       />
@@ -430,28 +432,85 @@ function AcademyPage() {
         return <LoanSearchModal p={fc} listed={loanSearchListed} onClose={() => setLoanSearchPlayerId(null)} onToggle={() => void toggleLoanSearch()} />;
       })()}
 
-      {promoteOpen && actionPlayer && <Dialog open onOpenChange={(open) => { if (!open) { setPromoteOpen(false); setActionPlayerId(null); } }}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader><DialogTitle className="text-xl font-black">Subir al primer equipo</DialogTitle><DialogDescription>{actionPlayer.name} · {Math.round(actionPlayer.ovr)} OVR · {actionPlayer.age} años</DialogDescription></DialogHeader>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="text-xs font-bold">Años de contrato<select value={promotionYears} onChange={(e) => setPromotionYears(Number(e.target.value))} className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2.5 text-sm"><option value={2}>2</option><option value={3}>3</option><option value={4}>4</option></select></label>
-            <label className="text-xs font-bold">Sueldo anual<input type="number" min={0} step={1000} value={promotionWage} onChange={(e) => setPromotionWage(Math.max(0, Number(e.target.value)))} className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2.5 text-sm" /></label>
-            <label className="text-xs font-bold sm:col-span-2">Cláusula<input type="number" min={0} step={100000} value={promotionClause} onChange={(e) => setPromotionClause(Math.max(0, Number(e.target.value)))} className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2.5 text-sm" /></label>
-          </div>
-          {rosterIds.length >= 28 && <label className="mt-3 block text-xs font-bold">Jugador joven que bajará a cantera<select value={demotionId} onChange={(e) => setDemotionId(e.target.value)} className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2.5 text-sm"><option value="">Seleccionar…</option>{youngSquad.map((player) => <option key={player.ID} value={player.ID}>{player.Name} · {Math.round(player.OVR)} OVR</option>)}</select></label>}
-          <div className="mt-5 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">Al confirmar, el jugador se convierte en futbolista profesional, entra en Plantilla, recibe contrato profesional y queda disponible para alineaciones y partidos.</div>
-          <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => { setPromoteOpen(false); setActionPlayerId(null); }} className="rounded-xl border border-border bg-secondary px-4 py-2.5 text-xs font-black">Cancelar</button><button type="button" onClick={() => void confirmPromotion()} className="rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground">Confirmar promoción</button></div>
-        </DialogContent>
-      </Dialog>}
+      {contractKind && actionPlayer && team && myTeamId && (() => {
+        const stats = usePlayersStore.getState().stats[String(actionPlayer.id)];
+        const negotiationPlayer = academyPlayerToFcPlayer({
+          ...actionPlayer,
+          ovr: Math.round(Number(stats?.dynamicStats?.currentOVR ?? actionPlayer.ovr)),
+          potential: Math.round(Number(stats?.dynamicStats?.potentialOVR ?? actionPlayer.potential)),
+          attributes: stats?.dynamicStats?.attributes ?? actionPlayer.attributes,
+        }, team.name, LEAGUES[team.league]?.name ?? team.league);
+        const marketPlayer = getPlayer(String(actionPlayer.id));
+        if (!marketPlayer) return null;
+        return (
+          <ContractNegotiationModal
+            player={negotiationPlayer}
+            clubId={myTeamId}
+            kind={contractKind}
+            currentDate={currentDate}
+            currentContract={academyContract(actionPlayer)}
+            context={{
+              morale: stats?.morale ?? 70,
+              satisfaction: Math.max(0, Math.min(100, 80 - Number(stats?.satisfactionMissStreak ?? 0) * 8 - Number(stats?.satisfactionBenchStreak ?? 0) * 4 - Number(stats?.satisfactionNotCalledStreak ?? 0) * 5)),
+              currentRole: "prospect",
+              yearsAtClub: Math.max(0, seasonFromDate(currentDate) - actionPlayer.joinedSeason),
+              homegrown: true,
+              cacheKey: currentDate.slice(0, 10),
+            }}
+            onClose={() => { setContractKind(null); setActionPlayerId(null); }}
+            onPersist={() => { const save = loadSave(); if (save) saveSave(save); }}
+            onAccepted={async (offer) => {
+              if (contractKind === "promotion") {
+                const result = promoteForUser(actionPlayer.id, { years: offer.years, wage: offer.wage, releaseClause: offer.releaseClause, signingBonus: offer.signingBonus, squadRole: offer.squadRole });
+                if (!result.ok) return { ok: false, reason: result.reason };
+              } else {
+                const result = await renewYouthContract(actionPlayer.id, offer.years, offer.squadRole);
+                if (!result.ok) return { ok: false, reason: result.reason };
+              }
+              setContractKind(null);
+              setActionPlayerId(null);
+              setSelectedId(null);
+              const save = loadSave();
+              if (save) saveSave(save);
+              return { ok: true };
+            }}
+          />
+        );
+      })()}
 
-      {renewOpen && actionPlayer && <Dialog open onOpenChange={(open) => { if (!open) { setRenewOpen(false); setActionPlayerId(null); } }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="text-xl font-black">Renovar contrato juvenil</DialogTitle><DialogDescription>{actionPlayer.name} · contrato actual: {actionPlayer.contractYearsLeft} temporada(s)</DialogDescription></DialogHeader>
-          <div className="mt-4 rounded-xl border border-border/60 bg-secondary/30 p-4"><p className="text-xs leading-5 text-muted-foreground">La renovación mantiene al jugador en la cantera y evita que entre en fin de ciclo. No crea un contrato profesional ni ocupa una plaza de la primera plantilla.</p></div>
-          <label className="mt-4 block text-xs font-bold">Nueva duración<select value={renewYears} onChange={(e) => setRenewYears(Number(e.target.value))} className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2.5 text-sm"><option value={1}>1 temporada</option><option value={2}>2 temporadas</option><option value={3}>3 temporadas</option></select></label>
-          <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => { setRenewOpen(false); setActionPlayerId(null); }} className="rounded-xl border border-border bg-secondary px-4 py-2.5 text-xs font-black">Cancelar</button><button type="button" onClick={() => void confirmRenew()} className="rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground">Confirmar renovación</button></div>
-        </DialogContent>
-      </Dialog>}
+      {releaseConfirmId != null && (() => {
+        const player = players.find((candidate) => candidate.id === releaseConfirmId);
+        if (!player) return null;
+        return (
+          <Dialog open onOpenChange={(open) => !open && setReleaseConfirmId(null)}>
+            <DialogContent className="max-w-md overflow-hidden border-rose-400/20 bg-background/95 p-0 shadow-2xl shadow-rose-950/20 backdrop-blur-xl">
+              <div className="relative overflow-hidden border-b border-border/50 bg-gradient-to-br from-rose-500/20 via-rose-500/5 to-transparent p-5">
+                <div className="pointer-events-none absolute -right-10 -top-14 h-40 w-40 rounded-full bg-rose-500/10 blur-3xl" />
+                <DialogHeader className="relative">
+                  <DialogTitle className="text-xl font-black">Liberar canterano</DialogTitle>
+                  <DialogDescription className="mt-1 text-sm leading-6">
+                    Vas a retirar definitivamente a <span className="font-black text-foreground">{player.name}</span> de tu cantera. Esta decisión no se puede deshacer.
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+              <div className="p-5">
+                <div className="flex items-center gap-3 rounded-2xl border border-rose-400/20 bg-rose-500/5 p-4">
+                  <PlayerFace name={player.name} role={roleFromPosition(player.positions[0] ?? "CM")} size={52} />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black">{player.name}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">OVR {Math.round(player.ovr)} · {player.age} años · {player.nation}</p>
+                  </div>
+                </div>
+                <p className="mt-4 text-xs leading-5 text-muted-foreground">El jugador desaparecerá de la cantera y de los registros dinámicos asociados a ella.</p>
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={() => setReleaseConfirmId(null)} className="rounded-xl border border-border bg-secondary px-4 py-2.5 text-xs font-black transition hover:bg-secondary/80">Cancelar</button>
+                  <button type="button" onClick={() => void handleConfirmRelease()} className="rounded-xl border border-rose-400/30 bg-rose-500/15 px-4 py-2.5 text-xs font-black text-rose-200 transition hover:bg-rose-500/25">Sí, liberar jugador</button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
       {upgradeType && <Dialog open onOpenChange={(open) => !open && setUpgradeType(null)}>
         <DialogContent className="max-w-lg">

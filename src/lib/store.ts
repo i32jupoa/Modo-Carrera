@@ -875,6 +875,8 @@ export type SaveGame = {
 
   /** Hechos estructurados de cantera, compactos y reutilizables por Noticias/Buzón. */
   academyEvents?: import("@/lib/academy/academyTypes").AcademyPromotionEvent[];
+  /** Negociaciones internas abiertas/recientes, opcional para compatibilidad con partidas antiguas. */
+  internalContractNegotiations?: Record<string, unknown>;
 };
 
 const STORAGE_KEY = "fcsim:save:v2";

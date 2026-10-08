@@ -46,7 +46,7 @@ export const ACADEMY_PROMOTION_LIMITS = {
 export const ACADEMY_FACILITIES = {
   min: 1,
   max: 5,
-  default: 3,
+  default: 1,
   ovrBonusByLevel: [0, 1, 2, 3, 4, 5] as readonly number[],
   potentialBonusByLevel: [0, 0, 2, 3, 5, 7] as readonly number[],
   progressionMultiplierByLevel: [0.85, 0.95, 1, 1.1, 1.2, 1.3] as readonly number[],

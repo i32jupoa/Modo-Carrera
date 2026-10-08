@@ -21,6 +21,7 @@ import {
   maxWageOffer,
   needsToSell,
   registerRenewal,
+  additionalWageCommitment,
   syncWageBill,
 } from "./BudgetManager";
 import {
@@ -60,6 +61,7 @@ export interface UserRenewalInput {
   wage: number;
   releaseClause: number;
   signingBonus: number;
+  squadRole?: import("./types").SquadRole;
 }
 
 export interface UserRenewalOutcome extends RenewalOutcome {
@@ -99,45 +101,47 @@ export function renewUserPlayer(input: UserRenewalInput): UserRenewalOutcome {
   const signingBonus = Math.max(0, Math.round(input.signingBonus));
   syncWageBill(input.clubId);
   const finances = getFinances(input.clubId);
-  const availableWageRoom = finances.wageBudget - finances.wageBill + player.contract.wage;
-  const wageDelta = wage - player.contract.wage;
-  const nextTotal = Math.max(0, finances.budget - signingBonus - wageDelta);
+  // La bolsa salarial representa el margen disponible para nuevas obligaciones
+  // salariales. En una renovación sólo se añade la diferencia positiva entre
+  // la nueva ficha y la actual: 20M -> 25M consume 5M, no 25M.
+  const wageDelta = Math.round(wage - player.contract.wage);
+  const wageCommitment = additionalWageCommitment(player.contract.wage, wage);
+  const availableWageRoom = Math.max(0, Math.round(finances.wageBudget));
+  const transferRoom = Math.max(0, finances.budget - finances.wageBudget);
+  // El salario nuevo no se paga íntegramente al firmar.
+  // Sólo se reserva la diferencia respecto al salario actual. Esa reserva se
+  // resta tanto de la bolsa económica total como de la bolsa salarial, de
+  // modo que el dinero para fichajes sólo se vea afectado por la prima.
+  const nextTotal = Math.max(0, finances.budget - wageDelta - signingBonus);
+  const nextWageBudget = Math.max(0, finances.wageBudget - wageDelta);
   const nextWageBill = Math.max(0, finances.wageBill + wageDelta);
-  const nextWageAllocation = nextTotal > 0
-    ? Math.round(
-        nextTotal *
-          Math.max(
-            0.05,
-            Math.min(
-              0.2,
-              finances.budget > 0 ? finances.wageBudget / finances.budget : 0.2,
-            ),
-          ),
-      )
-    : 0;
 
-  if (wage > availableWageRoom || nextWageBill > nextWageAllocation) {
+  if (wageCommitment > availableWageRoom) {
     return {
       ...base,
       wage,
       years,
       releaseClause,
       signingBonus,
-      message: `La renovación supera el margen salarial disponible (${Math.max(0, Math.round(availableWageRoom)).toLocaleString("es-ES")} €) o el 30% máximo de masa salarial.`,
+      message: `La renovación supera el margen salarial disponible (${Math.max(0, Math.round(availableWageRoom)).toLocaleString("es-ES")} €).`,
     };
   }
-  if (signingBonus > finances.budget) {
+  if (signingBonus > transferRoom) {
     return {
       ...base,
       wage,
       years,
       releaseClause,
       signingBonus,
-      message: `No puedes pagar la prima de renovación. Disponible: ${Math.round(finances.budget).toLocaleString("es-ES")} €.`,
+      message: `No puedes pagar la prima de renovación con el presupuesto de fichajes. Disponible: ${Math.round(transferRoom).toLocaleString("es-ES")} €.`,
     };
   }
 
   const previousWage = player.contract.wage;
+  // Actualizamos primero la contabilidad económica usando el contrato antiguo
+  // como referencia. Así la subida salarial se cuenta exactamente una vez;
+  // después se escribe el nuevo contrato en el índice de jugadores.
+  registerRenewal(input.clubId, previousWage, wage, signingBonus);
   updatePlayer(input.playerId, {
     contract: {
       yearsLeft: years,
@@ -148,7 +152,6 @@ export function renewUserPlayer(input: UserRenewalInput): UserRenewalOutcome {
     transferListed: false,
     listReason: null,
   });
-  registerRenewal(input.clubId, previousWage, wage, signingBonus);
   logRenewal({
     playerId: input.playerId,
     playerName: player.name,

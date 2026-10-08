@@ -66,6 +66,8 @@ import {
 } from "lucide-react";
 import { loadLive, saveLive, subLimits, isFreeWindow, type LiveMatchState } from "@/lib/liveMatch";
 import { btnPrimary, btnSecondary, infoChip } from "@/components/match/matchUi";
+import { getCalledUpPlayers } from "@/lib/academy/academyRuntime";
+import { useAcademyStore } from "@/lib/academy/academyStore";
 
 // Demarcación exacta que exige cada hueco del 11 titular (GK, DFC, MI, ED...).
 function emptySlotLabel(posKey: string): PosCode {
@@ -138,12 +140,15 @@ function LineupPage() {
   const rosterIds = usePlayersStore((s) => s.rosterIds);
   const currentDate = usePlayersStore((s) => s.currentDate);
   const clubOverrides = usePlayersStore((s) => s.clubOverrides);
+  const dynamicPlayers = usePlayersStore((s) => s.dynamicPlayers);
   const playerStats = usePlayersStore((s) => s.stats);
+  const uncallForUser = useAcademyStore((s) => s.uncallForUser);
   const [save, setSave] = useState<SaveGame | null>(null);
   const [selectedFormation, setSelectedFormation] = useState<FormationName>("Táctica 4-3-3");
   const [startingXI, setStartingXI] = useState<string[]>([]);
   const [bench, setBench] = useState<string[]>([]);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
+  const [academyRefreshKey, setAcademyRefreshKey] = useState(0);
   // A normal empty slot (including an injury/🚑 slot) can be selected first and
   // then filled by a starter, substitute or reserve.
   const [selectedEmptySlot, setSelectedEmptySlot] = useState<string | null>(null);
@@ -342,7 +347,7 @@ function LineupPage() {
 
   const squad = useMemo(
     () => (save && ready ? getSimSquad(save.myTeamId) : []),
-    [save, ready, getSimSquad, rosterIds, clubOverrides, playerStats],
+    [save, ready, getSimSquad, rosterIds, clubOverrides, dynamicPlayers, playerStats, academyRefreshKey],
   );
   const leagueMd = save ? save.currentMatchday[save.myLeague] : 0;
   const isCurrentlyInjured = (player: any) => isPlayerInjuredAtDate(player, currentDate, leagueMd);
@@ -539,6 +544,11 @@ function LineupPage() {
     const benchIds = new Set(bench);
     return squad.filter((player) => !xiIds.has(player.id) && !benchIds.has(player.id));
   }, [squad, startingXI, bench]);
+
+  const calledUpIds = useMemo(() => {
+    if (!save?.myTeamId) return new Set<string>();
+    return new Set(getCalledUpPlayers(save.myTeamId).map((player) => String(player.ID)));
+  }, [save, playerStats, academyRefreshKey]);
 
   // Count only valid, non-null players in starting XI
   const activeStartersCount = useMemo(() => {
@@ -1539,6 +1549,34 @@ function LineupPage() {
     setSelectedPlayer(null);
   }
 
+  async function handleUncallPlayer(playerId: string) {
+    if (liveMode) return;
+
+    // Dirección de equipo es la fuente visual de verdad para el once y
+    // banquillo. Una partida antigua podía conservar el ID en `save.substitutes`
+    // aunque ya se mostrara en Reservas, bloqueando la desconvocatoria.
+    if (save) {
+      let reconciledSave = setLineup(save, save.myTeamId, startingXI.filter(Boolean));
+      reconciledSave = setSubstitutes(reconciledSave, save.myTeamId, bench.filter(Boolean));
+      saveSave(reconciledSave);
+      setSave(reconciledSave);
+    }
+
+    const result = await uncallForUser(playerId, currentDate);
+    if (!result.ok) {
+      toast.error(result.reason);
+      return;
+    }
+    setSelectedPlayer(null);
+    setSelectedEmptySlot(null);
+    // `CALLED_UP_BY_TEAM` vive en un runtime no-reactivo. Forzamos una nueva
+    // lectura de getSimSquad para que desaparezca de Dirección de equipo en el acto.
+    setAcademyRefreshKey((value) => value + 1);
+    toast.success("Canterano desconvocado", {
+      description: "Su progreso del primer equipo se ha sincronizado con la cantera.",
+    });
+  }
+
   function handleCallUpPlayer(playerId: string) {
     if (liveMode || bench.length >= 12) return;
 
@@ -2272,8 +2310,13 @@ function LineupPage() {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="font-semibold truncate text-sm flex items-center gap-1">
+                    <div className="font-semibold truncate text-sm flex flex-wrap items-center gap-1">
                       {player.name}
+                      {calledUpIds.has(String(player.id)) && (
+                        <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[0.5rem] font-black uppercase tracking-wider text-sky-300">
+                          Canterano · Convocado
+                        </span>
+                      )}
                       {(isInjured || isLiveForcedInjury) && (
                         <span className="text-xs font-bold text-destructive">
                           (
@@ -2326,8 +2369,8 @@ function LineupPage() {
                   <div>
                     <p className="text-xs font-black">Reservas</p>
                     <p className="text-[0.6rem] text-muted-foreground">
-                      No están convocados. Pulsa un titular o un suplente y después una reserva para
-                      intercambiarlos directamente.
+                      Aquí están los jugadores fuera del once y del banquillo. Los canteranos convocados
+                      permanecen aquí hasta que los lleves al banquillo o al once.
                     </p>
                   </div>
                   <span className="rounded-full border border-border/60 bg-card px-2 py-1 text-[0.6rem] font-black text-muted-foreground">
@@ -2383,8 +2426,13 @@ function LineupPage() {
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <p className="truncate text-sm font-semibold">{player.name}</p>
+                          {calledUpIds.has(String(player.id)) && (
+                            <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-sky-300">
+                              Canterano · Convocado
+                            </span>
+                          )}
                           {isInjured && (
                             <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-destructive">
                               Lesionado
@@ -2425,7 +2473,19 @@ function LineupPage() {
                           </span>
                         ) : (
                           <>
-                            {bench.length < 12 && (
+                            {calledUpIds.has(String(player.id)) ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleUncallPlayer(player.id);
+                                }}
+                                className="rounded-md border border-sky-400/30 bg-sky-400/10 px-2.5 py-1.5 text-[0.65rem] font-black text-sky-300 transition hover:bg-sky-400/20"
+                                title="Vuelve a la cantera y conserva el progreso del primer equipo"
+                              >
+                                Desconvocar
+                              </button>
+                            ) : bench.length < 12 && (
                               <button
                                 type="button"
                                 onClick={(event) => {
@@ -2434,7 +2494,7 @@ function LineupPage() {
                                 }}
                                 className="rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[0.65rem] font-black text-primary transition hover:bg-primary/20"
                               >
-                                Convocar
+                                Al banquillo
                               </button>
                             )}
                             {selectedPlayer === player.id && (

@@ -8,8 +8,8 @@ function monthKey(date: string): string {
   return date.slice(0, 7);
 }
 
-function applyMonthlyYouthGrowth(player: AcademyPlayer, state: ClubAcademyState, date: string, saveId: string): AcademyPlayer {
-  if (!["academy", "loaned", "called-up"].includes(player.status)) return player;
+export function applyMonthlyYouthGrowth(player: AcademyPlayer, state: ClubAcademyState, date: string, saveId: string): AcademyPlayer {
+  if (!["academy", "loaned"].includes(player.status)) return player;
   const gap = Math.max(0, player.potential - player.ovr);
   const ageFactor = player.age <= 17 ? 1.18 : player.age <= 19 ? 1.08 : player.age === 20 ? 0.92 : 0.68;
   const profileFactor = player.growthProfile === "early" ? 1.12 : player.growthProfile === "late" ? (player.age >= 19 ? 1.28 : 0.82) : player.growthProfile === "stagnant" ? 0.48 : 1;
@@ -34,7 +34,7 @@ function applyMonthlyYouthGrowth(player: AcademyPlayer, state: ClubAcademyState,
   const retrainingActive = player.retrainingUntil && date <= player.retrainingUntil;
   return {
     ...player,
-    ovr: Number(nextOvr.toFixed(2)),
+    ovr: Math.round(nextOvr),
     attributes,
     retrainingPosition: retrainingActive ? player.retrainingPosition : undefined,
     retrainingUntil: retrainingActive ? player.retrainingUntil : undefined,

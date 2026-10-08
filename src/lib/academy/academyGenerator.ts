@@ -121,7 +121,10 @@ export function generateAcademyState(saveId: string, teamId: string, season: num
   const numericSeason = seasonNumber(season);
   const team = teamById(teamId);
   const profile = getClubProfile(teamId);
-  const facility = Math.max(1, Math.min(5, Math.round(3 + (profile.academyFocus - 0.5) * 2))) as 1 | 2 | 3 | 4 | 5;
+  // Todas las partidas comienzan con instalaciones de nivel 1/5.
+  // La calidad del club influye en los jugadores generados a través del perfil
+  // y otros factores del generador, no en el nivel inicial de las instalaciones.
+  const facility = ACADEMY_FACILITIES.default;
   const targetSize = seededInt(ACADEMY_LIMITS.minPlayers, ACADEMY_LIMITS.maxPlayers, saveId, teamId, numericSeason, "size");
   const players: AcademyPlayer[] = [];
   const clubStrength = clamp((team.att + team.mid + team.def) / 300, 0, 1);
@@ -166,7 +169,10 @@ export function generateAcademyState(saveId: string, teamId: string, season: num
   return {
     teamId,
     facilityLevel: facility,
-    youthCoach: { specialty: seededPick(["GK", "DEF", "MID", "ATT"] as const, saveId, teamId, numericSeason, "coach") ?? "MID", level: 2 + (facility >= 4 ? 1 : 0) },
+    youthCoach: {
+      specialty: seededPick(["GK", "DEF", "MID", "ATT"] as const, saveId, teamId, numericSeason, "coach") ?? "MID",
+      level: 1,
+    },
     players,
     // La plantilla base pertenece a la temporada actual; `manualPromotionAvailable`
     // controla de forma independiente si el botón de nueva promoción sigue disponible.

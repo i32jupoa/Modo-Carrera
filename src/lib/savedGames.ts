@@ -1,5 +1,6 @@
 import { teamById } from "@/data/teams";
 import { DYNAMIC_BY_ID, getDynamicMarketPlayers, getAcademyPromotionEvents, hydrateAcademyPromotionEvents, hydrateDynamicMarketPlayers } from "@/lib/academy/academyRuntime";
+import { getInternalContractNegotiationsSnapshot, hydrateInternalContractNegotiations } from "@/lib/transfers/InternalContractNegotiation";
 import { SaveGame } from "./store";
 import {
   baseClubOfPlayer,
@@ -60,6 +61,7 @@ function snapshotPlayersStore() {
     wageBill: s.wageBill,
     dismissedMatchIds: s.dismissedMatchIds,
     academyEvents: getAcademyPromotionEvents(),
+    internalContractNegotiations: getInternalContractNegotiationsSnapshot(),
   };
 }
 
@@ -293,6 +295,7 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
   const snap = save.playersStoreState;
   if (!snap) {
     // Partidas antiguas sin snapshot: dejar el estado limpio con sólo el equipo
+    hydrateInternalContractNegotiations(undefined);
     usePlayersStore.getState().hydrateDynamicPlayers({});
     usePlayersStore.setState({
       loaded: false,
@@ -320,6 +323,7 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
   setClubOverrides(clubOverrides);
   usePlayersStore.getState().hydrateDynamicPlayers(dynamicPlayers);
   hydrateDynamicMarketPlayers(snap.dynamicMarketPlayers);
+  hydrateInternalContractNegotiations(snap.internalContractNegotiations);
 
   // Restaurar usando setState (mutar el objeto devuelto por getState NO notifica
   // a los componentes ni persiste). Mantener cualquier campo no incluido.

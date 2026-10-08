@@ -277,8 +277,11 @@ export const IDEAL_SQUAD_SHAPE: Record<PositionGroup, { min: number; ideal: numb
 export const SQUAD_LIMITS = {
   /** Tamaño mínimo de plantilla antes de bloquear ventas. */
   minSquadSize: 18,
-  /** Tamaño a partir del cual el club considera que sobra gente. */
-  maxSquadSize: 28,
+  /**
+   * Las plantillas no tienen un límite máximo de jugadores.
+   * Se conserva la clave para compatibilidad con la lógica existente.
+   */
+  maxSquadSize: Number.POSITIVE_INFINITY,
   /** Edad a partir de la cual un jugador se considera veterano. */
   veteranAge: 32,
   /** Edad máxima para considerarse joven promesa. */
@@ -505,6 +508,39 @@ export const BUDGET_RULES = {
 // ============================================================================
 // CONTRATOS Y RENOVACIONES
 // ============================================================================
+
+/**
+ * Parámetros de negociación interna para jugadores propios y canteranos.
+ * Más flexibles que un fichaje externo y completamente deterministas.
+ */
+export const INTERNAL_CONTRACT_NEGOTIATION = {
+  acceptanceScoreThreshold: 0.46,
+  externalAcceptanceScoreReference: 0.53,
+  insultingWageRatio: 0.6,
+  maxCounterOffers: 3,
+  coolingDays: 5,
+  negotiationWageFloor: 0.72,
+  exceptionalWageRatio: 1.12,
+  wageWeight: 0.42,
+  roleWeight: 0.23,
+  yearsWeight: 0.13,
+  signingBonusWeight: 0.08,
+  loyaltyWeight: 0.14,
+  tenureBonusPerYear: 0.018,
+  tenureBonusMax: 0.09,
+  homegrownBonus: 0.08,
+  insultingMoraleDrop: 8,
+  positiveMoraleGain: 2,
+  ownedWageFlexibility: 0.14,
+  homegrownWageFlexibility: 0.08,
+  rolePenaltyPerGap: 0.08,
+  yearsPenaltyPerGap: 0.045,
+  deterministicVarianceMin: -0.025,
+  deterministicVarianceMax: 0.025,
+  counterWageStep: 0.58,
+  counterYearsStep: 0.7,
+  signingBonusShare: 0.12,
+} as const;
 
 export const CONTRACT_RULES = {
   minYears: 1,

@@ -431,11 +431,12 @@ export interface PlayerDetailDialogProps {
   onRelease?: () => void;
   onRenewYouth?: () => void;
   onCallUp?: () => void;
+  onUncall?: () => void;
+  onUncallDisabled?: boolean;
   onLoan?: () => void;
   onSellAcademy?: () => void;
   onRetrain?: () => void;
   academyStatusLabel?: string;
-  onDemoteToAcademy?: () => void;
 }
 
 export function PlayerDetailDialog({
@@ -459,11 +460,12 @@ export function PlayerDetailDialog({
   onRelease,
   onRenewYouth,
   onCallUp,
+  onUncall,
+  onUncallDisabled = false,
   onLoan,
   onSellAcademy,
   onRetrain,
   academyStatusLabel,
-  onDemoteToAcademy,
 }: PlayerDetailDialogProps) {
   if (!selected || !team) return null;
 
@@ -632,7 +634,6 @@ export function PlayerDetailDialog({
           )}
 
           {privateMode && !isMarketOpen && <p className="flex items-center gap-1 text-[0.65rem] text-muted-foreground"><ShieldAlert className="h-3 w-3" />Mercado cerrado. Las operaciones se reanudarán en la próxima ventana.</p>}
-          {privateMode && !academyMode && onDemoteToAcademy && selected.Age <= 21 && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3"><button type="button" onClick={onDemoteToAcademy} className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-black text-emerald-300">Bajar a la cantera</button></div>}
           {academyMode && (
             <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -643,6 +644,7 @@ export function PlayerDetailDialog({
                 <div className="flex flex-wrap gap-2">
                   {onPromote && <button type="button" onClick={onPromote} disabled={selected.Age < 18} className="rounded-xl bg-primary px-3 py-2 text-xs font-black text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40">Subir al primer equipo</button>}
                   {onCallUp && <button type="button" onClick={onCallUp} className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black text-blue-300">Convocar</button>}
+                  {onUncall && <button type="button" onClick={onUncall} disabled={onUncallDisabled} title={onUncallDisabled ? "Retíralo primero del once/banquillo" : undefined} className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs font-black text-sky-300 disabled:cursor-not-allowed disabled:opacity-40">Desconvocar</button>}
                   {onLoan && <button type="button" onClick={onLoan} disabled={!isMarketOpen} title={!isMarketOpen ? "Mercado cerrado" : undefined} className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-primary disabled:cursor-not-allowed disabled:opacity-40">Buscar cesión</button>}
                   {onSellAcademy && <button type="button" onClick={onSellAcademy} disabled={!isMarketOpen} title={!isMarketOpen ? "Mercado cerrado" : undefined} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-black text-amber-300 disabled:cursor-not-allowed disabled:opacity-40">Poner en venta</button>}
                   {onRetrain && <button type="button" onClick={onRetrain} className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-300">Reconversión</button>}

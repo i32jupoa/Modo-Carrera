@@ -38,7 +38,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
 import playersData from "@/data/playersData";
-import { DYNAMIC_BY_ID, clearAcademyRuntime, getCalledUpPlayers } from "@/lib/academy/academyRuntime";
+import { DYNAMIC_BY_ID, DYNAMIC_MARKET_BY_ID, clearAcademyRuntime, getCalledUpPlayers, getCalledUpRuntimeVersion } from "@/lib/academy/academyRuntime";
 import { buildPositions } from "@/lib/positions";
 import type { Position } from "@/data/players";
 
@@ -600,6 +600,7 @@ const SIM_SQUAD_VIEW_CACHE = new Map<
     rosterRef: string[];
     currentDate: string;
     membershipVersion: number;
+    calledUpRuntimeVersion: number;
     squad: Player[];
   }
 >();
@@ -1321,7 +1322,13 @@ function applyGlobalMonthlyProgression(currentMonth: number, currentYear: number
   const sourceStats = state.stats ?? {};
   const nextStats: Record<string, PlayerStats> = { ...sourceStats };
   let changed = false;
-  const progressionPlayers = [...RAW_PLAYERS, ...Array.from(DYNAMIC_BY_ID.values())];
+  const dynamicProgressionPlayers = Array.from(DYNAMIC_BY_ID.values()).filter((player) => {
+    const marketPlayer = DYNAMIC_MARKET_BY_ID.get(String(player.ID));
+    // La cantera/cedidos progresan por el motor de academia. Los convocados
+    // no tienen entrada de mercado y progresan únicamente con el primer equipo.
+    return !marketPlayer || marketPlayer.academyStatus === "promoted";
+  });
+  const progressionPlayers = [...RAW_PLAYERS, ...dynamicProgressionPlayers];
 
   // Cada jugador se evalúa dentro del contexto de su club actual.
   const teamTotals = new Map<string, { sum: number; count: number }>();
@@ -2621,15 +2628,43 @@ export const usePlayersStore = create<PlayersState>()(
             message: "No hay equipo seleccionado.",
           };
         }
+        const beforeBudget = Math.max(0, Math.round(state.budget));
+        const beforeWageBudget = Math.max(0, Math.round(state.wageBudget));
+        const beforeWageBill = Math.max(0, Math.round(state.wageBill));
         const result = renewUserPlayer({ ...input, clubId: state.myTeamId });
         if (result.renewed) {
-          const rosterIds = [...state.rosterIds];
+          const wageDelta = Math.max(0, Math.round(result.wage) - Math.round(result.previousWage));
+          const signingBonus = Math.max(0, Math.round(result.signingBonus));
+          const salaryDelta = Math.round(result.wage) - Math.round(result.previousWage);
+          const expectedBudget = Math.max(0, beforeBudget - salaryDelta - signingBonus);
+          const expectedWageBudget = Math.max(0, beforeWageBudget - salaryDelta);
+          const live = get();
+          const bridgeAlreadyApplied =
+            Math.round(live.budget) === expectedBudget &&
+            Math.round(live.wageBudget) === expectedWageBudget;
+          const rosterIds = [...live.rosterIds];
+          const currentStats = live.stats[String(result.playerId)];
+          const baseStats = currentStats ?? defaultStats();
+          const nextStats = input.squadRole
+            ? {
+                ...live.stats,
+                [String(result.playerId)]: {
+                  ...baseStats,
+                  squadRole: input.squadRole,
+                  squadRoleIsNegotiated: true,
+                },
+              }
+            : live.stats;
           set({
-            wageBill: getClubWageBill(state.myTeamId),
+            budget: bridgeAlreadyApplied ? live.budget : expectedBudget,
+            wageBudget: bridgeAlreadyApplied ? live.wageBudget : expectedWageBudget,
+            wageBill: Math.max(0, beforeWageBill + salaryDelta),
+            stats: nextStats,
             squad: syncSquadFromRoster(rosterIds),
           });
-          syncWageBill(state.myTeamId);
-          get().syncWageStateFromMarket();
+          // No recalculamos la proporción del mercado después de renovar: el
+          // incremento salarial ya se ha descontado de la bolsa de salarios y
+          // la prima de la bolsa de fichajes.
           void saveTransferSystem();
         }
         return result;
@@ -2928,7 +2963,8 @@ export const usePlayersStore = create<PlayersState>()(
           cached.statsRef === state.stats &&
           cached.rosterRef === state.rosterIds &&
           cached.currentDate === state.currentDate &&
-          cached.membershipVersion === CLUB_MEMBERSHIP_VERSION
+          cached.membershipVersion === CLUB_MEMBERSHIP_VERSION &&
+          cached.calledUpRuntimeVersion === getCalledUpRuntimeVersion()
         ) {
           return cached.squad;
         }
@@ -2945,6 +2981,7 @@ export const usePlayersStore = create<PlayersState>()(
             rosterRef: state.rosterIds,
             currentDate: state.currentDate,
             membershipVersion: CLUB_MEMBERSHIP_VERSION,
+            calledUpRuntimeVersion: getCalledUpRuntimeVersion(),
             squad: empty,
           });
           return empty;
@@ -2960,6 +2997,7 @@ export const usePlayersStore = create<PlayersState>()(
           rosterRef: state.rosterIds,
           currentDate: state.currentDate,
           membershipVersion: CLUB_MEMBERSHIP_VERSION,
+          calledUpRuntimeVersion: getCalledUpRuntimeVersion(),
           squad: built,
         });
 
