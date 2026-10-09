@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
+import { getCurrentSaveId } from "@/lib/savedGames";
 import {
   teamsByLeague,
   teamById,
@@ -35,12 +36,14 @@ import {
   levelLabel,
 } from "@/lib/teamProfile";
 import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace";
-import { formatPositionLabel } from "@/lib/positions";
+import { formatPositionLabel, sortByPositionGroupAndOvr } from "@/lib/positions";
 import { TypicalElevenPitch } from "@/components/TypicalElevenPitch";
 import { getPlayerForm } from "@/lib/playerForm";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
 import { useAcademyStore } from "@/lib/academy/academyStore";
-import type { AcademyPlayer } from "@/lib/academy/academyTypes";
+import { loadAcademyAiClub } from "@/lib/academy/academyAiPersistence";
+import { getAcademyStateForInspection, hydrateAcademyAiCache } from "@/lib/academy/academyPromotionEngine";
+import type { ClubAcademyState, AcademyStatus } from "@/lib/academy/academyTypes";
 import { Search, X, Trophy, CalendarDays, ArrowUp, ArrowDown, Minus, GraduationCap, Sparkles } from "lucide-react";
 
 // Helper to get league name from league ID
@@ -78,36 +81,157 @@ function norm(s: string): string {
 
 export const Route = createFileRoute("/teams")({ component: TeamsPage });
 
-function AcademyMiniRow({ player, rank }: { player: AcademyPlayer; rank: number }) {
-  return (
-    <div className="grid grid-cols-[28px_1fr_auto_auto] items-center gap-3 rounded-xl border border-border/40 bg-secondary/10 p-3">
-      <div className="text-center text-xs font-black text-muted-foreground">{rank}</div>
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-black">{player.name}</span>
-          {player.traits.includes("diamond") && <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" aria-label="Diamante en bruto" />}
-        </div>
-        <div className="mt-1 text-[0.65rem] text-muted-foreground">{player.positions.join(" / ")} · {player.age} años</div>
-      </div>
-      <div className="text-right"><div className="text-xs text-muted-foreground">OVR</div><div className="font-black scoreline">{Math.round(player.ovr)}</div></div>
-      <div className="text-right"><div className="text-xs text-muted-foreground">POT</div><div className="font-black text-primary">{player.potentialEstimate.min}–{player.potentialEstimate.max}</div></div>
-    </div>
-  );
+type AcademyStatusFilter = "all" | "academy" | "called-up" | "loaned" | "listed";
+
+function academyStatusLabel(status: AcademyStatus): string {
+  switch (status) {
+    case "called-up": return "Convocado";
+    case "loaned": return "Cedible / cedido";
+    case "listed": return "En venta";
+    case "academy": return "En cantera";
+    default: return status;
+  }
 }
 
-function ClubAcademyPanel({ teamId, teamName, club, isUserTeam, onOpenAcademy }: { teamId: string; teamName: string; club?: ReturnType<typeof useAcademyStore.getState>["clubs"][string]; isUserTeam: boolean; onOpenAcademy: () => void }) {
-  const players = useMemo(() => (club?.players ?? []).filter((p) => ["academy", "called-up", "loaned", "listed"].includes(p.status)).slice().sort((a, b) => (b.potentialEstimate.max + b.ovr) - (a.potentialEstimate.max + a.ovr)).slice(0, 5), [club]);
-  if (!club) return <div className="rounded-2xl border border-border/50 bg-secondary/10 p-8 text-center text-sm text-muted-foreground">Preparando la cantera de {teamName}…</div>;
+function ClubAcademyPanel({
+  teamName,
+  club,
+  isUserTeam,
+  loading,
+  error,
+  onOpenAcademy,
+}: {
+  teamName: string;
+  club?: ClubAcademyState | null;
+  isUserTeam: boolean;
+  loading: boolean;
+  error?: string | null;
+  onOpenAcademy: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<AcademyStatusFilter>("all");
+
+  useEffect(() => {
+    setQuery("");
+    setStatusFilter("all");
+  }, [teamName]);
+
+  const activePlayers = useMemo(() => {
+    const players = (club?.players ?? []).filter((player) =>
+      ["academy", "called-up", "loaned", "listed"].includes(player.status),
+    );
+    const normalizedQuery = norm(query.trim());
+    const filtered = players.filter((player) => {
+      if (statusFilter !== "all" && player.status !== statusFilter) return false;
+      if (!normalizedQuery) return true;
+      return norm(player.name).includes(normalizedQuery)
+        || player.positions.some((position) => norm(position).includes(normalizedQuery))
+        || norm(player.nation).includes(normalizedQuery);
+    });
+    return sortByPositionGroupAndOvr(
+      filtered,
+      (player) => player.positions[0] ?? "MC",
+      (player) => Number(player.internalOvr ?? player.ovr),
+    );
+  }, [club, query, statusFilter]);
+
+  const promisingCount = (club?.players ?? []).filter((player) =>
+    ["academy", "called-up", "loaned", "listed"].includes(player.status)
+      && player.potentialEstimate.max >= 75
+      && player.age <= 21,
+  ).length;
+  const averageOvr = activePlayers.length
+    ? Math.round(activePlayers.reduce((sum, player) => sum + Number(player.internalOvr ?? player.ovr), 0) / activePlayers.length)
+    : 0;
+
+  if (loading) {
+    return <div className="rounded-2xl border border-border/50 bg-secondary/10 p-8 text-center text-sm text-muted-foreground">Cargando los datos de la cantera de {teamName}…</div>;
+  }
+  if (!club) {
+    return <div role={error ? "alert" : undefined} className={`rounded-2xl border p-8 text-center text-sm ${error ? "border-destructive/30 bg-destructive/5 text-destructive" : "border-border/50 bg-secondary/10 text-muted-foreground"}`}>{error ?? `No se ha podido cargar la cantera de ${teamName}. Vuelve a seleccionar el club para reintentar.`}</div>;
+  }
+
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Instalaciones</div><div className="mt-1 text-lg font-black">{club.facilityLevel}/5</div></div>
-        <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Jugadores</div><div className="mt-1 text-lg font-black">{club.players.length}</div></div>
-        <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Talento destacado</div><div className="mt-1 text-lg font-black text-primary">{players[0]?.potentialEstimate.max ?? "—"}</div></div>
+        <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Canteranos activos</div><div className="mt-1 text-lg font-black">{activePlayers.length}</div></div>
+        <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Media de cantera</div><div className="mt-1 text-lg font-black">{activePlayers.length ? averageOvr : "—"}</div></div>
+        <div className="rounded-xl border border-border/50 bg-secondary/10 p-3"><div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Promesas (POT ≥ 75)</div><div className="mt-1 text-lg font-black text-primary">{promisingCount}</div></div>
       </div>
+
       <div className="rounded-xl border border-border/40 bg-card/40 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 font-black"><GraduationCap className="h-4 w-4 text-primary" />Las 5 promesas</div><div className="mt-1 text-[0.68rem] text-muted-foreground">Información parcial del nivel potencial de la cantera.</div></div><button type="button" onClick={onOpenAcademy} className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-black text-primary">{isUserTeam ? "Abrir cantera" : "Consultar cantera"}</button></div>
-        <div className="space-y-2">{players.map((player, index) => <AcademyMiniRow key={player.id} player={player} rank={index + 1} />)}</div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 font-black"><GraduationCap className="h-4 w-4 text-primary" />Cantera de {teamName}</div>
+            <div className="mt-1 text-[0.68rem] text-muted-foreground">Plantilla juvenil completa, ordenada por líneas. Las estadísticas son independientes del primer equipo.</div>
+          </div>
+          {isUserTeam
+            ? <button type="button" onClick={onOpenAcademy} className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-black text-primary">Gestionar mi cantera</button>
+            : <span className="rounded-lg border border-border/50 bg-secondary/20 px-3 py-1.5 text-[0.68rem] text-muted-foreground">Consulta · solo lectura</span>}
+        </div>
+
+        <div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_190px]">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Buscar canterano, posición o nacionalidad…"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-xs outline-none focus:border-primary"
+            aria-label="Buscar canteranos"
+          />
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as AcademyStatusFilter)}
+            className="rounded-lg border border-border bg-card px-3 py-2 text-xs outline-none focus:border-primary"
+            aria-label="Filtrar estado de canteranos"
+          >
+            <option value="all">Todos los estados</option>
+            <option value="academy">En cantera</option>
+            <option value="called-up">Convocados</option>
+            <option value="loaned">Cedidos</option>
+            <option value="listed">En venta</option>
+          </select>
+        </div>
+
+        <div className="mb-2 flex items-center justify-between text-[0.68rem] text-muted-foreground">
+          <span>{activePlayers.length} jugadores</span>
+          <span>Entrenador juvenil nivel {club.youthCoach?.level ?? 1}/5</span>
+        </div>
+
+        <div className="overflow-x-auto rounded-lg border border-border/50">
+          <table className="w-full min-w-[760px] text-left text-xs">
+            <thead className="bg-secondary/30 text-[0.62rem] uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2.5">Jugador</th><th className="px-3 py-2.5">Estado</th><th className="px-3 py-2.5 text-right">OVR</th><th className="px-3 py-2.5 text-right">POT.</th><th className="px-3 py-2.5 text-right">PJ</th><th className="px-3 py-2.5 text-right">MIN</th><th className="px-3 py-2.5 text-right">G</th><th className="px-3 py-2.5 text-right">A</th><th className="px-3 py-2.5 text-right">Nota</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/40">
+              {activePlayers.map((player) => {
+                const stats = player.academyStats;
+                return (
+                  <tr key={player.id} className="transition hover:bg-secondary/20">
+                    <td className="px-3 py-2.5">
+                      <div className="font-semibold">{player.name}</div>
+                      <div className="mt-0.5 text-[0.65rem] text-muted-foreground">{player.positions.join(" / ")} · {player.age} años · {player.nation}</div>
+                    </td>
+                    <td className="px-3 py-2.5"><span className={`rounded-md px-2 py-1 text-[0.62rem] font-semibold ${player.status === "called-up" ? "bg-primary/10 text-primary" : "bg-secondary/50 text-muted-foreground"}`}>{academyStatusLabel(player.status)}</span></td>
+                    <td className="px-3 py-2.5 text-right font-black scoreline">{Math.round(Number(player.internalOvr ?? player.ovr))}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold text-primary">{player.potentialEstimate.min}–{player.potentialEstimate.max}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{stats?.appearances ?? 0}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{stats?.minutes ?? 0}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{stats?.goals ?? 0}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{stats?.assists ?? 0}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold">{stats?.ratingCount ? stats.averageRating.toFixed(2) : "—"}</td>
+                  </tr>
+                );
+              })}
+              {activePlayers.length === 0 && (
+                <tr><td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">{query || statusFilter !== "all" ? "No hay canteranos que coincidan con el filtro." : "Este club aún no tiene canteranos registrados."}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-[0.65rem] text-muted-foreground">Los datos de otros clubes son de consulta: no puedes gestionar sus convocatorias, contratos o promociones desde tu carrera.</p>
       </div>
     </div>
   );
@@ -124,15 +248,13 @@ function TeamsPage() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<PanelTab>("squad");
+  const [otherClubAcademy, setOtherClubAcademy] = useState<ClubAcademyState | null>(null);
+  const [otherClubAcademyLoading, setOtherClubAcademyLoading] = useState(false);
+  const [otherClubAcademyError, setOtherClubAcademyError] = useState<string | null>(null);
   const currentDate = usePlayersStore((s: any) => s.currentDate);
   const playerStats = usePlayersStore((s: any) => s.stats);
   const academyClub = useAcademyStore((state) => selectedTeam ? state.clubs[selectedTeam.id] : undefined);
   const ensureAcademyClub = useAcademyStore((state) => state.ensureClub);
-
-  useEffect(() => {
-    if (!selectedTeam || tab !== "academy" || !save) return;
-    void ensureAcademyClub(selectedTeam.id, save.season, currentDate);
-  }, [selectedTeam, tab, save, currentDate, ensureAcademyClub]);
   const teamsSectionRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -238,6 +360,60 @@ function TeamsPage() {
   }, [selectedTeam, clubOverrides, myTeamId, myRosterIds, currentDate, getFcSquadByTeamId]);
 
   const isUserTeam = !!save && selectedTeam?.id === save.myTeamId;
+
+  useEffect(() => {
+    if (!selectedTeam || tab !== "academy" || !save) {
+      setOtherClubAcademyLoading(false);
+      setOtherClubAcademyError(null);
+      return;
+    }
+
+    let cancelled = false;
+    const date = currentDate || `${save.season}-07-01`;
+    if (isUserTeam) {
+      setOtherClubAcademy(null);
+      setOtherClubAcademyError(null);
+      setOtherClubAcademyLoading(false);
+      void ensureAcademyClub(selectedTeam.id, save.season, date).catch((error) => {
+        console.error("No se pudo cargar la cantera del equipo del usuario.", error);
+      });
+      return () => { cancelled = true; };
+    }
+
+    const saveId = getCurrentSaveId();
+    if (!saveId) {
+      setOtherClubAcademy(null);
+      setOtherClubAcademyError("No hay una partida activa.");
+      setOtherClubAcademyLoading(false);
+      return;
+    }
+
+    setOtherClubAcademy(null);
+    setOtherClubAcademyError(null);
+    setOtherClubAcademyLoading(true);
+    void loadAcademyAiClub(saveId, selectedTeam.id).then((persistedClub) => {
+      if (cancelled || getCurrentSaveId() !== saveId) return;
+      if (persistedClub) {
+        // Hidrata exclusivamente el club seleccionado. No se cargan ni
+        // recorren cientos de academias al abrir Centro de Clubes.
+        hydrateAcademyAiCache(saveId, date, { [selectedTeam.id]: persistedClub }, save.myTeamId);
+      }
+      const academy = getAcademyStateForInspection(saveId, selectedTeam.id, date);
+      if (!academy) {
+        setOtherClubAcademyError("No se ha podido cargar la cantera de este club.");
+        return;
+      }
+      setOtherClubAcademy(academy);
+    }).catch((error) => {
+      console.error(`No se pudo cargar la cantera de ${selectedTeam.name}.`, error);
+      if (!cancelled) setOtherClubAcademyError("No se ha podido cargar esta cantera. Vuelve a seleccionar el club para reintentar.");
+    }).finally(() => {
+      if (!cancelled) setOtherClubAcademyLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [selectedTeam?.id, selectedTeam?.name, tab, save?.season, save?.myTeamId, currentDate, isUserTeam, ensureAcademyClub]);
+
   const selectedTeamPlayer = selectedPlayerId
     ? (teamSquad.find((p) => String(p.ID) === String(selectedPlayerId)) ?? null)
     : null;
@@ -600,7 +776,14 @@ function TeamsPage() {
           </div>
 
           {tab === "academy" && selectedTeam && (
-            <ClubAcademyPanel teamId={selectedTeam.id} teamName={selectedTeam.name} club={academyClub} isUserTeam={isUserTeam} onOpenAcademy={() => navigate({ to: isUserTeam ? "/cantera" : "/teams" })} />
+            <ClubAcademyPanel
+              teamName={selectedTeam.name}
+              club={isUserTeam ? academyClub : otherClubAcademy}
+              isUserTeam={isUserTeam}
+              loading={isUserTeam ? !academyClub : otherClubAcademyLoading}
+              error={isUserTeam ? null : otherClubAcademyError}
+              onOpenAcademy={() => navigate({ to: "/cantera" })}
+            />
           )}
 
           {tab === "tactics" && tactics && (

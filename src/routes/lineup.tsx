@@ -143,6 +143,7 @@ function LineupPage() {
   const dynamicPlayers = usePlayersStore((s) => s.dynamicPlayers);
   const playerStats = usePlayersStore((s) => s.stats);
   const uncallForUser = useAcademyStore((s) => s.uncallForUser);
+  const ensureAcademyClub = useAcademyStore((s) => s.ensureClub);
   const [save, setSave] = useState<SaveGame | null>(null);
   const [selectedFormation, setSelectedFormation] = useState<FormationName>("Táctica 4-3-3");
   const [startingXI, setStartingXI] = useState<string[]>([]);
@@ -224,6 +225,13 @@ function LineupPage() {
       return;
     }
     setSave(s);
+
+    // Reconstruir el runtime de convocatoria desde el save activo. Así
+    // Dirección de equipo funciona correctamente incluso después de recargar
+    // el navegador o cambiar desde otra partida sin visitar Cantera antes.
+    void ensureAcademyClub(s.myTeamId, Number(s.season?.slice(0, 4) ?? currentDate.slice(0, 4)), currentDate).catch((error) => {
+      console.warn("[lineup] academy load failed:", error);
+    });
 
     if (liveMode) {
       const st = loadLive(fixtureId);

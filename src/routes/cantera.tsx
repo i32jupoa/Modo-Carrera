@@ -29,22 +29,9 @@ import type { AcademyPlayer } from "@/lib/academy/academyTypes";
 import { analyzeSquad } from "@/lib/transfers/SquadAnalyzer";
 import { getPlayer } from "@/lib/transfers";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
+import { POS_SHORT, POSITION_GROUP_ORDER, positionGroupFromCode, sortByPositionGroupAndOvr } from "@/lib/positions";
 
 export const Route = createFileRoute("/cantera")({ component: AcademyPage });
-
-const POSITION_LABEL: Record<string, string> = {
-  GK: "POR",
-  CB: "DFC",
-  LB: "LI",
-  RB: "LD",
-  CM: "MC",
-  CAM: "MCO",
-  CDM: "MCD",
-  LW: "EI",
-  RW: "ED",
-  ST: "DC",
-  CF: "SD",
-};
 
 function seasonFromDate(date: string): number {
   const year = Number(date.slice(0, 4));
@@ -64,10 +51,14 @@ function growthLabel(player: AcademyPlayer): string {
 }
 
 function AcademyCard({ player, onClick }: { player: AcademyPlayer; onClick: () => void }) {
-  const position = POSITION_LABEL[player.positions[0] ?? "CM"] ?? "MED";
-  const role = roleFromPosition(player.positions[0] ?? "CM");
-  const ready = player.age >= ACADEMY_LIMITS.professionalPromotionMinAge && Math.round(player.ovr) >= 55;
-  const ovr = Math.round(player.ovr);
+  const position = POS_SHORT[player.positions[0] ?? "MC"] ?? "MC";
+  const firstTeamStats = usePlayersStore((state) => state.stats[String(player.id)]);
+  const firstTeamAppearances = Number(firstTeamStats?.appearances ?? firstTeamStats?.dynamicStats?.seasonAppearances ?? 0);
+  const firstTeamRating = Number(firstTeamStats?.dynamicStats?.seasonAverageRating ?? 0);
+  const role = roleFromPosition(player.positions[0] ?? "MC");
+  const visibleOvr = Math.round(Number(player.internalOvr ?? player.ovr));
+  const ready = player.age >= ACADEMY_LIMITS.professionalPromotionMinAge && visibleOvr >= 55;
+  const ovr = visibleOvr;
   return (
     <button
       type="button"
@@ -90,6 +81,8 @@ function AcademyCard({ player, onClick }: { player: AcademyPlayer; onClick: () =
           <div className="mt-2 flex flex-wrap gap-1.5 text-[0.58rem] font-bold">
             <span className="rounded-full border border-border/50 bg-secondary/70 px-2 py-1">POT {potentialLabel(player)}</span>
             <span className="rounded-full border border-border/50 bg-secondary/70 px-2 py-1">{growthLabel(player)}</span>
+            {(player.academyStats?.appearances ?? 0) > 0 && <span className="rounded-full border border-border/50 bg-secondary/70 px-2 py-1">PJ cantera {player.academyStats?.appearances ?? 0} · {player.academyStats?.averageRating.toFixed(1)}</span>}
+            {player.status === "called-up" && firstTeamAppearances > 0 && <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-blue-300">PJ primer equipo {firstTeamAppearances}{firstTeamRating > 0 ? ` · ${firstTeamRating.toFixed(1)}` : ""}</span>}
             {ready && <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-emerald-300">Listo</span>}
             {player.status === "loaned" && <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-blue-300">Cedido</span>}
             {player.status === "listed" && <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-300">En venta</span>}
@@ -117,7 +110,7 @@ function AcademyPage() {
   const upgradeFacilities = useAcademyStore((state) => state.upgradeFacilities);
   const upgradeYouthCoach = useAcademyStore((state) => state.upgradeYouthCoach);
   const setLoanSearchForUser = useAcademyStore((state) => state.setLoanSearchForUser);
-  const listTransferForUser = useAcademyStore((state) => state.listTransferForUser);
+  const toggleTransferListForUser = useAcademyStore((state) => state.toggleTransferListForUser);
   const { isMarketOpen } = useTransferMarket();
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -127,7 +120,6 @@ function AcademyPage() {
   const [position, setPosition] = useState("ALL");
   const [sort, setSort] = useState<"ovr" | "potential" | "age">("ovr");
   const [compareId, setCompareId] = useState<number | null>(null);
-  const [demotionId, setDemotionId] = useState("");
   const [loanSearchPlayerId, setLoanSearchPlayerId] = useState<number | null>(null);
   const [loanSearchListed, setLoanSearchListed] = useState(false);
   const [upgradeType, setUpgradeType] = useState<"facility" | "coach" | null>(null);
@@ -146,15 +138,23 @@ function AcademyPage() {
   }, [currentDate, ensureClub, myTeamId]);
 
   const players = academy?.players.filter((player) => ["academy", "loaned", "called-up", "listed"].includes(player.status)) ?? [];
-  const filtered = useMemo(() => players.filter((player) => {
-    const matchesQuery = !query.trim() || player.name.toLowerCase().includes(query.trim().toLowerCase());
-    const matchesPosition = position === "ALL" || player.positions.includes(position as AcademyPlayer["positions"][number]);
-    return matchesQuery && matchesPosition;
-  }).sort((a, b) => {
-    if (sort === "potential") return b.potentialEstimate.max - a.potentialEstimate.max || b.ovr - a.ovr;
-    if (sort === "age") return a.age - b.age || b.ovr - a.ovr;
-    return b.ovr - a.ovr || b.potentialEstimate.max - a.potentialEstimate.max;
-  }), [players, position, query, sort]);
+  const filtered = useMemo(() => {
+    const visible = players.filter((player) => {
+      const matchesQuery = !query.trim() || player.name.toLowerCase().includes(query.trim().toLowerCase());
+      const matchesPosition = position === "ALL" || player.positions.includes(position as AcademyPlayer["positions"][number]);
+      return matchesQuery && matchesPosition;
+    });
+
+    const grouped = sortByPositionGroupAndOvr(visible, (player) => player.positions[0] ?? "MC", (player) => player.ovr);
+    if (sort === "ovr") return grouped;
+
+    return grouped.slice().sort((a, b) => {
+      const groupDiff = POSITION_GROUP_ORDER[positionGroupFromCode(a.positions[0])] - POSITION_GROUP_ORDER[positionGroupFromCode(b.positions[0])];
+      if (groupDiff !== 0) return groupDiff;
+      if (sort === "potential") return b.potentialEstimate.max - a.potentialEstimate.max || b.ovr - a.ovr;
+      return a.age - b.age || b.ovr - a.ovr;
+    });
+  }, [players, position, query, sort]);
 
   const selected = selectedId == null ? null : players.find((player) => player.id === selectedId) ?? null;
   const actionPlayer = actionPlayerId == null ? null : players.find((player) => player.id === actionPlayerId) ?? null;
@@ -168,9 +168,15 @@ function AcademyPage() {
   }, [myTeamId, selected, currentDate]);
   const selectedFc = selected && team ? academyPlayerToFcPlayer({
     ...selected,
-    ovr: Math.round(Number(selectedStats?.dynamicStats?.currentOVR ?? selected.ovr)),
-    potential: Math.round(Number(selectedStats?.dynamicStats?.potentialOVR ?? selected.potential)),
-    attributes: selectedStats?.dynamicStats?.attributes ?? selected.attributes,
+    ovr: selected.status === "called-up"
+      ? Math.round(Number(selectedStats?.dynamicStats?.currentOVR ?? selected.ovr))
+      : Math.round(Number(selected.internalOvr ?? selected.ovr)),
+    potential: selected.status === "called-up"
+      ? Math.round(Number(selectedStats?.dynamicStats?.potentialOVR ?? selected.potential))
+      : Math.round(selected.potential),
+    attributes: selected.status === "called-up"
+      ? (selectedStats?.dynamicStats?.attributes ?? selected.attributes)
+      : selected.attributes,
   }, team.name, LEAGUES[team.league]?.name ?? team.league) : null;
 
   const needsReport = useMemo(() => {
@@ -214,7 +220,7 @@ function AcademyPage() {
     }
   };
 
-  const handleLoan = async () => {
+  const handleLoan = () => {
     if (!selected) return;
     if (!isMarketOpen) { toast.error("El mercado está cerrado. La búsqueda de cesión estará disponible en la próxima ventana."); return; }
     const playerId = selected.id;
@@ -222,12 +228,6 @@ function AcademyPage() {
     setSelectedId(null);
     setLoanSearchPlayerId(playerId);
     setLoanSearchListed(listed);
-    const result = await setLoanSearchForUser(playerId, listed, currentDate);
-    if (!result.ok) {
-      toast.error(result.reason);
-      setLoanSearchPlayerId(null);
-      return;
-    }
   };
 
   const toggleLoanSearch = async () => {
@@ -246,10 +246,14 @@ function AcademyPage() {
     if (!selected) return;
     if (!isMarketOpen) { toast.error("El mercado está cerrado. La salida estará disponible en la próxima ventana."); return; }
     const player = selected;
+    const result = await toggleTransferListForUser(player.id, currentDate);
+    if (!result.ok) {
+      toast.error(result.reason);
+      return;
+    }
     setSelectedId(null);
-    const result = await listTransferForUser(player.id, currentDate);
-    if (!result.ok) toast.error(result.reason);
-    else toast.success(`${player.name} puesto en venta.`, { description: "Las ofertas aparecerán en Mercado → Ofertas recibidas." });
+    if (result.listed) toast.success(`${player.name} puesto en venta.`, { description: "Las ofertas aparecerán en Mercado → Ofertas recibidas." });
+    else toast.info(`${player.name} retirado de la lista de transferibles.`);
   };
 
   const handleRelease = () => {
@@ -380,7 +384,7 @@ function AcademyPage() {
         <section className="panel rounded-2xl p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar canterano..." className="w-full rounded-xl border border-border bg-secondary/60 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-primary/50" /></div>
-            <select value={position} onChange={(event) => setPosition(event.target.value)} className="rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-bold outline-none focus:border-primary/50"><option value="ALL">Todas las posiciones</option><option value="GK">Porteros</option><option value="CB">Centrales</option><option value="LB">Laterales izq.</option><option value="RB">Laterales der.</option><option value="CM">Centrocampistas</option><option value="CAM">Mediapuntas</option><option value="CDM">Pivotes</option><option value="LW">Extremos izq.</option><option value="RW">Extremos der.</option><option value="ST">Delanteros</option><option value="CF">Segundos puntas</option></select>
+            <select value={position} onChange={(event) => setPosition(event.target.value)} className="rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-bold outline-none focus:border-primary/50"><option value="ALL">Todas las posiciones</option><option value="GK">Porteros</option><option value="DFC">Centrales</option><option value="LD">Laterales der.</option><option value="LI">Laterales izq.</option><option value="MCD">Pivotes</option><option value="MC">Centrocampistas</option><option value="MCO">Mediapuntas</option><option value="MD">Medios derechos</option><option value="MI">Medios izquierdos</option><option value="ED">Extremos derechos</option><option value="EI">Extremos izquierdos</option><option value="DC">Delanteros</option></select>
             <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-bold outline-none focus:border-primary/50"><option value="ovr">Ordenar por OVR</option><option value="potential">Ordenar por POT estimado</option><option value="age">Ordenar por edad</option></select>
           </div>
         </section>
@@ -409,6 +413,7 @@ function AcademyPage() {
         player={selectedFc}
         team={team}
         stats={selectedStats ?? (selected ? academyPlayerToStats(selected) : undefined)}
+        academyStats={selected?.academyStats}
         privateMode
         myTeamId={myTeamId}
         isMarketOpen={isMarketOpen}
@@ -416,7 +421,7 @@ function AcademyPage() {
         academyPotentialEstimate={selected?.potentialEstimate}
         onPromote={selected && ["academy", "called-up"].includes(selected.status) ? () => openContractNegotiation("promotion") : undefined}
         onLoan={selected?.status === "academy" ? handleLoan : undefined}
-        onSellAcademy={selected?.status === "academy" ? handleSale : undefined}
+        onSellAcademy={selected && ["academy", "listed"].includes(selected.status) ? handleSale : undefined}
         onCallUp={selected?.status === "academy" ? handleCallUp : undefined}
         onUncall={selected?.status === "called-up" ? handleUncall : undefined}
         onUncallDisabled={selectedUncallBlocked}

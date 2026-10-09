@@ -43,7 +43,7 @@ import { LoanSearchModal } from "@/components/LoanSearchModal";
 import { ContractNegotiationModal } from "@/components/contracts/ContractNegotiationModal";
 import { MoodFace } from "@/components/MoodFace";
 import { RoleBadge } from "@/components/RoleBadge";
-import { buildPositions, POS_SHORT } from "@/lib/positions";
+import { buildPositions, POS_SHORT, sortByPositionGroupAndOvr } from "@/lib/positions";
 import {
   getPlayer,
   getPlayerAnnualWage,
@@ -530,8 +530,8 @@ function SquadPage() {
 
   const byPos = useMemo(() => {
     const buckets: Record<Position, FcPlayer[]> = { GK: [], DEF: [], MID: [], FWD: [] };
-    for (const p of squad) buckets[mapEaPosition(p.Position)].push(p);
-    for (const k of POSITION_ORDER) buckets[k].sort((a, b) => getDynamicOvr(b) - getDynamicOvr(a));
+    const ordered = sortByPositionGroupAndOvr(squad, (player) => player.Position, getDynamicOvr);
+    for (const player of ordered) buckets[mapEaPosition(player.Position)].push(player);
     return buckets;
   }, [squad, playerStats]);
 

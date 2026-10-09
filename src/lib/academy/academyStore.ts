@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { addDaysToIso } from "@/lib/transferWindows";
 import { additionalWageCommitment } from "@/lib/transfers/BudgetManager";
 import { getCurrentSaveId } from "@/lib/savedGames";
 import { loadSave, saveSave } from "@/lib/store";
@@ -8,23 +9,25 @@ import { registerDynamicPlayer, unregisterDynamicPlayer, usePlayersStore } from 
 import { academyPlayerToFcPlayer, academyPlayerToStats, academyContract, academyMarketValue } from "./academyAdapters";
 import { ACADEMY_FACILITIES, ACADEMY_LIMITS, ACADEMY_ID_BASE } from "./academyConstants";
 import { generateAcademyState, generateAnnualIntake } from "./academyGenerator";
-import { advanceAcademyToDate } from "./academyProgression";
-import { loadAcademySave, saveAcademySave, clearAcademySave } from "./academyPersistence";
-import { DYNAMIC_BY_ID, DYNAMIC_MARKET_BY_ID, getAcademyPromotionEvents, recordAcademyPromotionEvent, setCalledUpPlayer, getCalledUpPlayers, clearCalledUpPlayer } from "./academyRuntime";
+import { advanceAcademyToDate, simulateAcademyLeagueMatchOnDate } from "./academyProgression";
+import { ACADEMY_STATE_VERSION, loadAcademySave, saveAcademySave, clearAcademySave } from "./academyPersistence";
+import { DYNAMIC_BY_ID, DYNAMIC_MARKET_BY_ID, getAcademyPromotionEvents, recordAcademyPromotionEvent, setCalledUpPlayer, getCalledUpPlayers, clearCalledUpPlayer, clearCalledUpRuntime } from "./academyRuntime";
 import { setUserPlayerLoanListed } from "@/lib/transfers/UserNegotiation";
 import { syncCalledUpAcademyPlayer } from "./academyCallUp";
-import { listForTransfer } from "@/lib/transfers/ContractEngine";
+import { listForTransfer, unlistFromTransfer } from "@/lib/transfers/ContractEngine";
 import { getPlayer } from "@/lib/transfers/PlayerIndex";
 import { saveTransferSystem } from "@/lib/transfers/Persistence";
 import type { AcademyPlayer, AcademyCareerRecord, ClubAcademyState } from "./academyTypes";
 import type { MarketPlayer } from "@/lib/transfers/types";
 
+type AcademySyncOptions = { playLeagueMatch?: boolean };
+
 type AcademyState = {
   loaded: boolean;
   saveId: string | null;
   clubs: Record<string, ClubAcademyState>;
-  loadForCurrentSave: (teamId: string, season: number | string, currentDate?: string) => Promise<ClubAcademyState>;
-  ensureClub: (teamId: string, season: number | string, currentDate?: string) => Promise<ClubAcademyState>;
+  loadForCurrentSave: (teamId: string, season: number | string, currentDate?: string, options?: AcademySyncOptions) => Promise<ClubAcademyState>;
+  ensureClub: (teamId: string, season: number | string, currentDate?: string, options?: AcademySyncOptions) => Promise<ClubAcademyState>;
   save: () => Promise<void>;
   promoteForUser: (playerId: number, options?: { years?: number; wage?: number; releaseClause?: number; signingBonus?: number; squadRole?: import("@/lib/transfers/types").SquadRole }) => { ok: true } | { ok: false; reason: string };
   releaseForUser: (playerId: number) => Promise<{ ok: true } | { ok: false; reason: string }>;
@@ -32,6 +35,7 @@ type AcademyState = {
   loanForUser: (playerId: number, borrowerClubId: string, date: string) => Promise<{ ok: true; clubId: string } | { ok: false; reason: string }>;
   setLoanSearchForUser: (playerId: number, listed: boolean, date: string) => Promise<{ ok: true; listed: boolean } | { ok: false; reason: string }>;
   listTransferForUser: (playerId: number, date: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  toggleTransferListForUser: (playerId: number, date: string) => Promise<{ ok: true; listed: boolean } | { ok: false; reason: string }>;
   listForSale: (playerId: number, futurePercentage?: number, buybackClause?: number) => Promise<{ ok: true } | { ok: false; reason: string }>;
   callUpForUser: (playerId: number) => Promise<{ ok: true } | { ok: false; reason: string }>;
   prepareForInternalContractNegotiation: (playerId: number, date: string) => MarketPlayer | null;
@@ -60,6 +64,19 @@ function cloneClub(club: ClubAcademyState, players: AcademyPlayer[]): ClubAcadem
   return { ...club, players, updatedAt: new Date().toISOString() };
 }
 
+function advanceAndMaybePlayLeagueMatch(
+  state: ClubAcademyState,
+  currentDate: string | undefined,
+  saveId: string,
+  options?: AcademySyncOptions,
+): ClubAcademyState {
+  if (!currentDate) return state;
+  const advanced = advanceAcademyToDate(state, currentDate, saveId);
+  return options?.playLeagueMatch
+    ? simulateAcademyLeagueMatchOnDate(advanced, currentDate, saveId)
+    : advanced;
+}
+
 function dynamicMarketFromAcademy(player: AcademyPlayer, date: string, status: "academy" | "listed" | "loaned"): MarketPlayer | null {
   const team = teamById(player.teamId);
   const league = LEAGUES[team.league]?.name ?? team.league;
@@ -67,7 +84,7 @@ function dynamicMarketFromAcademy(player: AcademyPlayer, date: string, status: "
   const existingFc = DYNAMIC_BY_ID.get(String(player.id));
   const existingStats = playersState.stats[String(player.id)];
   const liveAttributes = existingStats?.dynamicStats?.attributes;
-  const liveOvr = Math.round(Number(existingStats?.dynamicStats?.currentOVR ?? existingFc?.OVR ?? player.ovr));
+  const liveOvr = Math.round(Number(existingStats?.dynamicStats?.currentOVR ?? existingFc?.OVR ?? player.internalOvr ?? player.ovr));
   const livePotential = Math.round(Number(existingStats?.dynamicStats?.potentialOVR ?? existingFc?.potential ?? player.potential));
   const baseFc = existingFc ?? academyPlayerToFcPlayer(player, team.name, league);
   const fc = {
@@ -113,25 +130,39 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
   saveId: null,
   clubs: {},
 
-  loadForCurrentSave: async (teamId, season, currentDate) => {
+  loadForCurrentSave: async (teamId, season, currentDate, options) => {
     const saveId = getCurrentSaveId();
     if (!saveId) throw new Error("No hay una partida activa.");
     const existing = await loadAcademySave(saveId);
+    // IndexedDB es asíncrono: si el usuario cambia de carrera mientras se lee
+    // el save, nunca debemos aplicar el resultado de la carrera anterior.
+    if (getCurrentSaveId() !== saveId) {
+      const current = get().clubs[teamId];
+      if (current) return current;
+      throw new Error("La partida activa ha cambiado durante la carga de la cantera.");
+    }
     const userTeamId = usePlayersStore.getState().myTeamId ?? existing?.userTeamId ?? teamId;
-    if (get().saveId !== saveId) set({ loaded: false, saveId, clubs: existing?.clubs ?? {} });
+    if (get().saveId !== saveId) {
+      // Cambiar de save invalida las convocatorias temporales de la carrera
+      // anterior. Los jugadores dinámicos pertenecientes al nuevo save ya se
+      // restauran en playersStore y no deben eliminarse aquí.
+      clearCalledUpRuntime();
+      set({ loaded: false, saveId, clubs: existing?.clubs ?? {} });
+    }
     const current = get().clubs[teamId];
     if (current) {
       for (const player of current.players.filter((candidate) => candidate.status === "called-up")) {
         const team = teamById(teamId);
         const league = LEAGUES[team.league]?.name ?? team.league;
-        setCalledUpPlayer(teamId, academyPlayerToFcPlayer(player, team.name, league));
+        const restored = DYNAMIC_BY_ID.get(String(player.id));
+        setCalledUpPlayer(teamId, restored ?? academyPlayerToFcPlayer(player, team.name, league));
       }
-      const advanced = currentDate ? advanceAcademyToDate(current, currentDate, saveId) : current;
+      const advanced = advanceAndMaybePlayLeagueMatch(current, currentDate, saveId, options);
       if (advanced !== current) {
         const nextClubs = { ...get().clubs, [teamId]: advanced };
         set({ loaded: true, clubs: nextClubs });
         if (teamId === userTeamId) {
-          await saveAcademySave({ version: 1, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
+          await saveAcademySave({ version: ACADEMY_STATE_VERSION, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
         }
         return advanced;
       }
@@ -139,28 +170,36 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
       return current;
     }
     const generated = generateAcademyState(saveId, teamId, season);
-    const advanced = currentDate ? advanceAcademyToDate(generated, currentDate, saveId) : generated;
+    const advanced = advanceAndMaybePlayLeagueMatch(generated, currentDate, saveId, options);
     const finalClubs = { ...get().clubs, [teamId]: advanced };
     set({ loaded: true, saveId, clubs: finalClubs });
     if (teamId === userTeamId) {
-      await saveAcademySave({ version: 1, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
+      await saveAcademySave({ version: ACADEMY_STATE_VERSION, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
     }
     return advanced;
   },
 
-  ensureClub: async (teamId, season, currentDate) => {
+  ensureClub: async (teamId, season, currentDate, options) => {
+    const saveId = getCurrentSaveId();
+    if (!saveId) throw new Error("No hay una partida activa.");
+
+    // El save activo del navegador es la única fuente de verdad. El saveId de
+    // Zustand puede pertenecer a una carrera anterior si se cambió de slot
+    // mientras había una operación asíncrona en curso.
+    if (get().saveId !== saveId || !get().loaded) {
+      return get().loadForCurrentSave(teamId, season, currentDate, options);
+    }
+
     const found = get().clubs[teamId];
-    if (!found) return get().loadForCurrentSave(teamId, season, currentDate);
+    if (!found) return get().loadForCurrentSave(teamId, season, currentDate, options);
     if (!currentDate) return found;
-    const saveId = get().saveId ?? getCurrentSaveId();
-    if (!saveId) return found;
-    const advanced = advanceAcademyToDate(found, currentDate, saveId);
+    const advanced = advanceAndMaybePlayLeagueMatch(found, currentDate, saveId, options);
     if (advanced !== found) {
       const clubs = { ...get().clubs, [teamId]: advanced };
       set({ clubs });
       const userTeamId = usePlayersStore.getState().myTeamId ?? teamId;
-      if (teamId === userTeamId) {
-        await saveAcademySave({ version: 1, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
+      if (teamId === userTeamId && getCurrentSaveId() === saveId) {
+        await saveAcademySave({ version: ACADEMY_STATE_VERSION, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
       }
       return advanced;
     }
@@ -174,7 +213,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     if (!userTeamId) return;
     const userClub = get().clubs[userTeamId];
     if (!userClub) return;
-    await saveAcademySave({ version: 1, savedAt: new Date().toISOString(), userTeamId, clubs: { [userTeamId]: userClub } }, saveId);
+    await saveAcademySave({ version: ACADEMY_STATE_VERSION, savedAt: new Date().toISOString(), userTeamId, clubs: { [userTeamId]: userClub } }, saveId);
   },
 
   promoteForUser: (playerId, options) => {
@@ -194,7 +233,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     const liveAttributes = liveStats?.dynamicStats?.attributes;
     const fc = {
       ...(liveFc ?? academyPlayerToFcPlayer(current, team.name, league)),
-      OVR: Math.round(Number(liveStats?.dynamicStats?.currentOVR ?? liveFc?.OVR ?? current.ovr)),
+      OVR: Math.round(Number(liveStats?.dynamicStats?.currentOVR ?? liveFc?.OVR ?? current.internalOvr ?? current.ovr)),
       potential: Math.round(Number(liveStats?.dynamicStats?.potentialOVR ?? liveFc?.potential ?? current.potential)),
       PAC: Number(liveAttributes?.PAC ?? liveFc?.PAC ?? current.attributes.PAC),
       SHO: Number(liveAttributes?.SHO ?? liveFc?.SHO ?? current.attributes.SHO),
@@ -425,6 +464,30 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     return { ok: true };
   },
 
+  toggleTransferListForUser: async (playerId, date) => {
+    const found = stateForPlayer(get(), playerId);
+    if (!found || !["academy", "listed"].includes(found.player.status)) return { ok: false, reason: "Canterano no encontrado." };
+    const id = String(playerId);
+    const market = DYNAMIC_MARKET_BY_ID.get(id);
+    const currentlyListed = found.player.status === "listed" || Boolean(market?.transferListed);
+
+    if (currentlyListed) {
+      unlistFromTransfer(id);
+      if (market) DYNAMIC_MARKET_BY_ID.set(id, { ...market, transferListed: false, listReason: null, academyStatus: "academy", academyParentClubId: found.club.teamId });
+      const next = cloneClub(found.club, found.club.players.map((p) => p.id === playerId ? { ...p, status: "academy" as const } : p));
+      set({ clubs: { ...get().clubs, [found.club.teamId]: next } });
+      await Promise.all([get().save(), saveTransferSystem()]);
+      return { ok: true, listed: false };
+    }
+
+    dynamicMarketFromAcademy(found.player, date, "listed");
+    listForTransfer(id, "user");
+    const next = cloneClub(found.club, found.club.players.map((p) => p.id === playerId ? { ...p, status: "listed" as const } : p));
+    set({ clubs: { ...get().clubs, [found.club.teamId]: next } });
+    await Promise.all([get().save(), saveTransferSystem()]);
+    return { ok: true, listed: true };
+  },
+
   listForSale: async (playerId, futurePercentage = 0, buybackClause = 0) => {
     const found = stateForPlayer(get(), playerId);
     if (!found || (found.player.status !== "academy" && found.player.status !== "called-up")) return { ok: false, reason: "Canterano no encontrado." };
@@ -452,7 +515,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     const liveDynamic = DYNAMIC_BY_ID.get(String(playerId));
     const fc = {
       ...(liveDynamic ?? academyPlayerToFcPlayer(found.player, team.name, league)),
-      OVR: Math.round(Number(dynamicStats.dynamicStats?.currentOVR ?? liveDynamic?.OVR ?? found.player.ovr)),
+      OVR: Math.round(Number(dynamicStats.dynamicStats?.currentOVR ?? liveDynamic?.OVR ?? found.player.internalOvr ?? found.player.ovr)),
       potential: Math.round(Number(dynamicStats.dynamicStats?.potentialOVR ?? liveDynamic?.potential ?? found.player.potential)),
     };
     registerDynamicPlayer(fc, dynamicStats);
@@ -565,6 +628,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
       birthdate: base.birthdate ?? `${Math.max(2000, Number(date.slice(0, 4)) - base.Age)}-06-01`,
       age: base.Age,
       positions: [base.Position as AcademyPlayer["positions"][number]],
+      internalOvr: currentOvr,
       ovr: currentOvr,
       potential: currentPotential,
       potentialEstimate: {
@@ -608,7 +672,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
           ...nextStats,
           dynamicStats: {
             ...(nextStats.dynamicStats ?? academyPlayerToStats(nextPlayer).dynamicStats!),
-            currentOVR,
+            currentOVR: currentOvr,
             potentialOVR: currentPotential,
             attributes: { ...nextPlayer.attributes },
           },
@@ -655,8 +719,8 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     const found = stateForPlayer(get(), playerId);
     if (!found || found.player.positions[0] === position) return { ok: false, reason: "Selecciona una posición diferente a la actual." };
     if (found.player.status !== "academy" && found.player.status !== "called-up") return { ok: false, reason: "La reconversión solo está disponible para jugadores de cantera." };
-    const available = ["GK", "CB", "LB", "RB", "CM", "CAM", "CDM", "LW", "RW", "ST", "CF"] as const;
-    if (!(available as readonly string[]).includes(position)) return { ok: false, reason: "Posición no válida." };
+    const available: AcademyPlayer["positions"][number][] = ["GK", "DFC", "LD", "LI", "MCD", "MC", "MCO", "MD", "MI", "ED", "EI", "DC"];
+    if (!available.includes(position)) return { ok: false, reason: "Posición no válida." };
     if (!usePlayersStore.getState().spendBudget(ACADEMY_LIMITS.retrainingCost)) return { ok: false, reason: `No hay presupuesto suficiente para la reconversión (${ACADEMY_LIMITS.retrainingCost.toLocaleString("es-ES")} €).` };
     const positions = [position, ...found.player.positions.filter((x) => x !== position)].slice(0, 3) as AcademyPlayer["positions"];
     const retrainingUntil = addDaysToIso(date, 90);
@@ -677,7 +741,11 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     }
   },
 
-  getUserPlayers: (teamId) => teamId ? get().clubs[teamId]?.players.filter((p) => ["academy", "called-up", "listed", "loaned"].includes(p.status)) ?? [] : [],
+  getUserPlayers: (teamId) => {
+    const activeSaveId = getCurrentSaveId();
+    if (!teamId || !activeSaveId || get().saveId !== activeSaveId) return [];
+    return get().clubs[teamId]?.players.filter((p) => ["academy", "called-up", "listed", "loaned"].includes(p.status)) ?? [];
+  },
 
   reset: async () => {
     const saveId = get().saveId ?? getCurrentSaveId();

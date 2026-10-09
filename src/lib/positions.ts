@@ -258,3 +258,40 @@ export function calculateVersatilityBonus(positions: PosCode[]): number {
 
   return Math.min(bonus, 1.15);
 }
+
+/** Grupos visuales compartidos por Plantilla y Cantera. */
+export type PositionGroup = "GK" | "DEF" | "MID" | "FWD";
+
+export const POSITION_GROUP_ORDER: Record<PositionGroup, number> = {
+  GK: 0,
+  DEF: 1,
+  MID: 2,
+  FWD: 3,
+};
+
+export function positionGroupFromCode(raw: unknown): PositionGroup {
+  const code = toPosCode(String(raw ?? ""));
+  if (code === "GK") return "GK";
+  if (code && ["DFC", "LD", "LI"].includes(code)) return "DEF";
+  if (code && ["MCD", "MC", "MCO", "MD", "MI"].includes(code)) return "MID";
+  return "FWD";
+}
+
+/**
+ * Orden común para listados de plantillas: grupo táctico y, dentro de cada
+ * grupo, OVR dinámico descendente. El parámetro de posición admite tanto los
+ * códigos canónicos como los códigos EA del dataset.
+ */
+export function sortByPositionGroupAndOvr<T>(
+  items: readonly T[],
+  getPosition: (item: T) => unknown,
+  getOvr: (item: T) => number,
+): T[] {
+  return items.slice().sort((a, b) => {
+    const groupDiff = POSITION_GROUP_ORDER[positionGroupFromCode(getPosition(a))] - POSITION_GROUP_ORDER[positionGroupFromCode(getPosition(b))];
+    if (groupDiff !== 0) return groupDiff;
+    const ovrDiff = Number(getOvr(b)) - Number(getOvr(a));
+    if (ovrDiff !== 0) return ovrDiff;
+    return String(getPosition(a)).localeCompare(String(getPosition(b)), "es");
+  });
+}

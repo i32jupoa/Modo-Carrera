@@ -130,6 +130,18 @@ export function useMarketClock(): void {
       bootedFor.current = currentDate;
 
       (async () => {
+        // La IA decide promociones de forma síncrona durante el avance del
+        // mercado. Hidrata primero sus academias persistidas para que una
+        // recarga directa de /season no regenere estados vacíos antes de que
+        // el runner de jornadas llegue a ejecutarse.
+        if (saveId && myTeamId) {
+          try {
+            const { hydrateAcademyAiRuntimeForSave } = await import("@/lib/academy/academyAiMatchdayRunner");
+            await hydrateAcademyAiRuntimeForSave(saveId, currentDate, myTeamId);
+          } catch (error) {
+            console.warn("[MarketClock] No se pudieron restaurar las academias IA:", error);
+          }
+        }
         await loadOrInitTransferSystem(currentDate);
         // Una vez cargadas las negociaciones de esta partida, podemos resolver
         // correctamente a qué sección pertenece cada aviso ya guardado.

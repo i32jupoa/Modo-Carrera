@@ -17,6 +17,7 @@ import { GraduationCap, Sparkles } from "lucide-react";
 import { faceUrl } from "@/lib/playerFaces";
 import { getAcademyClubRanking, getAcademyProspectRanking, type AcademyClubRankingEntry, type AcademyProspectRankingEntry } from "@/lib/academy/academyAnalytics";
 import {
+  usePlayersStore,
   selectTopScorers,
   selectTopAssisters,
   selectTopYellowCards,

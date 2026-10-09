@@ -1,12 +1,24 @@
 import { teamById } from "@/data/teams";
 import { getClubProfile } from "@/lib/transfers/ClubStrategy";
 import { hashString, seededInt, seededPick, seededRange, seededUnit, clamp } from "@/lib/transfers/random";
-import { buildPositions, type PosCode } from "@/lib/positions";
-import { ACADEMY_FACILITIES, ACADEMY_GROWTH_PROFILES, ACADEMY_ID_BASE, ACADEMY_ID_SPAN, ACADEMY_LIMITS, ACADEMY_TRAITS } from "./academyConstants";
+import { type PosCode } from "@/lib/positions";
+import {
+  ACADEMY_FACILITIES,
+  ACADEMY_GROWTH_PROFILES,
+  ACADEMY_ID_BASE,
+  ACADEMY_ID_SPAN,
+  ACADEMY_LIMITS,
+  ACADEMY_SECONDARY_POSITION_CHANCE,
+  ACADEMY_SECONDARY_POSITION_COMPATIBILITY,
+  ACADEMY_TARGET_POSITION_COUNTS,
+  ACADEMY_TRAITS,
+} from "./academyConstants";
 import { COUNTRY_NAMES, academyCountryKey, academyCountryLabel, getAcademyNamePool } from "./academyNames";
+import { createEmptyAcademySeasonStats } from "./academyTypes";
 import type { AcademyGrowthProfile, AcademyPlayer, AcademyTrait, ClubAcademyState } from "./academyTypes";
 
 const RESERVED_IDS = new Set<number>();
+const ACADEMY_POSITION_ORDER = Object.keys(ACADEMY_TARGET_POSITION_COUNTS) as PosCode[];
 
 function seasonNumber(season: number | string): number {
   const n = Number(String(season).slice(0, 4));
@@ -41,12 +53,43 @@ function nameFor(country: string, seed: string, usedNames: Set<string>): string 
   return fallback;
 }
 
-function candidatePositions(seed: string): PosCode[] {
-  const primary = seededPick(["GK", "CB", "LB", "RB", "CM", "CAM", "CDM", "LW", "RW", "ST", "CF"] as const, seed, "primary") ?? "CM";
-  const alternatives = seededUnit(seed, "alt") < 0.35
-    ? [seededPick(["CB", "LB", "RB", "CM", "CAM", "CDM", "LW", "RW", "ST", "CF"] as const, seed, "secondary") ?? "CM"]
-    : [];
-  return Array.from(new Set([primary, ...alternatives]));
+/**
+ * Escoge la posición que está más infrarepresentada respecto a la composición
+ * objetivo. Los empates se resuelven de forma determinista.
+ */
+function mostDeficientPosition(currentCounts: Partial<Record<PosCode, number>>, seed: string, stage: string): PosCode {
+  let bestRatio = Number.POSITIVE_INFINITY;
+  let candidates: PosCode[] = [];
+  for (const position of ACADEMY_POSITION_ORDER) {
+    const target = ACADEMY_TARGET_POSITION_COUNTS[position];
+    const current = currentCounts[position] ?? 0;
+    const ratio = current / target;
+    if (ratio < bestRatio - 0.0001) {
+      bestRatio = ratio;
+      candidates = [position];
+    } else if (Math.abs(ratio - bestRatio) <= 0.0001) {
+      candidates.push(position);
+    }
+  }
+  return seededPick(candidates, seed, "deficit-tie", stage) ?? "MC";
+}
+
+function candidatePositions(
+  seed: string,
+  currentCounts: Partial<Record<PosCode, number>> = {},
+  stage = "generation",
+): PosCode[] {
+  const primary = mostDeficientPosition(currentCounts, seed, stage);
+  const compatible = ACADEMY_SECONDARY_POSITION_COMPATIBILITY[primary];
+  if (compatible.length && seededUnit(seed, "alt") < ACADEMY_SECONDARY_POSITION_CHANCE) {
+    const secondary = seededPick(compatible, seed, "secondary");
+    if (secondary) return [primary, secondary as PosCode];
+  }
+  return [primary];
+}
+
+function incrementPositionCount(counts: Partial<Record<PosCode, number>>, position: PosCode): void {
+  counts[position] = (counts[position] ?? 0) + 1;
 }
 
 function roleAttributes(positions: readonly PosCode[], ovr: number, seed: string) {
@@ -62,15 +105,15 @@ function roleAttributes(positions: readonly PosCode[], ovr: number, seed: string
     PHY: clamp(base + spread(), 25, 90),
   };
   if (primary === "GK") return { PAC: 40, SHO: 20, PAS: clamp(ovr + spread(), 25, 90), DRI: 35, DEF: clamp(ovr + 4 + spread(), 25, 92), PHY: clamp(ovr + spread(), 25, 92) };
-  if (["CB", "LB", "RB"].includes(primary)) {
+  if (["DFC", "LD", "LI"].includes(primary)) {
     attrs.DEF = clamp(ovr + 6 + spread(), 35, 94);
     attrs.PHY = clamp(ovr + 3 + spread(), 30, 92);
   }
-  if (["ST", "CF", "LW", "RW"].includes(primary)) {
+  if (["DC", "ED", "EI"].includes(primary)) {
     attrs.SHO = clamp(ovr + 7 + spread(), 35, 95);
     attrs.DRI = clamp(ovr + 5 + spread(), 35, 95);
   }
-  if (["CM", "CAM", "CDM"].includes(primary)) {
+  if (["MCD", "MC", "MCO", "MD", "MI"].includes(primary)) {
     attrs.PAS = clamp(ovr + 6 + spread(), 35, 94);
     attrs.DRI = clamp(ovr + 3 + spread(), 30, 92);
   }
@@ -117,53 +160,78 @@ function traits(seed: string, potential: number): AcademyTrait[] {
   return out.length ? out.slice(0, 2) : ["hard-worker"];
 }
 
+function basePlayer(
+  saveId: string,
+  teamId: string,
+  numericSeason: number,
+  index: number,
+  profile: ReturnType<typeof getClubProfile>,
+  clubStrength: number,
+  facility: 1 | 2 | 3 | 4 | 5,
+  usedNames: Set<string>,
+  currentCounts: Partial<Record<PosCode, number>>,
+  intake: boolean,
+): AcademyPlayer {
+  const seed = `${saveId}|${teamId}|${numericSeason}|${index}|${intake ? "intake" : "initial"}`;
+  const national = seededUnit(seed, "nation") >= ACADEMY_LIMITS.foreignNationChance;
+  const homeCountry = academyCountryKey(profile.country);
+  const availableCountries = Object.keys(COUNTRY_NAMES).filter((value) => value !== homeCountry);
+  const nationKey = national ? homeCountry : (seededPick(availableCountries, seed, "foreign") ?? homeCountry);
+  const nation = academyCountryLabel(nationKey);
+  const birth = randomDate(seed, numericSeason, intake ? ACADEMY_LIMITS.intakeMinAge : 16, intake ? ACADEMY_LIMITS.intakeMaxAge : 20);
+  const positions = candidatePositions(seed, currentCounts, intake ? "annual-intake" : "initial-squad");
+  const facilityBonus = ACADEMY_FACILITIES.ovrBonusByLevel[facility] ?? 0;
+  const ovrLow = intake ? ACADEMY_LIMITS.minOvr : ACADEMY_LIMITS.minOvr;
+  const ovrHigh = intake ? 55 : ACADEMY_LIMITS.maxOvr;
+  const clubBonus = intake ? clubStrength * 2 : clubStrength * 3;
+  const focusBonus = intake ? profile.academyFocus * 3 : profile.academyFocus * 4;
+  const rawOvr = Math.round(seededRange(ovrLow, ovrHigh, seed, "ovr") + focusBonus + (intake ? 0 : facilityBonus) + clubBonus);
+  const ovr = clamp(rawOvr, ACADEMY_LIMITS.minOvr, ACADEMY_LIMITS.maxOvr);
+  const potential = potentialFor(seed, profile.academyFocus * (intake ? 0.6 : 0.55) + clubStrength * (intake ? 0.4 : 0.45), facility);
+  const estimateWidth = Math.max(3, Math.round(10 - profile.academyFocus * 4));
+  const id = uniqueAcademyId(saveId, teamId, numericSeason, index);
+  for (const position of positions) incrementPositionCount(currentCounts, position);
+  return {
+    id,
+    teamId,
+    name: nameFor(nation, seed, usedNames),
+    nation,
+    birthdate: birth.birthdate,
+    age: ageFromBirthdate(birth.birthdate, numericSeason),
+    positions,
+    internalOvr: ovr,
+    ovr,
+    potential,
+    potentialEstimate: {
+      min: Math.max(50, potential - estimateWidth),
+      max: Math.min(90, potential + Math.round(estimateWidth / 2)),
+    },
+    attributes: roleAttributes(positions, ovr, seed),
+    traits: traits(seed, potential),
+    growthProfile: growthProfile(seed, potential),
+    joinedSeason: numericSeason,
+    contractYearsLeft: ACADEMY_LIMITS.baseContractYears,
+    status: "academy",
+    minutesThisSeason: 0,
+    academyStats: createEmptyAcademySeasonStats(numericSeason, ovr),
+    academyCareerSeasons: [],
+    value: undefined,
+  };
+}
+
 export function generateAcademyState(saveId: string, teamId: string, season: number | string): ClubAcademyState {
   const numericSeason = seasonNumber(season);
   const team = teamById(teamId);
   const profile = getClubProfile(teamId);
-  // Todas las partidas comienzan con instalaciones de nivel 1/5.
-  // La calidad del club influye en los jugadores generados a través del perfil
-  // y otros factores del generador, no en el nivel inicial de las instalaciones.
   const facility = ACADEMY_FACILITIES.default;
   const targetSize = seededInt(ACADEMY_LIMITS.minPlayers, ACADEMY_LIMITS.maxPlayers, saveId, teamId, numericSeason, "size");
   const players: AcademyPlayer[] = [];
   const clubStrength = clamp((team.att + team.mid + team.def) / 300, 0, 1);
-  const country = profile.country;
   const usedNames = new Set<string>();
-  const availableCountries = Object.keys(COUNTRY_NAMES).filter((v) => v !== academyCountryKey(country));
+  const positionCounts: Partial<Record<PosCode, number>> = {};
 
   for (let i = 0; i < targetSize; i += 1) {
-    const seed = `${saveId}|${teamId}|${numericSeason}|${i}`;
-    const national = seededUnit(seed, "nation") >= ACADEMY_LIMITS.foreignNationChance;
-    const nationKey = national ? academyCountryKey(country) : (seededPick(availableCountries, seed, "foreign") ?? academyCountryKey(country));
-    const nation = academyCountryLabel(nationKey);
-    const birth = randomDate(seed, numericSeason, 16, 20);
-    const positions = candidatePositions(seed);
-    const facilityBonus = ACADEMY_FACILITIES.ovrBonusByLevel[facility] ?? 0;
-    const rawOvr = Math.round(seededRange(ACADEMY_LIMITS.minOvr, ACADEMY_LIMITS.maxOvr, seed, "ovr") + profile.academyFocus * 4 + facilityBonus + clubStrength * 3);
-    const ovr = clamp(rawOvr, ACADEMY_LIMITS.minOvr, ACADEMY_LIMITS.maxOvr);
-    const potential = potentialFor(seed, profile.academyFocus * 0.55 + clubStrength * 0.45, facility);
-    const estimateWidth = Math.max(3, Math.round(10 - profile.academyFocus * 4));
-    players.push({
-      id: uniqueAcademyId(saveId, teamId, numericSeason, i),
-      teamId,
-      name: nameFor(nation, seed, usedNames),
-      nation,
-      birthdate: birth.birthdate,
-      age: ageFromBirthdate(birth.birthdate, numericSeason),
-      positions,
-      ovr,
-      potential,
-      potentialEstimate: { min: Math.max(50, potential - estimateWidth), max: Math.min(90, potential + Math.round(estimateWidth / 2)) },
-      attributes: roleAttributes(positions, ovr, seed),
-      traits: traits(seed, potential),
-      growthProfile: growthProfile(seed, potential),
-      joinedSeason: numericSeason,
-      contractYearsLeft: ACADEMY_LIMITS.baseContractYears,
-      status: "academy",
-      minutesThisSeason: 0,
-      value: undefined,
-    });
+    players.push(basePlayer(saveId, teamId, numericSeason, i, profile, clubStrength, facility, usedNames, positionCounts, false));
   }
 
   return {
@@ -174,13 +242,12 @@ export function generateAcademyState(saveId: string, teamId: string, season: num
       level: 1,
     },
     players,
-    // La plantilla base pertenece a la temporada actual; `manualPromotionAvailable`
-    // controla de forma independiente si el botón de nueva promoción sigue disponible.
     lastIntakeSeason: numericSeason,
     manualPromotionAvailable: true,
     mentorAssignments: {},
     history: [],
     lastProgressionDate: `${numericSeason}-07-01`,
+    lastAcademyMatchDate: `${numericSeason}-07-01`,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -189,32 +256,38 @@ export function generateAnnualIntake(saveId: string, state: ClubAcademyState, se
   const numericSeason = seasonNumber(season);
   const profile = getClubProfile(state.teamId);
   const facilityBonus = ACADEMY_FACILITIES.annualIntakeBonusByLevel[state.facilityLevel] ?? 0;
-  const count = seededInt(ACADEMY_LIMITS.annualIntakeMin, ACADEMY_LIMITS.annualIntakeMax, saveId, state.teamId, numericSeason, "intake-count") + facilityBonus;
-  const existing = new Set(state.players.map((p) => p.id));
+  const count = seededInt(
+    ACADEMY_LIMITS.annualIntakeMin,
+    ACADEMY_LIMITS.annualIntakeMax,
+    saveId,
+    state.teamId,
+    numericSeason,
+    "intake-count",
+  ) + facilityBonus;
+  const existing = new Set(state.players.map((player) => player.id));
   const baseSeed = state.players.length + 100;
   const team = teamById(state.teamId);
   const clubStrength = clamp((team.att + team.mid + team.def) / 300, 0, 1);
   const players: AcademyPlayer[] = [];
-  const usedNames = new Set(state.players.map((p) => p.name));
-  const homeCountry = academyCountryKey(profile.country);
-  const availableCountries = Object.keys(COUNTRY_NAMES).filter((v) => v !== homeCountry);
+  const usedNames = new Set(state.players.map((player) => player.name));
+  const positionCounts: Partial<Record<PosCode, number>> = {};
+  for (const player of state.players) incrementPositionCount(positionCounts, player.positions[0] ?? "MC");
+
   for (let i = 0; i < count && state.players.length + players.length < ACADEMY_LIMITS.maxPlayers; i += 1) {
-    const seed = `${saveId}|${state.teamId}|${numericSeason}|${baseSeed + i}`;
-    const birth = randomDate(seed, numericSeason, ACADEMY_LIMITS.intakeMinAge, ACADEMY_LIMITS.intakeMaxAge);
-    const positions = candidatePositions(seed);
-    const ovr = clamp(Math.round(seededRange(ACADEMY_LIMITS.minOvr, 55, seed, "ovr") + profile.academyFocus * 3 + clubStrength * 2), ACADEMY_LIMITS.minOvr, ACADEMY_LIMITS.maxOvr);
-    const potential = potentialFor(seed, profile.academyFocus * 0.6 + clubStrength * 0.4, state.facilityLevel);
-    const id = uniqueAcademyId(saveId, state.teamId, numericSeason, baseSeed + i);
-    if (existing.has(id)) continue;
-    const nationKey = seededUnit(seed, "nation") >= ACADEMY_LIMITS.foreignNationChance ? homeCountry : (seededPick(availableCountries, seed, "foreign") ?? homeCountry);
-    const nation = academyCountryLabel(nationKey);
-    players.push({
-      id, teamId: state.teamId, name: nameFor(nation, seed, usedNames), nation,
-      birthdate: birth.birthdate, age: birth.age, positions, ovr, potential,
-      potentialEstimate: { min: Math.max(50, potential - 9), max: Math.min(90, potential + 5) },
-      attributes: roleAttributes(positions, ovr, seed), traits: traits(seed, potential), growthProfile: growthProfile(seed, potential),
-      joinedSeason: numericSeason, contractYearsLeft: ACADEMY_LIMITS.baseContractYears, status: "academy", minutesThisSeason: 0,
-    });
+    const player = basePlayer(
+      saveId,
+      state.teamId,
+      numericSeason,
+      baseSeed + i,
+      profile,
+      clubStrength,
+      state.facilityLevel,
+      usedNames,
+      positionCounts,
+      true,
+    );
+    if (existing.has(player.id)) continue;
+    players.push(player);
   }
   return players;
 }

@@ -101,6 +101,70 @@ export async function idbSetItem(key: string, value: string): Promise<boolean> {
   });
 }
 
+/** Reads several keys in one IndexedDB transaction (avoids one transaction per club). */
+export async function idbGetItems(keys: readonly string[]): Promise<Record<string, string | null>> {
+  const db = await openDb();
+  const result: Record<string, string | null> = {};
+  if (!db || keys.length === 0) return result;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE, "readonly");
+      const store = tx.objectStore(STORE);
+      for (const key of keys) {
+        const req = store.get(key);
+        req.onsuccess = () => {
+          result[key] = typeof req.result === "string" ? req.result : null;
+        };
+        req.onerror = () => {
+          result[key] = null;
+        };
+      }
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = () => resolve(result);
+      tx.onabort = () => resolve(result);
+    } catch {
+      resolve(result);
+    }
+  });
+}
+
+/** Writes multiple keys in one IndexedDB transaction for smooth matchday autosaves. */
+export async function idbSetItems(entries: Readonly<Record<string, string>>): Promise<boolean> {
+  const db = await openDb();
+  const items = Object.entries(entries);
+  if (!db || items.length === 0) return Boolean(db);
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      for (const [key, value] of items) store.put(value, key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/** Deletes multiple keys in one IndexedDB transaction. */
+export async function idbRemoveItems(keys: readonly string[]): Promise<void> {
+  const db = await openDb();
+  if (!db || keys.length === 0) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      for (const key of keys) store.delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
 /** Borra una clave. Nunca lanza. */
 export async function idbRemoveItem(key: string): Promise<void> {
   const db = await openDb();

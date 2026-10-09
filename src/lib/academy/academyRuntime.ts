@@ -47,6 +47,13 @@ export function getCalledUpPlayers(teamId: string): FcPlayer[] {
   return (CALLED_UP_BY_TEAM.get(teamId) ?? []).slice();
 }
 
+/** Invalida solo las convocatorias en memoria al cambiar de partida. */
+export function clearCalledUpRuntime(): void {
+  if (CALLED_UP_BY_TEAM.size === 0) return;
+  CALLED_UP_BY_TEAM.clear();
+  CALLED_UP_RUNTIME_VERSION += 1;
+}
+
 export function clearCalledUpPlayer(teamId: string, playerId: string): void {
   const next = (CALLED_UP_BY_TEAM.get(teamId) ?? []).filter((player) => String(player.ID) !== String(playerId));
   if (next.length) CALLED_UP_BY_TEAM.set(teamId, next);

@@ -80,7 +80,6 @@ export function AppSidebar() {
   const [teamName, setTeamName] = useState<string | null>(null);
   const [season, setSeason] = useState<string>("");
   const [hasSave, setHasSave] = useState(false);
-  const academyClubs = useAcademyStore((state) => state.clubs);
   const ensureAcademyClub = useAcademyStore((state) => state.ensureClub);
 
   useEffect(() => {
@@ -122,14 +121,6 @@ export function AppSidebar() {
     if (!save || pathname === "/") return;
     void ensureAcademyClub(save.myTeamId, Number(String(save.season).slice(0, 4)) || 2026, currentDate);
   }, [currentDate, ensureAcademyClub, pathname]);
-  const academyNotificationCount = (() => {
-    const save = loadSave();
-    if (!save) return 0;
-    const academy = academyClubs[save.myTeamId];
-    if (!academy) return 0;
-    return academy.players.filter((player) => player.status === "academy" && ((player.age >= 18 && player.ovr >= 55) || player.contractYearsLeft <= 1)).length;
-  })();
-
   // Mientras estás dentro del mercado, cualquier novedad se considera vista.
   // Así no aparece ningún punto al pasar días dentro de la propia sección.
   useEffect(() => {
@@ -190,11 +181,9 @@ export function AppSidebar() {
               badges={{
                 "/scouting": pathname !== "/scouting" && scoutingHasNotifications,
                 "/mailbox": pathname !== "/mailbox" && mailboxNotificationCount > 0,
-                "/cantera": pathname !== "/cantera" && academyNotificationCount > 0,
               }}
               badgeCounts={{
                 "/mailbox": mailboxNotificationCount,
-                "/cantera": academyNotificationCount,
               }}
             />
             <NavGroup

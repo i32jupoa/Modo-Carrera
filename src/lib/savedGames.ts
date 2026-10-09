@@ -240,6 +240,12 @@ export async function deleteSave(id: string): Promise<void> {
   } catch (error) {
     console.warn("No se pudo limpiar inmediatamente la cantera de la partida eliminada:", error);
   }
+  try {
+    const { clearAcademyAiRuntimeForSave } = await import("@/lib/academy/academyAiMatchdayRunner");
+    await clearAcademyAiRuntimeForSave(id);
+  } catch (error) {
+    console.warn("No se pudo limpiar inmediatamente las academias IA de la partida eliminada:", error);
+  }
 
   const saves = loadAllSaves().filter((s) => s.id !== id);
   saveMultipleSaves(saves);
@@ -258,6 +264,18 @@ export async function deleteSave(id: string): Promise<void> {
     try {
       const { resetTransferSystem } = await import("@/lib/transfers");
       resetTransferSystem();
+    } catch {
+      /* no crítico */
+    }
+    try {
+      const { clearInternalContractNegotiations } = await import("@/lib/transfers/InternalContractNegotiation");
+      clearInternalContractNegotiations();
+    } catch {
+      /* no crítico */
+    }
+    try {
+      const { useAcademyStore } = await import("@/lib/academy/academyStore");
+      useAcademyStore.setState({ loaded: false, saveId: null, clubs: {} });
     } catch {
       /* no crítico */
     }

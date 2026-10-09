@@ -10,6 +10,8 @@ import {
   setCurrentSaveId,
 } from "@/lib/savedGames";
 import { resetTransferSystem } from "@/lib/transfers";
+import { clearInternalContractNegotiations } from "@/lib/transfers/InternalContractNegotiation";
+import { useAcademyStore } from "@/lib/academy/academyStore";
 import { resetMarketIndex } from "@/lib/transfers/PlayerIndex";
 import { resetSquadReports } from "@/lib/transfers/SquadAnalyzer";
 import { resetClubOverrides } from "@/store/playersStore";
@@ -94,6 +96,10 @@ function Index() {
       resetTransferSystem();
       resetMarketIndex();
       resetSquadReports();
+      // Una nueva carrera debe empezar con el contexto de cantera y las
+      // negociaciones internas vacío, sin borrar los saves anteriores.
+      useAcademyStore.setState({ loaded: false, saveId: null, clubs: {} });
+      clearInternalContractNegotiations();
 
       // Resetear los overrides de club para que los fichajes no persistan entre partidas
       resetClubOverrides();
@@ -124,7 +130,13 @@ function Index() {
     }
   }
 
-  function continueGame(save: any, id?: string) {
+  async function continueGame(save: any, id?: string) {
+    // Vaciar los contextos en memoria antes de restaurar el nuevo save.
+    // Los datos persistidos de cada partida permanecen intactos y se cargan
+    // a continuación desde su propio id.
+    useAcademyStore.setState({ loaded: false, saveId: null, clubs: {} });
+    clearInternalContractNegotiations();
+
     // Activar la partida cargada como la actual (para que saveSave la mantenga)
     if (id) {
       setCurrentSaveId(id);
@@ -143,6 +155,23 @@ function Index() {
     // ambas reescribirían rosterIds/squad y perderías los fichajes).
     restorePlayersStoreState(save);
     save = initializeUserSquadRoles(save);
+
+    // Antes de que el motor de mercado tome decisiones síncronas, hidrata las
+    // academias IA guardadas para esta carrera. Así no se regenera una cantera
+    // antigua ni se pierden partidos/minutos al continuar una partida.
+    const activeSaveId = id ?? window.localStorage.getItem("fcsim:save:current");
+    if (activeSaveId) {
+      try {
+        const { hydrateAcademyAiRuntimeForSave } = await import("@/lib/academy/academyAiMatchdayRunner");
+        await hydrateAcademyAiRuntimeForSave(
+          activeSaveId,
+          save.playersStoreState?.currentDate ?? "2026-08-01",
+          save.myTeamId,
+        );
+      } catch (error) {
+        console.warn("No se pudieron restaurar las academias de la IA al continuar:", error);
+      }
+    }
 
     // Sincronizar el sistema antiguo (clave única) con la partida cargada
     saveSave(save);

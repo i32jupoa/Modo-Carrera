@@ -61,9 +61,12 @@ export async function reconcileAcademyLoans(date: string): Promise<void> {
         const minutesShare = Math.max(0, Math.min(1, Number(market.minutesShare ?? 0)));
         const minutes = Math.round(minutesShare * 900);
         const appearances = Math.round(minutesShare * 12);
-        const delta = Number((market.ovr - player.ovr).toFixed(2));
+        const currentInternalOvr = Number(player.internalOvr ?? player.ovr);
+        const delta = Number((market.ovr - currentInternalOvr).toFixed(2));
         next.push({
           ...player,
+          internalOvr: Number(Number(market.ovr).toFixed(2)),
+          ovr: Math.round(Number(market.ovr)),
           loanReports: [...reports, {
             date,
             minutes,

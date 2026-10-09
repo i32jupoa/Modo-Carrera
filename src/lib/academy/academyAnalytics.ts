@@ -54,9 +54,10 @@ function seasonFromDate(date: string): number {
 function playerScore(player: AcademyPlayer): number {
   const ageBonus = Math.max(0, 21 - player.age) * 0.8;
   const visiblePotential = player.potentialEstimate.max;
-  const gap = Math.max(0, visiblePotential - player.ovr);
+  const currentOvr = Number(player.internalOvr ?? player.ovr);
+  const gap = Math.max(0, visiblePotential - currentOvr);
   const traitBonus = player.traits.includes("diamond") ? 3.5 : player.traits.includes("hard-worker") ? 1.5 : 0;
-  return player.ovr * 0.9 + visiblePotential * 0.95 + gap * 0.35 + ageBonus + traitBonus;
+  return currentOvr * 0.9 + visiblePotential * 0.95 + gap * 0.35 + ageBonus + traitBonus;
 }
 
 export function getAcademyClubRanking(date: string, limit = 20): AcademyClubRankingEntry[] {

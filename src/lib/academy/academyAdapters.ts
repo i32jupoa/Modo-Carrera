@@ -1,33 +1,34 @@
 import type { FcPlayer, PlayerStats } from "@/store/playersStore";
 import { estimateAnnualWage } from "@/lib/transfers/SalaryEngine";
 import { marketValueFor } from "@/data/players";
-import { buildPositions } from "@/lib/positions";
 import type { AcademyPlayer } from "./academyTypes";
+import type { PosCode } from "@/lib/positions";
 
-function positionToEa(position: AcademyPlayer["positions"][number]): string {
+function positionToEa(position: PosCode): string {
   switch (position) {
     case "GK": return "GK";
-    case "CB": return "CB";
-    case "LB": return "LB";
-    case "RB": return "RB";
-    case "CM": return "CM";
-    case "CAM": return "CAM";
-    case "CDM": return "CDM";
-    case "LW": return "LW";
-    case "RW": return "RW";
-    case "ST": return "ST";
-    case "CF": return "CF";
-    default: return "CM";
+    case "DFC": return "CB";
+    case "LD": return "RB";
+    case "LI": return "LB";
+    case "MCD": return "CDM";
+    case "MC": return "CM";
+    case "MCO": return "CAM";
+    case "MD": return "RM";
+    case "MI": return "LM";
+    case "ED": return "RW";
+    case "EI": return "LW";
+    case "DC": return "ST";
   }
 }
 
 export function academyPlayerToFcPlayer(player: AcademyPlayer, teamName: string, leagueName: string): FcPlayer {
-  const primary = positionToEa(player.positions[0] ?? "CM");
+  const primary = positionToEa(player.positions[0] ?? "MC");
   const alternatives = player.positions.slice(1).map(positionToEa).join(",");
+  const visibleOvr = Math.round(Number(player.internalOvr ?? player.ovr));
   return {
     ID: player.id,
     Name: player.name,
-    OVR: Math.round(player.ovr),
+    OVR: visibleOvr,
     potential: Math.round(player.potential),
     PAC: player.attributes.PAC,
     SHO: player.attributes.SHO,
@@ -47,8 +48,8 @@ export function academyPlayerToFcPlayer(player: AcademyPlayer, teamName: string,
 }
 
 export function academyPlayerToStats(player: AcademyPlayer): PlayerStats {
-  const now = player.ovr;
-  const stats: PlayerStats = {
+  const now = Math.round(Number(player.internalOvr ?? player.ovr));
+  return {
     goals: 0, assists: 0, appearances: 0,
     cupGoals: 0, cupAssists: 0, cupAppearances: 0,
     uclGoals: 0, uclAssists: 0, uclAppearances: 0, uclCleanSheets: 0, uclMotm: 0,
@@ -70,24 +71,23 @@ export function academyPlayerToStats(player: AcademyPlayer): PlayerStats {
       monthlyStats: [],
       currentOVR: now,
       baseOVR: now,
-      potentialOVR: player.potential,
+      potentialOVR: Math.round(player.potential),
       attributes: { ...player.attributes },
       formHistory: [],
       careerSeasons: [],
       lastProgressionMonth: 0,
-      lastProgressionYear: new Date().getFullYear(),
+      lastProgressionYear: player.joinedSeason,
       lastProgressionDelta: 0,
       lastSeasonEndSeason: player.joinedSeason,
     },
   };
-  return stats;
 }
 
 export function academyMarketValue(player: AcademyPlayer): number {
   const market = marketValueFor(
     Math.round(player.ovr),
     player.age,
-    positionToEa(player.positions[0] ?? "CM"),
+    positionToEa(player.positions[0] ?? "MC"),
     player.teamId,
     "",
     0,

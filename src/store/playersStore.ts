@@ -171,12 +171,65 @@ function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
   );
 }
 
+// La sincronización de cantera ocurre fuera del hilo síncrono del calendario.
+// Se serializa y queda ligada al save activo para evitar que dos avances rápidos
+// dupliquen un partido o que una carrera antigua escriba sobre una nueva.
+const CURRENT_SAVE_ID_STORAGE_KEY = "fcsim:save:current";
+let academySyncQueue: Promise<void> = Promise.resolve();
+let academyAiMatchdayQueue: Promise<void> = Promise.resolve();
+
+function queueActiveAcademySync(
+  teamId: string | null,
+  targetDate: string,
+  playLeagueMatch = false,
+  leagueFixtures: readonly ScheduleFixture[] = [],
+): void {
+  if (!teamId || typeof window === "undefined") return;
+  const isMonthBoundary = targetDate.slice(8, 10) === "01";
+  const saveId = window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY);
+  if (!saveId) return;
+
+  // El canterano del usuario se procesa primero y sólo en partido de Liga o
+  // al inicio de mes; no se retrasa por el procesamiento de otras academias.
+  if (playLeagueMatch || isMonthBoundary) {
+    academySyncQueue = academySyncQueue
+      .then(async () => {
+        if (window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY) !== saveId) return;
+        const { useAcademyStore } = await import("@/lib/academy/academyStore");
+        if (window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY) !== saveId) return;
+        await useAcademyStore.getState().ensureClub(teamId, Number(targetDate.slice(0, 4)), targetDate, { playLeagueMatch });
+      })
+      .catch((error) => {
+        console.warn("[advanceTime] user academy sync failed:", error);
+      });
+  }
+
+  // Las academias de la IA tienen su propia cola. Los trabajos se trocean en
+  // tareas pequeñas y persisten una sola vez por jornada, sin frenar el clic.
+  academyAiMatchdayQueue = academyAiMatchdayQueue
+    .then(async () => {
+      if (window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY) !== saveId) return;
+      const { simulateAiAcademiesForDate } = await import("@/lib/academy/academyAiMatchdayRunner");
+      if (window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY) !== saveId) return;
+      await simulateAiAcademiesForDate({
+        saveId,
+        date: targetDate,
+        userTeamId: teamId,
+        userLeagueFixtures: leagueFixtures,
+      });
+    })
+    .catch((error) => {
+      console.warn("[advanceTime] AI academy simulation failed:", error);
+    });
+}
+
 // Track which matchdays have already generated stats to avoid duplicates
 
 const GENERATED_STATS_KEY_PREFIX = "fcsim:generated_stats:";
 
 function generatedStatsKey(): string | null {
-  const saveId = getCurrentSaveId();
+  if (typeof window === "undefined") return null;
+  const saveId = window.localStorage.getItem("fcsim:save:current");
   return saveId ? `${GENERATED_STATS_KEY_PREFIX}${saveId}` : null;
 }
 
@@ -1863,7 +1916,12 @@ export const usePlayersStore = create<PlayersState>()(
 
         const userMatch = onDay.find((f) => involvesTeam(f, state.myTeamId!));
 
-        if (userMatch) return 0;
+        if (userMatch) {
+          if (userMatch.competition === "Liga") {
+            queueActiveAcademySync(state.myTeamId, state.currentDate, true, state.fixtures);
+          }
+          return 0;
+        }
 
         if (get().pendingUserMatch) return 0;
 
@@ -2248,6 +2306,7 @@ export const usePlayersStore = create<PlayersState>()(
             pendingCupDraw: first === "cup",
             pendingUclDraw: first !== "cup" ? first : null,
           });
+          queueActiveAcademySync(state.myTeamId, nextDate, false, state.fixtures);
           return 1;
         }
 
@@ -2264,6 +2323,7 @@ export const usePlayersStore = create<PlayersState>()(
         }
 
         let advanced = 0;
+        let academyLeagueMatchDate: string | null = null;
 
         let pendingUserMatch: ScheduleFixture | null = null;
         const simXICache = new Map<string, Player[]>();
@@ -2388,6 +2448,7 @@ export const usePlayersStore = create<PlayersState>()(
           const userMatch = onDay.find((f) => involvesTeam(f, state.myTeamId!));
 
           if (userMatch) {
+            if (userMatch.competition === "Liga") academyLeagueMatchDate = nextDate;
             // Todas las estadísticas del resto de la jornada se publican en un
             // único update de Zustand en lugar de uno por jugador/acción.
             withPlayerStatsBatch(() => {
@@ -2426,6 +2487,8 @@ export const usePlayersStore = create<PlayersState>()(
           pendingUserMatch,
           squad: state.squad.length ? [...state.squad] : state.squad,
         });
+
+        queueActiveAcademySync(state.myTeamId, date, academyLeagueMatchDate === date, fixtures);
 
         return advanced;
       },

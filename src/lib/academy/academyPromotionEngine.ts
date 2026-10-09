@@ -11,7 +11,7 @@ import { DYNAMIC_BY_ID, recordAcademyPromotionEvent } from "./academyRuntime";
 import { academyContract, academyMarketValue, academyPlayerToFcPlayer, academyPlayerToStats } from "./academyAdapters";
 import { ACADEMY_LIMITS, ACADEMY_PROMOTION_LIMITS, ACADEMY_SCORE_WEIGHTS } from "./academyConstants";
 import { generateAcademyState } from "./academyGenerator";
-import { advanceAcademyToDate } from "./academyProgression";
+import { advanceAcademyToDate, simulateAcademyLeagueMatchOnDate } from "./academyProgression";
 import type { AcademyPlayer, ClubAcademyState } from "./academyTypes";
 
 const academyCache = new Map<string, ClubAcademyState>();
@@ -37,23 +37,93 @@ function getState(saveId: string, teamId: string, season: number, date: string):
   const generated = generateAcademyState(saveId, teamId, season);
   const filtered = {
     ...generated,
-    players: generated.players.filter((player) => !DYNAMIC_BY_ID.has(String(player.id))),
+    // Los listados y cedidos siguen perteneciendo a la academia. Solo se
+    // excluyen los que realmente ya tienen contrato profesional/promoción.
+    players: generated.players.filter((player) => {
+      const dynamic = DYNAMIC_BY_ID.get(String(player.id));
+      return !dynamic?.academyPromotionYear && !["promoted", "released", "sold"].includes(player.status);
+    }),
   };
   const advanced = advanceAcademyToDate(filtered, date, saveId);
   academyCache.set(key, advanced);
   return advanced;
 }
 
+/**
+ * Devuelve una vista de solo lectura de la cantera de un club de IA para
+ * Centro de Clubes. Reutiliza la caché real del motor de promociones y
+ * respeta la partida activa; no crea una academia ligada a la partida del
+ * usuario ni modifica convocatorias.
+ */
+export function getAcademyStateForInspection(
+  saveId: string,
+  teamId: string,
+  date: string,
+): ClubAcademyState | null {
+  if (!saveId || getCurrentSaveId() !== saveId) return null;
+  if (usePlayersStore.getState().myTeamId === teamId) return null;
+  return getState(saveId, teamId, seasonForDate(date), date);
+}
+
+/**
+ * Hidrata la caché del motor de promociones con las academias de IA guardadas.
+ * Se llama una vez al cargar una carrera, antes de que el mercado vuelva a
+ * consultar necesidades de plantilla.
+ */
+export function hydrateAcademyAiCache(
+  saveId: string,
+  date: string,
+  clubs: Record<string, ClubAcademyState>,
+  userTeamId: string | null,
+): void {
+  const season = seasonForDate(date);
+  for (const [teamId, state] of Object.entries(clubs)) {
+    if (!teamId || teamId === userTeamId || state.teamId !== teamId) continue;
+    const key = cacheKey(saveId, teamId, season);
+    if (academyCache.has(key)) continue;
+    const safePlayers = state.players.filter((player) => {
+      const dynamic = DYNAMIC_BY_ID.get(String(player.id));
+      return !dynamic?.academyPromotionYear && !["promoted", "released", "sold"].includes(player.status);
+    });
+    academyCache.set(key, { ...state, players: safePlayers });
+  }
+}
+
+/** Simula una jornada juvenil de un club de IA que disputa Liga en esa fecha. */
+export function simulateAcademyLeagueMatchForAiClub(
+  saveId: string,
+  teamId: string,
+  date: string,
+): ClubAcademyState | null {
+  if (!saveId || getCurrentSaveId() !== saveId || usePlayersStore.getState().myTeamId === teamId) return null;
+  const season = seasonForDate(date);
+  const key = cacheKey(saveId, teamId, season);
+  const current = getState(saveId, teamId, season, date);
+  const simulated = simulateAcademyLeagueMatchOnDate(current, date, saveId);
+  // Se conserva también la progresión mensual aunque el filial no alcance 11
+  // jugadores disponibles para jugar el partido.
+  academyCache.set(key, simulated);
+  return simulated;
+}
+
+export function clearAcademyAiCacheForSave(saveId: string): void {
+  const prefix = `${saveId}|`;
+  for (const key of academyCache.keys()) {
+    if (key.startsWith(prefix)) academyCache.delete(key);
+  }
+}
+
+function positionFitsNeed(position: AcademyPlayer["positions"][number], group: PositionGroup): boolean {
+  if (group === "GK") return position === "GK";
+  if (group === "CB") return position === "DFC";
+  if (group === "FB") return ["LD", "LI"].includes(position);
+  if (group === "CM") return ["MCD", "MC", "MCO", "MD", "MI"].includes(position);
+  if (group === "WING") return ["ED", "EI"].includes(position);
+  return position === "DC";
+}
+
 function chooseByGroup(players: readonly AcademyPlayer[], group: PositionGroup, squadOvr: number, seed: string): AcademyPlayer | null {
-  const candidates = players.filter((player) => {
-    const p = player.positions[0];
-    if (group === "GK") return p === "GK";
-    if (group === "CB") return ["CB"].includes(p);
-    if (group === "FB") return ["LB", "RB"].includes(p);
-    if (group === "CM") return ["CM", "CAM", "CDM"].includes(p);
-    if (group === "WING") return ["LW", "RW"].includes(p);
-    return ["ST", "CF"].includes(p);
-  });
+  const candidates = players.filter((player) => player.positions.some((position) => positionFitsNeed(position, group)));
   if (!candidates.length) return null;
   const ready = candidates.filter((player) => player.age >= 18);
   if (!ready.length) return null;
@@ -61,8 +131,9 @@ function chooseByGroup(players: readonly AcademyPlayer[], group: PositionGroup, 
     .slice()
     .sort((a, b) => {
       const score = (player: AcademyPlayer) => {
-        const positionFit = 1;
-        const ovrScore = 1 - Math.max(0, squadOvr - player.ovr) / 25;
+        const positionFit = positionFitsNeed(player.positions[0] ?? "MC", group) ? 1 : 0.9;
+        const playerOvr = Number(player.internalOvr ?? player.ovr);
+        const ovrScore = 1 - Math.max(0, squadOvr - playerOvr) / 25;
         const potentialScore = player.potential / 88;
         const ageScore = 1 - Math.max(0, player.age - 18) / 5;
         return positionFit * ACADEMY_SCORE_WEIGHTS.positionFit + ovrScore * ACADEMY_SCORE_WEIGHTS.ovr + potentialScore * ACADEMY_SCORE_WEIGHTS.potential + ageScore * ACADEMY_SCORE_WEIGHTS.age;
@@ -75,7 +146,7 @@ function refreshTeamRating(teamId: string): void {
   const team = teamById(teamId);
   const squad = getClubPlayers(teamId);
   const rated: RatedSquadMember[] = squad.map((player) => ({
-    rating: player.ovr,
+    rating: Math.round(Number(player.ovr)),
     position: player.group === "GK" ? "GK" : player.group === "CB" || player.group === "FB" ? "DEF" : player.group === "ST" || player.group === "WING" ? "FWD" : "MID",
     age: player.age,
   }));

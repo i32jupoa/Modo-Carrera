@@ -27,6 +27,7 @@ export function syncCalledUpAcademyPlayer(
 
   return {
     ...academyPlayer,
+    internalOvr: Number(currentOvr.toFixed(2)),
     ovr: Math.round(currentOvr),
     potential: Math.round(potential),
     attributes: {
@@ -37,10 +38,9 @@ export function syncCalledUpAcademyPlayer(
       DEF: Number(attributes.DEF),
       PHY: Number(attributes.PHY),
     },
-    minutesThisSeason: Math.max(
-      0,
-      Math.round(Number(dynamic?.seasonMinutes ?? academyPlayer.minutesThisSeason) || 0),
-    ),
+    // `minutesThisSeason` pertenece a las estadísticas de cantera y se mantiene
+    // separada de los minutos disputados con el primer equipo.
+    minutesThisSeason: academyPlayer.minutesThisSeason,
     status: "academy",
     loanClubId: undefined,
     loanStartedAt: undefined,

@@ -6,6 +6,7 @@ import {
   Cake,
   CircleDollarSign,
   Goal,
+  GraduationCap,
   Handshake,
   HeartHandshake,
   Medal,
@@ -42,6 +43,7 @@ import type { Team } from "@/data/teams";
 import type { LeagueId } from "@/data/teams";
 import { LEAGUES } from "@/data/teams";
 import type { DynamicPlayerStats } from "@/types/playerStats";
+import type { AcademySeasonStats } from "@/lib/academy/academyTypes";
 import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, Line, ReferenceLine } from "recharts";
 
 function getLeagueName(leagueId: string): string {
@@ -427,6 +429,7 @@ export interface PlayerDetailDialogProps {
   showMorale?: boolean;
   academyMode?: boolean;
   academyPotentialEstimate?: { min: number; max: number };
+  academyStats?: AcademySeasonStats;
   onPromote?: () => void;
   onRelease?: () => void;
   onRenewYouth?: () => void;
@@ -456,6 +459,7 @@ export function PlayerDetailDialog({
   showMorale = true,
   academyMode = false,
   academyPotentialEstimate,
+  academyStats,
   onPromote,
   onRelease,
   onRenewYouth,
@@ -473,16 +477,19 @@ export function PlayerDetailDialog({
   const detailPositions = buildPositions(selected.Position, selected["Alternative positions"]);
   const primaryPosition = detailPositions[0] ? formatShortPositions([detailPositions[0]]) : selected.Position;
   const secondaryPositions = detailPositions.length > 1 ? formatShortPositions(detailPositions.slice(1)) : "";
+  const isAcademyCalledUp = academyMode && academyStatusLabel === "Convocado";
   const morale = selectedStats?.morale ?? 70;
   const injured = !!selectedStats?.injuredUntilDate || (selectedStats?.injuredUntil ?? 0) > 0;
   const marketPlayer = getPlayer(String(selected.ID));
   const marketContract = marketPlayer?.contract;
   const value = marketValueEuros(selected);
   const wage = marketContract?.wage ?? getPlayerAnnualWage(String(selected.ID));
-  const dynamicOvr = Math.round(Number(selectedStats?.dynamicStats?.currentOVR ?? selected.OVR));
-  const baseOvr = Math.round(Number(selectedStats?.dynamicStats?.baseOVR ?? selected.OVR));
-  const potential = Math.round(Number(selectedStats?.dynamicStats?.potentialOVR ?? selected.potential ?? selected.OVR));
-  const ovrDelta = dynamicOvr - baseOvr;
+  const dynamicOvr = Math.round(Number(academyMode && !isAcademyCalledUp ? selected.OVR : selectedStats?.dynamicStats?.currentOVR ?? selected.OVR));
+  const baseOvr = Math.round(Number(academyMode && !isAcademyCalledUp ? selected.OVR : selectedStats?.dynamicStats?.baseOVR ?? selected.OVR));
+  const academyStartingOvr = Math.round(Number(academyStats?.startingOvr ?? selected.OVR));
+  const displayedBaseOvr = academyMode && !isAcademyCalledUp ? academyStartingOvr : baseOvr;
+  const potential = Math.round(Number(academyMode && !isAcademyCalledUp ? selected.potential : selectedStats?.dynamicStats?.potentialOVR ?? selected.potential ?? selected.OVR));
+  const ovrDelta = dynamicOvr - displayedBaseOvr;
   const seasonAppearances = Number(selectedStats?.appearances ?? selectedStats?.dynamicStats?.seasonAppearances ?? 0);
   const seasonMinutes = Number(selectedStats?.dynamicStats?.seasonMinutes ?? 0);
   const seasonGoals = Number(selectedStats?.goals ?? selectedStats?.dynamicStats?.seasonGoals ?? 0);
@@ -492,8 +499,16 @@ export function PlayerDetailDialog({
   const seasonRating = Number(selectedStats?.dynamicStats?.seasonAverageRating ?? (selectedStats?.formHistory?.length ? selectedStats.formHistory.reduce((sum, value) => sum + value, 0) / selectedStats.formHistory.length : 0));
   const seasonTrophies = Number(selectedStats?.dynamicStats?.seasonTrophies ?? 0);
   const currentForm = selectedStats?.formHistory?.length ? selectedStats.formHistory[selectedStats.formHistory.length - 1] : 0;
-  const dynamicAttributes = selectedStats?.dynamicStats?.attributes;
+  const dynamicAttributes = academyMode && !isAcademyCalledUp ? undefined : selectedStats?.dynamicStats?.attributes;
   const progressionReason = selectedStats?.dynamicStats?.lastProgressionReason;
+  const academySeasonAppearances = academyStats?.appearances ?? 0;
+  const academySeasonMinutes = academyStats?.minutes ?? 0;
+  const academySeasonGoals = academyStats?.goals ?? 0;
+  const academySeasonAssists = academyStats?.assists ?? 0;
+  const academySeasonCleanSheets = academyStats?.cleanSheets ?? 0;
+  const academySeasonYellowCards = academyStats?.yellowCards ?? 0;
+  const academySeasonRedCards = academyStats?.redCards ?? 0;
+  const academySeasonRating = academyStats?.averageRating ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
@@ -552,29 +567,53 @@ export function PlayerDetailDialog({
             </section>
           )}
 
-          <section className="space-y-3">
-            <SectionHeading icon={Medal} title="Rendimiento de temporada" subtitle="Impacto real en los partidos disputados" />
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-              <DetailMetric icon={Users} label="Partidos" value={String(seasonAppearances)} />
-              <DetailMetric icon={Timer} label="Minutos" value={seasonMinutes.toLocaleString("es-ES")} />
-              <DetailMetric icon={Star} label="Media" value={seasonRating > 0 ? seasonRating.toFixed(2) : "—"} accent="text-primary" />
-              <DetailMetric icon={Goal} label="Goles" value={String(seasonGoals)} />
-              <DetailMetric icon={Sparkles} label="Asistencias" value={String(seasonAssists)} />
-              <DetailMetric icon={Trophy} label="Trofeos" value={String(seasonTrophies)} accent="text-amber-300" />
-            </div>
-            {pos === "GK" && (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <DetailMetric icon={Shield} label="Porterías a 0" value={String(seasonCleanSheets)} accent="text-emerald-300" hint="Esta temporada" />
-                <DetailMetric icon={Star} label="MVP" value={String(seasonMVPs)} accent="text-amber-300" />
-                <DetailMetric icon={Shield} label="Ratio" value={seasonAppearances > 0 ? `${((seasonCleanSheets / seasonAppearances) * 100).toFixed(0)}%` : "—"} hint="Partidos con portería a cero" />
+          {academyMode && (
+            <section className="space-y-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+              <SectionHeading icon={GraduationCap} title="Rendimiento de cantera" subtitle="Partidos simulados del equipo filial/juvenil · separado del primer equipo" />
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
+                <DetailMetric icon={Users} label="Partidos" value={String(academySeasonAppearances)} />
+                <DetailMetric icon={Timer} label="Minutos" value={academySeasonMinutes.toLocaleString("es-ES")} />
+                <DetailMetric icon={Star} label="Media" value={academySeasonRating > 0 ? academySeasonRating.toFixed(2) : "—"} accent="text-primary" />
+                <DetailMetric icon={Goal} label="Goles" value={String(academySeasonGoals)} />
+                <DetailMetric icon={Sparkles} label="Asistencias" value={String(academySeasonAssists)} />
+                <DetailMetric icon={Shield} label="Porterías a 0" value={String(academySeasonCleanSheets)} accent="text-emerald-300" />
+                <DetailMetric icon={ShieldAlert} label="Tarjetas" value={`${academySeasonYellowCards} A · ${academySeasonRedCards} R`} accent={academySeasonRedCards > 0 ? "text-destructive" : "text-foreground"} />
               </div>
-            )}
-          </section>
+              {academyStats?.lastMatchDate && (
+                <p className="text-[0.65rem] text-muted-foreground">Último partido: <span className="font-bold text-foreground">{academyStats.lastOpponent ?? "Rival de cantera"}</span> · {academyStats.lastMatchDate}</p>
+              )}
+            </section>
+          )}
+
+          {(!academyMode || isAcademyCalledUp) && (
+            <section className="space-y-3">
+              <SectionHeading icon={Medal} title={isAcademyCalledUp ? "Rendimiento con el primer equipo" : "Rendimiento de temporada"} subtitle="Impacto real en los partidos disputados" />
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                <DetailMetric icon={Users} label="Partidos" value={String(seasonAppearances)} />
+                <DetailMetric icon={Timer} label="Minutos" value={seasonMinutes.toLocaleString("es-ES")} />
+                <DetailMetric icon={Star} label="Media" value={seasonRating > 0 ? seasonRating.toFixed(2) : "—"} accent="text-primary" />
+                <DetailMetric icon={Goal} label="Goles" value={String(seasonGoals)} />
+                <DetailMetric icon={Sparkles} label="Asistencias" value={String(seasonAssists)} />
+                <DetailMetric icon={Trophy} label="Trofeos" value={String(seasonTrophies)} accent="text-amber-300" />
+              </div>
+              {pos === "GK" && (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <DetailMetric icon={Shield} label="Porterías a 0" value={String(seasonCleanSheets)} accent="text-emerald-300" hint="Esta temporada" />
+                  <DetailMetric icon={Star} label="MVP" value={String(seasonMVPs)} accent="text-amber-300" />
+                  <DetailMetric icon={Shield} label="Ratio" value={seasonAppearances > 0 ? `${((seasonCleanSheets / seasonAppearances) * 100).toFixed(0)}%` : "—"} hint="Partidos con portería a cero" />
+                </div>
+              )}
+            </section>
+          )}
+
+          {academyMode && !isAcademyCalledUp && (
+            <p className="rounded-xl border border-border/50 bg-secondary/30 px-3 py-2 text-[0.65rem] font-semibold text-muted-foreground">Sin estadísticas de primer equipo: el jugador todavía no está convocado.</p>
+          )}
 
           <section className="space-y-3">
             <SectionHeading icon={TrendingUp} title="Evolución del jugador" subtitle="Cómo ha cambiado su media durante la partida" />
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <DetailMetric icon={Shield} label="Media inicial" value={String(baseOvr)} />
+              <DetailMetric icon={Shield} label="Media inicial" value={String(displayedBaseOvr)} />
               <DetailMetric icon={TrendingUp} label="Media actual" value={String(dynamicOvr)} accent={ovrDelta >= 0 ? "text-emerald-300" : "text-destructive"} hint={`${ovrDelta >= 0 ? "+" : ""}${ovrDelta} OVR`} />
               {privateMode && <DetailMetric icon={Medal} label="Potencial estimado" value={String(Math.round(potential))} hint="Proyección dinámica, no un techo." />}
               <DetailMetric icon={Star} label="Forma" value={currentForm > 0 ? Number(currentForm).toFixed(1) : "—"} accent="text-primary" />
@@ -582,12 +621,24 @@ export function PlayerDetailDialog({
             {progressionReason && <p className="text-[0.65rem] text-muted-foreground">Última evolución: <span className="font-bold text-foreground">{progressionReason}</span></p>}
           </section>
 
-          <SeasonProgressChart
-            monthlyStats={selectedStats?.dynamicStats?.monthlyStats ?? []}
-            baseOvr={baseOvr}
-            currentOvr={dynamicOvr}
-          />
-          <FormStrip values={selectedStats?.formHistory ?? []} />
+          {academyMode && (
+            <SeasonProgressChart
+              monthlyStats={academyStats?.monthlyStats ?? []}
+              baseOvr={displayedBaseOvr}
+              currentOvr={dynamicOvr}
+            />
+          )}
+          {(!academyMode || isAcademyCalledUp) && (
+            <SeasonProgressChart
+              monthlyStats={selectedStats?.dynamicStats?.monthlyStats ?? []}
+              baseOvr={baseOvr}
+              currentOvr={dynamicOvr}
+            />
+          )}
+          {academyMode ? <FormStrip values={academyStats?.formHistory ?? []} /> : <FormStrip values={selectedStats?.formHistory ?? []} />}
+          {isAcademyCalledUp && (selectedStats?.formHistory?.length ?? 0) > 0 && (
+            <FormStrip values={selectedStats?.formHistory ?? []} />
+          )}
 
           {showMorale && (
             <section className="rounded-xl border border-border/60 bg-card/55 p-4">
@@ -646,7 +697,7 @@ export function PlayerDetailDialog({
                   {onCallUp && <button type="button" onClick={onCallUp} className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black text-blue-300">Convocar</button>}
                   {onUncall && <button type="button" onClick={onUncall} disabled={onUncallDisabled} title={onUncallDisabled ? "Retíralo primero del once/banquillo" : undefined} className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs font-black text-sky-300 disabled:cursor-not-allowed disabled:opacity-40">Desconvocar</button>}
                   {onLoan && <button type="button" onClick={onLoan} disabled={!isMarketOpen} title={!isMarketOpen ? "Mercado cerrado" : undefined} className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-primary disabled:cursor-not-allowed disabled:opacity-40">Buscar cesión</button>}
-                  {onSellAcademy && <button type="button" onClick={onSellAcademy} disabled={!isMarketOpen} title={!isMarketOpen ? "Mercado cerrado" : undefined} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-black text-amber-300 disabled:cursor-not-allowed disabled:opacity-40">Poner en venta</button>}
+                  {onSellAcademy && <button type="button" onClick={onSellAcademy} disabled={!isMarketOpen} title={!isMarketOpen ? "Mercado cerrado" : undefined} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-black text-amber-300 disabled:cursor-not-allowed disabled:opacity-40">{academyStatusLabel === "En venta" ? "Retirar de venta" : "Poner en venta"}</button>}
                   {onRetrain && <button type="button" onClick={onRetrain} className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-300">Reconversión</button>}
                   {onRenewYouth && <button type="button" onClick={onRenewYouth} className="rounded-xl border border-border bg-secondary px-3 py-2 text-xs font-black">Renovar juvenil</button>}
                   {onRelease && <button type="button" onClick={onRelease} className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-black text-rose-300">Liberar</button>}
