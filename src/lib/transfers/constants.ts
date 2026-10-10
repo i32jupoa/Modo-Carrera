@@ -635,8 +635,8 @@ export const BALANCE = {
    * abstienen de salir a comprar.
    */
   dormantClubChance: 0.02,
-  /** Multiplicador de actividad de la ventana de invierno. */
-  winterFactor: 0.18,
+  /** Multiplicador de actividad de la ventana de invierno: activo, pero inferior al verano. */
+  winterFactor: 0.42,
   /**
    * Multiplicador de actividad de la ventana de verano. La pretemporada es,
    * con diferencia, el momento de más movimiento del mercado: se aplica
@@ -660,10 +660,10 @@ export const BALANCE = {
  * de lesiones, y muy pocos traspasos caros.
  */
 export const WINTER_MARKET = {
-  /** Probabilidad diaria de un fichaje permanente no reactivo. */
-  normalSigningChance: 0.018,
-  /** Probabilidad adicional para un club ambicioso cuando ha pasado la primera semana. */
-  interestingSigningChance: 0.022,
+  /** Probabilidad por día activo de un fichaje permanente no reactivo (enero < verano). */
+  normalSigningChance: 0.055,
+  /** Probabilidad adicional para un club ambicioso tras la primera semana. */
+  interestingSigningChance: 0.035,
   /** Ratio máximo de gasto para una compra normal en enero. */
   normalSpendRatio: 0.30,
   /** Ratio máximo de gasto para una reposición reactiva. */

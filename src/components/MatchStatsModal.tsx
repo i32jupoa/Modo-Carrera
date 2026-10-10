@@ -4,6 +4,7 @@ import { MiniPitch } from "@/components/MiniPitch";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 import { teamById, LEAGUES } from "@/data/teams";
+import { resolveMatchTeamColors } from "@/lib/matchPresentation";
 import { usePlayersStore } from "@/store/playersStore";
 import {
   Trophy,
@@ -39,6 +40,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
 
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
+  const matchColors = resolveMatchTeamColors(home, away);
   const result = fixture.result;
   if (!home || !away) return null;
 
@@ -594,14 +596,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${stats.home.possession}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${stats.away.possession}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>
@@ -633,14 +635,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${(stats.home.shots / (stats.home.shots + stats.away.shots)) * 100}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${(stats.away.shots / (stats.home.shots + stats.away.shots)) * 100}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>
@@ -674,14 +676,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${(stats.home.shotsOnTarget / (stats.home.shotsOnTarget + stats.away.shotsOnTarget)) * 100}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${(stats.away.shotsOnTarget / (stats.home.shotsOnTarget + stats.away.shotsOnTarget)) * 100}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>
@@ -713,14 +715,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${(stats.home.corners / (stats.home.corners + stats.away.corners)) * 100}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${(stats.away.corners / (stats.home.corners + stats.away.corners)) * 100}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>
@@ -752,14 +754,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${(stats.home.fouls / (stats.home.fouls + stats.away.fouls)) * 100}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${(stats.away.fouls / (stats.home.fouls + stats.away.fouls)) * 100}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>
@@ -793,14 +795,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${(stats.home.offsides / (stats.home.offsides + stats.away.offsides)) * 100}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${(stats.away.offsides / (stats.home.offsides + stats.away.offsides)) * 100}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>
@@ -834,14 +836,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${stats.home.passAccuracy}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${stats.away.passAccuracy}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>
@@ -873,14 +875,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${(stats.home.saves / (stats.home.saves + stats.away.saves)) * 100}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${(stats.away.saves / (stats.home.saves + stats.away.saves)) * 100}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>
@@ -912,14 +914,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                       className="h-full"
                       style={{
                         width: `${(stats.home.xg / (stats.home.xg + stats.away.xg)) * 100}%`,
-                        backgroundColor: home.color || "#3b82f6",
+                        backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
                         width: `${(stats.away.xg / (stats.home.xg + stats.away.xg)) * 100}%`,
-                        backgroundColor: away.color || "#ef4444",
+                        backgroundColor: matchColors.awayColor,
                       }}
                     />
                   </div>

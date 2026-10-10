@@ -202,7 +202,7 @@ export function detectFixtureFacts(
   }
 
   for (const card of fixture.result.cards ?? []) {
-    if (card.cardType !== "red") continue;
+    if (card.cardType !== "red" && !card.isSecondYellow) continue;
     facts.push({
       id: `suspension:${fixture.id}:${card.playerId}:${card.minute}`,
       date: matchDate(fixture, date),

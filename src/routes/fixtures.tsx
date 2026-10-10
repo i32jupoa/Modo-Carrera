@@ -166,7 +166,11 @@ function FixturesPage() {
       </div>
 
       <div className="panel divide-y divide-border/40">
-        {fixtures.map((f) => {
+        {[...fixtures].sort((a, b) => {
+          const aMine = a.homeId === save.myTeamId || a.awayId === save.myTeamId;
+          const bMine = b.homeId === save.myTeamId || b.awayId === save.myTeamId;
+          return aMine === bMine ? 0 : aMine ? -1 : 1;
+        }).map((f) => {
           const home = teamById(f.homeId);
 
           const away = teamById(f.awayId);
@@ -181,7 +185,7 @@ function FixturesPage() {
           return (
             <div
               key={f.id}
-              className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-3 ${isMine ? "bg-primary/5" : isFocus ? "bg-accent/10 ring-1 ring-inset ring-accent/40" : ""} ${f.result ? "cursor-pointer hover:bg-accent/20 transition" : ""}`}
+              className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-3 ${isMine ? "bg-primary/10 border-l-4 border-primary ring-1 ring-inset ring-primary/20" : isFocus ? "bg-accent/10 ring-1 ring-inset ring-accent/40" : ""} ${f.result ? "cursor-pointer hover:bg-accent/20 transition" : ""}`}
               onClick={() => f.result && setSelectedFixture(f)}
             >
               <div className="flex items-center gap-3 justify-end min-w-0">
@@ -194,7 +198,9 @@ function FixturesPage() {
                 <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={30} />
               </div>
 
-              <div className="scoreline font-bold text-lg min-w-[70px] text-center">
+              <div className="flex min-w-[70px] flex-col items-center text-center">
+                {isMine && <span className="mb-1 rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-primary">Tu partido</span>}
+                <div className="scoreline text-lg font-bold">
                 {f.competition === "cup" ? (
                   formatCupResult(f.result)
                 ) : f.result ? (
@@ -202,6 +208,7 @@ function FixturesPage() {
                 ) : (
                   <span className="text-muted-foreground text-sm font-normal">vs</span>
                 )}
+                </div>
               </div>
 
               <div className="flex items-center gap-3 min-w-0">

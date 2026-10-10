@@ -38,12 +38,14 @@ import { TeamLogo } from "@/components/TeamLogo";
 import {
   MatchEvent,
   CardEvent,
+  isExpulsionCard,
   simulateExtraTime,
   simulatePenaltyShootout,
   type HighlightEvent,
 } from "@/lib/simulation";
 import { accumulateStats, computePlayerRatings, type MatchStats } from "@/lib/matchStats";
 import { MatchStatsPanel } from "@/components/match/MatchStatsPanel";
+import { resolveMatchTeamColors } from "@/lib/matchPresentation";
 import { PlayerRatingsPanel } from "@/components/match/PlayerRatingsPanel";
 import {
   MATCH_TICK_MS,
@@ -115,11 +117,53 @@ function getLeagueName(leagueId: string): string {
 }
 
 const DEFAULT_FORMATION: FormationName = "Táctica 4-4-2";
+type AddedTimePeriod = "firstHalf" | "secondHalf" | "extraFirstHalf" | "extraSecondHalf";
+type StoppageTimes = { firstHalf: number; secondHalf: number; extraFirstHalf: number; extraSecondHalf: number };
 
 function normalizeFormation(value: unknown): FormationName {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(FORMATION_COORDINATES, value)
     ? (value as FormationName)
     : DEFAULT_FORMATION;
+}
+
+function normalizeStoppageTimes(result: any): StoppageTimes {
+  const existing = result?.stoppageTime;
+  const valid = (value: any, fallback: number) => Number.isFinite(Number(value)) && Number(value) >= 1 && Number(value) <= 10
+    ? Math.round(Number(value))
+    : fallback;
+  if (existing && typeof existing === "object") {
+    return {
+      firstHalf: valid(existing.firstHalf, 2),
+      secondHalf: valid(existing.secondHalf, 4),
+      extraFirstHalf: valid(existing.extraFirstHalf, 1),
+      extraSecondHalf: valid(existing.extraSecondHalf, 2),
+    };
+  }
+  const events = Array.isArray(result?.events) ? result.events : [];
+  const cards = Array.isArray(result?.cards) ? result.cards : [];
+  const injuries = Array.isArray(result?.injuries) ? result.injuries : [];
+  const subs = Array.isArray(result?.substitutions) ? result.substitutions : [];
+  const highlights = Array.isArray(result?.highlights) ? result.highlights : [];
+  const etEvents = Array.isArray(result?.extraTime?.events) ? result.extraTime.events : [];
+  const etSubs = Array.isArray(result?.extraTime?.substitutions) ? result.extraTime.substitutions : [];
+  const countBetween = (items: any[], start: number, end: number) => items.filter((x) => Number(x?.minute ?? -1) > start && Number(x?.minute ?? -1) <= end).length;
+  const estimate = (start: number, end: number, extra = false) => {
+    const periodEvents = countBetween(extra ? etEvents : events, start, end);
+    const periodCards = extra ? 0 : countBetween(cards, start, end);
+    const periodInjuries = extra ? 0 : countBetween(injuries, start, end);
+    const periodSubs = countBetween(extra ? etSubs : subs, start, end);
+    const periodVar = extra ? 0 : highlights.filter((x) => Number(x?.minute ?? -1) > start && Number(x?.minute ?? -1) <= end && x?.type === "var_disallowed").length;
+    // Usually 2–4 minutes before incidents; additional delays can push it to 8–10.
+    const base = 2 + Math.floor(Math.random() * 3);
+    const incidentLoad = periodEvents * 0.25 + periodCards * 0.35 + periodInjuries * 1.15 + periodSubs * 0.4 + periodVar * 0.75;
+    return Math.max(1, Math.min(10, base + Math.floor(incidentLoad)));
+  };
+  return {
+    firstHalf: estimate(0, 45),
+    secondHalf: estimate(45, 90),
+    extraFirstHalf: estimate(90, 105, true),
+    extraSecondHalf: estimate(105, 120, true),
+  };
 }
 
 export const Route = createFileRoute("/match")({ component: MatchPage });
@@ -283,6 +327,10 @@ function MatchPage() {
     source?: any;
   } | null>(null);
   const clockRunIdRef = useRef(0);
+  const [clockLabelOverride, setClockLabelOverride] = useState<string | null>(null);
+  const stoppageTimesRef = useRef<StoppageTimes>({ firstHalf: 1, secondHalf: 2, extraFirstHalf: 1, extraSecondHalf: 2 });
+  const stoppagePeriodRef = useRef<AddedTimePeriod | null>(null);
+  const stoppageElapsedRef = useRef(0);
   const outcomeBiasRef = useRef(0);
 
   // ---- live match control (pause / subs / stamina) ----
@@ -411,9 +459,15 @@ function MatchPage() {
       if (!fx) return;
 
       const restoredResult = normalizeLiveResult(st.result ?? fx.result ?? {});
-      const safeLineup = normalizeLiveArray(st.lineup)
-        .map((id: any) => String(id))
-        .filter(Boolean)
+      restoredResult.stoppageTime = normalizeStoppageTimes(restoredResult);
+      stoppageTimesRef.current = restoredResult.stoppageTime;
+      const storedStoppagePeriod = ["firstHalf", "secondHalf", "extraFirstHalf", "extraSecondHalf"].includes(String((st as any).stoppagePeriod))
+        ? (String((st as any).stoppagePeriod) as AddedTimePeriod)
+        : null;
+      stoppagePeriodRef.current = storedStoppagePeriod;
+      stoppageElapsedRef.current = Math.max(0, Number((st as any).stoppageElapsed) || 0);
+      const safeLineup = (Array.isArray(st.lineup) ? st.lineup : [])
+        .map((id: any) => String(id ?? ""))
         .slice(0, 11);
       const savedXI = normalizeLiveArray(s.lineups?.[s.myTeamId])
         .map((id: any) => String(id))
@@ -438,7 +492,7 @@ function MatchPage() {
       const safePlayedEvents = normalizeLiveArray((st as any).playedEvents);
       const safePlayedCards = normalizeLiveArray((st as any).playedCards);
       const safePlayedHighlights = normalizeLiveArray((st as any).playedHighlights);
-      const safeOpponentXI = normalizeLiveArray((st as any).opponentXI);
+      const safeOpponentXI = Array.isArray((st as any).opponentXI) ? (st as any).opponentXI.slice(0, 11) : [];
       const safeOpponentBench = normalizeLiveArray((st as any).opponentBench);
       const safeOpponentPlan = normalizeLiveArray((st as any).opponentPlan)
         .map((p: any) => ({
@@ -729,7 +783,8 @@ function MatchPage() {
     // ref instead of introducing a second timer lifecycle.
     clockTimeoutRef.current = window.setTimeout(() => {
       if (pausedRef.current || !resumeLive) return;
-      if (pending.isExtraTime) runExtraTimeClock(pending.minute);
+      if (stoppagePeriodRef.current) runAddedTimeTicks(stoppagePeriodRef.current, stoppageElapsedRef.current);
+      else if (pending.isExtraTime) runExtraTimeClock(pending.minute);
       else runClock(pending.minute);
     }, 0);
   }, [resumeLive, resumeClockPending, save]);
@@ -750,7 +805,7 @@ function MatchPage() {
     }
 
     for (const card of result.cards || []) {
-      if (card.cardType === "red" && card.team === myTeam) {
+      if (isExpulsionCard(card) && card.team === myTeam) {
         const susp = getSuspensionForPlayer(
           save,
           myTeamId,
@@ -920,7 +975,7 @@ function MatchPage() {
     // additional simulation allowance automatically.
     const userId = myTeamIdRef.current || save.myTeamId;
     const userIsHome = fixture.homeId === userId;
-    const homeXI = userIsHome ? (myXIRef.current.length ? myXIRef.current.map((id) => playerById(id)).filter(Boolean) : getSimSquad(fixture.homeId)) : oppXIRef.current;
+    const homeXI = userIsHome ? (myXIRef.current.length ? myXIRef.current.map((id) => id ? playerById(id) : null).filter(Boolean) : getSimSquad(fixture.homeId)) : oppXIRef.current;
     const awayXI = userIsHome ? oppXIRef.current : (myXIRef.current.length ? myXIRef.current.map((id) => playerById(id)).filter(Boolean) : getSimSquad(fixture.awayId));
     const homeBench = userIsHome
       ? []
@@ -1026,7 +1081,8 @@ function MatchPage() {
       }
 
       // Check for events at this minute
-      const eventsAtMinute = extraTimeEventsRef.current.filter((e) => e.minute === m);
+      const etBoundaryLabel = m === 105 ? "105+1'" : m === 120 ? "120+1'" : undefined;
+      const eventsAtMinute = extraTimeEventsRef.current.filter((e) => e.minute === m).map((event: any) => etBoundaryLabel ? { ...event, displayMinuteLabel: etBoundaryLabel } : event);
       if (eventsAtMinute.length > 0) {
         setFeed((prev) => [...prev, ...eventsAtMinute]);
 
@@ -1053,22 +1109,17 @@ function MatchPage() {
 
       if (m < 120) {
         if (m === 105 && !etHalftimeDoneRef.current) {
-          etHalftimeDoneRef.current = true;
-          showHalftimeMoment(true);
+          runAddedTimeTicks("extraFirstHalf");
           return;
         }
         scheduleEt();
       } else {
-        // Extra time finished - clear timeout
+        // The extra-time second half also receives its own added-time ticks.
         if (clockTimeoutRef.current !== null) {
           window.clearTimeout(clockTimeoutRef.current);
           clockTimeoutRef.current = null;
         }
-        console.log(`Clock reached 120, calling handleExtraTimeFinished`);
-        console.log(
-          `Current state: homeScore=${homeScore}, awayScore=${awayScore}, extraTimeHomeScore=${extraTimeHomeScore}, extraTimeAwayScore=${extraTimeAwayScore}`,
-        );
-        handleExtraTimeFinished();
+        runAddedTimeTicks("extraSecondHalf");
       }
     };
 
@@ -1132,17 +1183,19 @@ function MatchPage() {
     const userIsHome = fixture.homeId === userId;
     const homeXI = userIsHome
       ? (myXIRef.current.length ? myXIRef.current.map((id) => playerById(id)).filter(Boolean) : getSimSquad(fixture.homeId))
-      : oppXIRef.current;
+      : oppXIRef.current.filter(Boolean);
     const awayXI = userIsHome
-      ? oppXIRef.current
-      : (myXIRef.current.length ? myXIRef.current.map((id) => playerById(id)).filter(Boolean) : getSimSquad(fixture.awayId));
+      ? oppXIRef.current.filter(Boolean)
+      : (myXIRef.current.length ? myXIRef.current.map((id) => id ? playerById(id) : null).filter(Boolean) : getSimSquad(fixture.awayId));
 
     // Store XIs in refs for use in skipPenaltyShootoutToEnd
     homeXIRef.current = homeXI as any[];
     awayXIRef.current = awayXI as any[];
 
     // Simulate penalty shootout data
-    const penaltyResult = simulatePenaltyShootout(homeXI, awayXI);
+    const penaltyResult = simulatePenaltyShootout(homeXI, awayXI, {
+      injuries: fixture.result?.injuries ?? [],
+    });
     setPenaltyShootoutData(penaltyResult.shootout);
     setPenaltyShootoutIndex(0);
 
@@ -1252,10 +1305,10 @@ function MatchPage() {
       let found = null;
       if (isEuropeanFixture(fixture)) {
         found = findFixtureInEuropeanCompetitions(s, fixture.id);
-        if (found) { fixtureRef.current = found; console.log("Reloaded European fixture with result after penalties:", found.result); }
+
       } else if (matchType === "UCL" && s.uclFixtures) {
         found = s.uclFixtures.find((f) => f.id === fixture.id);
-        if (found) { fixtureRef.current = found; console.log("Reloaded UCL fixture with result after penalties:", found.result); }
+
       }
       // If not found in UCL, check cup fixtures
       if (!found) {
@@ -1264,7 +1317,7 @@ function MatchPage() {
           found = fixtures.find((f) => f.id === fixture.id);
           if (found) {
             fixtureRef.current = found;
-            console.log("Reloaded cup fixture with result after penalties:", found.result);
+
             break;
           }
         }
@@ -1327,10 +1380,10 @@ function MatchPage() {
       let found = null;
       if (isEuropeanFixture(fixture)) {
         found = findFixtureInEuropeanCompetitions(s, fixture.id);
-        if (found) { fixtureRef.current = found; console.log("Reloaded European fixture with result:", found.result); }
+
       } else if (matchType === "UCL" && s.uclFixtures) {
         found = s.uclFixtures.find((f) => f.id === fixture.id);
-        if (found) { fixtureRef.current = found; console.log("Reloaded UCL fixture with result:", found.result); }
+
       }
       // If not found in UCL, check cup fixtures
       if (!found) {
@@ -1339,7 +1392,7 @@ function MatchPage() {
           found = fixtures.find((f) => f.id === fixture.id);
           if (found) {
             fixtureRef.current = found;
-            console.log("Reloaded cup fixture with result:", found.result);
+
             break;
           }
         }
@@ -1473,10 +1526,6 @@ function MatchPage() {
     penaltyData?: { homeGoals: number; awayGoals: number },
     isUCL: boolean = false,
   ) {
-    console.log(
-      `updateFixtureInStore called: fixtureId=${fixtureId}, homeScore=${homeScore}, awayScore=${awayScore}, isCup=${isCup}, isUCL=${isUCL}, extraTimeData=${JSON.stringify(extraTimeData)}, penaltyData=${JSON.stringify(penaltyData)}`,
-    );
-
     // One authoritative substitution list for the whole match. Extra-time
     // changes are merged into the top-level list as well as stored inside
     // result.extraTime, so every competition (Copa/UCL/UEL/UECL) can render
@@ -1533,7 +1582,7 @@ function MatchPage() {
             substitutions: result.substitutions,
             extraTime: result.extraTime,
           });
-          console.log("Adding extraTime to result:", result.extraTime);
+
         }
 
         if (penaltyData) {
@@ -1542,10 +1591,10 @@ function MatchPage() {
             awayGoals: penaltyData.awayGoals,
             shootout: penaltyShootoutData,
           };
-          console.log("Adding penalties to result:", result.penalties);
+
         }
 
-        console.log("Final result to save:", result);
+
         commitLiveInjuriesToPlayersStore(fx, result);
 
         const updated = fixtureList.map((f) => (f.id === fixtureId ? { ...f, result, europeanCompetition: europeanCompetition ?? f.europeanCompetition } : f));
@@ -1602,7 +1651,7 @@ function MatchPage() {
             substitutions: result.substitutions,
             extraTime: result.extraTime,
           });
-          console.log("Adding extraTime to result:", result.extraTime);
+
         }
 
         if (penaltyData) {
@@ -1611,10 +1660,10 @@ function MatchPage() {
             awayGoals: penaltyData.awayGoals,
             shootout: penaltyShootoutData,
           };
-          console.log("Adding penalties to result:", result.penalties);
+
         }
 
-        console.log("Final result to save:", result);
+
         commitLiveInjuriesToPlayersStore(cupFx, result);
 
         // Find the fixture to determine which league it belongs to
@@ -1713,7 +1762,7 @@ function MatchPage() {
 
       // If fixture has a result, load it into the UI
       if (foundFixture?.result) {
-        console.log("Loading fixture with result:", foundFixture.result);
+
         console.log("Has extraTime:", !!foundFixture.result.extraTime);
         console.log("Has penalties:", !!foundFixture.result.penalties);
 
@@ -1743,7 +1792,7 @@ function MatchPage() {
 
         // Load extra time data if present
         if (foundFixture.result.extraTime) {
-          console.log("Loading extra time data:", foundFixture.result.extraTime);
+
           setExtraTimeHomeScore(foundFixture.result.extraTime.homeGoals);
           setExtraTimeAwayScore(foundFixture.result.extraTime.awayGoals);
           extraTimeHomeScoreRef.current = foundFixture.result.extraTime.homeGoals;
@@ -1754,7 +1803,7 @@ function MatchPage() {
 
         // Load penalty data if present
         if (foundFixture.result.penalties) {
-          console.log("Loading penalty data:", foundFixture.result.penalties);
+
           setPenaltyHomeScore(foundFixture.result.penalties.homeGoals);
           setPenaltyAwayScore(foundFixture.result.penalties.awayGoals);
           setPenaltyShootoutData(foundFixture.result.penalties.shootout || []);
@@ -1839,6 +1888,11 @@ function MatchPage() {
     );
 
     if (!fixture || !fixture.result) return;
+    fixture.result.stoppageTime = normalizeStoppageTimes(fixture.result);
+    stoppageTimesRef.current = fixture.result.stoppageTime;
+    stoppagePeriodRef.current = null;
+    stoppageElapsedRef.current = 0;
+    setClockLabelOverride(null);
     allEventsRef.current = fixture.result.events;
     allCardsRef.current = fixture.result.cards || [];
     allHighlightsRef.current = fixture.result.highlights || [];
@@ -2243,6 +2297,9 @@ function MatchPage() {
       homeScore: homeScoreRef.current,
       awayScore: awayScoreRef.current,
       result: fx.result,
+      stoppageTime: stoppageTimesRef.current,
+      stoppagePeriod: stoppagePeriodRef.current,
+      stoppageElapsed: stoppageElapsedRef.current,
       feed: [],
       cardFeed: [],
       highlightFeed: [],
@@ -2304,6 +2361,7 @@ function MatchPage() {
   function restartLiveClock() {
     const startMinute = minuteRef.current;
     const extraTime = isExtraTimeRef.current;
+    const addedPeriod = stoppagePeriodRef.current;
     if (clockTimeoutRef.current !== null) {
       window.clearTimeout(clockTimeoutRef.current);
       clockTimeoutRef.current = null;
@@ -2313,7 +2371,8 @@ function MatchPage() {
     // timer and leaving the live match apparently frozen.
     window.setTimeout(() => {
       if (pausedRef.current) return;
-      if (extraTime) runExtraTimeClock(startMinute);
+      if (addedPeriod) runAddedTimeTicks(addedPeriod, stoppageElapsedRef.current);
+      else if (extraTime) runExtraTimeClock(startMinute);
       else runClock(startMinute);
     }, 0);
   }
@@ -2541,14 +2600,14 @@ function MatchPage() {
   /** Same idea for cards: nobody off the pitch can be booked. */
   function remapCardToPitch(c: any) {
     const fx = fixtureRef.current;
-    if (!fx || !c) return c;
+    if (!fx || !c) return null;
     const pool = c.team === mySideOf(fx) ? myOnPitchPlayers() : oppXIRef.current;
-    if (!pool || pool.length === 0) return { ...c };
-    const activePool = pool.filter(Boolean);
-    const onPitch = new Set(activePool.map((p: any) => p.id));
-    if (onPitch.has(c.playerId)) return { ...c };
-    const repl = pickCredit(activePool);
-    return repl ? { ...c, playerId: repl.id, playerName: repl.name } : { ...c };
+    const activePool = (pool || []).filter(Boolean);
+    // A card belongs to the footballer who committed the offence. If a manual
+    // substitution means he's no longer on the pitch, discard the stale event;
+    // never transfer that yellow/red (especially a second-yellow red) to a
+    // different player just to keep the timeline visually full.
+    return activePool.some((player: any) => player.id === c.playerId) ? { ...c } : null;
   }
 
   /** Real substitutions of the match: mine plus the rival ones already shown. */
@@ -2777,7 +2836,7 @@ function MatchPage() {
       }
 
       for (const card of result.cards ?? []) {
-        if (card.team !== side || card.cardType !== "red") continue;
+        if (card.team !== side || !isExpulsionCard(card)) continue;
         if (onPitch.has(card.playerId)) {
           addInterval(card.playerId, Number(card.minute) || 0);
           onPitch.delete(card.playerId);
@@ -3123,15 +3182,14 @@ function MatchPage() {
     const oppSide = fx.homeId === myId ? "away" : "home";
     const alreadyDone = new Set(
       oppSubsDoneRef.current.map(
-        (s: any) => `${s.minute}|${s.outId ?? s.playerOutId}|${s.inId ?? s.playerInId}`,
+        (sub: any) => `${sub.minute}|${sub.outId ?? sub.playerOutId}|${sub.inId ?? sub.playerInId}`,
       ),
     );
+    // An opponent's injury always removes that player from the pitch. If the
+    // precomputed result has a legal replacement, use it; otherwise leave a
+    // real empty slot instead of letting the injured player keep playing.
     const injuries = (fx.result.injuries || []).filter(
-      (injury: any) =>
-        injury?.team === oppSide &&
-        Number(injury?.minute ?? -1) === m &&
-        injury?.forcedSub &&
-        injury?.replacementId,
+      (injury: any) => injury?.team === oppSide && Number(injury?.minute ?? -1) === m,
     );
     if (injuries.length === 0) return;
 
@@ -3140,32 +3198,27 @@ function MatchPage() {
     const made: any[] = [];
 
     for (const injury of injuries) {
-      const replacementId = String(injury.replacementId);
-      const key = `${m}|${injury.playerId}|${replacementId}`;
-      if (alreadyDone.has(key)) continue;
-
-      const outIndex = xi.findIndex((p: any) => p?.id === injury.playerId);
+      const outIndex = xi.findIndex((player: any) => player?.id === injury.playerId);
       if (outIndex < 0) continue;
-
-      const incoming =
-        bench.find((p: any) => p?.id === replacementId) ??
-        bench.find((p: any) => p && !isGkPlayer(p));
-      if (!incoming) continue;
-
       const outgoing = xi[outIndex];
+      const replacementId = injury?.replacementId ? String(injury.replacementId) : "";
+      const key = `${m}|${injury.playerId}|${replacementId}`;
+      if (replacementId && alreadyDone.has(key)) continue;
+      const incoming = injury.forcedSub && replacementId
+        ? (bench.find((player: any) => player?.id === replacementId) ?? bench.find((player: any) => player && !isGkPlayer(player)))
+        : null;
+
+      if (!incoming) {
+        xi[outIndex] = null;
+        oppPlanRef.current = oppPlanRef.current.filter((plan) => plan.outId !== injury.playerId);
+        continue;
+      }
+
       xi[outIndex] = incoming;
-      bench = bench.filter((p: any) => p?.id !== incoming.id);
-
-      // A forced replacement owns that bench player. Prevent a legacy/future
-      // tactical plan from trying to use the same player or the injured player.
+      bench = bench.filter((player: any) => player?.id !== incoming.id);
       oppPlanRef.current = oppPlanRef.current.filter(
-        (plan) =>
-          !(
-            plan.minute > m &&
-            (plan.inId === incoming.id || plan.outId === injury.playerId)
-          ),
+        (plan) => !(plan.minute > m && (plan.inId === incoming.id || plan.outId === injury.playerId)),
       );
-
       made.push({
         minute: m,
         team: oppSide,
@@ -3177,9 +3230,11 @@ function MatchPage() {
       });
     }
 
-    if (made.length === 0) return;
+    // Persist XI changes even when no replacement was available and the lineup
+    // therefore has no substitution row to add to the chronicle.
     oppXIRef.current = xi;
     oppBenchRef.current = bench;
+    if (made.length === 0) return;
     oppSubsDoneRef.current = [...oppSubsDoneRef.current, ...made];
     setSubFeed((prev) => [...made.slice().reverse(), ...prev]);
   }
@@ -3196,7 +3251,7 @@ function MatchPage() {
     const oppSide = fx.homeId === myId ? "away" : "home";
     const redIds = new Set(
       (fx.result?.cards || [])
-        .filter((c: any) => c.team === oppSide && (c.cardType === "red" || c.isSecondYellow) && Number(c.minute ?? 0) <= m)
+        .filter((c: any) => c.team === oppSide && isExpulsionCard(c) && Number(c.minute ?? 0) <= m)
         .map((c: any) => c.playerId),
     );
     const due = oppPlanRef.current.filter(
@@ -3322,20 +3377,28 @@ function MatchPage() {
 
       pendingSceneRef.current = null;
       setLiveMoment(null);
-      if (scene.source?.nextHalftime) {
-        if (scene.source.extraTime) {
-          showHalftimeMoment(true);
-        } else {
-          showHalftimeMoment(false);
-        }
+      const myRedCardAtMinute = playedCardsRef.current.some((card: any) =>
+        card.team === mySideOf(fixtureRef.current) && Number(card.minute ?? -1) === currentMinute &&
+        isExpulsionCard(card),
+      );
+      if (myRedCardAtMinute) {
+        goEditLineupLive();
+        return;
+      }
+      if (scene.source?.nextHalftime || (currentMinute === 45 && !isExtraTimeRef.current)) {
+        runAddedTimeTicks("firstHalf");
         return;
       }
       if (currentMinute >= 90 && !isExtraTimeRef.current) {
-        finishRegularLiveMatch();
+        runAddedTimeTicks("secondHalf");
+        return;
+      }
+      if (currentMinute === 105 && isExtraTimeRef.current && !etHalftimeDoneRef.current) {
+        runAddedTimeTicks("extraFirstHalf");
         return;
       }
       if (currentMinute >= 120 && isExtraTimeRef.current) {
-        handleExtraTimeFinished();
+        runAddedTimeTicks("extraSecondHalf");
         return;
       }
       pausedRef.current = false;
@@ -3419,19 +3482,19 @@ function MatchPage() {
       setLiveMoment(null);
       if (currentMinute === 45 && !isExtraTimeRef.current) {
         halftimePendingAfterMomentRef.current = false;
-        showHalftimeMoment(false);
+        runAddedTimeTicks("firstHalf");
         return;
       }
       if (currentMinute >= 90 && !isExtraTimeRef.current) {
-        finishRegularLiveMatch();
+        runAddedTimeTicks("secondHalf");
         return;
       }
-      if (currentMinute === 105 && isExtraTimeRef.current) {
-        showHalftimeMoment(true);
+      if (currentMinute === 105 && isExtraTimeRef.current && !etHalftimeDoneRef.current) {
+        runAddedTimeTicks("extraFirstHalf");
         return;
       }
       if (currentMinute >= 120 && isExtraTimeRef.current) {
-        handleExtraTimeFinished();
+        runAddedTimeTicks("extraSecondHalf");
         return;
       }
       pausedRef.current = false;
@@ -3464,11 +3527,11 @@ function MatchPage() {
         return;
       }
       if (currentMinute >= 90 && !isExtraTimeRef.current) {
-        finishRegularLiveMatch();
+        runAddedTimeTicks("secondHalf");
         return;
       }
       if (currentMinute === 45 && !isExtraTimeRef.current) {
-        showHalftimeMoment(false);
+        runAddedTimeTicks("firstHalf");
         return;
       }
       pausedRef.current = false;
@@ -3577,13 +3640,20 @@ function MatchPage() {
     }
 
     if (currentMinute >= 90 && !isExtraTimeRef.current) {
-      finishRegularLiveMatch();
+      runAddedTimeTicks("secondHalf");
       return;
     }
-
-    if (halftimePendingAfterMomentRef.current && currentMinute === 45) {
+    if (currentMinute === 45 && !isExtraTimeRef.current && !wasUserInjury && !wasOpponentInjury) {
       halftimePendingAfterMomentRef.current = false;
-      pauseMatch("halftime");
+      runAddedTimeTicks("firstHalf");
+      return;
+    }
+    if (currentMinute === 105 && isExtraTimeRef.current && !etHalftimeDoneRef.current) {
+      runAddedTimeTicks("extraFirstHalf");
+      return;
+    }
+    if (currentMinute >= 120 && isExtraTimeRef.current) {
+      runAddedTimeTicks("extraSecondHalf");
       return;
     }
 
@@ -3654,20 +3724,34 @@ function MatchPage() {
   function getCurrentPitchPlayers(team: "home" | "away") {
     const fx = fixtureRef.current;
     const myId = myTeamIdRef.current || save?.myTeamId;
+    let players: any[];
     if (fx?.homeId === myId) {
-      return team === "home"
+      players = team === "home"
+        ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
+        : (oppXIRef.current || []).filter(Boolean);
+    } else if (fx?.awayId === myId) {
+      players = team === "away"
+        ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
+        : (oppXIRef.current || []).filter(Boolean);
+    } else {
+      // Defensive fallback for older saves without a consistent myTeamId.
+      players = team === mySideOf(fx)
         ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
         : (oppXIRef.current || []).filter(Boolean);
     }
-    if (fx?.awayId === myId) {
-      return team === "away"
-        ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
-        : (oppXIRef.current || []).filter(Boolean);
-    }
-    // Fallback defensivo para partidas antiguas sin myTeamId consistente.
-    return team === mySideOf(fx)
-      ? myXIRef.current.map((id) => playerById(id)).filter(Boolean)
-      : (oppXIRef.current || []).filter(Boolean);
+
+    // Older live snapshots may contain a stale player in the XI after an injury.
+    // The injury report is match-specific; any injured player is ineligible for
+    // an in-play penalty and the shootout, even if a legacy snapshot is stale.
+    const injuredIds = new Set(
+      (fx?.result?.injuries ?? [])
+        .filter((injury: any) =>
+          injury.team === team && injury.playerId &&
+          Number(injury.minute ?? 60) <= Number(minuteRef.current ?? 0),
+        )
+        .map((injury: any) => String(injury.playerId)),
+    );
+    return players.filter((player: any) => player?.id && !injuredIds.has(String(player.id)));
   }
 
   function openInteractivePenaltyModal(source: any) {
@@ -3997,11 +4081,11 @@ function MatchPage() {
     pendingSceneRef.current = null;
     const currentMinute = minuteRef.current;
     if (currentMinute >= 90 && !isExtraTimeRef.current) {
-      finishRegularLiveMatch();
+      runAddedTimeTicks("secondHalf");
       return;
     }
     if (currentMinute === 45 && !isExtraTimeRef.current) {
-      showHalftimeMoment(false);
+      runAddedTimeTicks("firstHalf");
       return;
     }
     pausedRef.current = false;
@@ -4151,8 +4235,13 @@ function MatchPage() {
       deferredOpponentSubMinutesRef.current.add(m);
     }
 
-    const events = rawEvents.map(remapEventToPitch);
-    const cards = rawCards.map(remapCardToPitch);
+    const boundaryLabel = m === 45 ? "45+1'" : m === 90 ? "90+1'" : m === 105 ? "105+1'" : m === 120 ? "120+1'" : undefined;
+    const withBoundaryLabel = (item: any) => boundaryLabel ? { ...item, displayMinuteLabel: boundaryLabel } : item;
+    const events = rawEvents.map((event) => withBoundaryLabel(remapEventToPitch(event)));
+    const cards = rawCards
+      .map((card) => remapCardToPitch(card))
+      .filter(Boolean)
+      .map((card) => withBoundaryLabel(card));
     const hls = rawHighlights
       .filter((h: any) => {
         if (h.type === "penalty_missed") return false;
@@ -4160,7 +4249,7 @@ function MatchPage() {
         if (h.type === "forced_sub" && hasOpponentInjury && h.team === opponentSide) return false;
         return h.type !== "forced_sub";
       })
-      .map(remapHighlightToPitch);
+      .map((highlight) => withBoundaryLabel(remapHighlightToPitch(highlight)));
 
     if (hls.length > 0) {
       playedHighlightsRef.current = [...playedHighlightsRef.current, ...hls];
@@ -4188,7 +4277,7 @@ function MatchPage() {
       for (const c of cards) {
         if (
           c.team === mySide &&
-          (c.cardType === "red" || c.isSecondYellow) &&
+          isExpulsionCard(c) &&
           myXIRef.current.includes(c.playerId)
         ) {
           // A red card removes the player immediately, but the vacant formation
@@ -4201,7 +4290,7 @@ function MatchPage() {
     // Rival red cards remove the player from the minimap immediately, while
     // preserving his original formation slot as an actual empty space.
     for (const c of cards) {
-      if (c.team !== opponentSide || !(c.cardType === "red" || c.isSecondYellow)) continue;
+      if (c.team !== opponentSide || !isExpulsionCard(c)) continue;
       const idx = oppXIRef.current.findIndex((p: any) => p?.id === c.playerId);
       if (idx >= 0) oppXIRef.current[idx] = null;
       oppPlanRef.current = oppPlanRef.current.filter((plan: any) => plan.outId !== c.playerId);
@@ -4812,6 +4901,58 @@ function MatchPage() {
     return true;
   }
 
+  function completeAddedTimePeriod(period: AddedTimePeriod) {
+    stoppagePeriodRef.current = null;
+    stoppageElapsedRef.current = 0;
+    setClockLabelOverride(null);
+    persistLive();
+    if (period === "firstHalf") {
+      halftimeDoneRef.current = true;
+      showHalftimeMoment(false);
+    } else if (period === "secondHalf") {
+      finishRegularLiveMatch();
+    } else if (period === "extraFirstHalf") {
+      etHalftimeDoneRef.current = true;
+      showHalftimeMoment(true);
+    } else {
+      handleExtraTimeFinished();
+    }
+  }
+
+  /** Simulates stoppage ticks at the period boundary and persists the clock. */
+  function runAddedTimeTicks(period: AddedTimePeriod, alreadyElapsed = 0) {
+    const total = Math.max(1, Math.min(10, Number(stoppageTimesRef.current[period]) || 1));
+    const baseMinute = period === "firstHalf" ? 45 : period === "secondHalf" ? 90 : period === "extraFirstHalf" ? 105 : 120;
+    let elapsed = Math.max(0, Math.min(total, Math.floor(alreadyElapsed)));
+    stoppagePeriodRef.current = period;
+    stoppageElapsedRef.current = elapsed;
+    const runId = ++clockRunIdRef.current;
+
+    const schedule = () => {
+      if (pausedRef.current || runId !== clockRunIdRef.current) return;
+      clockTimeoutRef.current = window.setTimeout(tick, tickMs());
+    };
+    const tick = () => {
+      if (pausedRef.current || runId !== clockRunIdRef.current) return;
+      elapsed += 1;
+      stoppageElapsedRef.current = elapsed;
+      setClockLabelOverride(`${baseMinute}+${elapsed}'`);
+      persistLive();
+      if (elapsed >= total) {
+        completeAddedTimePeriod(period);
+        return;
+      }
+      schedule();
+    };
+
+    setClockLabelOverride(elapsed > 0 ? `${baseMinute}+${elapsed}'` : `${baseMinute}'`);
+    if (elapsed >= total) {
+      completeAddedTimePeriod(period);
+      return;
+    }
+    schedule();
+  }
+
   function finishRegularLiveMatch() {
     if (finishScheduledRef.current) return;
     clockRunIdRef.current += 1;
@@ -4860,24 +5001,6 @@ function MatchPage() {
           moment: buildCardMoment(yellow),
           emergency: true,
           isCard: true,
-        };
-      }
-
-      if (minute === 45 && !halftimeDoneRef.current) {
-        return {
-          moment: {
-            id: `halftime-${minute}-${homeScoreRef.current}-${awayScoreRef.current}`,
-            type: "halftime",
-            minute,
-            kicker: "⏸️ Descanso",
-            title: "DESCANSO",
-            body: `${home.name} ${homeScoreRef.current}-${awayScoreRef.current} ${away.name}.`,
-            emoji: "⏸️",
-            hardPause: true,
-            teamName: `${home.name} vs ${away.name}`,
-          },
-          emergency: true,
-          isHalftime: true,
         };
       }
 
@@ -5043,15 +5166,14 @@ function MatchPage() {
       if (checkInjuriesAt(m)) return;
 
       if (m === 45 && !halftimeDoneRef.current) {
-        halftimeDoneRef.current = true;
-        showHalftimeMoment(false);
+        runAddedTimeTicks("firstHalf");
         return;
       }
 
       if (pausedRef.current) return;
 
       if (m >= 90) {
-        finishRegularLiveMatch();
+        runAddedTimeTicks("secondHalf");
         return;
       }
 
@@ -5892,11 +6014,11 @@ function MatchPage() {
     const liveIds = phase !== "preview" && myXI.length > 0 ? myXI : null;
     const homeLineupIdsRaw = liveIds || matchLineup || savedLineups[fixture.homeId] || [];
     const homeLineupIds = Array.isArray(homeLineupIdsRaw) ? homeLineupIdsRaw : [];
-    homeLineup = homeLineupIds.map((id) => homeSquad.find((p) => p.id === id)).filter(Boolean);
+    homeLineup = homeLineupIds.slice(0, 11).map((id) => (id ? homeSquad.find((p) => p.id === id) ?? null : null));
     if (homeLineup.length < 11 && phase !== "preview") {
       const storedHome = normalizeLiveArray(fixture.result?.homeLineup);
       if (storedHome.length > 0) {
-        homeLineup = storedHome.map((p: any) => (typeof p === "string" ? playerById(p) : p)).filter(Boolean).slice(0, 11);
+        homeLineup = storedHome.slice(0, 11).map((p: any) => (typeof p === "string" ? (p ? playerById(p) ?? null : null) : p ?? null));
       }
     }
     homeFormation =
@@ -5919,11 +6041,11 @@ function MatchPage() {
     const liveIdsAway = phase !== "preview" && myXI.length > 0 ? myXI : null;
     const awayLineupIdsRaw = liveIdsAway || matchLineup || savedLineups[fixture.awayId] || [];
     const awayLineupIds = Array.isArray(awayLineupIdsRaw) ? awayLineupIdsRaw : [];
-    awayLineup = awayLineupIds.map((id) => awaySquad.find((p) => p.id === id)).filter(Boolean);
+    awayLineup = awayLineupIds.slice(0, 11).map((id) => (id ? awaySquad.find((p) => p.id === id) ?? null : null));
     if (awayLineup.length < 11 && phase !== "preview") {
       const storedAway = normalizeLiveArray(fixture.result?.awayLineup);
       if (storedAway.length > 0) {
-        awayLineup = storedAway.map((p: any) => (typeof p === "string" ? playerById(p) : p)).filter(Boolean).slice(0, 11);
+        awayLineup = storedAway.slice(0, 11).map((p: any) => (typeof p === "string" ? (p ? playerById(p) ?? null : null) : p ?? null));
       }
     }
     awayFormation =
@@ -5975,14 +6097,40 @@ function MatchPage() {
           ? `Champions League · Jornada ${fixture.matchday}`
           : `Liga · Jornada ${fixture.matchday}`;
 
+  const getVacantSlots = (side: "home" | "away", lineup: any[]): Record<number, "injury" | "red"> => {
+    const result: Record<number, "injury" | "red"> = {};
+    const isUserSide = side === mySideOf(fixture);
+    const initialRaw = isUserSide && initialMyXIRef.current.length
+      ? initialMyXIRef.current
+      : (side === "home" ? fixture.result?.homeStartingLineup ?? fixture.result?.homeLineup : fixture.result?.awayStartingLineup ?? fixture.result?.awayLineup);
+    const initialIds = Array.isArray(initialRaw)
+      ? initialRaw.map((entry: any) => (typeof entry === "string" ? entry : entry?.id ?? "")).slice(0, 11)
+      : [];
+    for (let index = 0; index < lineup.length; index++) {
+      if (lineup[index]) continue;
+      const initialId = String(initialIds[index] ?? "");
+      const redInUserSlot = isUserSide && Object.values(goneSlotIndexesRef.current).some((slot) => Number(slot) === index);
+      const redAlreadyPlayed = playedCardsRef.current.some((card: any) =>
+        card.team === side && Number(card.minute ?? 0) <= minute &&
+        isExpulsionCard(card) && (!initialId || card.playerId === initialId),
+      );
+      if (redInUserSlot || redAlreadyPlayed) {
+        result[index] = "red";
+        continue;
+      }
+      const injuryAlreadyOccurred = injuries.some((injury: any) =>
+        injury.team === side && Number(injury.minute ?? 60) <= minute && (!initialId || injury.playerId === initialId),
+      );
+      const pendingInjurySlot = isUserSide && Object.entries(pendingForcedInjurySlotsRef.current).some(([id, slot]) =>
+        Number(slot) === index && Number(injuries.find((x: any) => x.playerId === id)?.minute ?? 60) <= minute,
+      );
+      if (injuryAlreadyOccurred || pendingInjurySlot) result[index] = "injury";
+    }
+    return result;
+  };
+
   const liveMinuteLabel =
-    phase === "preview"
-      ? "00'"
-      : phase === "penalties"
-        ? "PEN"
-        : phase === "done"
-          ? "FINAL"
-          : `${minute}'`;
+    phase === "preview" ? "00'" : phase === "penalties" ? "PEN" : phase === "done" ? "FINAL" : (clockLabelOverride ?? `${minute}'`);
 
   return (
     <div
@@ -6055,6 +6203,9 @@ function MatchPage() {
                   mvp={phase === "done" ? fixture.result?.mvp?.playerId : undefined}
                   substitutions={subFeed.filter((s: any) => s.team === "home")}
                   injuries={injuries}
+                  currentMinute={minute}
+                  revealAllInjuries={phase === "done"}
+                  vacantSlots={getVacantSlots("home", homeLineup)}
                   stamina={isHome ? stamina : {}}
                 />
               </div>
@@ -6107,6 +6258,9 @@ function MatchPage() {
                   mvp={phase === "done" ? fixture.result?.mvp?.playerId : undefined}
                   substitutions={subFeed.filter((s: any) => s.team === "away")}
                   injuries={injuries}
+                  currentMinute={minute}
+                  revealAllInjuries={phase === "done"}
+                  vacantSlots={getVacantSlots("away", awayLineup)}
                   stamina={!isHome ? stamina : {}}
                 />
               </div>
@@ -6348,7 +6502,8 @@ function MatchPage() {
               {fixture?.result?.stats &&
                 (() => {
                   const acc = accumulateStats(fixture.result.stats, phase === "done" ? 90 : minute);
-                  return <MatchStatsPanel home={acc.home} away={acc.away} />;
+                  const colors = resolveMatchTeamColors(home, away);
+                  return <MatchStatsPanel home={acc.home} away={acc.away} homeColor={colors.homeColor} awayColor={colors.awayColor} />;
                 })()}
               {phase === "done" && fixture?.result && (
                 <PlayerRatingsPanel

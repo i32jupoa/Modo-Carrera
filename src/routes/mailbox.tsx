@@ -61,10 +61,12 @@ function MailboxPage() {
   const playerMap = useMemo(() => new Map(squad.map((player) => [player.id, player])), [squad]);
   const conversations = useMemo(() => (save?.mailbox?.conversations ?? []).filter((conversation) => playerMap.has(conversation.playerId)), [save?.mailbox?.conversations, playerMap]);
   const filteredConversations = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim().toLocaleLowerCase("es");
     if (!q) return conversations;
-    return conversations.filter((conversation) => playerMap.get(conversation.playerId)?.name.toLowerCase().includes(q));
+    return conversations.filter((conversation) => playerMap.get(conversation.playerId)?.name.toLocaleLowerCase("es").includes(q));
   }, [conversations, playerMap, query]);
+  const unreadConversationCount = conversations.filter((conversation) => (conversation.unreadCount ?? 0) > 0).length;
+  const unreadMessageCount = conversations.reduce((total, conversation) => total + Math.max(0, conversation.unreadCount ?? 0), 0);
 
   const selectedConversation = selectedPlayerId
     ? conversations.find((conversation) => conversation.playerId === selectedPlayerId) ?? null
@@ -132,13 +134,20 @@ function MailboxPage() {
 
   return (
     <div className="mx-auto flex h-[calc(100vh-2rem)] max-w-7xl min-h-0 flex-col p-4 md:p-6">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[0.6rem] font-black uppercase tracking-[0.22em] text-primary">Vestuario</p>
-          <h1 className="mt-1 flex items-center gap-2 text-2xl font-black"><MessageCircle className="h-6 w-6" />Buzón</h1>
+      <header className="mb-4 flex flex-col gap-3 rounded-2xl border border-border/60 bg-card/55 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="flex items-center gap-3">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary"><MessageCircle className="h-5 w-5" /></div>
+          <div>
+            <p className="text-[0.6rem] font-black uppercase tracking-[0.22em] text-primary">Vestuario</p>
+            <h1 className="mt-0.5 text-2xl font-black tracking-tight">Buzón</h1>
+            <p className="mt-1 text-xs text-muted-foreground">Mensajes personales y conversaciones con tus jugadores.</p>
+          </div>
         </div>
-        <div className="hidden text-right text-xs text-muted-foreground sm:block">Mensajes de tus jugadores y conversaciones de confianza</div>
-      </div>
+        <div className="grid grid-cols-2 gap-2 sm:min-w-[250px]">
+          <div className="rounded-xl border border-border/50 bg-background/55 px-3 py-2"><p className="text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">Conversaciones</p><p className="mt-1 scoreline text-lg font-black">{conversations.length}</p></div>
+          <div className={`rounded-xl border px-3 py-2 ${unreadConversationCount > 0 ? "border-amber-400/30 bg-amber-500/10" : "border-border/50 bg-background/55"}`}><p className="text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">Sin leer</p><p className={`mt-1 scoreline text-lg font-black ${unreadConversationCount > 0 ? "text-amber-300" : "text-foreground"}`}>{unreadMessageCount}</p><p className="text-[0.55rem] text-muted-foreground">{unreadConversationCount} conversaciones</p></div>
+        </div>
+      </header>
 
       {(academyClub?.players.some((player) => (player.loanReports?.length ?? 0) > 0) ?? false) && (
         <section className="mb-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
@@ -163,8 +172,9 @@ function MailboxPage() {
           <div className="border-b border-border/60 p-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar conversaciones" className="pl-9" />
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar jugador..." aria-label="Buscar conversaciones por jugador" className="pl-9" />
             </div>
+            <div className="mt-2 flex items-center justify-between text-[0.62rem] text-muted-foreground"><span>{filteredConversations.length} resultados</span><span>{filteredConversations.filter((entry) => (entry.unreadCount ?? 0) > 0).length} sin leer</span></div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {filteredConversations.length === 0 ? (

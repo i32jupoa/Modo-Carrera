@@ -366,7 +366,7 @@ function analyze(f: Fixture): MatchInfo | null {
   }
 
   const redCards = (r.cards ?? [])
-    .filter((c) => c.cardType === "red")
+    .filter((c) => c.cardType === "red" || c.isSecondYellow)
     .map((c) => ({ name: c.playerName, minute: c.minute, side: c.team }));
 
   const upset =

@@ -8,6 +8,8 @@ import { buildPositions, formatShortPositions } from "@/lib/positions";
 import type { ScoutingReport } from "@/lib/transfers/UserNegotiation";
 import { estimateScoutingMoney, estimateScoutingPotential, isScoutingFieldDetected } from "@/lib/transfers/ScoutingReport";
 import { formatEuro, usePlayersStore, type FcPlayer, type PlayerStats } from "@/store/playersStore";
+import { PlayerClubCrest } from "@/components/PlayerClubCrest";
+import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 
 type ScoutFieldKey = "potential" | "marketValue" | "salary" | "askingPrice" | "wageDemand";
 
@@ -146,31 +148,6 @@ function SafePlayerFace({ player }: { player: FcPlayer }) {
   );
 }
 
-function SafeTeamLogo({ team, league }: { team: string; league: string }) {
-  const teamName = safeText(team, "Equipo desconocido");
-  const leagueName = safeText(league, "");
-  const initials = initialsFor(teamName);
-  const src = leagueName
-    ? `/logos/${encodeURIComponent(leagueName)}/${encodeURIComponent(teamName)}.png`
-    : "";
-
-  return (
-    <span className="relative grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-md bg-secondary text-[0.48rem] font-black text-muted-foreground">
-      {initials}
-      {src && (
-        <img
-          src={src}
-          alt=""
-          className="absolute inset-0 h-full w-full object-contain"
-          onError={(event) => {
-            event.currentTarget.style.display = "none";
-          }}
-        />
-      )}
-    </span>
-  );
-}
-
 function Stat({ label, value, icon: Icon }: { label: string; value: string | number; icon?: ComponentType<{ className?: string }> }) {
   return (
     <div className="rounded-xl border border-border/60 bg-secondary/40 p-3">
@@ -209,6 +186,7 @@ class ReportModalBoundary extends Component<
     const ovr = Math.round(safeNumber(player?.OVR));
     const age = Math.round(safeNumber(player?.Age));
     const positions = safePositions(player);
+    const currentClub = resolveCurrentPlayerClub(player.ID, player);
 
     return (
       <Dialog open={this.props.open} onOpenChange={(value) => !value && this.props.onClose()}>
@@ -225,8 +203,8 @@ class ReportModalBoundary extends Component<
               <h3 className="truncate text-2xl font-black">{name}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{positions.length ? formatShortPositions(positions.slice(0, 1)) : "—"} · {age} años</p>
               <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                <SafeTeamLogo team={safeText(player?.Team, "Equipo desconocido")} league={safeText(player?.League, "")} />
-                <span className="font-bold">{safeText(player?.Team, "Equipo desconocido")}</span>
+                <PlayerClubCrest playerId={player.ID} player={player} size={28} />
+                <span className="font-bold">{currentClub.teamName}</span>
               </div>
             </div>
             <div className="rounded-xl border bg-secondary/40 px-3 py-2 text-center">
@@ -303,6 +281,7 @@ function ScoutingDetailsModalBody({
   const ratingLabel = `${rating.toLocaleString("es-ES")}★`;
   const precisionLabel = `${safeNumber(capabilities.precision, 2).toLocaleString("es-ES")} / 5`;
   const faceFallbackName = initialsFor(playerName);
+  const currentClub = resolveCurrentPlayerClub(player.ID, player);
 
   return (
     <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
@@ -338,8 +317,8 @@ function ScoutingDetailsModalBody({
               </div>
             </div>
             <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-              <SafeTeamLogo team={safeText(player.Team, "Equipo desconocido")} league={safeText(player.League, "")} />
-              <span className="font-bold">{safeText(player.Team, "Equipo desconocido")}</span>
+              <PlayerClubCrest playerId={player.ID} player={player} size={28} />
+              <span className="font-bold">{currentClub.teamName}</span>
             </div>
           </div>
         </div>

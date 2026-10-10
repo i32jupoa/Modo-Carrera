@@ -15,6 +15,10 @@ export type LiveMatchState = {
   v: number;
   fixtureId: string;
   minute: number;
+  /** Added-time duration and live progress (optional for older snapshots). */
+  stoppageTime?: { firstHalf: number; secondHalf: number; extraFirstHalf: number; extraSecondHalf: number };
+  stoppagePeriod?: "firstHalf" | "secondHalf" | "extraFirstHalf" | "extraSecondHalf" | null;
+  stoppageElapsed?: number;
   phase: LivePhase;
   homeScore: number;
   awayScore: number;
@@ -85,6 +89,12 @@ function safeArray(value: any): any[] {
   return Array.isArray(value) ? value : [];
 }
 
+function safeSlotList(value: any): string[] {
+  return safeArray(value)
+    .slice(0, 11)
+    .map((item: any) => (typeof item === "string" ? item : item?.id ? String(item.id) : ""));
+}
+
 function safeIdList(value: any): string[] {
   return safeArray(value)
     .map((item: any) => (typeof item === "string" ? item : item?.id))
@@ -118,7 +128,9 @@ function sanitizeLoadedLiveState(raw: any): LiveMatchState {
     };
   }
 
-  const lineup = safeIdList(raw?.lineup).slice(0, 11);
+  // Preserve empty formation slots (""), otherwise a red card/injury shifts every
+  // player to the left after a save/reload. Older snapshots remain compatible.
+  const lineup = safeSlotList(raw?.lineup);
   const bench = safeIdList(raw?.bench)
     .filter((id: string) => !lineup.includes(id))
     .slice(0, 12);
@@ -133,6 +145,19 @@ function sanitizeLoadedLiveState(raw: any): LiveMatchState {
     v: Number(raw?.v) || LIVE_VERSION,
     fixtureId: String(raw?.fixtureId ?? ""),
     minute: Math.max(0, Number(raw?.minute) || 0),
+    stoppageTime:
+      raw?.stoppageTime && typeof raw.stoppageTime === "object"
+        ? {
+            firstHalf: Math.max(1, Math.min(10, Number(raw.stoppageTime.firstHalf) || 2)),
+            secondHalf: Math.max(1, Math.min(10, Number(raw.stoppageTime.secondHalf) || 4)),
+            extraFirstHalf: Math.max(1, Math.min(10, Number(raw.stoppageTime.extraFirstHalf) || 1)),
+            extraSecondHalf: Math.max(1, Math.min(10, Number(raw.stoppageTime.extraSecondHalf) || 2)),
+          }
+        : undefined,
+    stoppagePeriod: ["firstHalf", "secondHalf", "extraFirstHalf", "extraSecondHalf"].includes(String(raw?.stoppagePeriod))
+      ? raw.stoppagePeriod
+      : null,
+    stoppageElapsed: Math.max(0, Number(raw?.stoppageElapsed) || 0),
     phase: raw?.phase || "playing",
     homeScore: Number(raw?.homeScore) || 0,
     awayScore: Number(raw?.awayScore) || 0,

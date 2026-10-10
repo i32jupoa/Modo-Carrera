@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { ALL_LEAGUES, loadSave, type SaveGame } from "@/lib/store";
 import { LEAGUES, LEAGUES_BY_COUNTRY, LeagueId, teamById } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerClubCrest } from "@/components/PlayerClubCrest";
+import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { CountryFlag } from "@/components/CountryFlag";
 import {
@@ -331,7 +333,7 @@ function ScorerList({ players, emptyMsg }: { players: any[]; emptyMsg: string })
   return (
     <div className="panel divide-y divide-border/40">
       {players.map((p, i) => {
-        const team = teamById(p.teamId);
+        const currentClub = resolveCurrentPlayerClub(String(p.id));
         return (
           <div
             key={p.id}
@@ -343,11 +345,11 @@ function ScorerList({ players, emptyMsg }: { players: any[]; emptyMsg: string })
               {i + 1}
             </span>
             <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
-            <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
+            <PlayerClubCrest playerId={p.id} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
               <div className="text-xs text-muted-foreground">
-                {team.name} · {p.assists} asist.
+                {currentClub.teamName} · {p.assists} asist.
               </div>
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
@@ -367,7 +369,7 @@ function AssisterList({ players, emptyMsg }: { players: any[]; emptyMsg: string 
   return (
     <div className="panel divide-y divide-border/40">
       {players.map((p, i) => {
-        const team = teamById(p.teamId);
+        const currentClub = resolveCurrentPlayerClub(String(p.id));
         return (
           <div
             key={p.id}
@@ -379,11 +381,11 @@ function AssisterList({ players, emptyMsg }: { players: any[]; emptyMsg: string 
               {i + 1}
             </span>
             <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
-            <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
+            <PlayerClubCrest playerId={p.id} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
               <div className="text-xs text-muted-foreground">
-                {team.name} · {p.goals} goles
+                {currentClub.teamName} · {p.goals} goles
               </div>
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
@@ -419,7 +421,7 @@ function CardList({
   return (
     <div className="panel divide-y divide-border/40">
       {players.map((p, i) => {
-        const team = teamById(p.teamId);
+        const currentClub = resolveCurrentPlayerClub(String(p.id));
         return (
           <div
             key={p.id}
@@ -431,11 +433,11 @@ function CardList({
               {i + 1}
             </span>
             <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
-            <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
+            <PlayerClubCrest playerId={p.id} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
               <div className="text-xs text-muted-foreground">
-                {team.name} · {p[secondaryKey]} {secondaryLabel}
+                {currentClub.teamName} · {p[secondaryKey]} {secondaryLabel}
               </div>
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>
@@ -467,7 +469,7 @@ function SimpleList({
   return (
     <div className="panel divide-y divide-border/40">
       {players.map((p, i) => {
-        const team = teamById(p.teamId);
+        const currentClub = resolveCurrentPlayerClub(String(p.id));
         return (
           <div
             key={p.id}
@@ -479,11 +481,11 @@ function SimpleList({
               {i + 1}
             </span>
             <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
-            <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
+            <PlayerClubCrest playerId={p.id} size={28} />
             <div className="min-w-0">
               <div className="font-bold truncate">{p.name}</div>
               <div className="text-xs text-muted-foreground">
-                {team.name} · {label}
+                {currentClub.teamName} · {label}
               </div>
             </div>
             <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>

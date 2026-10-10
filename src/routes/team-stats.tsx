@@ -21,10 +21,10 @@ const POSITION_FULL: Record<Position, string> = {
   FWD: "Delanteros",
 };
 const POSITION_ACCENT: Record<Position, string> = {
-  GK: "from-amber-500/30 to-amber-500/0 border-amber-500/40 text-amber-300",
-  DEF: "from-sky-500/30 to-sky-500/0 border-sky-500/40 text-sky-300",
-  MID: "from-emerald-500/30 to-emerald-500/0 border-emerald-500/40 text-emerald-300",
-  FWD: "from-rose-500/30 to-rose-500/0 border-rose-500/40 text-rose-300",
+  GK: "from-muted/40 to-card/20 border-border/60 text-foreground",
+  DEF: "from-muted/40 to-card/20 border-border/60 text-foreground",
+  MID: "from-muted/40 to-card/20 border-border/60 text-foreground",
+  FWD: "from-muted/40 to-card/20 border-border/60 text-foreground",
 };
 
 function getLeagueName(leagueId: string): string {
@@ -60,7 +60,7 @@ function fallbackStats(): PlayerStats {
 function averageRating(stats: PlayerStats | undefined): number | null {
   if (!stats) return null;
   const dynamic = stats.dynamicStats;
-  if (dynamic && dynamic.seasonAppearances > 0) return dynamic.seasonAverageRating;
+  if (dynamic && (dynamic.seasonRatingCount ?? 0) > 0) return dynamic.seasonAverageRating;
   if (stats.formHistory?.length) {
     return stats.formHistory.reduce((sum, value) => sum + value, 0) / stats.formHistory.length;
   }
@@ -165,9 +165,12 @@ function TeamStatsPage() {
         if (st.dynamicStats?.seasonCleanSheets != null) acc.clean += st.dynamicStats.seasonCleanSheets;
         else acc.clean += st.cleanSheets ?? 0;
         const rating = averageRating(st);
-        if (rating != null && st.appearances > 0) {
-          acc.ratingWeighted += rating * st.appearances;
-          acc.ratingAppearances += st.appearances;
+        if (rating != null) {
+          const ratedMatches = st.dynamicStats?.seasonRatingCount ?? st.formHistory?.length ?? 0;
+          if (ratedMatches > 0) {
+            acc.ratingWeighted += rating * ratedMatches;
+            acc.ratingAppearances += ratedMatches;
+          }
         }
         return acc;
       },
@@ -274,12 +277,12 @@ function TeamStatsPage() {
                           </td>
                           <td className="px-2 py-2 text-center"><span className="scoreline font-black">{p.OVR}</span></td>
                           <td className="px-2 py-2 text-center text-muted-foreground">{p.Age}</td>
-                          <td className="px-2 py-2 text-center scoreline">{st.appearances}</td>
-                          <td className="px-2 py-2 text-center font-semibold text-primary">{st.goals}</td>
-                          <td className="px-2 py-2 text-center font-semibold text-accent">{st.assists}</td>
+                          <td className="px-2 py-2 text-center scoreline">{st.appearances ?? 0}</td>
+                          <td className="px-2 py-2 text-center font-semibold text-primary">{st.goals ?? 0}</td>
+                          <td className="px-2 py-2 text-center font-semibold text-accent">{st.assists ?? 0}</td>
                           <td className="px-2 py-2 text-center font-bold">{contrib}</td>
-                          <td className="px-2 py-2 text-center text-yellow-500">{st.yellowCards}</td>
-                          <td className="px-2 py-2 text-center text-red-500">{st.redCards}</td>
+                          <td className="px-2 py-2 text-center text-yellow-500">{st.yellowCards ?? 0}</td>
+                          <td className="px-2 py-2 text-center text-red-500">{st.redCards ?? 0}</td>
                           <td className="px-2 py-2 text-center scoreline font-semibold">{avg == null ? "—" : avg.toFixed(2)}</td>
                           <td className="px-2 py-2 text-center scoreline font-semibold text-yellow-500">{mvp}</td>
                           <td className="px-2 py-2 text-center scoreline font-semibold text-sky-400">{clean}</td>
@@ -302,9 +305,6 @@ function TeamStatsPage() {
         })}
       </div>
 
-      <p className="mt-4 text-[0.65rem] text-muted-foreground">
-        Ordenado por posición · la <strong>Nota media</strong> solo contabiliza partidos que el jugador ha disputado y tienen valoración registrada. P0 = porterías a cero; MVP = mejor jugador del partido; Forma: últimos 5 partidos; ↑ ≥ 7, → 6–6,99, ↓ &lt; 6.
-      </p>
     </div>
   );
 }

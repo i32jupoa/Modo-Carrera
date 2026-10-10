@@ -63,6 +63,8 @@ import {
   registerCoreDeparture,
   registerCoreSigning,
   windowDeficit,
+  canPlayerMoveAgain,
+  registerHistoricalMove,
 } from "./MarketLocks";
 import { isAvailable, valuePlayer } from "./MarketValuation";
 import { decideOnMove, desireToLeave, wageDemand } from "./PlayerDecision";
@@ -1288,6 +1290,10 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
   // usar, como en las salidas forzadas más abajo en este archivo).
   const sellerId = player.clubId;
 
+  if (sellerId !== buyerId && !canPlayerMoveAgain(player.id, date)) {
+    return null;
+  }
+
   // Barrera final: un jugador del usuario sólo cambia de club dentro de una
   // operación que él haya cerrado (`UserNegotiation`). Cualquier otra vía
   // —IA, cesiones, obligaciones de compra— queda anulada aquí.
@@ -1320,11 +1326,24 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
     clauses: offer.clauses,
   };
 
-  // Jugadores incluidos en el intercambio: viajan en sentido contrario.
+  // Los jugadores incluidos en un intercambio también cuentan como un
+  // movimiento. Validarlos antes de modificar cualquiera de las plantillas
+  // evita un cierre parcial si uno de ellos ya cambió de club esta temporada.
+  if (sellerId) {
+    for (const swapId of offer.clauses.playerSwapIds) {
+      const swap = getPlayer(swapId);
+      if (swap && swap.clubId === buyerId && !canPlayerMoveAgain(swapId, date)) return null;
+    }
+  }
+
+  // Registrar el movimiento antes de mutar el índice impide que dos ofertas
+  // completadas en el mismo ciclo de IA muevan al mismo jugador dos veces.
+  if (sellerId !== buyerId) registerHistoricalMove(player.id, date);
   if (sellerId) {
     for (const swapId of offer.clauses.playerSwapIds) {
       const swap = getPlayer(swapId);
       if (!swap || swap.clubId !== buyerId) continue;
+      registerHistoricalMove(swapId, date);
       reassignPlayerClub(swapId, sellerId, teamById(sellerId).league);
       updatePlayer(swapId, { minutesShare: 0 });
     }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { usePlayersStore } from "@/store/playersStore";
 import {
@@ -37,7 +37,14 @@ export function MatchDayModal() {
   const clearPendingMatch = usePlayersStore((s) => s.clearPendingMatch);
   const dismissMatch = usePlayersStore((s) => s.dismissMatch);
   const dismissedMatchIds = usePlayersStore((s) => s.dismissedMatchIds);
-  const save = loadSave();
+  const [save, setSave] = useState<SaveGame | null>(null);
+
+  // loadSave can migrate old careers and update shared stores. Keep that work
+  // out of render so the global sidebar/other subscribers are never updated
+  // while MatchDayModal is rendering.
+  useEffect(() => {
+    setSave(loadSave());
+  }, [currentDate, fixtures, myTeamId]);
 
   useEffect(() => {
     if (!myTeamId || pending) return;

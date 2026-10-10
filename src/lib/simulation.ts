@@ -367,6 +367,11 @@ export type CardEvent = {
   reason?: string;
 };
 
+/** A second yellow is an expulsion even when an old/malformed save labels it yellow. */
+export function isExpulsionCard(card: Pick<CardEvent, "cardType" | "isSecondYellow"> | null | undefined): boolean {
+  return card?.cardType === "red" || card?.isSecondYellow === true;
+}
+
 export type InjuryEvent = {
   team: "home" | "away";
   playerId: string;
@@ -813,7 +818,7 @@ export function generateExtraTimeSubs(
   team: "home" | "away",
   regularSubs: SubstitutionEvent[] = [],
   regularCards: CardEvent[] = [],
-  context?: { teamStyle?: "defensive" | "balanced" | "offensive"; teamStrength?: number; opponentStrength?: number; seed?: string },
+  context?: { teamStyle?: "defensive" | "balanced" | "offensive"; teamStrength?: number; opponentStrength?: number; seed?: string; regularInjuries?: InjuryEvent[] },
 ): SubstitutionEvent[] {
   if (xi.length === 0 || bench.length === 0) return [];
 
@@ -824,10 +829,10 @@ export function generateExtraTimeSubs(
 
   const redCards = new Map<string, number>();
   for (const card of regularCards) {
-    if (card.team === team && card.cardType === "red") redCards.set(card.playerId, card.minute);
+    if (card.team === team && isExpulsionCard(card)) redCards.set(card.playerId, card.minute);
   }
 
-  const onPitchAt90 = activePlayersAt(xi, bench, regularSubs, redCards, team, 90);
+  const onPitchAt90 = activePlayersAt(xi, bench, regularSubs, redCards, team, 90, context?.regularInjuries ?? []);
   const availableOut = onPitchAt90.filter((p) => !isGoalkeeper(p.positions));
   const usedIn = new Set(regularTeamSubs.map((s) => s.playerInId));
   const availableIn = bench.filter((p) => !usedIn.has(p.id) && !redCards.has(p.id) && !isGoalkeeper(p.positions));
@@ -892,6 +897,7 @@ function activePlayersAt(
   redCards: Map<string, number>,
   team: "home" | "away",
   minute: number,
+  injuries: InjuryEvent[] = [],
 ): Player[] {
   const all = [...xi, ...bench];
   const byId = new Map(all.map((p) => [p.id, p]));
@@ -910,7 +916,14 @@ function activePlayersAt(
     const onPitch = wasStarter ? !left.has(p.id) : entered.has(p.id);
     if (!onPitch) return false;
     const redMinute = redCards.get(p.id);
-    return redMinute === undefined || redMinute > minute;
+    if (redMinute !== undefined && redMinute <= minute) return false;
+    // An injury at the current minute is still resolved chronologically by the
+    // live UI; once the minute has passed, the player is no longer eligible.
+    const wasInjured = injuries.some(
+      (injury) => injury.team === team && injury.playerId === p.id &&
+        injury.minute !== undefined && injury.minute <= minute,
+    );
+    return !wasInjured;
   });
 }
 
@@ -924,13 +937,14 @@ export function getActivePlayersAtMinute(
   cards: CardEvent[],
   team: "home" | "away",
   minute: number,
+  injuries: InjuryEvent[] = [],
 ): Player[] {
   const redCards = new Map<string, number>(
     cards
-      .filter((c) => c.team === team && c.cardType === "red")
+      .filter((c) => c.team === team && isExpulsionCard(c))
       .map((c) => [c.playerId, c.minute]),
   );
-  return activePlayersAt(xi, bench, substitutions, redCards, team, minute);
+  return activePlayersAt(xi, bench, substitutions, redCards, team, minute, injuries);
 }
 
 function participantsFromSubs(
@@ -988,7 +1002,7 @@ function buildMinutesPlayed(
   }
 
   for (const card of cards) {
-    if (card.team !== team || card.cardType !== "red") continue;
+    if (card.team !== team || !isExpulsionCard(card)) continue;
     if (onPitch.has(card.playerId)) {
       addInterval(card.playerId, card.minute);
       onPitch.delete(card.playerId);
@@ -1215,84 +1229,6 @@ export function simulateMatchFast(
   }
   substitutions.sort((a, b) => a.minute - b.minute);
 
-  const { lh, la } = expectedGoals(home, away, homeXI, awayXI, opts.homeTactics, opts.awayTactics);
-
-  // Poisson keeps the goal distribution realistic and, unlike the previous
-  // implementation, does NOT force every fast-simulated match to end in a draw.
-  const homeGoals = poisson(lh);
-  const awayGoals = poisson(la);
-
-  // Minimal events - with weighted scorer selection and assists
-  // Stats are recorded later by applyMatchToStats to avoid duplicates
-  const events: MatchEvent[] = [];
-
-  // Home team goals
-  for (let i = 0; i < homeGoals; i++) {
-    const minute = goalMinute();
-    const active = activePlayersAt(homeXI, homeBench, substitutions, new Map(), "home", minute);
-    const scorer = fastPickScorerWeighted(active);
-    if (!scorer) continue;
-    const assister = fastPickAssister(active, scorer.id);
-
-    events.push({
-      minute,
-      team: "home",
-      type: "goal",
-      scorerId: scorer.id,
-      scorerName: scorer.name,
-      assistId: assister?.id,
-      assistName: assister?.name,
-    });
-  }
-
-  // Away team goals
-  for (let i = 0; i < awayGoals; i++) {
-    const minute = goalMinute();
-    const active = activePlayersAt(awayXI, awayBench, substitutions, new Map(), "away", minute);
-    const scorer = fastPickScorerWeighted(active);
-    if (!scorer) continue;
-    const assister = fastPickAssister(active, scorer.id);
-
-    events.push({
-      minute,
-      team: "away",
-      type: "goal",
-      scorerId: scorer.id,
-      scorerName: scorer.name,
-      assistId: assister?.id,
-      assistName: assister?.name,
-    });
-  }
-
-  // Keep the scoreboard and chronicle coherent even if a player becomes
-  // unavailable between the Poisson score draw and scorer selection.
-  const ensureFastGoalEvents = (team: "home" | "away", expectedGoals: number) => {
-    if (expectedGoals <= 0) return;
-    const count = events.filter(
-      (e) =>
-        e.team === team &&
-        ["goal", "own_goal", "free_kick_goal", "penalty_goal"].includes(e.type),
-    ).length;
-    let missing = expectedGoals - count;
-    if (missing <= 0) return;
-    const pool = (team === "home" ? homeXI : awayXI).filter((p) => !isGoalkeeper(p.positions));
-    const candidates = pool.length > 0 ? pool : team === "home" ? homeXI : awayXI;
-    if (candidates.length === 0) return;
-    for (let i = 0; i < missing; i++) {
-      const scorer = candidates[(count + i) % candidates.length];
-      events.push({
-        minute: Math.min(90, Math.max(1, 8 + Math.floor((80 * (i + 1)) / (missing + 1)))),
-        team,
-        type: "goal",
-        scorerId: scorer.id,
-        scorerName: scorer.name,
-      });
-    }
-  };
-  ensureFastGoalEvents("home", homeGoals);
-  ensureFastGoalEvents("away", awayGoals);
-  events.sort((a, b) => a.minute - b.minute);
-
   // Lightweight cards for fast/background matches. This engine is used by
   // background leagues, so it must support the same disciplinary outcomes as
   // the detailed engine: yellow, second yellow -> red and direct red.
@@ -1396,7 +1332,7 @@ export function simulateMatchFast(
   const fastHomeRedCardedPlayers = new Map<string, number>();
   const fastAwayRedCardedPlayers = new Map<string, number>();
   for (const card of cards) {
-    if (card.cardType !== "red") continue;
+    if (!isExpulsionCard(card)) continue;
     if (card.team === "home") fastHomeRedCardedPlayers.set(card.playerId, card.minute);
     else fastAwayRedCardedPlayers.set(card.playerId, card.minute);
   }
@@ -1428,7 +1364,7 @@ export function simulateMatchFast(
   fastHomeRedCardedPlayers.clear();
   fastAwayRedCardedPlayers.clear();
   for (const card of cards) {
-    if (card.cardType === "red") {
+    if (isExpulsionCard(card)) {
       if (card.team === "home") fastHomeRedCardedPlayers.set(card.playerId, card.minute);
       else fastAwayRedCardedPlayers.set(card.playerId, card.minute);
     }
@@ -1441,6 +1377,108 @@ export function simulateMatchFast(
   substitutions.length = 0;
   substitutions.push(...validFastSubsAfterCards);
   substitutions.sort((a, b) => a.minute - b.minute);
+
+
+  const { lh: baseHomeLambda, la: baseAwayLambda } = expectedGoals(
+    home, away, homeXI, awayXI, homeTactics, awayTactics,
+  );
+
+  // A dismissal changes the probability of later scoring in fast/background
+  // matches too. Weight by the fraction of the match played a man down; a late
+  // red has little effect, while an early red has a meaningful effect.
+  const redExposure = (teamCards: CardEvent[], team: "home" | "away") => {
+    const earliestByPlayer = new Map<string, number>();
+    for (const card of teamCards) {
+      if (card.team !== team || !isExpulsionCard(card)) continue;
+      earliestByPlayer.set(card.playerId, Math.min(earliestByPlayer.get(card.playerId) ?? 90, card.minute));
+    }
+    return Math.min(1.5, [...earliestByPlayer.values()].reduce((sum, minute) => sum + Math.max(0, 90 - minute) / 90, 0));
+  };
+  const homeRedExposure = redExposure(cards, "home");
+  const awayRedExposure = redExposure(cards, "away");
+  const lh = Math.max(0.05, baseHomeLambda * Math.max(0.68, 1 - homeRedExposure * 0.18 + awayRedExposure * 0.06));
+  const la = Math.max(0.05, baseAwayLambda * Math.max(0.68, 1 - awayRedExposure * 0.18 + homeRedExposure * 0.06));
+
+  // Poisson keeps the goal distribution realistic, and cards are generated
+  // before this draw so an early dismissal impacts the score probability.
+  const homeGoals = poisson(lh);
+  const awayGoals = poisson(la);
+
+  // Minimal events - with weighted scorer selection and assists
+  // Stats are recorded later by applyMatchToStats to avoid duplicates
+  const events: MatchEvent[] = [];
+
+  // Home team goals
+  for (let i = 0; i < homeGoals; i++) {
+    const minute = goalMinute();
+    const active = activePlayersAt(homeXI, homeBench, substitutions, fastHomeRedCardedPlayers, "home", minute, injuries);
+    const scorer = fastPickScorerWeighted(active);
+    if (!scorer) continue;
+    const assister = fastPickAssister(active, scorer.id);
+
+    events.push({
+      minute,
+      team: "home",
+      type: "goal",
+      scorerId: scorer.id,
+      scorerName: scorer.name,
+      assistId: assister?.id,
+      assistName: assister?.name,
+    });
+  }
+
+  // Away team goals
+  for (let i = 0; i < awayGoals; i++) {
+    const minute = goalMinute();
+    const active = activePlayersAt(awayXI, awayBench, substitutions, fastAwayRedCardedPlayers, "away", minute, injuries);
+    const scorer = fastPickScorerWeighted(active);
+    if (!scorer) continue;
+    const assister = fastPickAssister(active, scorer.id);
+
+    events.push({
+      minute,
+      team: "away",
+      type: "goal",
+      scorerId: scorer.id,
+      scorerName: scorer.name,
+      assistId: assister?.id,
+      assistName: assister?.name,
+    });
+  }
+
+  // Keep the scoreboard and chronicle coherent even if a player becomes
+  // unavailable between the Poisson score draw and scorer selection.
+  const ensureFastGoalEvents = (team: "home" | "away", expectedGoals: number) => {
+    if (expectedGoals <= 0) return;
+    const count = events.filter(
+      (e) =>
+        e.team === team &&
+        ["goal", "own_goal", "free_kick_goal", "penalty_goal"].includes(e.type),
+    ).length;
+    let missing = expectedGoals - count;
+    if (missing <= 0) return;
+    const pool = (team === "home" ? homeXI : awayXI).filter((p) => !isGoalkeeper(p.positions));
+    const candidates = pool.length > 0 ? pool : team === "home" ? homeXI : awayXI;
+    if (candidates.length === 0) return;
+    for (let i = 0; i < missing; i++) {
+      const minute = Math.min(90, Math.max(1, 8 + Math.floor((80 * (i + 1)) / (missing + 1))));
+      const teamXI = team === "home" ? homeXI : awayXI;
+      const teamBench = team === "home" ? homeBench : awayBench;
+      const teamReds = team === "home" ? fastHomeRedCardedPlayers : fastAwayRedCardedPlayers;
+      const activeAtMinute = activePlayersAt(teamXI, teamBench, substitutions, teamReds, team, minute, injuries);
+      const activeOutfield = activeAtMinute.filter((p) => !isGoalkeeper(p.positions));
+      // Never assign a fallback goal to a player who was substituted, injured
+      // or sent off. If no outfield player remains, use an eligible player who
+      // is actually active (even if the only survivor is the goalkeeper).
+      const candidatesAtMinute = activeOutfield.length > 0 ? activeOutfield : activeAtMinute;
+      if (candidatesAtMinute.length === 0) break;
+      const scorer = candidatesAtMinute[(count + i) % candidatesAtMinute.length];
+      events.push({ minute, team, type: "goal", scorerId: scorer.id, scorerName: scorer.name });
+    }
+  };
+  ensureFastGoalEvents("home", homeGoals);
+  ensureFastGoalEvents("away", awayGoals);
+  events.sort((a, b) => a.minute - b.minute);
 
   // If the original scorer was dismissed before his goal, remap it to a player
   // who was actually on the pitch at that minute.
@@ -1482,6 +1520,7 @@ export function simulateMatchFast(
       team === "home" ? fastHomeRedCardedPlayers : fastAwayRedCardedPlayers,
       team,
       minute,
+      injuries,
     );
       const gk = activeKeeperPool.find((p) => isGoalkeeper(p.positions));
       if (!gk) continue;
@@ -1493,6 +1532,7 @@ export function simulateMatchFast(
         attackingSide === "home" ? fastHomeRedCardedPlayers : fastAwayRedCardedPlayers,
         attackingSide,
         minute,
+        injuries,
       ).filter((p) => !isGoalkeeper(p.positions));
       const attacker = attackerPool.length
         ? attackerPool[Math.floor(rand() * attackerPool.length)]
@@ -1520,6 +1560,7 @@ export function simulateMatchFast(
       team === "home" ? fastHomeRedCardedPlayers : fastAwayRedCardedPlayers,
       team,
       minute,
+      injuries,
     ).filter(
       (p) => !isGoalkeeper(p.positions),
     );
@@ -1583,6 +1624,7 @@ export function simulateMatchFast(
       team: c.team,
       playerId: c.playerId,
       cardType: c.cardType,
+      isSecondYellow: c.isSecondYellow,
       minute: c.minute,
     })),
     minutesPlayed,
@@ -1605,8 +1647,8 @@ export function simulateMatchFast(
     awayLineup: awayParticipants,
     homeStartingLineup: homeXI,
     awayStartingLineup: awayXI,
-    homeFinalLineup: activePlayersAt(homeXI, homeBench, substitutions, new Map(cards.filter((c) => c.team === "home" && c.cardType === "red").map((c) => [c.playerId, c.minute])), "home", 90),
-    awayFinalLineup: activePlayersAt(awayXI, awayBench, substitutions, new Map(cards.filter((c) => c.team === "away" && c.cardType === "red").map((c) => [c.playerId, c.minute])), "away", 90),
+    homeFinalLineup: activePlayersAt(homeXI, homeBench, substitutions, new Map(cards.filter((c) => c.team === "home" && isExpulsionCard(c)).map((c) => [c.playerId, c.minute])), "home", 90, injuries),
+    awayFinalLineup: activePlayersAt(awayXI, awayBench, substitutions, new Map(cards.filter((c) => c.team === "away" && isExpulsionCard(c)).map((c) => [c.playerId, c.minute])), "away", 90, injuries),
     homeFormation,
     awayFormation,
     substitutions,
@@ -1782,7 +1824,7 @@ export function simulateMatch(
   const homeRedCardedPlayers = new Map<string, number>();
   const awayRedCardedPlayers = new Map<string, number>();
   for (const card of cards) {
-    if (card.cardType === "red") {
+    if (isExpulsionCard(card)) {
       if (card.team === "home") homeRedCardedPlayers.set(card.playerId, card.minute);
       else awayRedCardedPlayers.set(card.playerId, card.minute);
     }
@@ -1821,7 +1863,7 @@ export function simulateMatch(
   //    plain Poisson here instead of multiplying the lambda a second time
   //    (which used to flatten every result towards a random draw).
   // -------------------------------------------------------------------------
-  const { lh, la } = expectedGoals(
+  const { lh: baseHomeLambda, la: baseAwayLambda } = expectedGoals(
     home,
     away,
     adjustedHomeXI,
@@ -1830,8 +1872,28 @@ export function simulateMatch(
     awayTactics,
   );
 
-  const homeGoalsRaw = poisson(lh);
-  const awayGoalsRaw = poisson(la);
+  // Reduce the scoring output for the minutes played a man down, while
+  // slightly increasing the rival's chance creation. A red in minute 85 has
+  // little effect; one in minute 15 has a meaningful one.
+  const redExposure = (cardsForTeam: CardEvent[], team: "home" | "away") => {
+    const unique = new Map<string, number>();
+    for (const card of cardsForTeam) {
+      if (card.team !== team || !isExpulsionCard(card)) continue;
+      unique.set(card.playerId, Math.min(unique.get(card.playerId) ?? 90, card.minute));
+    }
+    return Math.min(1.5, [...unique.values()].reduce((sum, minute) => sum + (90 - minute) / 90, 0));
+  };
+  const homeRedExposure = redExposure(cards, "home");
+  const awayRedExposure = redExposure(cards, "away");
+  const homeLambda = Math.max(0.05, baseHomeLambda * Math.max(0.68, 1 - homeRedExposure * 0.18 + awayRedExposure * 0.06));
+  const awayLambda = Math.max(0.05, baseAwayLambda * Math.max(0.68, 1 - awayRedExposure * 0.18 + homeRedExposure * 0.06));
+  // Keep the names consumed by the result/statistics builder, now reflecting
+  // the red-card-adjusted expected-goal values.
+  const lh = homeLambda;
+  const la = awayLambda;
+
+  const homeGoalsRaw = poisson(homeLambda);
+  const awayGoalsRaw = poisson(awayLambda);
 
   const events: MatchEvent[] = [];
   const highlights: HighlightEvent[] = [];
@@ -1843,21 +1905,15 @@ export function simulateMatch(
     minute: number,
     team: "home" | "away",
   ) => {
-    const active = activePlayersAt(
+    return activePlayersAt(
       xi,
       team === "home" ? homeBench : awayBench,
       substitutions,
       reds,
       team,
       minute,
+      injuries,
     );
-    return active.filter((p) => {
-      const injury = injuries?.find(
-        (i) =>
-          i.team === team && i.playerId === p.id && i.minute !== undefined && minute > i.minute,
-      );
-      return !injury;
-    });
   };
 
   // Injuries are generated before goals/highlights so an injured player is
@@ -1935,7 +1991,7 @@ export function simulateMatch(
   homeRedCardedPlayers.clear();
   awayRedCardedPlayers.clear();
   for (const card of cards) {
-    if (card.cardType === "red") {
+    if (isExpulsionCard(card)) {
       if (card.team === "home") homeRedCardedPlayers.set(card.playerId, card.minute);
       else awayRedCardedPlayers.set(card.playerId, card.minute);
     }
@@ -2071,8 +2127,9 @@ export function simulateMatch(
   const pickPenaltyTaker = (xi: Player[], tactics: SimTactics | null): Player | undefined => {
     const active = xi.filter((p) => !isGoalkeeper(p.positions));
     if (!active.length) return undefined;
-    return designated(xi, tactics, "penaltyTakerId") ??
-      active.slice().sort((a, b) => penaltyTakerScore(b) - penaltyTakerScore(a) || b.rating - a.rating)[0];
+    const named = designated(xi, tactics, "penaltyTakerId");
+    return (named && active.some((p) => p.id === named.id) ? named : undefined) ??
+      active.slice().sort((a, b) => penaltyTakerScore(b) - penaltyTakerScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0))[0];
   };
 
   const pickAvailableMinute = (team: "home" | "away") => {
@@ -2095,7 +2152,7 @@ export function simulateMatch(
 
     const minute = pickAvailableMinute(team);
     const attackReds = team === "home" ? homeRedCardedPlayers : awayRedCardedPlayers;
-    const attackActive = activePlayersAt(xi, bench, substitutions, attackReds, team, minute);
+    const attackActive = activePlayersAt(xi, bench, substitutions, attackReds, team, minute, injuries);
     const defendActive = activePlayersAt(
       defendXI,
       team === "home" ? awayBench : homeBench,
@@ -2103,6 +2160,7 @@ export function simulateMatch(
       defendReds,
       team === "home" ? "away" : "home",
       minute,
+      injuries,
     );
     const taker = pickPenaltyTaker(attackActive, tactics);
     if (!taker) return false;
@@ -2259,6 +2317,7 @@ export function simulateMatch(
       team: c.team,
       playerId: c.playerId,
       cardType: c.cardType,
+      isSecondYellow: c.isSecondYellow,
       minute: c.minute,
     })),
     minutesPlayed,
@@ -2295,8 +2354,8 @@ export function simulateMatch(
     awayLineup: awayXI,
     homeStartingLineup: homeXI,
     awayStartingLineup: awayXI,
-    homeFinalLineup: activePlayersAt(homeXI, homeBench, substitutions, new Map(cards.filter((c) => c.team === "home" && c.cardType === "red").map((c) => [c.playerId, c.minute])), "home", 90),
-    awayFinalLineup: activePlayersAt(awayXI, awayBench, substitutions, new Map(cards.filter((c) => c.team === "away" && c.cardType === "red").map((c) => [c.playerId, c.minute])), "away", 90),
+    homeFinalLineup: activePlayersAt(homeXI, homeBench, substitutions, new Map(cards.filter((c) => c.team === "home" && isExpulsionCard(c)).map((c) => [c.playerId, c.minute])), "home", 90, injuries),
+    awayFinalLineup: activePlayersAt(awayXI, awayBench, substitutions, new Map(cards.filter((c) => c.team === "away" && isExpulsionCard(c)).map((c) => [c.playerId, c.minute])), "away", 90, injuries),
     homeFormation,
     awayFormation,
     substitutions,
@@ -2318,6 +2377,7 @@ export function simulateExtraTime(
     awayBench?: Player[];
     regularSubstitutions?: SubstitutionEvent[];
     regularCards?: CardEvent[];
+    regularInjuries?: InjuryEvent[];
     homeTactics?: SimTactics | null;
     awayTactics?: SimTactics | null;
   } = {},
@@ -2326,10 +2386,11 @@ export function simulateExtraTime(
   const awayBench = opts.awayBench ?? [];
   const regularSubs = opts.regularSubstitutions ?? [];
   const regularCards = opts.regularCards ?? [];
+  const regularInjuries = opts.regularInjuries ?? [];
   const homeRedCards = new Map<string, number>();
   const awayRedCards = new Map<string, number>();
   for (const card of regularCards) {
-    if (card.cardType !== "red") continue;
+    if (!isExpulsionCard(card)) continue;
     if (card.team === "home") homeRedCards.set(card.playerId, card.minute);
     else awayRedCards.set(card.playerId, card.minute);
   }
@@ -2339,18 +2400,20 @@ export function simulateExtraTime(
     teamStrength: homeXI.reduce((sum, p) => sum + p.rating, 0) / Math.max(1, homeXI.length),
     opponentStrength: awayXI.reduce((sum, p) => sum + p.rating, 0) / Math.max(1, awayXI.length),
     seed: `et:home:${home.name}:${away.name}:${homeXI.map((p) => p.id).join(",")}`,
+    regularInjuries,
   });
   const awaySubs = generateExtraTimeSubs(awayXI, awayBench, "away", regularSubs, regularCards, {
     teamStyle: opts.awayTactics?.style,
     teamStrength: awayXI.reduce((sum, p) => sum + p.rating, 0) / Math.max(1, awayXI.length),
     opponentStrength: homeXI.reduce((sum, p) => sum + p.rating, 0) / Math.max(1, homeXI.length),
     seed: `et:away:${home.name}:${away.name}:${awayXI.map((p) => p.id).join(",")}`,
+    regularInjuries,
   });
   const substitutions = [...homeSubs, ...awaySubs].sort((a, b) => a.minute - b.minute);
   const allSubs = [...regularSubs, ...substitutions];
 
-  const activeHome90 = activePlayersAt(homeXI, homeBench, regularSubs, homeRedCards, "home", 90);
-  const activeAway90 = activePlayersAt(awayXI, awayBench, regularSubs, awayRedCards, "away", 90);
+  const activeHome90 = activePlayersAt(homeXI, homeBench, regularSubs, homeRedCards, "home", 90, regularInjuries);
+  const activeAway90 = activePlayersAt(awayXI, awayBench, regularSubs, awayRedCards, "away", 90, regularInjuries);
   const etHomeAvg = activeHome90.length
     ? activeHome90.reduce((s, p) => s + p.rating, 0) / activeHome90.length
     : 60;
@@ -2381,15 +2444,16 @@ export function simulateExtraTime(
       team === "home" ? homeRedCards : awayRedCards,
       team,
       minute,
+      regularInjuries,
     ).filter((p) => !isGoalkeeper(p.positions));
-    return active.length > 0 ? fastPickScorerWeighted(active) : (team === "home" ? homeXI[0] : awayXI[0]);
+    return active.length > 0 ? fastPickScorerWeighted(active) : undefined;
   };
 
   for (let i = 0; i < homeGoals; i++) {
     const minute = 91 + Math.floor(rand() * 30);
     const scorer = pickETScorer("home", minute);
     if (!scorer) continue;
-    const active = activePlayersAt(homeXI, homeBench, allSubs, homeRedCards, "home", minute).filter((p) => !isGoalkeeper(p.positions));
+    const active = activePlayersAt(homeXI, homeBench, allSubs, homeRedCards, "home", minute, regularInjuries).filter((p) => !isGoalkeeper(p.positions));
     const assister = active.find((p) => p.id !== scorer.id) ?? null;
     events.push({ minute, team: "home", type: "goal", scorerId: scorer.id, scorerName: scorer.name, assistId: assister?.id, assistName: assister?.name });
   }
@@ -2397,7 +2461,7 @@ export function simulateExtraTime(
     const minute = 91 + Math.floor(rand() * 30);
     const scorer = pickETScorer("away", minute);
     if (!scorer) continue;
-    const active = activePlayersAt(awayXI, awayBench, allSubs, awayRedCards, "away", minute).filter((p) => !isGoalkeeper(p.positions));
+    const active = activePlayersAt(awayXI, awayBench, allSubs, awayRedCards, "away", minute, regularInjuries).filter((p) => !isGoalkeeper(p.positions));
     const assister = active.find((p) => p.id !== scorer.id) ?? null;
     events.push({ minute, team: "away", type: "goal", scorerId: scorer.id, scorerName: scorer.name, assistId: assister?.id, assistName: assister?.name });
   }
@@ -2410,21 +2474,47 @@ export function simulateExtraTime(
 export function simulatePenaltyShootout(
   homeXI: Player[],
   awayXI: Player[],
+  options: { injuries?: readonly InjuryEvent[] } = {},
 ): {
   homeGoals: number;
   awayGoals: number;
   shootout: Array<{ team: "home" | "away"; scored: boolean; playerId?: string }>;
 } {
   const shootout: Array<{ team: "home" | "away"; scored: boolean; playerId?: string }> = [];
+  const matchInjuries = Array.isArray(options.injuries) ? options.injuries : [];
 
-  // Los lanzadores de la tanda se ordenan por calidad de tiro, no por OVR
-  // bruto: el especialista en penaltis/remate debe ser quien lidere la lista.
-  const homeTakers = [...homeXI].sort((a, b) =>
-    penaltyTakerScore(b) - penaltyTakerScore(a) || b.rating - a.rating,
+  // Solo participan jugadores que llegaron al final del encuentro sin haber
+  // sufrido una lesión durante ese partido. Las sustituciones/expulsiones ya
+  // deben venir reflejadas en las alineaciones recibidas.
+  const eligibleTakers = (xi: Player[], team: "home" | "away") => {
+    const injuredIds = new Set(
+      matchInjuries.filter((injury) => injury.team === team && injury.playerId).map((injury) => injury.playerId),
+    );
+    const seen = new Set<string>();
+    return xi.filter((player: any) => {
+      if (!player?.id || seen.has(player.id) || injuredIds.has(player.id)) return false;
+      seen.add(player.id);
+      return true;
+    });
+  };
+  const homeTakers = eligibleTakers(homeXI, "home").sort((a, b) =>
+    penaltyTakerScore(b) - penaltyTakerScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0),
   );
-  const awayTakers = [...awayXI].sort((a, b) =>
-    penaltyTakerScore(b) - penaltyTakerScore(a) || b.rating - a.rating,
+  const awayTakers = eligibleTakers(awayXI, "away").sort((a, b) =>
+    penaltyTakerScore(b) - penaltyTakerScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0),
   );
+
+  // If one side has fewer eligible players (e.g. a dismissal), the other side
+  // must reduce its taker pool to the same size before the first kick.
+  const equalizedSquadSize = Math.min(homeTakers.length, awayTakers.length);
+  homeTakers.length = equalizedSquadSize;
+  awayTakers.length = equalizedSquadSize;
+
+  // Defensive guard for malformed old saves: never enter sudden-death with an
+  // empty taker list (which otherwise causes modulo-by-zero and an endless loop).
+  if (homeTakers.length === 0 || awayTakers.length === 0) {
+    return { homeGoals: 0, awayGoals: 0, shootout: [] };
+  }
 
   // Penalty success rate: 50% for each team (as requested)
   const getPenaltySuccess = () => rand() < 0.5;
@@ -2524,20 +2614,29 @@ export function simulateCupMatch(
       awayBench: opts.awayBench ?? [],
       regularSubstitutions,
       regularCards: regularResult.cards ?? [],
+      regularInjuries: regularResult.injuries ?? [],
       homeTactics: opts.homeTactics ?? null,
       awayTactics: opts.awayTactics ?? null,
     });
     const totalHome = regularResult.homeGoals + extraTimeResult.homeGoals;
     const combinedSubstitutions = [...regularSubstitutions, ...(extraTimeResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);
-    const homeRedCarded120 = new Map<string, number>(regularResult.cards.filter((c) => c.team === "home" && c.cardType === "red").map((c) => [c.playerId, c.minute]));
-    const awayRedCarded120 = new Map<string, number>(regularResult.cards.filter((c) => c.team === "away" && c.cardType === "red").map((c) => [c.playerId, c.minute]));
-    const finalHomeLineup120 = activePlayersAt(homeXI, opts.homeBench ?? [], combinedSubstitutions, homeRedCarded120, "home", 120);
-    const finalAwayLineup120 = activePlayersAt(awayXI, opts.awayBench ?? [], combinedSubstitutions, awayRedCarded120, "away", 120);
+    const homeRedCarded120 = new Map<string, number>(regularResult.cards.filter((c) => c.team === "home" && isExpulsionCard(c)).map((c) => [c.playerId, c.minute]));
+    const awayRedCarded120 = new Map<string, number>(regularResult.cards.filter((c) => c.team === "away" && isExpulsionCard(c)).map((c) => [c.playerId, c.minute]));
+    const finalHomeLineup120 = activePlayersAt(
+      homeXI, opts.homeBench ?? [], combinedSubstitutions, homeRedCarded120, "home", 120,
+      [...(regularResult.injuries ?? []), ...((extraTimeResult as any).injuries ?? [])],
+    );
+    const finalAwayLineup120 = activePlayersAt(
+      awayXI, opts.awayBench ?? [], combinedSubstitutions, awayRedCarded120, "away", 120,
+      [...(regularResult.injuries ?? []), ...((extraTimeResult as any).injuries ?? [])],
+    );
     const totalAway = regularResult.awayGoals + extraTimeResult.awayGoals;
 
     // If still tied after extra time, go to penalties
     if (totalHome === totalAway) {
-      const penaltyResult = simulatePenaltyShootout(finalHomeLineup120, finalAwayLineup120);
+      const penaltyResult = simulatePenaltyShootout(finalHomeLineup120, finalAwayLineup120, {
+        injuries: [...(regularResult.injuries ?? []), ...((extraTimeResult as any).injuries ?? [])],
+      });
 
       // Combine all results, preserving lineups/formation/ratings/mvp from regular time
       return {

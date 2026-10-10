@@ -31,6 +31,9 @@ function pushInto(map: Map<string, TransferRecord[]>, key: string, record: Trans
 export function recordTransfer(record: TransferRecord): TransferRecord {
   history.push(record);
   registerHistoricalMove(record.playerId, record.date);
+  for (const swapId of record.clauses?.playerSwapIds ?? []) {
+    registerHistoricalMove(swapId, record.date);
+  }
   // El jugador queda asentado en su nuevo club: no se moverá otra vez en la
   // misma ventana de mercado.
   lockPlayer(record.playerId, record.type);

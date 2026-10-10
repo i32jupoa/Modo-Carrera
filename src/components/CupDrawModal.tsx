@@ -121,6 +121,15 @@ export function CupDrawModal({
     }
   }, [isOpen, teams]);
 
+  // A modal can unmount while the interactive draw is running. Always release
+  // its interval as soon as the handle changes or the component is removed.
+  useEffect(() => {
+    const activeInterval = drawInterval;
+    return () => {
+      if (activeInterval) clearInterval(activeInterval);
+    };
+  }, [drawInterval]);
+
   const roundNames: Record<string, string> = {
     R32: "Treintaidosavos",
     R16: "Dieciseisavos",

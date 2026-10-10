@@ -513,7 +513,7 @@ export function PlayerDetailDialog({
   return (
     <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
       <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto overflow-x-hidden p-0">
-        <div className={`relative overflow-hidden bg-gradient-to-br p-5 ${pos === "GK" ? "from-amber-500/30 to-amber-500/0 border-amber-500/40" : pos === "DEF" ? "from-sky-500/30 to-sky-500/0 border-sky-500/40" : pos === "MID" ? "from-emerald-500/30 to-emerald-500/0 border-emerald-500/40" : "from-rose-500/30 to-rose-500/0 border-rose-500/40"}`}>
+        <div className="relative overflow-hidden border border-border/60 bg-gradient-to-br from-muted/40 to-card p-5">
           <div className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-background/10 blur-3xl" />
           <button type="button" onClick={onClose} className="absolute right-3 top-3 z-10 rounded-full p-2 text-foreground/70 transition hover:bg-background/30 hover:text-foreground" aria-label="Cerrar">
             <X className="h-4 w-4" />

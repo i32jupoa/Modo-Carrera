@@ -14,24 +14,24 @@ export function roleFromPosition(pos: string): PosRole {
 }
 
 export const ROLE_TEXT: Record<PosRole, string> = {
-  GK: "text-pos-gk",
-  DEF: "text-pos-def",
-  MID: "text-pos-mid",
-  ATT: "text-pos-att",
+  GK: "text-muted-foreground",
+  DEF: "text-muted-foreground",
+  MID: "text-muted-foreground",
+  ATT: "text-muted-foreground",
 };
 
 export const ROLE_BORDER: Record<PosRole, string> = {
-  GK: "border-pos-gk",
-  DEF: "border-pos-def",
-  MID: "border-pos-mid",
-  ATT: "border-pos-att",
+  GK: "border-border",
+  DEF: "border-border",
+  MID: "border-border",
+  ATT: "border-border",
 };
 
 export const ROLE_BG: Record<PosRole, string> = {
-  GK: "bg-pos-gk/15",
-  DEF: "bg-pos-def/15",
-  MID: "bg-pos-mid/15",
-  ATT: "bg-pos-att/15",
+  GK: "bg-secondary/60",
+  DEF: "bg-secondary/60",
+  MID: "bg-secondary/60",
+  ATT: "bg-secondary/60",
 };
 
 function initials(name: string): string {
@@ -59,7 +59,7 @@ interface PlayerFaceProps {
   role?: PosRole;
   size?: number;
   className?: string;
-  /** Aro de color según la demarcación. Se puede desactivar (alineación). */
+  /** Borde neutro del retrato; ya no depende de la demarcación. */
   showRing?: boolean;
 }
 

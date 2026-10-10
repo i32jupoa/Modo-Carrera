@@ -3879,7 +3879,7 @@ export function rebuildEuropeanRankingStats(save: SaveGame | null): void {
       for (const id of participants) bump(id, `${prefix}Appearances` as keyof PlayerStats);
 
       for (const card of r.cards ?? []) {
-        if (card.cardType === "red") {
+        if (card.cardType === "red" || card.isSecondYellow) {
           bump(card.playerId, `${prefix}RedCards` as keyof PlayerStats);
           if (card.isSecondYellow) bump(card.playerId, `${prefix}YellowCards` as keyof PlayerStats);
         } else {

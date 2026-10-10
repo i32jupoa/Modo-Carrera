@@ -19,6 +19,8 @@ import {
 } from "@/lib/awards";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerClubCrest } from "@/components/PlayerClubCrest";
+import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { faceUrl } from "@/lib/playerFaces";
 import { LEAGUES, teamById, type LeagueId } from "@/data/teams";
@@ -33,6 +35,7 @@ export const Route = createFileRoute("/awards")({ component: AwardsPage });
 
 function PlayerIdentity({ player, size = "md" }: { player: AwardPlayer; size?: "sm" | "md" }) {
   const imageSize = size === "sm" ? "h-9 w-9" : "h-14 w-14";
+  const currentClub = resolveCurrentPlayerClub(player.id);
   return (
     <div className="flex min-w-0 items-center gap-3">
       <img
@@ -44,8 +47,8 @@ function PlayerIdentity({ player, size = "md" }: { player: AwardPlayer; size?: "
       <div className="min-w-0">
         <div className={`truncate font-black ${size === "sm" ? "text-sm" : "text-lg"}`}>{player.name}</div>
         <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <TeamLogo teamName={player.teamName} leagueName={player.leagueName} size={size === "sm" ? 16 : 18} />
-          <span className="truncate">{player.teamName}</span>
+          <PlayerClubCrest playerId={player.id} size={size === "sm" ? 16 : 18} />
+          <span className="truncate">{currentClub.teamName}</span>
         </div>
       </div>
     </div>
@@ -149,6 +152,7 @@ function XIPlayers({ players, ratingByPlayer }: { players: AwardPlayer[]; rating
     <div className="space-y-2">
       {players.map((player, index) => {
         const rating = ratingByPlayer?.get(player.id) ?? player.averageRating;
+        const currentClub = resolveCurrentPlayerClub(player.id);
         return (
           <div key={player.id} className="flex items-center gap-2 rounded-lg border border-border/40 bg-secondary/20 px-2.5 py-2">
             <span className="w-5 text-center text-[0.65rem] font-black text-muted-foreground">{index + 1}</span>
@@ -156,8 +160,8 @@ function XIPlayers({ players, ratingByPlayer }: { players: AwardPlayer[]; rating
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-bold">{player.name}</div>
               <div className="flex min-w-0 items-center gap-1.5 text-[0.65rem] text-muted-foreground">
-                <TeamLogo teamName={player.teamName} leagueName={player.leagueName} size={16} />
-                <span className="truncate">{player.teamName}</span>
+                <PlayerClubCrest playerId={player.id} size={16} />
+                <span className="truncate">{currentClub.teamName}</span>
               </div>
             </div>
             <div className="text-xs font-black">{rating.toFixed(2)}</div>
@@ -200,7 +204,7 @@ function AwardsPitch({ players, ratingByPlayer }: { players: AwardPlayer[]; rati
                   {rating.toFixed(1)}
                 </div>
                 <div className="absolute -bottom-1 -left-1 rounded-full border border-white/70 bg-background p-0.5 shadow">
-                  <TeamLogo teamName={player.teamName} leagueName={player.leagueName} size={18} />
+                  <PlayerClubCrest playerId={player.id} size={18} />
                 </div>
               </div>
               <div className="mt-0.5 max-w-[92px] truncate rounded bg-background/90 px-1.5 py-0.5 text-[0.58rem] font-bold shadow-sm">
@@ -689,7 +693,6 @@ function AwardsPage() {
           <TabsTrigger value="europa">Europa League</TabsTrigger>
           <TabsTrigger value="conference">Conference League</TabsTrigger>
           <TabsTrigger value="ligas">Ligas</TabsTrigger>
-          <TabsTrigger value="cantera">Cantera</TabsTrigger>
         </TabsList>
 
         <TabsContent value="resumen">
@@ -721,9 +724,6 @@ function AwardsPage() {
           ) : (
             <LeagueView leagueId={leagueId} setLeagueId={setLeagueId} periods={periods} periodKey={selectedPeriod ? `${selectedPeriod.year}-${selectedPeriod.month}` : periodKey} setPeriodKey={setPeriodKey} monthly={monthly} />
           )}
-        </TabsContent>
-        <TabsContent value="cantera">
-          <AcademyAwardsView date={currentDate} season={save.season} />
         </TabsContent>
       </Tabs>
     </div>

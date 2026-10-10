@@ -37,6 +37,8 @@ import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 
 import { TeamLogo } from "@/components/TeamLogo";
+import { TeamBadge } from "@/components/TeamBadge";
+import type { Fixture } from "@/lib/season";
 
 import { CupDrawModal } from "@/components/CupDrawModal";
 
@@ -69,6 +71,40 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
+
+function CalendarTeamLogo({ teamId, size = 14 }: { teamId: string; size?: number }) {
+  try {
+    const team = teamById(teamId);
+    return <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={size} />;
+  } catch {
+    return <TeamBadge teamId={teamId} size={size} />;
+  }
+}
+
+function calendarResultLabel(result: Fixture["result"]): string | null {
+  if (!result) return null;
+  const home = Number(result.homeGoals ?? 0) + Number(result.extraTime?.homeGoals ?? 0);
+  const away = Number(result.awayGoals ?? 0) + Number(result.extraTime?.awayGoals ?? 0);
+  if (result.penalties) return `${home} (${result.penalties.homeGoals})–(${result.penalties.awayGoals}) ${away}`;
+  return `${home}–${away}`;
+}
+
+function EuropeanCalendarChip({ fixture, label, color, title }: {
+  fixture: Fixture;
+  label: string;
+  color: string;
+  title: string;
+}) {
+  const result = calendarResultLabel(fixture.result);
+  const detail = fixture.result?.penalties ? " · decidido por penaltis" : fixture.result?.extraTime ? " · prórroga" : "";
+  return (
+    <div key={fixture.id} className={`flex items-center justify-center gap-1 w-full min-w-0 text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded ${color} text-white ring-1 ring-inset ring-primary/70`} title={`${title}${result ? ` · ${result}${detail}` : " · Pendiente"}`}>
+      <CalendarTeamLogo teamId={fixture.homeId} size={12} />
+      <span className="truncate">{result ?? label}</span>
+      <CalendarTeamLogo teamId={fixture.awayId} size={12} />
+    </div>
+  );
 }
 
 export const Route = createFileRoute("/calendar")({ component: CalendarPage });
@@ -487,6 +523,10 @@ function CalendarPage() {
         homeId?: string;
         awayId?: string;
         id: string;
+        isPlayed?: boolean;
+        homeScore?: number | null;
+        awayScore?: number | null;
+        result?: Fixture["result"];
       }>
     >();
 
@@ -862,85 +902,38 @@ function CalendarPage() {
 
                         if (!opponentId) return null;
 
-                        const opponent = teamById(opponentId);
-
-                        const myTeam = teamById(myTeamId);
-
                         const isCup = f.competition === "cup";
-
-                        const bgColor = isCup ? "bg-purple-600/90" : "bg-red-600/90";
-
+                        const color = isCup ? "bg-purple-600/90" : "bg-red-600/90";
                         const label = isCup ? "C" : `J${f.matchday}`;
-
+                        const savedResult = (f as any).result;
+                        const scheduleResult = (f as any).isPlayed && (f as any).homeScore != null && (f as any).awayScore != null
+                          ? `${(f as any).homeScore}–${(f as any).awayScore}`
+                          : null;
+                        const score = calendarResultLabel(savedResult) ?? scheduleResult;
+                        const homeId = f.homeId || f.homeTeam;
+                        const awayId = f.awayId || f.awayTeam;
+                        if (!homeId || !awayId) return null;
                         return (
                           <div
                             key={f.id}
-                            className={`flex items-center justify-center gap-1 w-full text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded ${bgColor} text-white`}
-                            title={`${isCup ? "Copa" : "Liga"} - ${isHome ? "Local" : "Visitante"}`}
+                            className={`flex items-center justify-center gap-1 w-full min-w-0 text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded ${color} text-white ${homeId === myTeamId || awayId === myTeamId ? "ring-1 ring-inset ring-primary/70" : ""}`}
+                            title={`${isCup ? "Copa" : "Liga"} · ${homeId === myTeamId ? "Local" : "Visitante"}${score ? ` · Resultado ${score}` : " · Pendiente"}`}
                           >
-                            {isHome && (
-                              <TeamLogo
-                                teamName={myTeam.name}
-                                leagueName={getLeagueName(myTeam.league)}
-                                size={12}
-                              />
-                            )}
-
-                            {!isHome && (
-                              <TeamLogo
-                                teamName={opponent.name}
-                                leagueName={getLeagueName(opponent.league)}
-                                size={12}
-                              />
-                            )}
-
-                            <span>{label}</span>
-
-                            {isHome && (
-                              <TeamLogo
-                                teamName={opponent.name}
-                                leagueName={getLeagueName(opponent.league)}
-                                size={14}
-                              />
-                            )}
-
-                            {!isHome && (
-                              <TeamLogo
-                                teamName={myTeam.name}
-                                leagueName={getLeagueName(myTeam.league)}
-                                size={14}
-                              />
-                            )}
+                            <CalendarTeamLogo teamId={homeId} size={12} />
+                            <span className="truncate">{score ?? label}</span>
+                            <CalendarTeamLogo teamId={awayId} size={12} />
                           </div>
                         );
                       })
                       .filter(Boolean)}
 
-                  {inMonth && uelMatchDays.has(iso) && uelMatchDays.get(iso)!.map((f) => {
-                    const isHome = f.homeId === myTeamId;
-                    const opponentId = isHome ? f.awayId : f.homeId;
-                    const opponent = teamById(opponentId);
-                    const mine = teamById(myTeamId!);
-                    return opponent ? (
-                      <div key={f.id} className="flex items-center justify-center gap-1 w-full text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded bg-orange-600/90 text-white" title={`Europa League - ${isHome ? "Local" : "Visitante"}`}>
-                        <TeamLogo teamName={(isHome ? mine : opponent).name} leagueName={getLeagueName((isHome ? mine : opponent).league)} size={12} />
-                        <span>UEL</span>
-                      </div>
-                    ) : null;
-                  })}
+                  {inMonth && uelMatchDays.has(iso) && uelMatchDays.get(iso)!.map((f) => (
+                    <EuropeanCalendarChip key={f.id} fixture={f} label="UEL" color="bg-orange-600/90" title={`Europa League · ${f.homeId === myTeamId ? "Local" : "Visitante"}`} />
+                  ))}
 
-                  {inMonth && ueclMatchDays.has(iso) && ueclMatchDays.get(iso)!.map((f) => {
-                    const isHome = f.homeId === myTeamId;
-                    const opponentId = isHome ? f.awayId : f.homeId;
-                    const opponent = teamById(opponentId);
-                    const mine = teamById(myTeamId!);
-                    return opponent ? (
-                      <div key={f.id} className="flex items-center justify-center gap-1 w-full text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded bg-green-600/90 text-white" title={`Conference League - ${isHome ? "Local" : "Visitante"}`}>
-                        <TeamLogo teamName={(isHome ? mine : opponent).name} leagueName={getLeagueName((isHome ? mine : opponent).league)} size={12} />
-                        <span>UECL</span>
-                      </div>
-                    ) : null;
-                  })}
+                  {inMonth && ueclMatchDays.has(iso) && ueclMatchDays.get(iso)!.map((f) => (
+                    <EuropeanCalendarChip key={f.id} fixture={f} label="UECL" color="bg-green-600/90" title={`Conference League · ${f.homeId === myTeamId ? "Local" : "Visitante"}`} />
+                  ))}
 
                   {windowHighlight && inMonth && !isToday && dayFixtures.length === 0 && (
                     <span
@@ -979,63 +972,9 @@ function CalendarPage() {
                     </div>
                   )}
 
-                  {inMonth &&
-                    uclMatchDays.has(iso) &&
-                    uclMatchDays.get(iso)!.map((f) => {
-                      const isHome = f.homeId === myTeamId;
-
-                      const opponentId = isHome ? f.awayId : f.homeId;
-
-                      try {
-                        const opponent = teamById(opponentId);
-
-                        const myTeam = teamById(myTeamId!);
-
-                        return (
-                          <div
-                            key={f.id}
-                            className="flex items-center justify-center gap-1 w-full text-[0.5rem] leading-tight font-bold px-0.5 py-0.5 rounded bg-blue-700/90 text-white"
-                            title={`UCL - ${isHome ? "Local" : "Visitante"}`}
-                          >
-                            {isHome && (
-                              <TeamLogo
-                                teamName={myTeam.name}
-                                leagueName={getLeagueName(myTeam.league)}
-                                size={12}
-                              />
-                            )}
-
-                            {!isHome && (
-                              <TeamLogo
-                                teamName={opponent.name}
-                                leagueName={getLeagueName(opponent.league)}
-                                size={12}
-                              />
-                            )}
-
-                            <Trophy className="h-3 w-3 inline-block text-white/90" />
-
-                            {isHome && (
-                              <TeamLogo
-                                teamName={opponent.name}
-                                leagueName={getLeagueName(opponent.league)}
-                                size={14}
-                              />
-                            )}
-
-                            {!isHome && (
-                              <TeamLogo
-                                teamName={myTeam.name}
-                                leagueName={getLeagueName(myTeam.league)}
-                                size={14}
-                              />
-                            )}
-                          </div>
-                        );
-                      } catch {
-                        return null;
-                      }
-                    })}
+                  {inMonth && uclMatchDays.has(iso) && uclMatchDays.get(iso)!.map((f) => (
+                    <EuropeanCalendarChip key={f.id} fixture={f} label="UCL" color="bg-blue-700/90" title={`Champions League · ${f.homeId === myTeamId ? "Local" : "Visitante"}`} />
+                  ))}
                 </div>
               </div>
             );

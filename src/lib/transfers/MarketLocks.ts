@@ -1,10 +1,10 @@
 /**
  * Cerrojos de mercado.
  *
- * Un jugador que ya ha cambiado de club en la ventana en curso queda
- * "asentado": acaba de firmar un contrato y no vuelve a moverse hasta la
- * siguiente ventana. Sin esto, el mismo jugador podía aparecer en tres
- * traspasos distintos antes de que empezara la temporada.
+ * Un jugador que ya ha cambiado de club queda asentado hasta la siguiente
+ * temporada y año natural, no solo hasta la siguiente ventana. El historial
+ * global de movimientos complementa los cerrojos temporales de cada ventana
+ * y se reconstruye desde el historial persistido.
  *
  * Además se lleva la cuenta de llegadas por club dentro de la ventana, para
  * que el mercado no concentre todas las operaciones en los mismos dos o tres
@@ -34,6 +34,9 @@ const settled = new Map<string, string>();
 
 /** playerId -> temporada en la que ya se movió durante el mercado de verano. */
 const summerMovedThisSeason = new Map<string, number>();
+
+/** Último movimiento de cada jugador, reconstruible a partir del historial guardado. */
+const lastMovementByPlayer = new Map<string, { date: string; calendarYear: number; season: number }>();
 
 /**
  * playerId -> ventana en la que se cedió (subconjunto de `settled`).
@@ -163,8 +166,37 @@ export function currentLockWindow(): string {
 
 /** Registra una operación histórica para impedir una segunda mudanza en enero. */
 export function registerHistoricalMove(playerId: string, date: string): void {
-  if (!playerId || !date) return;
+  if (!playerId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
   if (isSummerDate(date)) summerMovedThisSeason.set(playerId, seasonOfDate(date));
+
+  const calendarYear = Number(date.slice(0, 4));
+  const season = seasonOfDate(date);
+  const previous = lastMovementByPlayer.get(playerId);
+  // Al restaurar una partida, los registros pueden proceder de archivos de
+  // ventanas separados; nunca dejemos que un registro antiguo pise al último.
+  if (!previous || date >= previous.date) {
+    lastMovementByPlayer.set(playerId, { date, calendarYear, season });
+  }
+}
+
+/**
+ * Un jugador no puede cambiar de club dos veces durante el mismo año natural
+ * ni dos veces dentro de la misma temporada deportiva (julio-junio). La regla
+ * cubre compras, agentes libres y cesiones, tanto para la IA como para el club
+ * del usuario. Se reconstruye desde el historial, sin añadir campos al save.
+ */
+export function canPlayerMoveAgain(playerId: string, date: string): boolean {
+  if (!playerId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const previous = lastMovementByPlayer.get(playerId);
+  if (!previous) return true;
+  const calendarYear = Number(date.slice(0, 4));
+  const season = seasonOfDate(date);
+  return previous.calendarYear !== calendarYear && previous.season !== season;
+}
+
+export function playerMovementBlockReason(playerId: string, date: string): string | null {
+  if (canPlayerMoveAgain(playerId, date)) return null;
+  return "Este jugador ya ha cambiado de equipo durante este año o temporada y no puede volver a moverse hasta la siguiente temporada.";
 }
 
 /** ¿Se movió ya este jugador durante el verano de la misma temporada deportiva? */
@@ -175,12 +207,9 @@ export function movedInSummerThisSeason(playerId: string, date: string): boolean
 }
 
 /**
- * Marca a un jugador como recién movido esta ventana: no se podrá volver a
- * FICHAR EN FIRME hasta la siguiente. Si el movimiento es una cesión, además
- * queda marcado aparte (`loanSettled`) para impedir una segunda cesión, sin
- * afectar a si puede seguir siendo fichado en firme por su club actual (ya
- * bloqueado por este mismo cerrojo) ni a si un fichaje en firme previo le
- * sigue permitiendo salir cedido.
+ * Marca al jugador como asentado en esta ventana. La barrera de movimiento
+ * anual/de temporada se comprueba aparte en `canPlayerMoveAgain`; estos
+ * mapas conservan además las reglas operativas heredadas de la ventana.
  */
 export function lockPlayer(playerId: string, type?: string): void {
   if (!activeWindowKey) return;
@@ -316,6 +345,7 @@ export function resetMarketLocks(): void {
   lastCoreLoss.clear();
   lastCoreSigning.clear();
   summerMovedThisSeason.clear();
+  lastMovementByPlayer.clear();
   userApprovedDepth = 0;
 }
 
@@ -330,6 +360,8 @@ export function rebuildLocks(
     fromClubId?: string | null;
     date: string;
     type?: string;
+    clauses?: { playerSwapIds?: string[] };
+    playerSwapIds?: string[];
   }[],
   windowKeyOf: (date: string) => string,
 ): void {
@@ -340,7 +372,11 @@ export function rebuildLocks(
   coreDepartures.clear();
   lastCoreLoss.clear();
   summerMovedThisSeason.clear();
-  for (const record of records) registerHistoricalMove(record.playerId, record.date);
+  lastMovementByPlayer.clear();
+  for (const record of records) {
+    registerHistoricalMove(record.playerId, record.date);
+    for (const swapId of record.playerSwapIds ?? record.clauses?.playerSwapIds ?? []) registerHistoricalMove(swapId, record.date);
+  }
   if (!activeWindowKey) return;
   for (const record of records) {
     if (windowKeyOf(record.date) !== activeWindowKey) continue;

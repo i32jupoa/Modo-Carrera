@@ -2,10 +2,10 @@
  * Sistema de demarcaciones detalladas.
  *
  * Sustituye por completo al viejo agrupamiento en 4 bloques
- * (POR / DEF / MED / DEL): cada jugador tiene una LISTA de demarcaciones
- * (su posición principal + sus "Alternative positions" de la base de datos),
- * TODAS al mismo nivel, y cada hueco del 11 titular exige una demarcación
- * concreta (GK, DFC, LI, MC, MD, ED...).
+ * (POR / DEF / MED / DEL): cada jugador tiene una LISTA de demarcaciones.
+ * La posición principal se conserva primero y después van sus "Alternative
+ * positions"; cada hueco del 11 titular exige una demarcación concreta
+ * (GK, DFC, LI, MC, MD, ED...).
  */
 
 export type PosCode =
@@ -193,8 +193,8 @@ export function isNaturalFor(codes: PosCode[], slot: PosCode): boolean {
  *
  * En Dirección de equipo la regla es estricta: un jugador solo puede ocupar
  * una demarcación que figure realmente entre su posición principal o sus
- * posiciones alternativas. No se permiten conversiones automáticas como
- * MC → MCD, DC → MCO, etc.
+ * posiciones alternativas. buildPositions conserva la primaria en el índice 0.
+ * No se permiten conversiones automáticas como MC → MCD, DC → MCO, etc.
  */
 export function canPlayPosition(codes: PosCode[], slot: PosCode): boolean {
   return codes.includes(slot);

@@ -455,10 +455,22 @@ function SeasonPage() {
           </div>
         )}
 
-        {/* Header strip — club summary */}
+        {/* Season dashboard header */}
         <div
-          className={`mb-6 panel p-4 rounded-xl border ${theme.cardBorder} flex flex-wrap items-center justify-between gap-4`}
+          className={`mb-6 panel p-4 sm:p-5 rounded-2xl border ${theme.cardBorder} flex flex-col gap-4`}
         >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[0.62rem] font-black uppercase tracking-[0.2em] text-primary">Central de temporada</p>
+              <p className="mt-1 text-xs text-muted-foreground">Resumen deportivo, próximo compromiso y evolución en la liga.</p>
+            </div>
+            <span className={`rounded-full border px-3 py-1 text-[0.65rem] font-black ${seasonComplete ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-border/60 bg-secondary/40 text-muted-foreground"}`}>
+              {seasonComplete ? "Temporada finalizada" : `Jornada ${Math.min(currentMd, myLeagueTotalMatchdays)} de ${myLeagueTotalMatchdays}`}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-secondary/70" role="progressbar" aria-label="Progreso de la temporada" aria-valuemin={0} aria-valuemax={100} aria-valuenow={seasonComplete ? 100 : Math.min(100, Math.max(0, Math.round(((currentMd - 1) / Math.max(1, myLeagueTotalMatchdays)) * 100)))}>
+            <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${seasonComplete ? 100 : Math.min(100, Math.max(0, Math.round(((currentMd - 1) / Math.max(1, myLeagueTotalMatchdays)) * 100)))}%` }} />
+          </div>
           <div className="flex items-center gap-4">
             <div
               className="relative rounded-xl p-2 bg-gradient-to-br from-background to-secondary"
@@ -785,29 +797,39 @@ function NextMatchCard({
       </div>
 
       {/* Referee + weather */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/40 border border-border/40">
-          <Flag className="w-4 h-4 text-muted-foreground" />
-          <div className="min-w-0">
-            <div className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
-              Árbitro
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <section className="rounded-xl border border-border/60 bg-card/65 p-3" aria-label="Información del árbitro">
+          <div className="flex items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary">
+              <Flag className="h-5 w-5" />
             </div>
-            <div className="text-xs font-bold truncate">{referee.name}</div>
-            <div className="text-[0.6rem] text-muted-foreground">
-              Severidad {referee.strictness}/100
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[0.6rem] font-black uppercase tracking-[0.16em] text-muted-foreground">Árbitro principal</span>
+                <span className={`rounded-full px-2 py-0.5 text-[0.58rem] font-black ${referee.strictness >= 70 ? "bg-amber-500/10 text-amber-300" : referee.strictness <= 35 ? "bg-emerald-500/10 text-emerald-300" : "bg-secondary text-muted-foreground"}`}>
+                  {referee.strictness >= 70 ? "Estricto" : referee.strictness <= 35 ? "Permisivo" : "Equilibrado"}
+                </span>
+              </div>
+              <p className="mt-1 truncate text-sm font-black">{referee.name}</p>
+              <div className="mt-2 flex items-center gap-2" title="Indicador orientativo de severidad disciplinaria">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, referee.strictness))}%` }} /></div>
+                <span className="scoreline text-[0.65rem] font-bold">{referee.strictness}/100</span>
+              </div>
+              <p className="mt-1 text-[0.6rem] text-muted-foreground">Severidad disciplinaria estimada</p>
             </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/40 border border-border/40">
-          <span className="text-xl leading-none">{weather.icon}</span>
-          <div className="min-w-0">
-            <div className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
-              Clima
+        </section>
+        <section className="rounded-xl border border-border/60 bg-card/65 p-3" aria-label="Previsión meteorológica">
+          <div className="flex items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-sky-400/20 bg-sky-400/10 text-2xl">{weather.icon}</div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[0.6rem] font-black uppercase tracking-[0.16em] text-muted-foreground">Condiciones del partido</span>
+              <p className="mt-1 truncate text-sm font-black">{weather.label}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Temperatura prevista: <span className="font-bold text-foreground">{weather.temp}°C</span></p>
+              <p className="mt-1 text-[0.6rem] text-muted-foreground">Información contextual previa al encuentro.</p>
             </div>
-            <div className="text-xs font-bold truncate">{weather.label}</div>
-            <div className="text-[0.6rem] text-muted-foreground">{weather.temp}°C</div>
           </div>
-        </div>
+        </section>
       </div>
 
       {/* Action buttons */}

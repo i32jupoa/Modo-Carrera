@@ -305,6 +305,7 @@ export type RatingInput = {
     team: "home" | "away";
     playerId: string;
     cardType: "yellow" | "red";
+    isSecondYellow?: boolean;
     minute: number;
   }>;
   minutesPlayed: Record<string, number>;
@@ -333,16 +334,18 @@ export function computePlayerRatings(input: RatingInput): {
       const ownGoals = input.goals.filter((g) => g.ownGoal && g.scorerId === p.id).length;
       const assists = input.goals.filter((g) => g.assistId === p.id).length;
       const yellow = input.cards.filter(
-        (c) => c.playerId === p.id && c.cardType === "yellow",
+        (c) => c.playerId === p.id && (c.cardType === "yellow" || c.isSecondYellow),
       ).length;
-      const red = input.cards.some((c) => c.playerId === p.id && c.cardType === "red");
+      const red = input.cards.some((c) => c.playerId === p.id && (c.cardType === "red" || c.isSecondYellow));
       const saves = isGoalkeeper(p.positions) ? teamSaves : 0;
       const missedPen = (input.penaltiesMissed ?? []).filter((x) => x.playerId === p.id).length;
 
-      let r = 6.0;
+      // Positional baseline is deliberately moderate so defenders and midfielders
+      // can earn strong ratings from team performance, not only goal contributions.
+      let r = 6.35;
 
-      // Baseline from quality: better players are slightly more consistent.
-      r += ((p.rating - 72) / 100) * 1.2;
+      // Quality influences consistency, but must not dominate match performance.
+      r += ((p.rating - 72) / 100) * 0.8;
 
       // Attacking contributions.
       const goalBonus = isAttacking(p.positions)
@@ -357,16 +360,18 @@ export function computePlayerRatings(input: RatingInput): {
 
       // Goalkeeper / defensive contributions.
       if (isGoalkeeper(p.positions)) {
-        r += saves * 0.18;
-        r += conceded === 0 ? 1.0 : -conceded * 0.35;
+        r += saves * 0.16;
+        r += conceded === 0 ? 0.9 : -conceded * 0.25;
       } else if (isDefensive(p.positions)) {
-        r += conceded === 0 ? 0.6 : -conceded * 0.18;
+        r += conceded === 0 ? 0.75 : -conceded * 0.12;
+        r += resultMod > 0 ? 0.12 : 0;
       } else if (isMidfield(p.positions)) {
-        r += conceded === 0 ? 0.2 : -conceded * 0.06;
+        r += conceded === 0 ? 0.15 : -conceded * 0.035;
+        r += assists * 0.15;
       }
 
       // Penalties.
-      r -= yellow * 0.35;
+      r -= yellow * 0.28;
       if (red) r -= 1.6;
       r -= ownGoals * 1.6;
       r -= missedPen * 0.9;
@@ -376,7 +381,7 @@ export function computePlayerRatings(input: RatingInput): {
       if (minutes < 90) r -= ((90 - minutes) / 90) * 0.35;
 
       // Small random spread for the intangibles.
-      r += between(-0.35, 0.35);
+      r += between(-0.25, 0.25);
 
       ratings.push({
         playerId: p.id,

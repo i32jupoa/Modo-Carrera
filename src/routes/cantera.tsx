@@ -349,8 +349,9 @@ function AcademyPage() {
           <div className="panel rounded-2xl p-4">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-black"><Settings2 className="h-4 w-4 text-emerald-300" /> Instalaciones de cantera</div>
-                <p className="mt-1 text-xs text-muted-foreground">Nivel {facilityLevel}/5. Mejoran la calidad inicial, el potencial visible y la velocidad de desarrollo. También pueden ampliar la promoción anual.</p>
+                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-black"><Settings2 className="h-4 w-4 text-emerald-300" /> Instalaciones de cantera</div><span className="scoreline text-xs font-black text-emerald-300">{facilityLevel}/5</span></div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary/70" role="progressbar" aria-label="Nivel de instalaciones" aria-valuemin={0} aria-valuemax={5} aria-valuenow={facilityLevel}><div className="h-full rounded-full bg-emerald-400" style={{ width: `${(facilityLevel / 5) * 100}%` }} /></div>
+                <p className="mt-2 text-xs text-muted-foreground">Mejoran la calidad inicial, el potencial visible y la velocidad de desarrollo; también pueden ampliar la promoción anual.</p>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-[0.65rem]">
                   <MiniEffect label="Progresión" value={`+${currentFacilityGrowth - 100}%`} />
                   <MiniEffect label="POT adicional" value={`+${facilityPotential}`} />
@@ -367,8 +368,9 @@ function AcademyPage() {
           <div className="panel rounded-2xl p-4">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-black"><SearchCode className="h-4 w-4 text-primary" /> Entrenador juvenil</div>
-                <p className="mt-1 text-xs text-muted-foreground">Nivel {coachLevel}/5 · especialidad {coachSpecialty}. Aumenta la velocidad de progresión y da un bonus adicional a su grupo de posición.</p>
+                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-black"><SearchCode className="h-4 w-4 text-primary" /> Entrenador juvenil</div><span className="scoreline text-xs font-black text-primary">{coachLevel}/5</span></div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary/70" role="progressbar" aria-label="Nivel del entrenador juvenil" aria-valuemin={0} aria-valuemax={5} aria-valuenow={coachLevel}><div className="h-full rounded-full bg-primary" style={{ width: `${(coachLevel / 5) * 100}%` }} /></div>
+                <p className="mt-2 text-xs text-muted-foreground">Especialidad {coachSpecialty}. Aumenta la velocidad de progresión y aporta un bonus adicional a su grupo de posición.</p>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-[0.65rem]">
                   <MiniEffect label="Progresión base" value={`+${currentCoachBonus.toFixed(1)}%`} />
                   <MiniEffect label={`Especialidad ${coachSpecialty}`} value="+6% adicional" />
@@ -381,9 +383,16 @@ function AcademyPage() {
           </div>
         </section>
 
-        <section className="panel rounded-2xl p-4">
+        <section className="panel rounded-2xl p-4" aria-label="Buscar y filtrar canteranos">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-black">Promesas de la academia</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">Filtra por demarcación o cambia el criterio de ordenación.</p>
+            </div>
+            <span className="rounded-full border border-border/60 bg-secondary/50 px-3 py-1 text-[0.65rem] font-black text-muted-foreground">{filtered.length} de {players.length} jugadores</span>
+          </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar canterano..." className="w-full rounded-xl border border-border bg-secondary/60 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-primary/50" /></div>
+            <div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por nombre..." aria-label="Buscar canteranos por nombre" className="w-full rounded-xl border border-border bg-secondary/60 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-primary/50" /></div>
             <select value={position} onChange={(event) => setPosition(event.target.value)} className="rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-bold outline-none focus:border-primary/50"><option value="ALL">Todas las posiciones</option><option value="GK">Porteros</option><option value="DFC">Centrales</option><option value="LD">Laterales der.</option><option value="LI">Laterales izq.</option><option value="MCD">Pivotes</option><option value="MC">Centrocampistas</option><option value="MCO">Mediapuntas</option><option value="MD">Medios derechos</option><option value="MI">Medios izquierdos</option><option value="ED">Extremos derechos</option><option value="EI">Extremos izquierdos</option><option value="DC">Delanteros</option></select>
             <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-bold outline-none focus:border-primary/50"><option value="ovr">Ordenar por OVR</option><option value="potential">Ordenar por POT estimado</option><option value="age">Ordenar por edad</option></select>
           </div>

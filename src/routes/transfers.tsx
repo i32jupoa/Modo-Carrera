@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSave, SaveGame } from "@/lib/store";
 import { getCurrentSaveId } from "@/lib/savedGames";
-import { TEAMS, teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
+import { teamById, getAllTeams, LeagueId, LEAGUES, leagueIdFromName } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { LeagueLogo } from "@/components/LeagueLogo";
@@ -18,10 +18,9 @@ import {
   usePlayersStore,
   formatEuro,
   FcPlayer,
-  clubOfPlayer,
   fcPlayerById,
 } from "@/store/playersStore";
-import { getPlayerAnnualWage, getPlayer, isPlayerSettled, hasRejectedDealFor } from "@/lib/transfers";
+import { getPlayerAnnualWage, getPlayer, isPlayerSettled, canPlayerMoveAgain, hasRejectedDealFor } from "@/lib/transfers";
 import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Radar, Eye, Clock3, Trash2, LockKeyhole } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
@@ -37,6 +36,8 @@ import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import { getClubScout } from "@/lib/transfers";
 import { FREE_AGENT_IMPORTANT_OVR } from "@/lib/transfers/constants";
+import { resolveCurrentPlayerClub } from "@/lib/playerClub";
+import { PlayerClubCrest } from "@/components/PlayerClubCrest";
 import { windowForDate } from "@/lib/transferWindows";
 import type { ScoutingReport, UserDeal } from "@/lib/transfers";
 import {
@@ -192,17 +193,18 @@ function applyFilters(
       if (!playerPositions.some((position) => filters.positions.includes(position))) return false;
     }
 
-    // Situación contractual / club actual
-    if (filters.clubStatus === "free" && clubOfPlayer(id) !== null) return false;
+    // Los filtros usan la afiliación viva del mercado; Team/League en el
+    // dataset de jugadores son valores iniciales y pueden quedar obsoletos.
+    const currentClub = resolveCurrentPlayerClub(id, p);
+    if (filters.clubStatus === "free" && !currentClub.isFreeAgent) return false;
 
-    // League filter - use player's League field converted to ID
     if (filters.league !== "all") {
-      const playerLeagueId = leagueIdFromName(p.League);
-      if (playerLeagueId !== filters.league) return false;
+      const currentLeagueId = currentClub.team?.league ??
+        (currentClub.leagueName ? leagueIdFromName(currentClub.leagueName) : "");
+      if (currentLeagueId !== filters.league) return false;
     }
 
-    // Team filter
-    if (filters.team !== "all" && p.Team !== filters.team) return false;
+    if (filters.team !== "all" && currentClub.teamName !== filters.team) return false;
 
     // Age range filter
     if (filters.ageMin !== "" && p.Age < filters.ageMin) return false;
@@ -231,10 +233,6 @@ export const Route = createFileRoute("/transfers")({
   }),
   component: TransfersPage,
 });
-
-const TEAM_NAME_TO_ID: Record<string, string> = Object.fromEntries(
-  TEAMS.map((t) => [t.name, t.id]),
-);
 
 function ovrBadgeClass(ovr: number): string {
   if (ovr >= 85) return "bg-green-500/20 text-green-300 border-green-500/40";
@@ -851,15 +849,10 @@ function TransfersPage() {
                 const id = String(p.ID);
                 const positions = buildPositions(p.Position, p["Alternative positions"]);
                 const primaryPosition = positions[0];
-                const clubId = clubOfPlayer(id) ?? TEAM_NAME_TO_ID[p.Team];
-                const club = clubId ? teamById(clubId) : null;
+                const currentClub = resolveCurrentPlayerClub(id, p);
                 const negotiating = market.deals.some(
                   (d) => d.playerId === id && d.stage !== "completed" && d.stage !== "failed",
                 );
-                // Recién fichado en firme esta ventana: solo se puede negociar
-                // una cesión hasta la siguiente. Se avisa en la propia tarjeta
-                // para no descubrirlo al enviar la oferta y que rebote.
-                const justSettled = isPlayerSettled(id);
                 const blockedThisWindow = !!myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate);
 
                 return (
@@ -890,25 +883,19 @@ function TransfersPage() {
                             </span>
                           )}
                         </p>
-                        {club ? (
-                          <div className="flex items-center gap-1.5 mt-1.5">
-                            <TeamLogo
-                              teamName={club.name}
-                              leagueName={getLeagueName(club.league)}
-                              size={18}
-                            />
-                            <span className="text-[0.65rem] text-muted-foreground truncate">
-                              {club.name}
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="mt-1.5 inline-flex items-center rounded-md border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 text-[0.58rem] font-bold text-emerald-300">
-                            Agente libre
-                          </div>
-                        )}
-                        {justSettled && (
+                        <div className="flex items-center gap-1.5 mt-1.5 min-w-0">
+                          {currentClub.isFreeAgent ? (
+                            <span className="inline-grid h-[18px] w-[18px] shrink-0 place-items-center rounded border border-emerald-400/30 bg-emerald-400/10 text-[0.48rem] font-black text-emerald-300">FA</span>
+                          ) : (
+                            <PlayerClubCrest playerId={id} player={p} size={18} />
+                          )}
+                          <span className="text-[0.65rem] text-muted-foreground truncate">
+                            {currentClub.teamName}
+                          </span>
+                        </div>
+                        {!canPlayerMoveAgain(id, market.currentDate) && (
                           <p className="text-[0.6rem] text-amber-400 mt-1">
-                            Recién fichado: solo cesión esta ventana
+                            Ya cambió de club este año o temporada
                           </p>
                         )}
                       </div>
@@ -1003,12 +990,10 @@ function TransfersPage() {
                 const id = String(p.ID);
                 const positions = buildPositions(p.Position, p["Alternative positions"]);
                 const primaryPosition = positions[0];
-                const clubId = clubOfPlayer(id) ?? TEAM_NAME_TO_ID[p.Team];
-                const club = clubId ? teamById(clubId) : null;
+                const currentClub = resolveCurrentPlayerClub(id, p);
                 const negotiating = market.deals.some(
                   (d) => d.playerId === id && d.stage !== "completed" && d.stage !== "failed",
                 );
-                const justSettled = isPlayerSettled(id);
                 const blockedThisWindow = !!myTeamId && hasRejectedDealFor(id, myTeamId, market.currentDate);
                 const pending = scout.status === "pending";
                 const completed = scout.status === "completed";
@@ -1041,25 +1026,19 @@ function TransfersPage() {
                             </span>
                           )}
                         </p>
-                        {club ? (
-                          <div className="flex items-center gap-1.5 mt-1.5">
-                            <TeamLogo
-                              teamName={club.name}
-                              leagueName={getLeagueName(club.league)}
-                              size={18}
-                            />
-                            <span className="text-[0.65rem] text-muted-foreground truncate">
-                              {club.name}
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="mt-1.5 inline-flex items-center rounded-md border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 text-[0.58rem] font-bold text-emerald-300">
-                            Agente libre
-                          </div>
-                        )}
-                        {justSettled && (
+                        <div className="flex items-center gap-1.5 mt-1.5 min-w-0">
+                          {currentClub.isFreeAgent ? (
+                            <span className="inline-grid h-[18px] w-[18px] shrink-0 place-items-center rounded border border-emerald-400/30 bg-emerald-400/10 text-[0.48rem] font-black text-emerald-300">FA</span>
+                          ) : (
+                            <PlayerClubCrest playerId={id} player={p} size={18} />
+                          )}
+                          <span className="text-[0.65rem] text-muted-foreground truncate">
+                            {currentClub.teamName}
+                          </span>
+                        </div>
+                        {!canPlayerMoveAgain(id, market.currentDate) && (
                           <p className="text-[0.6rem] text-amber-400 mt-1">
-                            Recién fichado: solo cesión esta ventana
+                            Ya cambió de club este año o temporada
                           </p>
                         )}
                       </div>
@@ -1459,9 +1438,9 @@ function TransfersPage() {
           playerCard={target.card}
           ovr={target.OVR}
           age={target.Age}
-          clubName={target ? (teamById(clubOfPlayer(String(target.ID)) ?? TEAM_NAME_TO_ID[target.Team])?.name ?? target.Team) : ""}
-          isFreeAgent={target ? !(clubOfPlayer(String(target.ID)) ?? TEAM_NAME_TO_ID[target.Team]) : false}
-          importantFreeAgent={target ? !(clubOfPlayer(String(target.ID)) ?? TEAM_NAME_TO_ID[target.Team]) && target.OVR >= FREE_AGENT_IMPORTANT_OVR : false}
+          clubName={target ? resolveCurrentPlayerClub(String(target.ID), target).teamName : ""}
+          isFreeAgent={target ? resolveCurrentPlayerClub(String(target.ID), target).isFreeAgent : false}
+          importantFreeAgent={target ? resolveCurrentPlayerClub(String(target.ID), target).isFreeAgent && target.OVR >= FREE_AGENT_IMPORTANT_OVR : false}
           report={report}
           scoutingEntry={target ? scoutingMap.get(String(target.ID)) ?? null : null}
           budget={budget}
@@ -1469,6 +1448,7 @@ function TransfersPage() {
           wageBill={wageBill}
           currentWage={target ? getPlayerAnnualWage(String(target.ID)) : 0}
           transferLocked={target ? isPlayerSettled(String(target.ID)) : false}
+          movementBlocked={target ? !canPlayerMoveAgain(String(target.ID), market.currentDate) : false}
           currentDate={market.currentDate}
           onClose={() => setTarget(null)}
           onSubmit={({ amount, wageOffer, type, clauses }) => {

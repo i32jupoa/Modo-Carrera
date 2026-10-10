@@ -22,6 +22,7 @@ import {
   type FcPlayer,
 } from "@/store/playersStore";
 import { TeamLogo } from "@/components/TeamLogo";
+import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { loadTactics } from "@/lib/teamTactics";
@@ -561,10 +562,8 @@ function TeamsPage() {
                   Jugadores
                 </div>
                 {playerResults.map((p) => {
-                  const realClubId = clubOfPlayer(String(p.ID));
-                  const club = realClubId
-                    ? teamById(realClubId)
-                    : getAllTeams().find((t) => t.name === p.Team);
+                  const currentClub = resolveCurrentPlayerClub(String(p.ID), p);
+                  const club = currentClub.team;
                   return (
                     <button
                       key={p.ID}
@@ -580,7 +579,7 @@ function TeamsPage() {
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold truncate">{p.Name}</div>
                         <div className="text-[0.65rem] text-muted-foreground truncate">
-                          {club?.name ?? p.Team}
+                          {currentClub.teamName}
                         </div>
                       </div>
                       <span className="text-sm font-black scoreline">{Math.round(p.OVR)}</span>
@@ -928,18 +927,18 @@ function TeamsPage() {
                             </span>
                           </td>
                           <td className="py-2 px-1 text-center text-muted-foreground">{p.Age}</td>
-                          <td className="py-2 px-1 text-center scoreline">{stats.appearances}</td>
+                          <td className="py-2 px-1 text-center scoreline">{stats.appearances ?? 0}</td>
                           <td className="py-2 px-1 text-center font-semibold text-primary">
-                            {stats.goals}
+                            {stats.goals ?? 0}
                           </td>
                           <td className="py-2 px-1 text-center font-semibold text-accent">
-                            {stats.assists}
+                            {stats.assists ?? 0}
                           </td>
                           <td className="py-2 px-1 text-center font-bold">{goalContributions}</td>
                           <td className="py-2 px-1 text-center text-yellow-500">
-                            {stats.yellowCards}
+                            {stats.yellowCards ?? 0}
                           </td>
-                          <td className="py-2 px-1 text-center text-red-500">{stats.redCards}</td>
+                          <td className="py-2 px-1 text-center text-red-500">{stats.redCards ?? 0}</td>
                           <td className="py-2 px-1 text-center scoreline font-semibold">
                             {averageRating == null ? "—" : averageRating.toFixed(2)}
                           </td>
@@ -959,10 +958,6 @@ function TeamsPage() {
                   </tbody>
                 </table>
               </div>
-              <p className="text-[0.65rem] text-muted-foreground mt-3">
-                Orden por posición · PJ = Partidos Jugados · Contrib. = Goles + Asistencias · TA/TR
-                = tarjetas · Nota media = media de las valoraciones de los partidos jugados · MVP = mejor jugador del partido · P0 = porterías a cero · Forma: últimos 5 partidos; ↑ ≥ 7, → 6–6,99, ↓ &lt; 6
-              </p>
             </>
           )}
 

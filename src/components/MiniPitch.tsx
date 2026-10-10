@@ -25,6 +25,9 @@ interface MiniPitchProps {
   injuries?: InjuryEvent[];
   substitutions?: SubstitutionEvent[];
   stamina?: Record<string, number>;
+  currentMinute?: number;
+  revealAllInjuries?: boolean;
+  vacantSlots?: Record<number, "injury" | "red">;
 }
 
 // Position role mappings for CPU lineup generation
@@ -96,6 +99,9 @@ export function MiniPitch({
   injuries = [],
   substitutions = [],
   stamina = {},
+  currentMinute = 120,
+  revealAllInjuries = false,
+  vacantSlots = {},
 }: MiniPitchProps) {
   const formationPositions = FORMATION_COORDINATES[formation] ?? FORMATION_COORDINATES["Táctica 4-4-2"];
   const positionKeys = Object.keys(formationPositions);
@@ -153,7 +159,9 @@ export function MiniPitch({
 
   // Create a map of player IDs to their injuries
   const playerInjuries: Record<string, InjuryEvent[]> = {};
-  injuries.forEach((i) => {
+  injuries
+    .filter((i) => revealAllInjuries || Number(i.minute ?? 60) <= currentMinute)
+    .forEach((i) => {
     if (!playerInjuries[i.playerId]) {
       playerInjuries[i.playerId] = [];
     }
@@ -193,16 +201,34 @@ export function MiniPitch({
         </div>
 
         {/* Player nodes */}
-        {positionKeys.map((posKey) => {
+        {positionKeys.map((posKey, slotIndex) => {
           const coord = formationPositions[posKey];
           const player = playerPositions[posKey];
 
-          if (!player) return null;
+          if (!player) {
+            const vacancy = vacantSlots[slotIndex];
+            if (!vacancy) return null;
+            return (
+              <div
+                key={posKey}
+                className="absolute flex flex-col items-center justify-center"
+                style={{ top: `${coord.top}%`, left: `${coord.left}%`, transform: "translate(-50%, -50%)" }}
+                title={vacancy === "red" ? "Hueco por expulsión: no se puede sustituir" : "Hueco por lesión"}
+              >
+                <div className={`flex h-9 w-9 items-center justify-center rounded-full border-2 border-dashed text-lg shadow-lg ${vacancy === "red" ? "border-red-400 bg-red-950/80" : "border-amber-300 bg-amber-950/70"}`}>
+                  {vacancy === "red" ? "🟥" : "🚑"}
+                </div>
+                <div className="mt-0.5 text-[0.45rem] font-bold text-foreground text-center leading-tight">
+                  {vacancy === "red" ? "EXPULSADO" : "LESIÓN"}
+                </div>
+              </div>
+            );
+          }
 
           // Get cards for this player
           const playerCardList = playerCards[player.id] || [];
-          const hasYellowCard = playerCardList.some((c) => c.cardType === "yellow");
-          const hasRedCard = playerCardList.some((c) => c.cardType === "red");
+          const hasYellowCard = playerCardList.some((c) => c.cardType === "yellow" && !c.isSecondYellow);
+          const hasRedCard = playerCardList.some((c) => c.cardType === "red" || c.isSecondYellow);
           const cardType = hasRedCard ? "red" : hasYellowCard ? "yellow" : null;
 
           // Get rating for this player

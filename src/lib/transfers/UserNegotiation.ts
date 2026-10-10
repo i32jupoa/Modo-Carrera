@@ -38,8 +38,9 @@ import {
 } from "./NegotiationEngine";
 import { completeTransfer } from "./TransferEngine";
 import { recordTransfer } from "./TransferHistory";
-import { withUserApproval, isPlayerSettled } from "./MarketLocks";
-import { getSimulationState, isDeadlineDay, windowForDate } from "./MarketSimulation";
+import { withUserApproval, isPlayerSettled, playerMovementBlockReason } from "./MarketLocks";
+import { getSimulationState, isDeadlineDay, windowForDate, windowKeyForDate } from "./MarketSimulation";
+import { isMarketOpenForIso } from "@/lib/transferWindows";
 import { FREE_AGENT_IMPORTANT_OVR, MARKET_TIMING, WAGE_RULES } from "./constants";
 import { clamp, seededInt, seededPick, seededUnit } from "./random";
 import type {
@@ -247,7 +248,19 @@ function cacheKeyFor(date: string): string {
 }
 
 function marketWindowKey(date: string): string {
-  return `${date.slice(0, 4)}:${windowForDate(date)}`;
+  // Clave canónica temporada:ventana; el invierno pertenece a la temporada
+  // deportiva anterior al año natural. Se conserva una lectura legacy aparte
+  // en isBlockedForWindow para que los guardados existentes sigan respetándose.
+  return windowKeyForDate(date);
+}
+
+function isBlockedForWindow(blockedForWindow: string | undefined, date: string): boolean {
+  if (!blockedForWindow) return false;
+  const window = windowForDate(date);
+  if (window === "closed") return false;
+  const canonical = marketWindowKey(date);
+  const legacyCalendarYearKey = `${date.slice(0, 4)}:${window}`;
+  return blockedForWindow === canonical || blockedForWindow === legacyCalendarYearKey;
 }
 
 function isImportantFreeAgent(player: MarketPlayer | undefined): boolean {
@@ -582,13 +595,12 @@ function nextHigherRole(role: SquadRole): SquadRole {
 
 /** El jugador queda bloqueado para este mercado después de un rechazo definitivo. */
 export function hasRejectedDealFor(playerId: string, userClubId: string, date: string): boolean {
-  const key = marketWindowKey(date);
   return Array.from(deals.values()).some(
     (deal) =>
       deal.playerId === playerId &&
       deal.userClubId === userClubId &&
       deal.stage === "failed" &&
-      deal.blockedForWindow === key,
+      isBlockedForWindow(deal.blockedForWindow, date),
   );
 }
 
@@ -797,7 +809,7 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   if (input.userClubId === "ath" && player.nation.trim().toLowerCase() !== "españa") {
     return { ok: false, reason: "Athletic Club solo puede fichar jugadores españoles." };
   }
-  if (windowForDate(input.date) === "closed") {
+  if (!isMarketOpenForIso(input.date)) {
     return { ok: false, reason: "El mercado está cerrado." };
   }
   if (hasOpenDealFor(input.playerId)) {
@@ -822,16 +834,15 @@ export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   });
 
   const requestedType = input.type ?? "permanent";
+  const movementBlock = playerMovementBlockReason(input.playerId, input.date);
+  if (movementBlock) return { ok: false, reason: movementBlock };
   if (isFreeAgent && isLoanOffer(requestedType)) {
     return { ok: false, reason: "Un agente libre solo puede negociarse mediante fichaje directo." };
   }
   const type: TransferType = isFreeAgent ? "free" : requestedType;
   const isLoan = isLoanOffer(type);
-  // Un jugador que ya ha cambiado de club esta misma ventana está "asentado":
-  // ningún otro club puede ficharlo en firme hasta la siguiente. Sí puede
-  // salir cedido por su club actual (por ejemplo, un joven recién fichado al
-  // que le conviene tener minutos en otro sitio esa misma ventana), así que
-  // esta comprobación sólo se aplica a ofertas de compra, no a cesiones.
+  // Comprobación de compatibilidad para partidas antiguas/estado en memoria:
+  // el bloqueo por año/temporada ya se aplica arriba para cualquier operación.
   if (!isLoan && isPlayerSettled(input.playerId)) {
     return {
       ok: false,
@@ -1345,7 +1356,7 @@ export function clearFinishedUserDeals(date?: string): boolean {
       if (
         deal.stage === "failed" &&
         deal.blockedForWindow &&
-        deal.blockedForWindow === marketWindowKey(date)
+        isBlockedForWindow(deal.blockedForWindow, date)
       ) {
         // El registro puede desaparecer de la UI, pero debe seguir existiendo
         // para mantener el bloqueo del jugador durante toda la ventana.
@@ -1389,11 +1400,13 @@ function applyAgreedLoanClauses(deal: UserDeal): void {
  * fuera (compra/venta real de la plantilla del usuario).
  */
 export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
-  if (windowForDate(date) === "closed") {
+  if (!isMarketOpenForIso(date)) {
     return { ok: false, reason: "El mercado de fichajes está cerrado." };
   }
   const deal = deals.get(dealId);
   if (!deal) return { ok: false, reason: "Negociación no encontrada." };
+  const movementBlock = playerMovementBlockReason(deal.playerId, date);
+  if (movementBlock) return { ok: false, reason: movementBlock };
   const canFinalizeDeferredSale = deal.direction === "out" && deal.stage === "closing";
   if (deal.stage !== "ready" && !canFinalizeDeferredSale) {
     return { ok: false, reason: "El acuerdo todavía no está cerrado." };
@@ -1560,7 +1573,7 @@ function repairStuckClubWait(deal: UserDeal, date: string): void {
 }
 
 export function advanceUserDeals(userClubId: string, date: string): UserDealEvent[] {
-  if (windowForDate(date) === "closed") {
+  if (!isMarketOpenForIso(date)) {
     return cancelOpenDealsOnMarketClose(userClubId, date);
   }
   const events: UserDealEvent[] = [];
@@ -2679,7 +2692,7 @@ export function submitUserLoanOutOffer(input: {
   if (input.borrowerClubId === input.userClubId) {
     return { ok: false, reason: "El destino de la cesión debe ser otro club." };
   }
-  if (windowForDate(input.date) === "closed") {
+  if (!isMarketOpenForIso(input.date)) {
     return { ok: false, reason: "El mercado está cerrado." };
   }
   if (hasOpenDealFor(input.playerId)) {
@@ -2865,7 +2878,7 @@ function weightedPlayerSelection(
  */
 function generateOffersForUserPlayers(userClubId: string, date: string): UserDealEvent[] {
   const events: UserDealEvent[] = [];
-  if (windowForDate(date) === "closed") return events;
+  if (!isMarketOpenForIso(date)) return events;
 
   const state = getSimulationState();
   const intensity = state?.intensity ?? 0.5;
@@ -3038,7 +3051,7 @@ function loanSuitorsFor(playerId: string, userClubId: string, date: string): str
 
 function generateLoanOffersForUserPlayers(userClubId: string, date: string): UserDealEvent[] {
   const events: UserDealEvent[] = [];
-  if (windowForDate(date) === "closed") return events;
+  if (!isMarketOpenForIso(date)) return events;
   if (seededUnit("loan-offers", userClubId, date) > 0.38) return events;
 
   // Igual que en los traspasos, no hay límite global de tres ofertas recibidas.
@@ -3165,7 +3178,7 @@ export function acceptIncomingOffer(
   date: string,
   clauses?: Partial<OfferClauses>,
 ): IncomingResponseResult {
-  if (windowForDate(date) === "closed") {
+  if (!isMarketOpenForIso(date)) {
     return { ok: false, reason: "El mercado de fichajes está cerrado." };
   }
   const deal = deals.get(dealId);

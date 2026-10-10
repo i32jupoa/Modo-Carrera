@@ -1988,7 +1988,7 @@ function LineupPage() {
       </div>
 
       {!liveMode && tacticPlanState && (
-        <div className="panel mb-6 p-4 sm:p-5">
+        <div id="tactics-plans" className="panel mb-6 p-4 sm:p-5">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
@@ -2073,7 +2073,15 @@ function LineupPage() {
         </div>
       )}
 
-      <div className="grid lg:grid-cols-2 gap-6 mb-6">
+      <nav aria-label="Atajos de dirección de equipo" className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/45 p-2">
+        <span className="px-2 text-[0.6rem] font-black uppercase tracking-[0.16em] text-muted-foreground">Ir a</span>
+        <a href="#tactics-lineup" className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-xs font-bold transition hover:border-primary/50 hover:text-primary">Alineación y banquillo</a>
+        {!liveMode && tacticPlanState && <a href="#tactics-plans" className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-xs font-bold transition hover:border-primary/50 hover:text-primary">Planes de juego</a>}
+        <a href="#tactics-advanced" className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-xs font-bold transition hover:border-primary/50 hover:text-primary">Tácticas avanzadas</a>
+        <span className="ml-auto hidden text-[0.65rem] text-muted-foreground sm:block">Los cambios se conservan al guardar la alineación.</span>
+      </nav>
+
+      <div id="tactics-lineup" className="grid lg:grid-cols-2 gap-6 mb-6 scroll-mt-4">
         {/* Football Pitch */}
         <div className="flex flex-col items-center">
           <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-3">
@@ -2573,8 +2581,10 @@ function LineupPage() {
         );
       })()}
 
-      {/* Tactics panel */}
-      <TacticsPanel tactics={tactics} updateTactics={updateTactics} xiPlayers={xiPlayers as any} />
+      {/* Advanced tactics */}
+      <div id="tactics-advanced" className="scroll-mt-4">
+        <TacticsPanel tactics={tactics} updateTactics={updateTactics} xiPlayers={xiPlayers as any} />
+      </div>
 
       {liveMode &&
         live &&
@@ -2917,7 +2927,10 @@ function TacticsPanel({
   return (
     <div className="panel-glow mt-6 mb-6 p-5">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-black uppercase tracking-wider">Tácticas avanzadas</h2>
+        <div>
+          <h2 className="text-sm font-black uppercase tracking-[0.16em]">Tácticas avanzadas</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Define el comportamiento colectivo y los responsables a balón parado.</p>
+        </div>
         <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
           Auto-guardado
         </span>

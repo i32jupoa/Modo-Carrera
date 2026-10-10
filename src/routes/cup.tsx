@@ -36,8 +36,6 @@ function getLeagueName(leagueId: string): string {
 // Helper to format cup result with extra time or penalties
 
 function formatCupResult(result: any): string {
-  console.log("formatCupResult called with:", JSON.stringify(result, null, 2));
-
   if (!result) return "vs";
 
   const { homeGoals, awayGoals, extraTime, penalties } = result;
@@ -53,7 +51,6 @@ function formatCupResult(result: any): string {
 
     const formatted = `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
 
-    console.log("Formatted with penalties:", formatted);
 
     return formatted;
   } else if (extraTime) {
@@ -68,7 +65,6 @@ function formatCupResult(result: any): string {
 
       const formatted = `${totalHome} - ${totalAway} (prórroga)`;
 
-      console.log("Formatted with extra time (winner):", formatted);
 
       return formatted;
     }
@@ -77,14 +73,12 @@ function formatCupResult(result: any): string {
 
     const formatted = `${totalHome} - ${totalAway}`;
 
-    console.log("Formatted with extra time (tied):", formatted);
 
     return formatted;
   }
 
   const formatted = `${homeGoals} - ${awayGoals}`;
 
-  console.log("Formatted regular time:", formatted);
 
   return formatted;
 }
@@ -211,6 +205,11 @@ function CupPage() {
   const [country, setCountry] = useState<string>("");
 
   const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
+  const [selectedRound, setSelectedRound] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedRound(null);
+  }, [country]);
 
   useEffect(() => {
     const s = loadSave();
@@ -264,7 +263,7 @@ function CupPage() {
 
   // Get fixtures for the selected country's cup
 
-  const fixtures = primaryLeague ? save.cupFixtures[primaryLeague] : [];
+  const fixtures = primaryLeague ? (save.cupFixtures[primaryLeague] ?? []) : [];
 
   const champion = primaryLeague ? save.cupChampion[primaryLeague] : null;
 
@@ -304,47 +303,69 @@ function CupPage() {
         </div>
       )}
 
-      <div className="space-y-6">
-        {cupSchedule.map((step: any) => {
-          const rf = fixtures.filter((f) => f.round === step.round);
-
-          if (rf.length === 0)
-            return (
-              <RoundBlock
-                key={step.round}
-                label={ROUND_LABEL[step.round] || step.round}
-                matchday={step.matchday}
-                dateLabel={
-                  save.pendingBackgroundSims?.find(
-                    (p) => p.isCup && p.league === primaryLeague && p.matchday === step.matchday,
-                  )?.date
-                }
-              >
-                <p className="text-xs text-muted-foreground px-4 py-3">Pendiente de sortear</p>
-              </RoundBlock>
-            );
-
-          return (
+      {(() => {
+        const steps = Array.isArray(cupSchedule) ? cupSchedule : [];
+        const firstUnfinished = steps.find((step: any) =>
+          fixtures.some((fixture) => fixture.round === step.round && !fixture.result),
+        );
+        const firstNotDrawn = steps.find((step: any) =>
+          !fixtures.some((fixture) => fixture.round === step.round),
+        );
+        const defaultRound = firstUnfinished?.round ?? firstNotDrawn?.round ?? steps[steps.length - 1]?.round;
+        const activeRound = selectedRound && steps.some((step: any) => step.round === selectedRound)
+          ? selectedRound
+          : defaultRound;
+        const activeIndex = Math.max(0, steps.findIndex((step: any) => step.round === activeRound));
+        const step = steps[activeIndex];
+        if (!step) return <p className="text-sm text-muted-foreground">No hay rondas configuradas para esta copa.</p>;
+        const rf = fixtures
+          .filter((fixture) => fixture.round === step.round)
+          .sort((a, b) => {
+            const aMine = a.homeId === myId || a.awayId === myId;
+            const bMine = b.homeId === myId || b.awayId === myId;
+            return aMine === bMine ? 0 : aMine ? -1 : 1;
+          });
+        const dateLabel = rf.find((fixture) => !!fixture.date)?.date ||
+          save.pendingBackgroundSims?.find(
+            (pending) => pending.isCup && pending.league === primaryLeague && pending.matchday === step.matchday,
+          )?.date;
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-border/70 bg-card/70 p-2">
+              <button type="button" onClick={() => setSelectedRound(steps[activeIndex - 1]?.round ?? null)} disabled={activeIndex <= 0} className="inline-flex items-center gap-1 rounded-lg border border-border px-3 py-2 text-sm font-bold transition hover:border-primary/50 disabled:opacity-30" aria-label="Ronda anterior">‹ <span className="hidden sm:inline">Anterior</span></button>
+              <div className="min-w-0 text-center">
+                <div className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">Ronda activa · {activeIndex + 1}/{steps.length}</div>
+                <div className="truncate text-base font-black">{ROUND_LABEL[step.round] || step.round}</div>
+              </div>
+              <button type="button" onClick={() => setSelectedRound(steps[activeIndex + 1]?.round ?? null)} disabled={activeIndex >= steps.length - 1} className="inline-flex items-center gap-1 rounded-lg border border-border px-3 py-2 text-sm font-bold transition hover:border-primary/50 disabled:opacity-30" aria-label="Ronda siguiente"><span className="hidden sm:inline">Siguiente</span> ›</button>
+            </div>
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {steps.map((round: any, index: number) => {
+                const roundFixtures = fixtures.filter((fixture) => fixture.round === round.round);
+                const isActive = round.round === step.round;
+                const isDone = roundFixtures.length > 0 && roundFixtures.every((fixture) => !!fixture.result);
+                return <button key={round.round} type="button" onClick={() => setSelectedRound(round.round)} aria-current={isActive ? "step" : undefined} className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${isActive ? "border-primary bg-primary/15 text-primary" : "border-border/60 bg-card text-muted-foreground hover:border-primary/40"}`}>
+                  {ROUND_LABEL[round.round] || round.round}{isDone ? " ✓" : ""}
+                </button>;
+              })}
+            </div>
             <RoundBlock
-              key={step.round}
               label={ROUND_LABEL[step.round] || step.round}
               matchday={step.matchday}
-              dateLabel={
-                rf.find((f) => !!f.date)?.date ||
-                save.pendingBackgroundSims?.find(
-                  (p) => p.isCup && p.league === primaryLeague && p.matchday === step.matchday,
-                )?.date
-              }
+              dateLabel={dateLabel}
             >
-              <div className="divide-y divide-border/40">
-                {rf.map((f) => (
-                  <KOFixtureRow key={f.id} f={f} myId={myId} onClick={setSelectedFixture} />
-                ))}
-              </div>
+              {rf.length === 0 ? (
+                <p className="px-4 py-4 text-xs text-muted-foreground">Pendiente de sortear.</p>
+              ) : (
+                <div className="divide-y divide-border/40">
+                  {rf.map((fixture) => <KOFixtureRow key={fixture.id} f={fixture} myId={myId} onClick={setSelectedFixture} />)}
+                </div>
+              )}
             </RoundBlock>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })()}
+
 
       <MatchStatsModal fixture={selectedFixture} onClose={() => setSelectedFixture(null)} />
     </div>
@@ -416,15 +437,9 @@ export function KOFixtureRow({
 
   const winner = getCupMatchWinner(f.result);
 
-  // Log for debugging user's fixtures
-
-  if (isMine) {
-    console.log(`KOFixtureRow for user fixture ${f.id}:`, JSON.stringify(f.result, null, 2));
-  }
-
   return (
     <div
-      className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3 ${isMine ? "bg-primary/5" : ""} ${f.result ? "cursor-pointer hover:bg-accent/20 transition" : ""}`}
+      className={`grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3 ${isMine ? "bg-primary/10 border-l-4 border-primary ring-1 ring-inset ring-primary/20" : ""} ${f.result ? "cursor-pointer hover:bg-accent/20 transition" : ""}`}
       onClick={() => f.result && onClick?.(f)}
     >
       <div className="flex items-center gap-2 justify-end min-w-0">
@@ -437,8 +452,9 @@ export function KOFixtureRow({
         <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={26} />
       </div>
 
-      <div className="scoreline font-bold text-base text-center min-w-[70px]">
-        {formatCupResult(f.result)}
+      <div className="flex min-w-[70px] flex-col items-center text-center">
+        {isMine && <span className="mb-1 rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-primary">Tu partido</span>}
+        <span className="scoreline text-base font-bold">{formatCupResult(f.result)}</span>
       </div>
 
       <div className="flex items-center gap-2 min-w-0">

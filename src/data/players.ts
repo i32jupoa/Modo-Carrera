@@ -134,7 +134,7 @@ export type Position = "GK" | "DEF" | "MID" | "FWD";
 export type Player = {
   id: string;
   name: string;
-  /** Demarcaciones reales (principal + alternativas), todas al mismo nivel. */
+  /** Demarcaciones reales: la primera es la principal; las siguientes son alternativas. */
   positions: PosCode[];
   rating: number;
   /** Potencial real del dataset (techo esperado del jugador). */

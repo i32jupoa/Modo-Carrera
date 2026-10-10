@@ -4,6 +4,8 @@ import { ALL_LEAGUES, loadSave, SaveGame, getSortedStandings } from "@/lib/store
 import { LEAGUES, teamById, teamsByLeague, type LeagueId } from "@/data/teams";
 import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
 import { TeamLogo } from "@/components/TeamLogo";
+import { TeamForm } from "@/components/TeamForm";
+import { getTeamForms } from "@/lib/teamForm";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import {
   Select,
@@ -92,7 +94,7 @@ function StandingsPage() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-bold">Clasificación</h3>
         </div>
-        <StandingsTable standings={standings} myTeamId={save.myTeamId} highlight={highlight} />
+        <StandingsTable standings={standings} myTeamId={save.myTeamId} highlight={highlight} save={save} />
       </div>
     </div>
   );
@@ -102,14 +104,17 @@ function StandingsTable({
   standings,
   myTeamId,
   highlight,
+  save,
 }: {
   standings: ReturnType<typeof getSortedStandings>;
   myTeamId: string;
   highlight?: string;
+  save: SaveGame;
 }) {
+  const formsByTeam = getTeamForms(save, 5);
   return (
     <div className="text-xs">
-      <div className="grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
+      <div className="grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px_76px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
         <span>#</span>
         <span>Equipo</span>
         <span className="text-center">PJ</span>
@@ -120,6 +125,7 @@ function StandingsTable({
         <span className="text-center">GC</span>
         <span className="text-center">DG</span>
         <span className="text-center">Pts</span>
+        <span className="text-center">Forma</span>
       </div>
       {standings.map((s, i) => {
         const t = teamById(s.teamId);
@@ -136,7 +142,7 @@ function StandingsTable({
         return (
           <div
             key={s.teamId}
-            className={`grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : isHighlighted ? "bg-accent/10 ring-1 ring-accent/50 font-semibold" : ""}`}
+            className={`grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px_76px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : isHighlighted ? "bg-accent/10 ring-1 ring-accent/50 font-semibold" : ""}`}
           >
             <span className="text-muted-foreground">{i + 1}</span>
             <span className="flex items-center gap-1.5 min-w-0">
@@ -151,6 +157,7 @@ function StandingsTable({
             <span className="text-center scoreline">{s.ga}</span>
             <span className="text-center scoreline">{s.gd > 0 ? `+${s.gd}` : s.gd}</span>
             <span className="text-center scoreline font-bold">{s.points}</span>
+            <TeamForm results={formsByTeam.get(s.teamId) ?? []} />
           </div>
         );
       })}

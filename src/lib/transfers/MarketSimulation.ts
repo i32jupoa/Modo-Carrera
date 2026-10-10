@@ -712,8 +712,14 @@ function runClubDay(
       recordTransfers(cycle.transfers);
       result.transfers.push(...cycle.transfers);
       for (const transfer of cycle.transfers) {
-        if (!transfer.fromClubId) continue;
-        clubWindowState(transfer.fromClubId).sales += 1;
+        publishConfirmedTransferRumor(
+          result,
+          transfer.toClubId,
+          transfer.playerId,
+          transfer.fromClubId,
+          date,
+        );
+        if (transfer.fromClubId) clubWindowState(transfer.fromClubId).sales += 1;
       }
     }
 
@@ -751,8 +757,14 @@ function runClubDay(
         recordTransfers(oppCycle.transfers);
         result.transfers.push(...oppCycle.transfers);
         for (const transfer of oppCycle.transfers) {
-          if (!transfer.fromClubId) continue;
-          clubWindowState(transfer.fromClubId).sales += 1;
+          publishConfirmedTransferRumor(
+            result,
+            transfer.toClubId,
+            transfer.playerId,
+            transfer.fromClubId,
+            date,
+          );
+          if (transfer.fromClubId) clubWindowState(transfer.fromClubId).sales += 1;
         }
       }
     }

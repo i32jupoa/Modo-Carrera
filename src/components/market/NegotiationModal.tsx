@@ -27,6 +27,8 @@ interface Props {
    * negociar una cesión.
    */
   transferLocked?: boolean;
+  /** El jugador ya se movió este año/temporada; bloquea compras y cesiones. */
+  movementBlocked?: boolean;
   onSubmit: (input: {
     amount: number;
     wageOffer: number;
@@ -57,6 +59,7 @@ export function NegotiationModal({
   currentWage = 0,
   currentDate,
   transferLocked = false,
+  movementBlocked = false,
   onSubmit,
   onClose,
 }: Props) {
@@ -66,17 +69,17 @@ export function NegotiationModal({
   );
   const [loanType, setLoanType] = useState<"loan" | "loan-option" | "loan-obligation">("loan");
   const type = operation === "transfer" ? "permanent" : loanType;
-  const [amount, setAmount] = useState(0);
+  const [amount, setAmount] = useState<number | "">("");
   const [sellOn, setSellOn] = useState(0);
 
   const [wageShare, setWageShare] = useState(50);
   const [loanSellOn, setLoanSellOn] = useState(0);
-  const [loanOptionFee, setLoanOptionFee] = useState(0);
+  const [loanOptionFee, setLoanOptionFee] = useState<number | "">("");
   const [loanDurationMonths, setLoanDurationMonths] = useState<number>(
     windowForDate(currentDate) === "winter" ? 6 : 12,
   );
 
-  const amountEuros = Math.round(amount * 1_000_000);
+  const amountEuros = Math.round((amount === "" ? 0 : amount) * 1_000_000);
   const wageEuros = type === "permanent"
     ? Math.max(0, Math.round(report?.wageDemand ?? 0))
     : Math.max(0, Math.round(currentWage));
@@ -107,6 +110,12 @@ export function NegotiationModal({
           </button>
         </div>
 
+        {movementBlocked && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs font-semibold text-amber-200">
+            Este jugador ya ha cambiado de equipo este año o temporada y no puede volver a moverse hasta la siguiente.
+          </div>
+        )}
+
         {!scoutingData && (
           <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 text-center">
             <p className="text-[0.68rem] font-black text-primary">Se necesita un ojeador para acceder a esta información.</p>
@@ -131,7 +140,7 @@ export function NegotiationModal({
           </p>
         )}
 
-        {transferLocked && (
+        {transferLocked && !movementBlocked && (
           <p className="text-xs text-amber-400">
             {playerName} acaba de fichar en firme esta ventana: solo se puede negociar una cesión hasta la próxima.
           </p>
@@ -164,9 +173,9 @@ export function NegotiationModal({
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              disabled={transferLocked}
+              disabled={transferLocked || movementBlocked}
               onClick={() => setOperation("transfer")}
-              title={transferLocked ? "Recién fichado: no se puede ofertar en firme hasta la próxima ventana." : undefined}
+              title={movementBlocked ? "El jugador no puede cambiar de equipo otra vez este año/temporada." : transferLocked ? "Recién fichado: no se puede ofertar en firme hasta la próxima ventana." : undefined}
               className={`rounded-xl border px-3 py-3 text-sm font-black transition ${
                 transferLocked
                   ? "border-border/40 bg-secondary/40 text-muted-foreground/40 cursor-not-allowed"
@@ -179,6 +188,7 @@ export function NegotiationModal({
             </button>
             <button
               type="button"
+              disabled={movementBlocked}
               onClick={() => setOperation("loan")}
               className={`rounded-xl border px-3 py-3 text-sm font-black transition ${
                 operation === "loan"
@@ -320,7 +330,7 @@ export function NegotiationModal({
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={overBudget || overWageBudget || (!isFreeAgent && amountEuros <= 0)}
+            disabled={movementBlocked || overBudget || overWageBudget || (operation === "transfer" && !isFreeAgent && amountEuros <= 0)}
             onClick={() =>
               onSubmit({
                 amount: amountEuros,
@@ -333,13 +343,13 @@ export function NegotiationModal({
                       sellOnPercent: loanType === "loan" ? 0 : loanSellOn,
                       wageShare: wageShare / 100,
                       loanDurationMonths,
-                      optionFee: loanType === "loan" ? 0 : Math.max(0, Math.round(loanOptionFee * 1_000_000)),
+                      optionFee: loanType === "loan" ? 0 : Math.max(0, Math.round((loanOptionFee === "" ? 0 : loanOptionFee) * 1_000_000)),
                     },
               })
             }
             className="flex-1 bg-primary text-primary-foreground py-2 rounded-lg font-bold disabled:opacity-40"
           >
-            {isFreeAgent ? "Enviar propuesta al jugador" : "Enviar propuesta al club"}
+            {movementBlocked ? "Movimiento bloqueado" : isFreeAgent ? "Enviar propuesta al jugador" : "Enviar propuesta al club"}
           </button>
           <button
             type="button"
@@ -375,8 +385,8 @@ function Field({
   step,
 }: {
   label: string;
-  value: number;
-  onChange: (value: number) => void;
+  value: number | "";
+  onChange: (value: number | "") => void;
   step: number;
 }) {
   return (
@@ -386,10 +396,20 @@ function Field({
       </label>
       <input
         type="number"
+        inputMode="decimal"
         min={0}
         step={step}
         value={value}
-        onChange={(e) => onChange(Math.max(0, Number(e.target.value)))}
+        placeholder="0"
+        onChange={(e) => {
+          const raw = e.currentTarget.value;
+          if (raw === "") {
+            onChange("");
+            return;
+          }
+          const parsed = Number(raw);
+          if (Number.isFinite(parsed)) onChange(Math.max(0, parsed));
+        }}
         className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm font-bold"
       />
     </div>

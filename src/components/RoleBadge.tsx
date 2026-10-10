@@ -3,6 +3,14 @@ import { CircleDot, Crown, ShieldCheck, Sparkles, UsersRound } from "lucide-reac
 import type { SquadRole } from "@/lib/transfers/types";
 import { SQUAD_ROLE_LABELS } from "@/lib/squadRoles";
 
+const ROLE_HELP: Record<SquadRole, string> = {
+  star: "Estrella: pieza clave del proyecto deportivo.",
+  starter: "Titular: se espera que juegue con regularidad desde el inicio.",
+  rotation: "Rotación: alterna titularidades y minutos desde el banquillo.",
+  secondary: "Secundario: papel de apoyo con participación selectiva.",
+  prospect: "Promesa: jugador en desarrollo que necesita oportunidades para progresar.",
+};
+
 const CONFIG: Record<SquadRole, { icon: typeof Crown; classes: string }> = {
   star: { icon: Crown, classes: "border-amber-400/25 bg-amber-500/10 text-amber-300" },
   starter: { icon: ShieldCheck, classes: "border-sky-400/25 bg-sky-500/10 text-sky-300" },
@@ -21,7 +29,7 @@ export const RoleBadge = memo(function RoleBadge({ role = "secondary", compact =
   const config = CONFIG[role];
   const Icon = config.icon;
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border font-bold ${compact ? "px-1.5 py-0.5 text-[0.55rem]" : "px-2 py-1 text-xs"} ${config.classes} ${className}`}>
+    <span title={ROLE_HELP[role]} aria-label={`${SQUAD_ROLE_LABELS[role]}. ${ROLE_HELP[role]}`} className={`inline-flex items-center gap-1 rounded-full border font-bold ${compact ? "px-1.5 py-0.5 text-[0.55rem]" : "px-2 py-1 text-xs"} ${config.classes} ${className}`}>
       <Icon className={compact ? "h-2.5 w-2.5" : "h-3.5 w-3.5"} />
       {SQUAD_ROLE_LABELS[role]}
     </span>

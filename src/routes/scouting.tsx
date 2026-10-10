@@ -16,12 +16,13 @@ import { toast } from "sonner";
 import { loadSave } from "@/lib/store";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { CountryFlag } from "@/components/CountryFlag";
-import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerClubCrest } from "@/components/PlayerClubCrest";
+import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { LEAGUES } from "@/data/teams";
-import { clubOfPlayer, formatEuro, usePlayersStore, type FcPlayer } from "@/store/playersStore";
+import { formatEuro, usePlayersStore, type FcPlayer } from "@/store/playersStore";
 import {
   ensureScoutingState,
   dismissHiredScout,
@@ -92,10 +93,10 @@ class ScoutingReportBoundary extends Component<{ children: ReactNode; player: Fc
                 />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xl font-black">{this.props.player.Name}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{this.props.player.Team} · {this.props.player.Age} años</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{resolveCurrentPlayerClub(this.props.player.ID, this.props.player).teamName} · {this.props.player.Age} años</p>
                   <p className="mt-1 text-sm font-bold">Media {this.props.player.OVR}</p>
                 </div>
-                <TeamLogo teamName={this.props.player.Team} leagueName={this.props.player.League} size={46} />
+                <PlayerClubCrest playerId={this.props.player.ID} player={this.props.player} size={46} />
               </div>
               <div className="rounded-xl border border-border/60 bg-card/40 p-4">
                 <p className="text-[0.65rem] font-black uppercase tracking-wider text-primary">Datos del informe</p>
@@ -161,6 +162,10 @@ function optionalNumber(value: string): number | null {
   if (!value.trim()) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizePlayerName(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").trim();
 }
 
 function ScoutStars({ rating, size = "sm" }: { rating: ScoutRating; size?: "sm" | "lg" }) {
@@ -342,6 +347,7 @@ function ScoutingPage() {
   const playerStats = usePlayersStore((state) => state.stats);
   const rawPlayers = useMemo(() => usePlayersStore.getState().getRawPlayers?.() || [], [playerStats, currentDate]);
   const spendBudget = usePlayersStore((state) => state.spendBudget);
+  const [nameQuery, setNameQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState<PosCode | "">("");
   const [minOvr, setMinOvr] = useState("");
   const [maxOvr, setMaxOvr] = useState("");
@@ -401,7 +407,8 @@ function ScoutingPage() {
   }, []);
 
   const hasSearchCriteria = Boolean(
-    positionFilter ||
+    nameQuery.trim() ||
+      positionFilter ||
       minOvr.trim() ||
       maxOvr.trim() ||
       minAge.trim() ||
@@ -421,12 +428,14 @@ function ScoutingPage() {
     const minAgeValue = optionalNumber(minAge);
     const maxAgeValue = optionalNumber(maxAge);
     const roster = new Set(usePlayersStore.getState().rosterIds);
-    const assigned = new Set(assignments.map((entry) => entry.playerId));
+    const normalizedQuery = normalizePlayerName(nameQuery);
     const multiplier = sortDirection === "asc" ? 1 : -1;
 
     return (rawPlayers as FcPlayer[])
-      .filter((player) => !roster.has(String(player.ID)) && !assigned.has(String(player.ID)))
+      .filter((player) => !roster.has(String(player.ID)))
       .filter((player) => {
+        if (normalizedQuery && !normalizePlayerName(player.Name).includes(normalizedQuery)) return false;
+        const currentClub = resolveCurrentPlayerClub(String(player.ID), player);
         const positions = buildPositions(player.Position, player["Alternative positions"]);
         if (positionFilter && !positions.includes(positionFilter)) return false;
         if (minOvrValue !== null && Number(player.OVR) < minOvrValue) return false;
@@ -434,8 +443,8 @@ function ScoutingPage() {
         if (minAgeValue !== null && Number(player.Age) < minAgeValue) return false;
         if (maxAgeValue !== null && Number(player.Age) > maxAgeValue) return false;
         if (nationFilter && (player.Nation ?? "") !== nationFilter) return false;
-        if (leagueFilter && player.League !== leagueFilter) return false;
-        if (clubStatus === "free" && clubOfPlayer(String(player.ID)) !== null) return false;
+        if (leagueFilter && currentClub.leagueName !== leagueFilter) return false;
+        if (clubStatus === "free" && !currentClub.isFreeAgent) return false;
         return true;
       })
       .sort((a, b) => {
@@ -445,7 +454,7 @@ function ScoutingPage() {
         if (valueDifference !== 0) return valueDifference * multiplier;
         return a.Name.localeCompare(b.Name, "es");
       });
-  }, [assignments, clubStatus, hasSearched, leagueFilter, maxAge, maxOvr, minAge, minOvr, nationFilter, positionFilter, rawPlayers, sortBy, sortDirection]);
+  }, [clubStatus, hasSearched, leagueFilter, maxAge, maxOvr, minAge, minOvr, nameQuery, nationFilter, positionFilter, rawPlayers, sortBy, sortDirection]);
 
   const totalSearchPages = Math.max(1, Math.ceil(availableSearchPlayers.length / RESULTS_PER_PAGE));
   const safeCurrentPage = Math.min(currentPage, totalSearchPages);
@@ -502,6 +511,7 @@ function ScoutingPage() {
   }
 
   function resetSearch() {
+    setNameQuery("");
     setPositionFilter("");
     setMinOvr("");
     setMaxOvr("");
@@ -520,6 +530,7 @@ function ScoutingPage() {
     const positions = buildPositions(player.Position, player["Alternative positions"]);
     const entry = assignments.find((item) => item.playerId === String(player.ID));
     const playerFace = faceUrl(String(player.ID), player.card);
+    const currentClub = resolveCurrentPlayerClub(String(player.ID), player);
     const scoutBlocked = !entry && !hasAvailableScoutSlot;
 
     return (
@@ -552,22 +563,22 @@ function ScoutingPage() {
                 </span>
               </div>
               <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                {clubOfPlayer(String(player.ID)) === null ? (
+                {currentClub.isFreeAgent ? (
                   <span className="inline-flex items-center rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[0.6rem] font-bold text-emerald-300">
                     Agente libre
                   </span>
                 ) : (
                   <>
-                    <TeamLogo teamName={player.Team} leagueName={player.League} size={28} />
-                    <span className="truncate font-semibold text-foreground">{player.Team}</span>
+                    <PlayerClubCrest playerId={player.ID} player={player} size={28} />
+                    <span className="truncate font-semibold text-foreground">{currentClub.teamName}</span>
                   </>
                 )}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.62rem] text-muted-foreground">
                 <span>{formatShortPositions(positions.slice(0, 2))}</span>
                 <span>·</span>
-                <LeagueBadge league={player.League} />
-                <span className="truncate">{player.League || "Liga desconocida"}</span>
+                {currentClub.leagueName ? <LeagueBadge league={currentClub.leagueName} /> : null}
+                <span className="truncate">{currentClub.leagueName || (currentClub.isFreeAgent ? "Agente libre" : "Liga desconocida")}</span>
                 <span>·</span>
                 <CountryFlag country={player.Nation || ""} size="sm" />
                 <span>{player.Nation || "Nacionalidad desconocida"}</span>
@@ -587,13 +598,16 @@ function ScoutingPage() {
             <div className="flex min-w-[118px] flex-col items-stretch gap-1">
               <button
                 type="button"
-                disabled={!!entry || scoutBlocked}
-                onClick={() => handleScoutPlayer(String(player.ID), player.Name)}
-                title={scoutBlocked ? "No hay huecos de ojeo disponibles" : undefined}
+                disabled={entry?.status === "pending" || (!entry && scoutBlocked)}
+                onClick={() => {
+                  if (entry?.status === "completed") handleViewReport(entry);
+                  else if (!entry) handleScoutPlayer(String(player.ID), player.Name);
+                }}
+                title={entry?.status === "pending" ? "El informe todavía se está preparando" : scoutBlocked ? "No hay huecos de ojeo disponibles" : undefined}
                 className="inline-flex min-h-10 items-center justify-center rounded-xl bg-primary px-3.5 py-2 text-xs font-black text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <Eye className="mr-1.5 h-3.5 w-3.5" />
-                {entry ? "En ojeo" : scoutBlocked ? "Sin huecos" : "Ojear"}
+                {entry?.status === "pending" ? "Ojeando…" : entry?.status === "completed" ? "Ver informe" : scoutBlocked ? "Sin huecos" : "Ojear"}
               </button>
               {scoutBlocked && (
                 <span className="text-center text-[0.55rem] font-semibold leading-tight text-amber-300">
@@ -831,6 +845,17 @@ function ScoutingPage() {
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
+              <label className="sm:col-span-2">
+                <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Buscar jugador por nombre</span>
+                <input
+                  type="search"
+                  value={nameQuery}
+                  onChange={(event) => { setNameQuery(event.target.value); setCurrentPage(1); }}
+                  disabled={!hiredScout}
+                  placeholder="Ej. Emre Can (sin distinguir tildes ni mayúsculas)"
+                  className="w-full rounded-xl border border-border bg-secondary px-3 py-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </label>
               <label>
                 <span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Media mínima</span>
                 <input

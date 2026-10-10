@@ -15,10 +15,12 @@ import {
   Users,
 } from "lucide-react";
 import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerClubCrest } from "@/components/PlayerClubCrest";
+import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import type { FcPlayer } from "@/store/playersStore";
 import { formatEuro } from "@/store/playersStore";
-import { LEAGUES, getAllTeams, teamById, type LeagueId } from "@/data/teams";
+import { LEAGUES, teamById, type LeagueId } from "@/data/teams";
 import { DealCard } from "@/components/market/DealCard";
 import { stageLabel, type UserDeal } from "@/lib/transfers";
 
@@ -269,7 +271,7 @@ export function IncomingOffersBoard({
             const player = group.player;
             const isExpanded = expanded.has(group.playerId);
             const playerRole = roleFromPosition(player?.Position ?? "MID");
-            const currentClub = player?.Team ? getAllTeams().find((team) => team.name === player.Team) : null;
+            const currentClub = player ? resolveCurrentPlayerClub(String(player.ID), player) : null;
 
             return (
               <section key={group.playerId} className={`overflow-hidden rounded-3xl border bg-card shadow-sm transition ${group.actionable ? "border-amber-400/30 shadow-amber-950/10" : "border-border"}`}>
@@ -291,7 +293,7 @@ export function IncomingOffersBoard({
                         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
                           <span className="inline-flex items-center gap-1.5"><Users className="h-3.5 w-3.5" /> {group.deals.length} clubes interesados</span>
                           <span className="inline-flex items-center gap-1.5"><Banknote className="h-3.5 w-3.5" /> Hasta {shortAmount(group.highest)}</span>
-                          {currentClub && <span className="inline-flex items-center gap-1.5"><TeamLogo teamName={currentClub.name} leagueName={leagueName(currentClub.id)} size={18} /> {currentClub.name}</span>}
+                          {currentClub && <span className="inline-flex items-center gap-1.5"><PlayerClubCrest playerId={player!.ID} player={player!} size={18} /> {currentClub.teamName}</span>}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 self-end md:self-center">

@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { ALL_LEAGUES, loadSave, SaveGame } from "@/lib/store";
-import { LEAGUES, LeagueId, teamById } from "@/data/teams";
+import { LEAGUES, LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
-import { TeamLogo } from "@/components/TeamLogo";
+import { PlayerClubCrest } from "@/components/PlayerClubCrest";
+import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import {
   Select,
@@ -13,10 +14,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-// Helper to get league name from league ID
-function getLeagueName(leagueId: string): string {
-  return LEAGUES[leagueId as LeagueId]?.name || leagueId;
-}
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { selectTopAssisters } from "@/store/playersStore";
 import { faceUrl } from "@/lib/playerFaces";
@@ -99,7 +96,7 @@ function AssistsPage() {
       ) : (
         <div className="panel divide-y divide-border/40">
           {assisters.map((p, i) => {
-            const team = teamById(p.teamId);
+            const currentClub = resolveCurrentPlayerClub(String(p.id));
             return (
               <div
                 key={p.id}
@@ -111,11 +108,11 @@ function AssistsPage() {
                   {i + 1}
                 </span>
                 <RankFace id={p.id} cardImage={p.cardImage} name={p.name} />
-                <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />
+                <PlayerClubCrest playerId={p.id} size={28} />
                 <div className="min-w-0">
                   <div className="font-bold truncate">{p.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {team.name} · {p.goals} goles
+                    {currentClub.teamName} · {p.goals} goles
                   </div>
                 </div>
                 <div className="text-xs text-muted-foreground">{p.appearances} PJ</div>

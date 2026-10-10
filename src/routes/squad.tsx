@@ -82,10 +82,10 @@ const POSITION_FULL: Record<Position, string> = {
   FWD: "Delanteros",
 };
 const POSITION_ACCENT: Record<Position, string> = {
-  GK: "from-amber-500/30 to-amber-500/0 border-amber-500/40 text-amber-300",
-  DEF: "from-sky-500/30 to-sky-500/0 border-sky-500/40 text-sky-300",
-  MID: "from-emerald-500/30 to-emerald-500/0 border-emerald-500/40 text-emerald-300",
-  FWD: "from-rose-500/30 to-rose-500/0 border-rose-500/40 text-rose-300",
+  GK: "from-muted/40 to-card/20 border-border/60 text-foreground",
+  DEF: "from-muted/40 to-card/20 border-border/60 text-foreground",
+  MID: "from-muted/40 to-card/20 border-border/60 text-foreground",
+  FWD: "from-muted/40 to-card/20 border-border/60 text-foreground",
 };
 
 function ovrTone(ovr: number): string {
@@ -397,7 +397,7 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
       onClick={onClick}
       className="group relative flex w-full overflow-hidden rounded-2xl border border-border/60 bg-card/80 text-left transition hover:-translate-y-0.5 hover:border-primary/60 hover:bg-card"
     >
-      <div className={`w-1 shrink-0 bg-gradient-to-b ${POSITION_ACCENT[pos].replace("from-", "from-").replace(" to-", " to-")}`} />
+      <div className="w-1 shrink-0 bg-border/70" />
       <div className="flex min-w-0 flex-1 items-center gap-3 p-3">
         <PlayerFace
           name={p.Name}
@@ -540,6 +540,30 @@ function SquadPage() {
     : "—";
   const totalValue = squad.reduce((s, p) => s + marketValueEuros(p), 0);
   const currentWageBill = squad.reduce((sum, p) => sum + getPlayerAnnualWage(String(p.ID)), 0);
+  const managementSummary = useMemo(() => {
+    const roleCounts = { star: 0, starter: 0, rotation: 0, secondary: 0, prospect: 0 };
+    let moraleTotal = 0;
+    let happy = 0;
+    let neutral = 0;
+    let unhappy = 0;
+    for (const player of squad) {
+      const stats = playerStats[String(player.ID)];
+      const morale = Math.max(0, Math.min(100, Number(stats?.morale ?? 70)));
+      moraleTotal += morale;
+      if (morale >= 60) happy++;
+      else if (morale >= 40) neutral++;
+      else unhappy++;
+      const role = stats?.squadRole ?? "secondary";
+      roleCounts[role] = (roleCounts[role] ?? 0) + 1;
+    }
+    return {
+      averageMorale: squad.length ? Math.round(moraleTotal / squad.length) : 0,
+      happy,
+      neutral,
+      unhappy,
+      roleCounts,
+    };
+  }, [squad, playerStats]);
 
   const selected = selectedId ? (squad.find((p) => String(p.ID) === selectedId) ?? null) : null;
   // Subscribe to the selected player's stats so the detail card always
@@ -616,6 +640,44 @@ function SquadPage() {
           </div>
         </div>
       </div>
+
+      {squad.length > 0 && (
+        <section className="mb-6 grid grid-cols-1 gap-3 xl:grid-cols-[1.05fr_0.95fr]" aria-label="Gestión de vestuario">
+          <div className="rounded-2xl border border-border/60 bg-card/60 p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[0.6rem] font-black uppercase tracking-[0.18em] text-primary">Ambiente del vestuario</p>
+                <h2 className="mt-1 text-base font-black">Satisfacción de la plantilla</h2>
+                <p className="mt-1 text-xs text-muted-foreground">Estado basado en la satisfacción individual de los jugadores.</p>
+              </div>
+              <div className="text-right"><p className="text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">Media</p><p className={`scoreline text-2xl font-black ${managementSummary.averageMorale >= 60 ? "text-emerald-300" : managementSummary.averageMorale >= 40 ? "text-amber-300" : "text-rose-300"}`}>{managementSummary.averageMorale}<span className="text-xs text-muted-foreground">/100</span></p></div>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary/70" role="progressbar" aria-label="Satisfacción media del vestuario" aria-valuemin={0} aria-valuemax={100} aria-valuenow={managementSummary.averageMorale}>
+              <div className={`h-full rounded-full ${managementSummary.averageMorale >= 60 ? "bg-emerald-400" : managementSummary.averageMorale >= 40 ? "bg-amber-400" : "bg-rose-400"}`} style={{ width: `${managementSummary.averageMorale}%` }} />
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-2"><p className="text-[0.55rem] font-bold uppercase tracking-wider text-emerald-300">Satisfechos</p><p className="mt-1 scoreline text-lg font-black">{managementSummary.happy}</p><p className="text-[0.58rem] text-muted-foreground">60–100</p></div>
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-2"><p className="text-[0.55rem] font-bold uppercase tracking-wider text-amber-300">Neutrales</p><p className="mt-1 scoreline text-lg font-black">{managementSummary.neutral}</p><p className="text-[0.58rem] text-muted-foreground">40–59</p></div>
+              <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-2"><p className="text-[0.55rem] font-bold uppercase tracking-wider text-rose-300">Descontentos</p><p className="mt-1 scoreline text-lg font-black">{managementSummary.unhappy}</p><p className="text-[0.58rem] text-muted-foreground">0–39</p></div>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-border/60 bg-card/60 p-4 sm:p-5">
+            <p className="text-[0.6rem] font-black uppercase tracking-[0.18em] text-primary">Jerarquía del equipo</p>
+            <h2 className="mt-1 text-base font-black">Roles de plantilla</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Distribución de expectativas de minutos y responsabilidad.</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {([
+                ["star", "Estrellas"], ["starter", "Titulares"], ["rotation", "Rotación"], ["secondary", "Secundarios"], ["prospect", "Promesas"],
+              ] as const).map(([role, label]) => (
+                <div key={role} className="rounded-xl border border-border/50 bg-background/45 p-2.5" title={`Jugadores con rol ${label.toLowerCase()}`}>
+                  <div className="flex items-center justify-between gap-2"><span className="text-[0.6rem] font-bold text-muted-foreground">{label}</span><span className="scoreline text-base font-black">{managementSummary.roleCounts[role]}</span></div>
+                  <div className="mt-2 h-1 overflow-hidden rounded-full bg-secondary/70"><div className="h-full rounded-full bg-primary" style={{ width: `${squad.length ? (managementSummary.roleCounts[role] / squad.length) * 100 : 0}%` }} /></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {squad.length === 0 ? (
         <div className="panel p-6">

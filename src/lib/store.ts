@@ -13,7 +13,7 @@ import {
   getPrimaryLeagueForCountry,
   Team,
 } from "@/data/teams";
-import { type PosCode, canPlayPosition, isNaturalFor } from "@/lib/positions";
+import { type PosCode, calculatePositionSimilarity } from "@/lib/positions";
 
 // Funciones auxiliares para determinar tipo de jugador basado en posiciones específicas
 function isGoalkeeper(positions: PosCode[]): boolean {
@@ -140,6 +140,7 @@ import {
   type FormationName,
 } from "@/lib/formations";
 import { FIVE_DEFENDER_TEAMS, getTeamStyle, formationsForStyle } from "@/lib/teamProfile";
+import { getRivals } from "@/data/teamExtras";
 
 
 /**
@@ -275,74 +276,49 @@ function applyMonthlyProgressionToAllPlayers(currentMonth: number, currentYear: 
 }
 
 
-/**
- * Coloca 11 jugadores disponibles en los huecos de una formación concreta,
- * respetando su demarcación real (declarada por el jugador), igual que el 11
- * ideal de /equipos (ver `estimatedEleven` en teamProfile.ts). Devuelve los
- * ids en el mismo orden que los huecos de la formación (Object.keys), que es
- * el orden que espera <MiniPitch> para pintar cada jugador en su sitio.
- */
-function pickXIForFormation(
-  squad: Player[],
-  unavailable: Set<string>,
-  formation: FormationName,
-): { ids: string[]; score: number } {
-  const coords = FORMATION_COORDINATES[formation];
-  const slotKeys = Object.keys(coords);
-  const available = squad.filter((p) => !unavailable.has(p.id));
-  const used = new Set<string>();
-  const slotIds: (string | null)[] = new Array(slotKeys.length).fill(null);
-  let score = 0;
+type CpuFixtureCompetition = "league" | "cup" | "ucl" | "uel" | "uecl";
 
-  slotKeys.forEach((key, idx) => {
-    const required = slotPosCode(key);
-    const candidates = available
-      .filter((p) => !used.has(p.id))
-      .map((p) => ({
-        p,
-        natural: isNaturalFor(p.positions, required),
-        can: canPlayPosition(p.positions, required),
-      }))
-      .filter((c) => c.can)
-      .sort((a, b) => b.p.rating - a.p.rating || (b.natural ? 1 : 0) - (a.natural ? 1 : 0));
-
-    if (candidates.length > 0) {
-      const pick = candidates[0];
-      used.add(pick.p.id);
-      slotIds[idx] = pick.p.id;
-      score += pick.p.rating - (pick.natural ? 0 : 5);
-    } else {
-      // Hueco sin candidato declarada disponible (p.ej. plantilla muy
-      // corta de una demarcación por lesiones). Se rellenará después con el
-      // mejor jugador libre que quede, para no salir a jugar con menos de 11.
-      score -= 40;
-    }
-  });
-
-  if (slotIds.some((id) => id === null)) {
-    const leftovers = available.filter((p) => !used.has(p.id)).sort((a, b) => b.rating - a.rating);
-    for (let i = 0; i < slotIds.length; i++) {
-      if (slotIds[i] === null && leftovers.length > 0) {
-        const p = leftovers.shift()!;
-        slotIds[i] = p.id;
-        used.add(p.id);
-      }
-    }
-  }
-
-  return { ids: slotIds.filter((id): id is string => !!id), score };
-}
-
-// Contexto del próximo partido para que la IA pueda variar XI y dibujo con
-// sentido: rival, local/visitante y competición. Se busca el primer partido
-// todavía sin resultado en el calendario real de la partida.
 type CpuFixtureContext = {
   fixtureId: string;
-  opponentId: string;
+  opponentId?: string;
+  homeId?: string;
+  awayId?: string;
   isHome: boolean;
-  competition: "league" | "cup" | "ucl";
+  competition: CpuFixtureCompetition;
+  europeanCompetition?: "ucl" | "uel" | "uecl";
   matchday: number;
+  round?: string;
+  /** True when another scheduled match falls within four days. */
+  isCongested?: boolean;
 };
+
+function normalizeCpuCompetition(fixture: any): CpuFixtureCompetition {
+  const european = fixture?.europeanCompetition;
+  if (european === "uel" || european === "uecl" || european === "ucl") return european;
+  if (fixture?.competition === "cup") return "cup";
+  if (fixture?.competition === "ucl") return "ucl";
+  return "league";
+}
+
+function normalizeCpuFixtureContext(teamId: string, fixture: any): CpuFixtureContext | null {
+  if (!fixture) return null;
+  const homeId = fixture.homeId == null ? undefined : String(fixture.homeId);
+  const awayId = fixture.awayId == null ? undefined : String(fixture.awayId);
+  const inferredOpponent = homeId && awayId ? (homeId === teamId ? awayId : homeId) : undefined;
+  const isHome = typeof fixture.isHome === "boolean" ? fixture.isHome : homeId === teamId;
+  return {
+    fixtureId: String(fixture.fixtureId ?? fixture.id ?? ""),
+    opponentId: fixture.opponentId == null ? inferredOpponent : String(fixture.opponentId),
+    homeId,
+    awayId,
+    isHome,
+    competition: normalizeCpuCompetition(fixture),
+    europeanCompetition: fixture.europeanCompetition,
+    matchday: Number(fixture.matchday ?? 0),
+    round: fixture.round == null ? undefined : String(fixture.round),
+    isCongested: fixture.isCongested === true,
+  };
+}
 
 function hashString(value: string): number {
   let h = 2166136261 >>> 0;
@@ -358,32 +334,22 @@ function seeded01(seed: string): number {
 }
 
 function findNextCpuFixture(save: SaveGame, teamId: string): CpuFixtureContext | null {
-  const candidates: { fixture: Fixture; competition: CpuFixtureContext["competition"] }[] = [];
-  for (const list of Object.values(save.fixtures ?? {})) {
-    for (const fixture of (list ?? []) as Fixture[]) {
-      if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
-        candidates.push({ fixture, competition: "league" });
+  const candidates: { fixture: Fixture; competition: CpuFixtureCompetition }[] = [];
+  const addFixtures = (items: unknown, competition: CpuFixtureCompetition) => {
+    if (!Array.isArray(items)) return;
+    for (const fixture of items as Fixture[]) {
+      if (!fixture?.result && (fixture?.homeId === teamId || fixture?.awayId === teamId)) {
+        candidates.push({ fixture, competition: fixture.europeanCompetition ?? competition });
       }
     }
-  }
-  for (const list of Object.values(save.cupFixtures ?? {})) {
-    if (!Array.isArray(list)) continue;
-    for (const fixture of list as Fixture[]) {
-      if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
-        candidates.push({ fixture, competition: "cup" });
-      }
-    }
-  }
-  for (const fixture of (save.uclFixtures ?? []) as Fixture[]) {
-    if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
-      candidates.push({ fixture, competition: "ucl" });
-    }
-  }
-  for (const fixture of (save.ucl?.fixtures ?? []) as Fixture[]) {
-    if (!fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId)) {
-      candidates.push({ fixture, competition: "ucl" });
-    }
-  }
+  };
+
+  for (const list of Object.values(save.fixtures ?? {})) addFixtures(list, "league");
+  for (const list of Object.values(save.cupFixtures ?? {})) addFixtures(list, "cup");
+  addFixtures(save.uclFixtures ?? [], "ucl");
+  addFixtures(save.uelFixtures ?? [], "uel");
+  addFixtures(save.ueclFixtures ?? [], "uecl");
+  addFixtures(save.ucl?.fixtures ?? [], "ucl");
   if (candidates.length === 0) return null;
 
   candidates.sort((a, b) => {
@@ -394,12 +360,23 @@ function findNextCpuFixture(save: SaveGame, teamId: string): CpuFixtureContext |
   });
 
   const { fixture, competition } = candidates[0];
+  const fixtureTime = Date.parse((fixture as any).date ?? "");
+  // Only upcoming fixtures are needed here, so congestion can be inferred
+  // from the next scheduled match without rescanning the whole calendar later.
+  const isCongested = Number.isFinite(fixtureTime) && candidates.slice(1).some(({ fixture: next }) => {
+    const nextTime = Date.parse((next as any).date ?? "");
+    return Number.isFinite(nextTime) && nextTime > fixtureTime && nextTime - fixtureTime <= 4 * 86400000;
+  });
+
   return {
     fixtureId: fixture.id,
     opponentId: fixture.homeId === teamId ? fixture.awayId : fixture.homeId,
     isHome: fixture.homeId === teamId,
     competition,
+    europeanCompetition: fixture.europeanCompetition,
     matchday: fixture.matchday,
+    round: fixture.round,
+    isCongested,
   };
 }
 
@@ -414,11 +391,113 @@ function squadStrengthForSelection(squad: Player[]): number {
 }
 
 /**
- * Coloca 11 jugadores disponibles en una formación. Con rotationLevel > 0
- * introduce una rotación controlada y determinista: las estrellas siguen
- * teniendo más opciones de jugar, pero ante rivales inferiores o partidos de
- * menor prioridad pueden descansar y entrar otros jugadores de la plantilla.
+ * Valida que la formación describe un once futbolísticamente coherente.
+ * La comprobación por roles visuales evita esquemas malformados incluso cuando
+ * una posición concreta se traduce a un código alternativo en slotPosCode().
  */
+function isSensibleAiFormation(formation: FormationName): boolean {
+  const coordinates = FORMATION_COORDINATES[formation];
+  if (!coordinates) return false;
+  const slots = Object.keys(coordinates);
+  if (slots.length !== 11) return false;
+  const goalkeeperSlots = slots.filter((key) => slotPosCode(key) === "GK");
+  const roles = Object.values(coordinates).map((slot: any) => slot?.role);
+  const defenders = roles.filter((role) => role === "DEF").length;
+  const midfielders = roles.filter((role) => role === "MID").length;
+  const attackers = roles.filter((role) => role === "ATT").length;
+  return goalkeeperSlots.length === 1 && defenders >= 3 && midfielders >= 2 && attackers >= 1 && attackers <= 4;
+}
+
+/**
+ * Soluciona la asignación máxima de pesos (huecos x jugadores) con el algoritmo
+ * húngaro rectangular. O(11² · plantilla), suficientemente barato para usarlo
+ * al simular cientos de partidos y, a diferencia del greedy por slot, no gasta
+ * un extremo en una posición secundaria si eso deja vacío su puesto natural.
+ */
+function maximumWeightAssignment(weights: number[][]): number[] {
+  const rowCount = weights.length;
+  if (!rowCount) return [];
+  const columnCount = weights[0]?.length ?? 0;
+  if (columnCount < rowCount) throw new Error("La matriz de alineación debe tener al menos tantas columnas como huecos");
+
+  const u = new Array(rowCount + 1).fill(0);
+  const v = new Array(columnCount + 1).fill(0);
+  const matchedRow = new Array(columnCount + 1).fill(0);
+  const previousColumn = new Array(columnCount + 1).fill(0);
+
+  for (let row = 1; row <= rowCount; row++) {
+    matchedRow[0] = row;
+    let currentColumn = 0;
+    const minimum = new Array(columnCount + 1).fill(Number.POSITIVE_INFINITY);
+    const used = new Array(columnCount + 1).fill(false);
+
+    do {
+      used[currentColumn] = true;
+      const currentRow = matchedRow[currentColumn];
+      let delta = Number.POSITIVE_INFINITY;
+      let nextColumn = 0;
+      for (let column = 1; column <= columnCount; column++) {
+        if (used[column]) continue;
+        const cost = -weights[currentRow - 1][column - 1] - u[currentRow] - v[column];
+        if (cost < minimum[column]) {
+          minimum[column] = cost;
+          previousColumn[column] = currentColumn;
+        }
+        if (minimum[column] < delta) {
+          delta = minimum[column];
+          nextColumn = column;
+        }
+      }
+      for (let column = 0; column <= columnCount; column++) {
+        if (used[column]) {
+          u[matchedRow[column]] += delta;
+          v[column] -= delta;
+        } else {
+          minimum[column] -= delta;
+        }
+      }
+      currentColumn = nextColumn;
+    } while (matchedRow[currentColumn] !== 0);
+
+    do {
+      const previous = previousColumn[currentColumn];
+      matchedRow[currentColumn] = matchedRow[previous];
+      currentColumn = previous;
+    } while (currentColumn !== 0);
+  }
+
+  const assignment = new Array(rowCount).fill(-1);
+  for (let column = 1; column <= columnCount; column++) {
+    if (matchedRow[column] > 0) assignment[matchedRow[column] - 1] = column - 1;
+  }
+  return assignment;
+}
+
+function positionalAssignmentScore(player: Player, required: PosCode): number {
+  const positions = Array.isArray(player.positions) ? player.positions : [];
+  const primary = positions[0] === required;
+  const secondary = !primary && positions.includes(required);
+  const rating = Number(player.rating) || 0;
+
+  // El encaje pesa más que una diferencia normal de media: un extremo titular
+  // debe ocupar su banda por delante de otro jugador mejor valorado pero
+  // secundario/fuera de posición. La media sigue decidiendo entre encajes parecidos.
+  let score = rating * 0.55;
+  if (primary) score += 40;
+  else if (secondary) score += 12;
+  else {
+    const similarity = positions.reduce(
+      (best, position) => Math.max(best, calculatePositionSimilarity(position, required)),
+      0,
+    );
+    score -= 26 - similarity * 5;
+  }
+
+  if (required === "GK" && !positions.includes("GK")) score -= 100;
+  if (required !== "GK" && positions.includes("GK")) score -= 30;
+  return score;
+}
+
 function pickXIForFormationWithRotation(
   squad: Player[],
   unavailable: Set<string>,
@@ -426,145 +505,150 @@ function pickXIForFormationWithRotation(
   rotationLevel = 0,
   seed = "",
 ): { ids: string[]; score: number } {
-  const coords = FORMATION_COORDINATES[formation];
-  const slotKeys = Object.keys(coords);
-  const available = squad.filter((p) => !unavailable.has(p.id));
+  const coordinates = FORMATION_COORDINATES[formation];
+  const slotKeys = Object.keys(coordinates ?? {});
+  const available = squad.filter((player) => !unavailable.has(player.id));
+  if (!slotKeys.length || !available.length) return { ids: [], score: -Infinity };
+
   const rankMap = new Map(
-    [...available].sort((a, b) => b.rating - a.rating).map((p, i) => [p.id, i]),
+    [...available].sort((a, b) => b.rating - a.rating).map((player, index) => [player.id, index]),
   );
-  const used = new Set<string>();
-  const slotIds: (string | null)[] = new Array(slotKeys.length).fill(null);
-  let score = 0;
-
-  slotKeys.forEach((key, idx) => {
+  // Añadir columnas ficticias solo cuando la plantilla disponible es más
+  // pequeña que once; así no se inventan IDs ni se duplica ningún jugador.
+  const columnCount = Math.max(slotKeys.length, available.length);
+  const weights = slotKeys.map((key) => {
     const required = slotPosCode(key);
-    const candidates = available
-      .filter((p) => !used.has(p.id))
-      .map((p) => {
-        const natural = isNaturalFor(p.positions, required);
-        const can = canPlayPosition(p.positions, required);
-        const rank = rankMap.get(p.id) ?? 99;
-        const noise =
-          (seeded01(`${seed}:xi:${formation}:${key}:${p.id}`) - 0.5) * (rotationLevel * 7);
-        const eliteRest =
-          rotationLevel > 0 && rank < 8 && seeded01(`${seed}:rest:${p.id}`) < rotationLevel * 0.58
-            ? (8 - rank) * rotationLevel
-            : 0;
-        const positionalPenalty = natural ? 0 : 5;
-        return {
-          p,
-          natural,
-          can,
-          score: p.rating + noise - positionalPenalty - eliteRest,
-        };
-      })
-      .filter((c) => c.can)
-      .sort((a, b) => b.score - a.score || b.p.rating - a.p.rating);
-
-    if (candidates.length > 0) {
-      const pick = candidates[0];
-      used.add(pick.p.id);
-      slotIds[idx] = pick.p.id;
-      score += pick.p.rating - (pick.natural ? 0 : 5);
-    } else {
-      score -= 40;
-    }
+    return Array.from({ length: columnCount }, (_, index) => {
+      if (index >= available.length) return -10000;
+      const player = available[index];
+      const rank = rankMap.get(player.id) ?? 99;
+      const restChance = rotationLevel > 0 && rank < 8
+        ? seeded01(`${seed}:rest:${player.id}`)
+        : 1;
+      const restPenalty = rotationLevel > 0 && rank < 8 && restChance < rotationLevel * 0.65
+        ? rotationLevel * 28
+        : 0;
+      const noise = (seeded01(`${seed}:xi:${formation}:${key}:${player.id}`) - 0.5) * rotationLevel * 4;
+      return positionalAssignmentScore(player, required) - restPenalty + noise;
+    });
   });
 
-  if (slotIds.some((id) => id === null)) {
-    const leftovers = available.filter((p) => !used.has(p.id)).sort((a, b) => b.rating - a.rating);
-    for (let i = 0; i < slotIds.length; i++) {
-      if (slotIds[i] === null && leftovers.length > 0) {
-        const p = leftovers.shift()!;
-        slotIds[i] = p.id;
-        used.add(p.id);
-      }
-    }
+  const assignment = maximumWeightAssignment(weights);
+  const ids: string[] = [];
+  let score = 0;
+  for (let slotIndex = 0; slotIndex < assignment.length; slotIndex++) {
+    const playerIndex = assignment[slotIndex];
+    if (playerIndex < 0 || playerIndex >= available.length) continue;
+    ids.push(available[playerIndex].id);
+    score += weights[slotIndex][playerIndex];
   }
-
-  return { ids: slotIds.filter((id): id is string => !!id), score };
+  return { ids, score };
 }
 
-// Genera el once de un equipo CPU respetando su estilo, pero variando de forma
-// controlada tanto la formación como el XI. Cada club tiene una formación
-// favorita (la guardada en save.formations); esa favorita tiene más peso, pero
-// no se usa obligatoriamente todos los partidos.
+function isHighPriorityCpuFixture(
+  squad: Player[],
+  team: Team,
+  context: CpuFixtureContext | null,
+): boolean {
+  if (!context) return false;
+  const competition = context.europeanCompetition ?? context.competition;
+  const round = String(context.round ?? "");
+  if (competition !== "league") return true; // Copa y todas las competiciones europeas.
+  if (/final|semi.?final|quarter.?final|round of 16|r16|octavos|cuartos|semifinal|play.?off|knockout/i.test(round)) return true;
+
+  const opponentId = context.opponentId ?? (
+    context.homeId && context.awayId
+      ? (context.homeId === team.id ? context.awayId : context.homeId)
+      : undefined
+  );
+  const opponent = opponentId ? teamById(opponentId) : null;
+  if (opponent && getRivals(team).some((rival) => rival.id === opponent.id)) return true;
+
+  if (opponent) {
+    const ownStrength = squadStrengthForSelection(squad);
+    const opponentSquad = usePlayersStore.getState().getSimSquad(opponent.id);
+    const opponentStrength = opponentSquad.length ? squadStrengthForSelection(opponentSquad) : 0;
+    if (ownStrength >= 78 && opponentStrength >= 78 && Math.abs(ownStrength - opponentStrength) <= 12) return true;
+  }
+  return false;
+}
+
+// Genera el once de un equipo CPU. La formación favorita orienta la elección,
+// pero nunca se impone si una alternativa encaja claramente mejor con los
+// mejores jugadores disponibles (por ejemplo, dos extremos de élite).
 function generateCPUXI(
   squad: Player[],
   unavailable: Set<string>,
   team: Team,
-  forcedFormation?: FormationName,
+  preferredFormation?: FormationName,
   rotationSeed = "",
   context: CpuFixtureContext | null = null,
 ): { ids: string[]; formation: FormationName } {
-  const { style } = getTeamStyle(team);
-  const candidateFormations = formationsForStyle(style);
+  const style = getTeamStyle(team).style;
+  const styleFormations = formationsForStyle(style).filter(isSensibleAiFormation);
+  const candidateFormations = Array.from(new Set([
+    ...styleFormations,
+    ...(preferredFormation && isSensibleAiFormation(preferredFormation) ? [preferredFormation] : []),
+  ]));
+  const formations = candidateFormations.length ? candidateFormations : ALL_FORMATIONS.filter(isSensibleAiFormation);
+  const important = isHighPriorityCpuFixture(squad, team, context);
+  const available = squad.filter((player) => !unavailable.has(player.id));
+  const strength = squadStrengthForSelection(available);
+  const opponentId = context?.opponentId ?? (
+    context?.homeId && context?.awayId
+      ? (context.homeId === team.id ? context.awayId : context.homeId)
+      : undefined
+  );
+  const opponent = opponentId ? teamById(opponentId) : null;
+  const opponentSquad = opponent ? usePlayersStore.getState().getSimSquad(opponent.id) : [];
+  const opponentStrength = opponentSquad.length ? squadStrengthForSelection(opponentSquad) : strength;
+  const strengthDiff = strength - opponentStrength;
 
-  const ranked = candidateFormations
+  // Solo se rota frente a un rival claramente inferior o cuando existe
+  // congestión conocida del calendario. En finales, copas, Europa, derbis y
+  // duelos de nivel alto la rotación queda desactivada.
+  let rotationLevel = 0;
+  if (!important && (strengthDiff >= 8 || context?.isCongested)) {
+    rotationLevel = Math.max(0.12, Math.min(0.35, 0.12 + Math.max(0, strengthDiff - 8) / 55));
+    if (context?.isCongested) rotationLevel = Math.max(rotationLevel, 0.18);
+    if (context?.isHome) rotationLevel *= 0.9;
+  }
+
+  const ranked = formations
     .map((formation) => {
-      const picked = pickXIForFormationWithRotation(squad, unavailable, formation, 0, rotationSeed);
+      const picked = pickXIForFormationWithRotation(
+        squad,
+        unavailable,
+        formation,
+        rotationLevel,
+        `${rotationSeed}:${formation}`,
+      );
       const fiveBackBonus = FIVE_DEFENDER_TEAMS.has(team.name) && formation.includes("5-") ? 12 : 0;
       return { formation, ids: picked.ids, score: picked.score + fiveBackBonus };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score || a.formation.localeCompare(b.formation));
 
-  const favorite = forcedFormation || ranked[0]?.formation || "Táctica 4-4-2";
-  const alternatives = candidateFormations.filter((f) => f !== favorite);
+  const best = ranked[0];
+  if (!best) return { ids: [], formation: "Táctica 4-4-2" };
+  if (important) return { ids: best.ids, formation: best.formation };
 
-  let formation = favorite;
-  if (!forcedFormation && alternatives.length > 0) {
-    const favoriteChance =
-      context?.competition === "ucl" ? 0.88 : context?.competition === "cup" ? 0.8 : 0.82;
-    const strength = squadStrengthForSelection(squad);
-    const opponent = context?.opponentId ? teamById(context.opponentId) : null;
-    const opponentSquad = opponent ? usePlayersStore.getState().getSimSquad(opponent.id) : [];
-    const oppStrength = opponentSquad.length ? squadStrengthForSelection(opponentSquad) : strength;
-    const strengthDiff = strength - oppStrength;
-    const adjustedFavoriteChance = Math.max(
-      0.5,
-      Math.min(0.9, favoriteChance + (strengthDiff > 7 ? 0.08 : strengthDiff < -7 ? 0.1 : 0)),
-    );
-
-    if (seeded01(`${rotationSeed}:formation`) >= adjustedFavoriteChance) {
-      const viable = ranked
-        .filter((r) => r.formation !== favorite)
-        .slice(0, Math.min(3, ranked.length - 1));
-      if (viable.length > 0) {
-        formation =
-          viable[Math.floor(seeded01(`${rotationSeed}:formation:choice`) * viable.length)]
-            .formation;
-      } else {
-        formation =
-          alternatives[
-            Math.floor(seeded01(`${rotationSeed}:formation:fallback`) * alternatives.length)
-          ];
-      }
-    }
+  // Solo conservar/sortear una alternativa si pierde como máximo un pequeño
+  // margen respecto al mejor once. Nunca escoger formaciones absurdas o una
+  // táctica que deje a las estrellas fuera de su encaje natural por variación.
+  const acceptable = ranked.filter((candidate) => best.score - candidate.score <= 18);
+  const preferred = preferredFormation
+    ? acceptable.find((candidate) => candidate.formation === preferredFormation)
+    : undefined;
+  const variationChoice = seeded01(`${rotationSeed}:formation-choice`);
+  if (preferred && variationChoice < 0.7) {
+    return { ids: preferred.ids, formation: preferred.formation };
   }
-
-  const strength = squadStrengthForSelection(squad);
-  const opponent = context?.opponentId ? teamById(context.opponentId) : null;
-  const opponentSquad = opponent ? usePlayersStore.getState().getSimSquad(opponent.id) : [];
-  const oppStrength = opponentSquad.length ? squadStrengthForSelection(opponentSquad) : strength;
-  const strengthDiff = strength - oppStrength;
-
-  // Rotación conservadora: los equipos fuertes deben mantener un once de
-  // nivel en la liga. Solo rotan de forma apreciable ante rivales claramente
-  // inferiores y en competiciones de menor prioridad. Así se evita que una
-  // plantilla de 88-90 OVR pierda demasiada fuerza por descansos aleatorios.
-  let rotationLevel = Math.max(0, Math.min(0.12, (strengthDiff - 9) / 30));
-  if (context?.competition === "ucl") rotationLevel *= 0.2;
-  else if (context?.competition === "cup") rotationLevel *= 0.45;
-  if (context?.isHome) rotationLevel *= 0.9;
-
-  const picked = pickXIForFormationWithRotation(
-    squad,
-    unavailable,
-    formation,
-    rotationLevel,
-    `${rotationSeed}:${formation}`,
-  );
-  return { ids: picked.ids, formation };
+  if (acceptable.length > 1 && variationChoice > 0.92) {
+    const alternatives = acceptable.filter((candidate) => candidate.formation !== best.formation);
+    const chosen = alternatives[Math.floor(seeded01(`${rotationSeed}:formation-alternative`) * alternatives.length)];
+    if (chosen) return { ids: chosen.ids, formation: chosen.formation };
+  }
+  return { ids: best.ids, formation: best.formation };
 }
 
 // Helper to determine winner of a cup match (considering extra time and penalties)
@@ -719,6 +803,7 @@ export function fixCupDraws(save: SaveGame): SaveGame {
           awayBench,
           regularSubstitutions: f.result.substitutions ?? [],
           regularCards: f.result.cards ?? [],
+          regularInjuries: f.result.injuries ?? [],
         });
         mutableResult.substitutions = [
           ...(mutableResult.substitutions ?? []),
@@ -746,6 +831,7 @@ export function fixCupDraws(save: SaveGame): SaveGame {
             mutableResult.cards ?? [],
             "home",
             120,
+            mutableResult.injuries ?? [],
           );
           const finalAway = getActivePlayersAtMinute(
             awayXI,
@@ -754,11 +840,11 @@ export function fixCupDraws(save: SaveGame): SaveGame {
             mutableResult.cards ?? [],
             "away",
             120,
+            mutableResult.injuries ?? [],
           );
-          const penaltyResult = simulatePenaltyShootout(
-            finalHome.length ? finalHome : homeXI,
-            finalAway.length ? finalAway : awayXI,
-          );
+          const penaltyResult = simulatePenaltyShootout(finalHome, finalAway, {
+            injuries: mutableResult.injuries ?? [],
+          });
 
           mutableResult.penalties = {
             homeGoals: penaltyResult.homeGoals,
@@ -1103,7 +1189,11 @@ function rebuildAppearanceCountersFromFixtures(save: SaveGame): boolean {
 
 const SQUAD_ROLE_ALGORITHM_VERSION = 3;
 
-export function recalculateUserSquadRoles(save: SaveGame, force = false): SaveGame {
+export function recalculateUserSquadRoles(
+  save: SaveGame,
+  force = false,
+  deferStoreUpdate = false,
+): SaveGame {
   const store = usePlayersStore.getState();
   const squad = store.getSimSquad(save.myTeamId);
   if (squad.length === 0) return save;
@@ -1140,7 +1230,32 @@ export function recalculateUserSquadRoles(save: SaveGame, force = false): SaveGa
     }
   }
   hydrateMailboxWantsOutOverrides(nextStats);
-  if (changed) usePlayersStore.setState({ stats: nextStats });
+  if (changed) {
+    if (deferStoreUpdate && typeof window !== "undefined") {
+      // loadSave() is also called while React components render. Do not publish
+      // a Zustand update synchronously from that read path; merge just the role
+      // fields into the latest stats after the current render has completed.
+      const roleUpdates = new Map(
+        squad.map((player) => [player.id, nextStats[player.id]?.squadRole] as const),
+      );
+      window.setTimeout(() => {
+        const latestStore = usePlayersStore.getState();
+        // A user can switch career before this deferred update runs.
+        if (latestStore.myTeamId !== save.myTeamId) return;
+        const latest = latestStore.stats ?? {};
+        let merged: Record<string, any> | null = null;
+        for (const [playerId, role] of roleUpdates) {
+          if (!role) continue;
+          if (latest[playerId]?.squadRole === role) continue;
+          merged ??= { ...latest };
+          merged[playerId] = { ...(latest[playerId] ?? defaultStats()), squadRole: role };
+        }
+        if (merged) usePlayersStore.setState({ stats: merged });
+      }, 0);
+    } else {
+      usePlayersStore.setState({ stats: nextStats });
+    }
+  }
   return { ...save, squadRoleRecalculationKey: roleWindowKey };
 }
 
@@ -1222,6 +1337,41 @@ export function loadSave(): SaveGame | null {
     if (parsed.ueclPrizesAwarded == null) { parsed.ueclPrizesAwarded = []; needsMigrationSave = true; }
     if (parsed.uel === undefined) { parsed.uel = null; needsMigrationSave = true; }
     if (parsed.uecl === undefined) { parsed.uecl = null; needsMigrationSave = true; }
+
+    // Legacy saves may contain a completed European competition but no
+    // drawState (or only some flags). Repair it once at load, preserving any
+    // explicit booleans and inferring missing ones from phase/fixtures.
+    for (const [competition, fixtureKey] of [
+      ["ucl", "uclFixtures"],
+      ["uel", "uelFixtures"],
+      ["uecl", "ueclFixtures"],
+    ] as const) {
+      const state = (parsed as any)[competition];
+      if (!state || typeof state !== "object") continue;
+      const phase = typeof state.phase === "string" ? state.phase : "league";
+      const nestedFixtures = Array.isArray(state.fixtures) ? state.fixtures : [];
+      const flatFixtures = Array.isArray((parsed as any)[fixtureKey]) ? (parsed as any)[fixtureKey] : [];
+      const hasLeagueDraw = [...flatFixtures, ...nestedFixtures].some((fixture: any) =>
+        typeof fixture?.round === "string" && fixture.round.startsWith("Jornada"),
+      );
+      const previous = state.drawState && typeof state.drawState === "object" ? state.drawState : {};
+      const drawState = {
+        // Later phases imply earlier draws are complete even if old flags
+        // contradict the phase due to a partially-written legacy save.
+        leagueDone: phase !== "league" || previous.leagueDone === true || hasLeagueDraw,
+        playoffDone: ["playoff", "r16", "qf", "sf", "final", "done"].includes(phase) || previous.playoffDone === true,
+        knockoutDone: ["r16", "qf", "sf", "final", "done"].includes(phase) || previous.knockoutDone === true,
+      };
+      if (
+        previous.leagueDone !== drawState.leagueDone ||
+        previous.playoffDone !== drawState.playoffDone ||
+        previous.knockoutDone !== drawState.knockoutDone
+      ) {
+        state.drawState = drawState;
+        needsMigrationSave = true;
+      }
+    }
+
     if (parsed.mailbox == null) { parsed.mailbox = createEmptyMailbox(); needsMigrationSave = true; }
     if (!Array.isArray(parsed.academyEvents)) { parsed.academyEvents = []; needsMigrationSave = true; }
     parsed.academyEvents = parsed.academyEvents.slice(-80);
@@ -1394,29 +1544,47 @@ export function loadSave(): SaveGame | null {
       parsed.suspensions = normalizedSuspensions;
     }
 
-    const ps = usePlayersStore.getState();
-
+    let legacyPlayersToImport: Record<string, Player> | null = null;
     if (parsed.players && Object.keys(parsed.players).length > 0) {
-      ps.importLegacyStats(parsed.players);
-
+      legacyPlayersToImport = parsed.players as Record<string, Player>;
       parsed.lineups = buildDefaultLineups();
-
       delete parsed.players;
       needsMigrationSave = true;
     }
 
-    if (parsed.appearanceStatsRepairVersion !== APPEARANCE_STATS_REPAIR_VERSION) {
-      rebuildAppearanceCountersFromFixtures(parsed as SaveGame);
+    const repairAppearanceStats =
+      parsed.appearanceStatsRepairVersion !== APPEARANCE_STATS_REPAIR_VERSION;
+    if (repairAppearanceStats) {
+      // The counter rebuild publishes Zustand state. Defer it because loadSave
+      // can be called by a component during render.
       parsed.appearanceStatsRepairVersion = APPEARANCE_STATS_REPAIR_VERSION;
       needsMigrationSave = true;
     }
 
     let save = parsed as SaveGame;
     if (usePlayersStore.getState().myTeamId === save.myTeamId) {
-      save = recalculateUserSquadRoles(save, false);
+      save = recalculateUserSquadRoles(save, false, true);
       if (save.squadRoleRecalculationKey !== (parsed as SaveGame).squadRoleRecalculationKey) needsMigrationSave = true;
     } else {
       hydrateMailboxWantsOutOverrides(usePlayersStore.getState().stats ?? {});
+    }
+
+    if (legacyPlayersToImport || repairAppearanceStats) {
+      const migrationSave = save;
+      const migrationSaveId = activeId;
+      window.setTimeout(() => {
+        // Do not apply a deferred migration after the active career changes.
+        if (getCurrentSaveId() !== migrationSaveId) return;
+        if (legacyPlayersToImport) {
+          usePlayersStore.getState().importLegacyStats(legacyPlayersToImport!);
+        }
+        if (repairAppearanceStats) rebuildAppearanceCountersFromFixtures(migrationSave);
+        if (legacyPlayersToImport && usePlayersStore.getState().myTeamId === migrationSave.myTeamId) {
+          // The legacy import replaces individual stats, so recalculate roles
+          // once more against the imported values outside React's render phase.
+          recalculateUserSquadRoles(migrationSave, false);
+        }
+      }, 0);
     }
 
     parsedSaveCache = {
@@ -1450,26 +1618,69 @@ export function loadSave(): SaveGame | null {
  */
 const DETAILED_MATCHES_KEPT = 6;
 
-function slimResult(result: any, keepDetail: boolean): any {
-  if (!result) return result;
-  if (keepDetail) return result;
+const COMPACT_PLAYER_SNAPSHOT_KEYS = new Set(["id", "name", "positions", "position", "rating", "teamId"]);
+const COMPACT_HIGHLIGHT_KEYS = new Set(["minute", "team", "type", "playerId", "playerName", "detail"]);
 
-  // Los partidos de otros equipos también deben poder abrirse en Jornadas,
-  // Champions y Copa con una crónica coherente. Antes se eliminaban `highlights`
-  // al guardar, por lo que desaparecían paradones, palos y cambios forzados.
-  // Conservamos solo el detalle ligero que necesita la UI: eventos, tarjetas,
-  // highlights, sustituciones, XI y formación. Se siguen descartando las
-  // estadísticas pesadas y las notas/rating completas para no volver a llenar
-  // localStorage.
-  // `homeLineup`/`awayLineup` guardan los 22 jugadores completos (nombre,
-  // rating, valor de mercado, carta...) de cada partido. Pesan mucho más que
-  // `stats`, y antes NO se descartaban aquí pese a lo que decía este
-  // comentario: se acumulaban para siempre, en todos los partidos de todas
-  // las ligas, y eran la causa real de que la cuota de `localStorage` se
-  // agotara ya en la jornada 2. La UI (MatchStatsModal) ya sabe reconstruir
-  // una alineación aproximada a partir de `ratings` cuando faltan estos
-  // campos, así que es seguro quitarlos.
-  const { stats, extraTime, homeLineup, awayLineup, ...rest } = result;
+function isCompactPlayerSnapshot(player: any): boolean {
+  if (!player || typeof player !== "object") return true;
+  return Object.keys(player).every((key) => COMPACT_PLAYER_SNAPSHOT_KEYS.has(key));
+}
+
+function compactPlayerSnapshots(list: any): any {
+  if (!Array.isArray(list)) return list;
+  let changed = false;
+  const compacted = list.map((player) => {
+    if (!player || typeof player !== "object") return player;
+    if (isCompactPlayerSnapshot(player)) return player;
+    changed = true;
+    const snapshot: Record<string, any> = {};
+    for (const key of COMPACT_PLAYER_SNAPSHOT_KEYS) {
+      if (player[key] !== undefined) snapshot[key] = player[key];
+    }
+    return snapshot;
+  });
+  return changed ? compacted : list;
+}
+
+function isCompactHighlights(highlights: any): boolean {
+  return !Array.isArray(highlights) || highlights.every((highlight) =>
+    !highlight || typeof highlight !== "object" ||
+    Object.keys(highlight).every((key) => COMPACT_HIGHLIGHT_KEYS.has(key)),
+  );
+}
+
+function isAlreadySlimResult(result: any): boolean {
+  if (!result || typeof result !== "object") return false;
+  if (result.stats != null || result.energyAtEnd != null) return false;
+  if (!isCompactHighlights(result.highlights)) return false;
+  return [
+    "homeLineup",
+    "awayLineup",
+    "homeStartingLineup",
+    "awayStartingLineup",
+    "homeFinalLineup",
+    "awayFinalLineup",
+  ].every((key) => !Array.isArray(result[key]) || result[key].every(isCompactPlayerSnapshot));
+}
+
+function slimResult(result: any, keepDetail: boolean): any {
+  if (!result || keepDetail || isAlreadySlimResult(result)) return result;
+
+  // Old saves can contain full Player objects in four lineup snapshots per
+  // match, plus duplicate homeLineup/awayLineup and energyAtEnd maps. Keep the
+  // identifiers and match display fields but discard duplicated player data.
+  const {
+    stats,
+    extraTime,
+    homeLineup,
+    awayLineup,
+    energyAtEnd,
+    homeStartingLineup,
+    awayStartingLineup,
+    homeFinalLineup,
+    awayFinalLineup,
+    ...rest
+  } = result;
 
   const compactHighlights = Array.isArray(rest.highlights)
     ? rest.highlights.map((h: any) => ({
@@ -1492,9 +1703,28 @@ function slimResult(result: any, keepDetail: boolean): any {
       }
     : undefined;
 
-  const compact = {
+  // Preserve lightweight XI snapshots needed by stats/ratings pages. Legacy
+  // results often have only homeLineup/awayLineup; promote those snapshots to
+  // starting lineups before dropping the duplicate fields.
+  const homeParticipants = compactPlayerSnapshots(homeLineup);
+  const awayParticipants = compactPlayerSnapshots(awayLineup);
+  const homeStarting = compactPlayerSnapshots(homeStartingLineup ?? homeLineup);
+  const awayStarting = compactPlayerSnapshots(awayStartingLineup ?? awayLineup);
+  const homeFinal = compactPlayerSnapshots(homeFinalLineup);
+  const awayFinal = compactPlayerSnapshots(awayFinalLineup);
+  const compact: Record<string, any> = {
     ...rest,
     ...(compactHighlights ? { highlights: compactHighlights } : {}),
+    // Keep participant IDs/positions for awards, appearance accounting and
+    // clean-sheet calculations. These arrays used to retain full Player
+    // records; compact snapshots preserve their consumers without the market,
+    // contract, biography and other duplicated fields.
+    ...(homeParticipants !== undefined ? { homeLineup: homeParticipants } : {}),
+    ...(awayParticipants !== undefined ? { awayLineup: awayParticipants } : {}),
+    ...(homeStarting !== undefined ? { homeStartingLineup: homeStarting } : {}),
+    ...(awayStarting !== undefined ? { awayStartingLineup: awayStarting } : {}),
+    ...(homeFinal !== undefined ? { homeFinalLineup: homeFinal } : {}),
+    ...(awayFinal !== undefined ? { awayFinalLineup: awayFinal } : {}),
   };
 
   return slimExtra ? { ...compact, extraTime: slimExtra } : compact;
@@ -1502,27 +1732,45 @@ function slimResult(result: any, keepDetail: boolean): any {
 
 function slimFixtures(list: any[] | undefined, myTeamId: string, detailedIds: Set<string>): any[] {
   if (!Array.isArray(list)) return list as any;
-  return list.map((f) => {
+  let changed = false;
+  const compacted = list.map((f) => {
     if (!f?.result) return f;
     const mine = f.homeId === myTeamId || f.awayId === myTeamId;
-    return { ...f, result: slimResult(f.result, mine && detailedIds.has(f.id)) };
+    const result = slimResult(f.result, mine && detailedIds.has(String(f.id)));
+    if (result === f.result) return f;
+    changed = true;
+    return { ...f, result };
   });
+  return changed ? compacted : list;
 }
 
 export function slimSave(s: SaveGame): SaveGame {
   try {
     const myTeamId = s.myTeamId;
-    // Los últimos partidos jugados por tu equipo mantienen todo el detalle.
+    // The last six user matches across leagues, cups and all European cups keep
+    // full detail. De-duplicate fixture ids because some old saves mirror UCL
+    // fixtures inside both the flat and nested competition state.
     const played: any[] = [];
+    const seenPlayed = new Set<string>();
     const collect = (list: any) => {
       if (!Array.isArray(list)) return;
       for (const f of list) {
-        if (f?.result && (f.homeId === myTeamId || f.awayId === myTeamId)) played.push(f);
+        if (!f?.result || (f.homeId !== myTeamId && f.awayId !== myTeamId)) continue;
+        const key = String(f.id);
+        if (seenPlayed.has(key)) continue;
+        seenPlayed.add(key);
+        played.push(f);
       }
     };
     for (const lg of Object.keys(s.fixtures ?? {})) collect((s.fixtures as any)[lg]);
     for (const lg of Object.keys(s.cupFixtures ?? {})) collect((s.cupFixtures as any)[lg]);
     collect(s.uclFixtures);
+    collect(s.uelFixtures);
+    collect(s.ueclFixtures);
+    collect((s.ucl as any)?.fixtures);
+    collect((s.uel as any)?.fixtures);
+    collect((s.uecl as any)?.fixtures);
+    played.sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")));
     const detailedIds = new Set<string>(
       played.slice(-DETAILED_MATCHES_KEPT).map((f) => String(f.id)),
     );
@@ -1535,21 +1783,24 @@ export function slimSave(s: SaveGame): SaveGame {
     for (const lg of Object.keys(s.cupFixtures ?? {})) {
       cupFixtures[lg] = slimFixtures((s.cupFixtures as any)[lg], myTeamId, detailedIds);
     }
-    const ucl: any = s.ucl
-      ? {
-          ...s.ucl,
-          fixtures: Array.isArray((s.ucl as any).fixtures)
-            ? slimFixtures((s.ucl as any).fixtures, myTeamId, detailedIds)
-            : (s.ucl as any).fixtures,
-        }
-      : s.ucl;
+    const compactCompetition = (state: any) => {
+      if (!state) return state;
+      const compactFixtures = Array.isArray(state.fixtures)
+        ? slimFixtures(state.fixtures, myTeamId, detailedIds)
+        : state.fixtures;
+      return compactFixtures === state.fixtures ? state : { ...state, fixtures: compactFixtures };
+    };
 
     return {
       ...s,
       fixtures,
       cupFixtures,
       uclFixtures: slimFixtures(s.uclFixtures, myTeamId, detailedIds),
-      ucl,
+      uelFixtures: slimFixtures(s.uelFixtures, myTeamId, detailedIds),
+      ueclFixtures: slimFixtures(s.ueclFixtures, myTeamId, detailedIds),
+      ucl: compactCompetition(s.ucl),
+      uel: compactCompetition(s.uel),
+      uecl: compactCompetition(s.uecl),
     };
   } catch {
     return s;
@@ -2012,7 +2263,7 @@ function processRedCards(
   const next: SaveGame = save;
 
   for (const card of cards) {
-    if (card.cardType !== "red") continue;
+    if (card.cardType !== "red" && !card.isSecondYellow) continue;
 
     const teamId = card.team === "home" ? homeTeamId : awayTeamId;
     const suspensionLength = card.isSecondYellow ? 1 : directRedSuspensionLength(competition);
@@ -2277,32 +2528,26 @@ export function getStartersWithFormation(
     // no una formación obligatoria. En cada partido la IA puede escoger otra
     // dentro del catálogo de su estilo, manteniendo la favorita como opción
     // con mayor probabilidad.
-    const fixtureContext = options?.fixture ?? findNextCpuFixture(save, teamId);
+    // No recorrer todo el calendario al simular un fixture: los contextos
+    // explícitos son frecuentes durante el avance de jornada. La densidad se
+    // calcula en findNextCpuFixture cuando el motor necesita descubrir el partido.
+    const fixtureContext = options?.fixture
+      ? normalizeCpuFixtureContext(teamId, options.fixture)
+      : findNextCpuFixture(save, teamId);
     const rotationSeed = `${save.season}:${teamId}:${fixtureContext?.fixtureId ?? save.currentMatchday[lg] ?? 0}`;
     const { ids: autoIds, formation } = generateCPUXI(
       squad,
       unavailable,
       team,
-      undefined,
-      rotationSeed + (options?.randomFormation ? ":preview" : ""),
+      save.formations[teamId] as FormationName | undefined,
+      rotationSeed,
       fixtureContext,
     );
 
-    if (!save.formations[teamId]) {
-      // Guardar como favorita la mejor que encaja con la plantilla; la
-      // selección de cada partido no sobreescribe esta preferencia.
-      const favoriteCandidate = formationsForStyle(getTeamStyle(team).style)
-        .map((f) => ({
-          f,
-          ...pickXIForFormationWithRotation(squad, unavailable, f, 0, `${rotationSeed}:favorite`),
-        }))
-        .sort(
-          (a, b) =>
-            b.score +
-            (FIVE_DEFENDER_TEAMS.has(team.name) && b.f.includes("5-") ? 12 : 0) -
-            (a.score + (FIVE_DEFENDER_TEAMS.has(team.name) && a.f.includes("5-") ? 12 : 0)),
-        )[0];
-      save.formations[teamId] = favoriteCandidate?.f || formation;
+    if (!save.formations[teamId] || !isSensibleAiFormation(save.formations[teamId] as FormationName)) {
+      // Si el guardado antiguo no tenía favorita, guardar la formación que
+      // acaba de superar la asignación óptima y mantener compatibilidad.
+      save.formations[teamId] = formation;
     }
 
     const players = autoIds
@@ -2360,7 +2605,7 @@ export function getStarters(
   // Get suspended players for this team
 
   const suspensions = save.suspensions[teamId] ?? [];
-  const matchCompetition = options?.fixture?.competition ?? "league";
+  const matchCompetition = options?.fixture?.europeanCompetition ?? options?.fixture?.competition ?? "league";
 
   const suspendedPlayerIds = new Set(
     suspensions
@@ -2387,18 +2632,23 @@ export function getStarters(
   const isUserTeam = teamId === save.myTeamId;
 
   if (!isUserTeam || lineup.length === 0) {
-    const fixtureContext = options?.fixture ?? findNextCpuFixture(save, teamId);
+    // No recorrer todo el calendario al simular un fixture: los contextos
+    // explícitos son frecuentes durante el avance de jornada. La densidad se
+    // calcula en findNextCpuFixture cuando el motor necesita descubrir el partido.
+    const fixtureContext = options?.fixture
+      ? normalizeCpuFixtureContext(teamId, options.fixture)
+      : findNextCpuFixture(save, teamId);
     const rotationSeed = `${save.season}:${teamId}:${fixtureContext?.fixtureId ?? save.currentMatchday[lg] ?? 0}`;
     const { ids: autoIds, formation } = generateCPUXI(
       squad,
       unavailable,
       team,
-      undefined,
+      save.formations[teamId] as FormationName | undefined,
       rotationSeed,
       fixtureContext,
     );
 
-    if (!save.formations[teamId]) {
+    if (!save.formations[teamId] || !isSensibleAiFormation(save.formations[teamId] as FormationName)) {
       save.formations[teamId] = formation;
     }
 
@@ -2681,9 +2931,16 @@ function applyMatchToStats(
   // Process cards (including those from extra time)
 
   for (const card of r.cards) {
-    if (card.cardType === "yellow") {
-      store.recordYellowCard(card.playerId, statsCompetition);
+    if (card.cardType === "red" || card.isSecondYellow) {
+      store.recordRedCard(card.playerId, statsCompetition);
 
+      // A second-yellow dismissal also counts as a yellow booking.
+      if (card.isSecondYellow) {
+        store.recordYellowCard(card.playerId, statsCompetition);
+        store.incrementAccumulatedYellowCards(card.playerId);
+      }
+    } else if (card.cardType === "yellow") {
+      store.recordYellowCard(card.playerId, statsCompetition);
       store.incrementAccumulatedYellowCards(card.playerId);
 
       // Keep the existing fifth-yellow suspension rule, but make it
@@ -2696,16 +2953,6 @@ function applyMatchToStats(
           p.teamId,
           disciplineCompetition,
         );
-      }
-    } else if (card.cardType === "red") {
-      store.recordRedCard(card.playerId, statsCompetition);
-
-      // If it's a second yellow, also count it as a yellow card
-
-      if (card.isSecondYellow) {
-        store.recordYellowCard(card.playerId, statsCompetition);
-
-        store.incrementAccumulatedYellowCards(card.playerId);
       }
     }
   }
@@ -2764,7 +3011,7 @@ function applyMatchToStats(
     const redCardedPlayerIds = new Set(
       (r.cards || [])
 
-        .filter((c) => c.cardType === "red" && squad.find((p) => p.id === c.playerId))
+        .filter((c) => (c.cardType === "red" || c.isSecondYellow) && squad.find((p) => p.id === c.playerId))
 
         .map((c) => c.playerId),
     );
@@ -3834,12 +4081,6 @@ export async function simulateCupMatchdayLayered(
     }
   }
 
-  console.log(`simulateCupMatchdayLayered: Total fixtures to simulate: ${allFixtures.length}`);
-
-  console.log(`simulateCupMatchdayLayered: Leagues with fixtures:`, [
-    ...new Set(allFixtures.map((f) => f.league)),
-  ]);
-
   const totalMatches = allFixtures.length;
 
   let processed = 0;
@@ -3963,6 +4204,7 @@ export async function simulateCupMatchdayLayered(
             awayBench,
             regularSubstitutions: result.substitutions ?? [],
             regularCards: result.cards ?? [],
+            regularInjuries: result.injuries ?? [],
             homeTactics: loadTactics(fixture.homeId),
             awayTactics: loadTactics(fixture.awayId),
           });
@@ -3980,24 +4222,15 @@ export async function simulateCupMatchdayLayered(
           const totalHome = result.homeGoals + etResult.homeGoals;
           const totalAway = result.awayGoals + etResult.awayGoals;
           if (totalHome === totalAway) {
-            const redHome = new Map<string, number>(
-              (result.cards ?? [])
-                .filter((c) => c.team === "home" && c.cardType === "red")
-                .map((c) => [c.playerId, c.minute]),
+            const finalHome = getActivePlayersAtMinute(
+              homeXI, homeBench, result.substitutions ?? [], result.cards ?? [], "home", 120, result.injuries ?? [],
             );
-            const redAway = new Map<string, number>(
-              (result.cards ?? [])
-                .filter((c) => c.team === "away" && c.cardType === "red")
-                .map((c) => [c.playerId, c.minute]),
+            const finalAway = getActivePlayersAtMinute(
+              awayXI, awayBench, result.substitutions ?? [], result.cards ?? [], "away", 120, result.injuries ?? [],
             );
-            const finalHome = result.homeFinalLineup ?? homeXI;
-            const finalAway = result.awayFinalLineup ?? awayXI;
-            const penaltyHome = finalHome.filter((p) => !redHome.has(p.id));
-            const penaltyAway = finalAway.filter((p) => !redAway.has(p.id));
-            const penaltyResult = simulatePenaltyShootout(
-              penaltyHome.length ? penaltyHome : homeXI,
-              penaltyAway.length ? penaltyAway : awayXI,
-            );
+            const penaltyResult = simulatePenaltyShootout(finalHome, finalAway, {
+              injuries: result.injuries ?? [],
+            });
             result.penalties = {
               homeGoals: penaltyResult.homeGoals,
               awayGoals: penaltyResult.awayGoals,
@@ -4069,8 +4302,6 @@ export async function simulateCupMatchdayLayered(
       await new Promise((r) => setTimeout(r, 0));
     }
   }
-
-  console.log(`simulateCupMatchdayLayered: Completed ${processed}/${totalMatches} fixtures`);
 
   return next;
 }
@@ -4259,6 +4490,7 @@ export async function simulateRemainingCupMatches(
               awayBench,
               regularSubstitutions: result.substitutions ?? [],
               regularCards: result.cards ?? [],
+              regularInjuries: result.injuries ?? [],
               homeTactics: getCachedCupTactics(f.homeId),
               awayTactics: getCachedCupTactics(f.awayId),
             });
@@ -4285,23 +4517,15 @@ export async function simulateRemainingCupMatches(
             if (totalHome === totalAway) {
               // Simulate penalties with the players who are actually still
               // on the pitch after regular time + extra time.
-              const regularAndExtraSubs = result.substitutions ?? [];
-              const redHome = new Map<string, number>(
-                (result.cards ?? [])
-                  .filter((c) => c.team === "home" && c.cardType === "red")
-                  .map((c) => [c.playerId, c.minute]),
+              const finalHome = getActivePlayersAtMinute(
+                homeXI, homeBench, result.substitutions ?? [], result.cards ?? [], "home", 120, result.injuries ?? [],
               );
-              const redAway = new Map<string, number>(
-                (result.cards ?? [])
-                  .filter((c) => c.team === "away" && c.cardType === "red")
-                  .map((c) => [c.playerId, c.minute]),
+              const finalAway = getActivePlayersAtMinute(
+                awayXI, awayBench, result.substitutions ?? [], result.cards ?? [], "away", 120, result.injuries ?? [],
               );
-              const finalHome = homeXI.filter((p) => !redHome.has(p.id));
-              const finalAway = awayXI.filter((p) => !redAway.has(p.id));
-              const penaltyResult = simulatePenaltyShootout(
-                finalHome.length ? finalHome : homeXI,
-                finalAway.length ? finalAway : awayXI,
-              );
+              const penaltyResult = simulatePenaltyShootout(finalHome, finalAway, {
+                injuries: result.injuries ?? [],
+              });
 
               result.penalties = {
                 homeGoals: penaltyResult.homeGoals,
@@ -4342,6 +4566,7 @@ export async function simulateRemainingCupMatches(
             awayBench,
             regularSubstitutions: result.substitutions ?? [],
             regularCards: result.cards ?? [],
+            regularInjuries: result.injuries ?? [],
             homeTactics: getCachedCupTactics(f.homeId),
             awayTactics: getCachedCupTactics(f.awayId),
           });
@@ -4372,6 +4597,7 @@ export async function simulateRemainingCupMatches(
               result.cards ?? [],
               "home",
               120,
+              result.injuries ?? [],
             );
             const finalAway = getActivePlayersAtMinute(
               awayXI,
@@ -4380,11 +4606,11 @@ export async function simulateRemainingCupMatches(
               result.cards ?? [],
               "away",
               120,
+              result.injuries ?? [],
             );
-            const penaltyResult = simulatePenaltyShootout(
-              finalHome.length ? finalHome : homeXI,
-              finalAway.length ? finalAway : awayXI,
-            );
+            const penaltyResult = simulatePenaltyShootout(finalHome, finalAway, {
+              injuries: result.injuries ?? [],
+            });
 
             result.penalties = {
               homeGoals: penaltyResult.homeGoals,
@@ -4520,31 +4746,12 @@ function applyUCLMatchAftermath(save: SaveGame, homeId: string, awayId: string):
 export function simulateUCLMatchday(save: SaveGame, matchday: number): SaveGame {
   let next: SaveGame = createFastMutationSnapshot(save);
 
-  console.log(
-    `[simulateUCLMatchday] START - matchday: ${matchday}, total fixtures: ${next.uclFixtures?.length ?? 0}`,
-  );
-
   if (!next.uclFixtures) return next;
 
   const matchdayFixtures = next.uclFixtures.filter((f) => f.matchday === matchday && !f.result);
 
-  console.log(`[simulateUCLMatchday] fixtures to simulate: ${matchdayFixtures.length}`);
-
-  if (matchdayFixtures.length === 0) {
-    console.log(
-      `[simulateUCLMatchday] No fixtures to simulate - all fixtures on matchday:`,
-      next.uclFixtures
-        .filter((f) => f.matchday === matchday)
-        .map((f) => ({ id: f.id, hasResult: !!f.result })),
-    );
-  }
-
   for (const f of matchdayFixtures) {
     const simmed = simulateFixtureInline(next, f);
-
-    console.log(
-      `[simulateUCLMatchday] simulated ${f.id}: ${simmed.result?.homeGoals}-${simmed.result?.awayGoals}`,
-    );
 
     const idx = next.uclFixtures.findIndex((x) => x.id === f.id);
 
@@ -6133,6 +6340,7 @@ export function processScheduledBackgroundSims(
               awayBench,
               regularSubstitutions: result.substitutions ?? [],
               regularCards: result.cards ?? [],
+              regularInjuries: result.injuries ?? [],
               homeTactics: getScheduledCupTactics(f.homeId),
               awayTactics: getScheduledCupTactics(f.awayId),
             });
@@ -6150,22 +6358,15 @@ export function processScheduledBackgroundSims(
             const totalHome = result.homeGoals + etResult.homeGoals;
             const totalAway = result.awayGoals + etResult.awayGoals;
             if (totalHome === totalAway) {
-              const redHome = new Map<string, number>(
-                (result.cards ?? [])
-                  .filter((c) => c.team === "home" && c.cardType === "red")
-                  .map((c) => [c.playerId, c.minute]),
+              const penaltyHome = getActivePlayersAtMinute(
+                homeXI, homeBench, result.substitutions ?? [], result.cards ?? [], "home", 120, result.injuries ?? [],
               );
-              const redAway = new Map<string, number>(
-                (result.cards ?? [])
-                  .filter((c) => c.team === "away" && c.cardType === "red")
-                  .map((c) => [c.playerId, c.minute]),
+              const penaltyAway = getActivePlayersAtMinute(
+                awayXI, awayBench, result.substitutions ?? [], result.cards ?? [], "away", 120, result.injuries ?? [],
               );
-              const penaltyHome = homeXI.filter((p) => !redHome.has(p.id));
-              const penaltyAway = awayXI.filter((p) => !redAway.has(p.id));
-              const penaltyResult = simulatePenaltyShootout(
-                penaltyHome.length ? penaltyHome : homeXI,
-                penaltyAway.length ? penaltyAway : awayXI,
-              );
+              const penaltyResult = simulatePenaltyShootout(penaltyHome, penaltyAway, {
+                injuries: result.injuries ?? [],
+              });
               result.penalties = {
                 homeGoals: penaltyResult.homeGoals,
                 awayGoals: penaltyResult.awayGoals,
@@ -7763,10 +7964,7 @@ export function applyCupDraw(
 
     list.push(fixture);
 
-    console.log(`Created fixture: ${fixture.id} - ${home} vs ${away}`);
   }
-
-  console.log(`Total fixtures in list after draw: ${list.length}`);
 
   // Clear cup draw pending
 
@@ -8049,6 +8247,7 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
             awayBench,
             regularSubstitutions: simmed.result.substitutions ?? [],
             regularCards: simmed.result.cards ?? [],
+            regularInjuries: simmed.result.injuries ?? [],
           });
           simmed.result.substitutions = [
             ...(simmed.result.substitutions ?? []),
@@ -8068,6 +8267,7 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
               simmed.result.cards ?? [],
               "home",
               120,
+              simmed.result.injuries ?? [],
             );
             const finalAway = getActivePlayersAtMinute(
               awayXI,
@@ -8076,11 +8276,11 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
               simmed.result.cards ?? [],
               "away",
               120,
+              simmed.result.injuries ?? [],
             );
-            const penResult = simulatePenaltyShootout(
-              finalHome.length ? finalHome : homeXI,
-              finalAway.length ? finalAway : awayXI,
-            );
+            const penResult = simulatePenaltyShootout(finalHome, finalAway, {
+              injuries: simmed.result.injuries ?? [],
+            });
             simmed.result.penalties = {
               homeGoals: penResult.homeGoals,
               awayGoals: penResult.awayGoals,
@@ -8270,6 +8470,7 @@ function simulateEuropeanFixtureFast(
       awayBench,
       regularSubstitutions: result.substitutions ?? [],
       regularCards: result.cards ?? [],
+      regularInjuries: result.injuries ?? [],
       homeTactics: loadTactics(fixture.homeId),
       awayTactics: loadTactics(fixture.awayId),
     });
@@ -8302,22 +8503,15 @@ function simulateEuropeanFixtureFast(
     }
 
     if (totalHome === totalAway) {
-      const redHome = new Set(
-        (result.cards ?? [])
-          .filter((c) => c.team === "home" && c.cardType === "red")
-          .map((c) => c.playerId),
+      const finalHome = getActivePlayersAtMinute(
+        homeXI, homeBench, result.substitutions ?? [], result.cards ?? [], "home", 120, result.injuries ?? [],
       );
-      const redAway = new Set(
-        (result.cards ?? [])
-          .filter((c) => c.team === "away" && c.cardType === "red")
-          .map((c) => c.playerId),
+      const finalAway = getActivePlayersAtMinute(
+        awayXI, awayBench, result.substitutions ?? [], result.cards ?? [], "away", 120, result.injuries ?? [],
       );
-      const finalHome = homeXI.filter((p) => !redHome.has(p.id));
-      const finalAway = awayXI.filter((p) => !redAway.has(p.id));
-      const penResult = simulatePenaltyShootout(
-        finalHome.length ? finalHome : homeXI,
-        finalAway.length ? finalAway : awayXI,
-      );
+      const penResult = simulatePenaltyShootout(finalHome, finalAway, {
+        injuries: result.injuries ?? [],
+      });
       result.penalties = {
         homeGoals: penResult.homeGoals,
         awayGoals: penResult.awayGoals,
@@ -8911,6 +9105,40 @@ function europeanTeamIsUserParticipant(comp: EuropeanStateKey, userTeamId: strin
   return EUROPEAN_CONFIGS[comp]?.participants.includes(userTeamId) ?? false;
 }
 
+type ProgressTuple = Array<string | number | boolean | null | undefined>;
+
+function europeanFixtureProgressSnapshot(fixtures: any): ProgressTuple[] {
+  if (!Array.isArray(fixtures)) return [];
+  return fixtures.map((fixture: any) => {
+    const result = fixture?.result;
+    const extraTime = result?.extraTime;
+    const penalties = result?.penalties;
+    return [
+      fixture?.id, fixture?.round, fixture?.homeId, fixture?.awayId, fixture?.matchday,
+      result ? 1 : 0, result?.homeGoals, result?.awayGoals,
+      extraTime?.homeGoals, extraTime?.awayGoals,
+      penalties?.homeGoals, penalties?.awayGoals,
+    ];
+  });
+}
+
+function sameProgressSnapshot(a: ProgressTuple[], b: ProgressTuple[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].length !== b[i].length) return false;
+    for (let j = 0; j < a[i].length; j++) if (a[i][j] !== b[i][j]) return false;
+  }
+  return true;
+}
+
+function europeanBracketProgressSnapshot(bracket: any): ProgressTuple[] {
+  if (!Array.isArray(bracket)) return [];
+  return bracket.map((slot: any) => [
+    slot?.id, slot?.round, slot?.homeId, slot?.awayId,
+    slot?.legOneMatchday, slot?.legTwoMatchday, slot?.isFinal,
+  ]);
+}
+
 /**
  * Synchronise one Europa/Conference competition up to a calendar offset.
  *
@@ -8954,6 +9182,27 @@ export function simulatePendingEuropeanThroughDay(
     let changed = false;
     let state = (next as any)[comp];
     if (!state) break;
+    if (
+      !state.drawState ||
+      typeof state.drawState !== "object" ||
+      typeof state.drawState.leagueDone !== "boolean" ||
+      typeof state.drawState.playoffDone !== "boolean" ||
+      typeof state.drawState.knockoutDone !== "boolean"
+    ) {
+      const phase = state.phase ?? "league";
+      const fixtureList = (next as any)[europeanFixtureKey(comp)] ?? [];
+      const hasLeagueDraw = Array.isArray(fixtureList) && fixtureList.some((f: any) => f?.round?.startsWith("Jornada"));
+      const previous = state.drawState && typeof state.drawState === "object" ? state.drawState : {};
+      state = {
+        ...state,
+        drawState: {
+          leagueDone: phase !== "league" || previous.leagueDone === true || hasLeagueDraw,
+          playoffDone: ["playoff", "r16", "qf", "sf", "final", "done"].includes(phase) || previous.playoffDone === true,
+          knockoutDone: ["r16", "qf", "sf", "final", "done"].includes(phase) || previous.knockoutDone === true,
+        },
+      };
+      (next as any)[comp] = state;
+    }
 
     // AI-only competitions never depend on a modal opened by the manager.
     if (aiOnly && throughOffset >= calendar.leagueDraw && !state.drawState.leagueDone) {
@@ -8963,14 +9212,14 @@ export function simulatePendingEuropeanThroughDay(
     }
 
     if (state.drawState.leagueDone && throughOffset >= calendar.leagueDay[0] && hasPendingAtOrBefore(next)) {
-      const before = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      const before = europeanFixtureProgressSnapshot((next as any)[europeanFixtureKey(comp)] ?? []);
       next = runEuropeanEngine(
         next,
         comp,
         (engine) => simulateAllEuropeanAIThroughDay(engine, throughOffset - 1, userTeamId),
       );
-      const after = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
-      if (before !== after) changed = true;
+      const after = europeanFixtureProgressSnapshot((next as any)[europeanFixtureKey(comp)] ?? []);
+      if (!sameProgressSnapshot(before, after)) changed = true;
       state = (next as any)[comp];
     }
 
@@ -8990,22 +9239,22 @@ export function simulatePendingEuropeanThroughDay(
     }
 
     if (state.drawState.playoffDone && throughOffset >= calendar.playoffLeg1 && hasPendingAtOrBefore(next)) {
-      const before = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      const before = europeanFixtureProgressSnapshot((next as any)[europeanFixtureKey(comp)] ?? []);
       next = runEuropeanEngine(
         next,
         comp,
         (engine) => simulateAllEuropeanAIThroughDay(engine, throughOffset - 1, userTeamId),
       );
-      const after = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
-      if (before !== after) changed = true;
+      const after = europeanFixtureProgressSnapshot((next as any)[europeanFixtureKey(comp)] ?? []);
+      if (!sameProgressSnapshot(before, after)) changed = true;
       state = (next as any)[comp];
     }
 
-    const beforeProgress = JSON.stringify((next as any)[comp]?.bracket ?? []);
+    const beforeProgress = europeanBracketProgressSnapshot((next as any)[comp]?.bracket ?? []);
     const beforePhase = (next as any)[comp]?.phase;
     next = processEuropeanKnockoutProgress(next, comp, throughOffset);
     if (
-      JSON.stringify((next as any)[comp]?.bracket ?? []) !== beforeProgress ||
+      !sameProgressSnapshot(beforeProgress, europeanBracketProgressSnapshot((next as any)[comp]?.bracket ?? [])) ||
       (next as any)[comp]?.phase !== beforePhase
     ) {
       changed = true;
@@ -9027,21 +9276,21 @@ export function simulatePendingEuropeanThroughDay(
     }
 
     if (state.drawState.knockoutDone && throughOffset >= calendar.r16Leg1 && hasPendingAtOrBefore(next)) {
-      const before = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
+      const before = europeanFixtureProgressSnapshot((next as any)[europeanFixtureKey(comp)] ?? []);
       next = runEuropeanEngine(
         next,
         comp,
         (engine) => simulateAllEuropeanAIThroughDay(engine, throughOffset - 1, userTeamId),
       );
-      const after = JSON.stringify((next as any)[europeanFixtureKey(comp)] ?? []);
-      if (before !== after) changed = true;
+      const after = europeanFixtureProgressSnapshot((next as any)[europeanFixtureKey(comp)] ?? []);
+      if (!sameProgressSnapshot(before, after)) changed = true;
     }
 
-    const beforeLateProgress = JSON.stringify((next as any)[comp]?.bracket ?? []);
+    const beforeLateProgress = europeanBracketProgressSnapshot((next as any)[comp]?.bracket ?? []);
     const beforeLatePhase = (next as any)[comp]?.phase;
     next = processEuropeanKnockoutProgress(next, comp, throughOffset);
     if (
-      JSON.stringify((next as any)[comp]?.bracket ?? []) !== beforeLateProgress ||
+      !sameProgressSnapshot(beforeLateProgress, europeanBracketProgressSnapshot((next as any)[comp]?.bracket ?? [])) ||
       (next as any)[comp]?.phase !== beforeLatePhase
     ) {
       changed = true;

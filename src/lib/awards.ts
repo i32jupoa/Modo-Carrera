@@ -863,26 +863,77 @@ function buildXI(
   const scored = new Map<string, number>();
   for (const player of candidates) scored.set(player.id, competitionScore(player, competition, monthlyById, save));
 
-  const candidateBySlot = slots.map((slot, slotIndex) => ({
-    slot,
-    slotIndex,
-    candidates: candidates
-      .filter((player) => slotSuitability(player, slot) > 0 && Number.isFinite(scored.get(player.id)))
-      .sort((a, b) => (scored.get(b.id)! + slotSuitability(b, slot)) - (scored.get(a.id)! + slotSuitability(a, slot)) || b.currentOVR - a.currentOVR),
+  // Resolver las 11 posiciones como una asignación global evita que una elección
+  // temprana para una posición flexible consuma al único candidato válido de otra.
+  const validPlayers = [...new Map(candidates.filter((player) => Number.isFinite(scored.get(player.id))).map((player) => [player.id, player])).values()];
+  if (validPlayers.length < slots.length) return [];
+
+  const suitability = slots.map((slot) => validPlayers.map((player) => slotSuitability(player, slot)));
+  const validScores = validPlayers.flatMap((player, playerIndex) =>
+    slots.map((_, slotIndex) => suitability[slotIndex][playerIndex] > 0 ? scored.get(player.id)! + (suitability[slotIndex][playerIndex] - 80) * 0.01 : -Infinity),
+  ).filter(Number.isFinite);
+  if (validScores.length < slots.length) return [];
+  const maxScore = validScores.reduce((max, score) => Math.max(max, score), -Infinity);
+  const invalidCost = 1e8;
+  const costs = slots.map((_, slotIndex) => validPlayers.map((player, playerIndex) => {
+    const fit = suitability[slotIndex][playerIndex];
+    if (fit <= 0) return invalidCost;
+    const score = scored.get(player.id)! + (fit - 80) * 0.01;
+    return maxScore - score;
   }));
 
-  const flexibility = new Map<string, number>();
-  for (const entry of candidateBySlot) for (const player of entry.candidates) flexibility.set(player.id, (flexibility.get(player.id) ?? 0) + 1);
-  const criticality = (entry: typeof candidateBySlot[number]) => entry.candidates.reduce((sum, player) => sum + 1 / Math.max(1, flexibility.get(player.id) ?? 1), 0);
-  const assignment = new Array<AwardPlayer | null>(slots.length).fill(null);
-  const used = new Set<string>();
-  const work = [...candidateBySlot].sort((a, b) => a.candidates.length - b.candidates.length || criticality(b) - criticality(a) || a.slotIndex - b.slotIndex);
-
-  for (const entry of work) {
-    const chosen = entry.candidates.find((player) => !used.has(player.id));
-    if (chosen) { assignment[entry.slotIndex] = chosen; used.add(chosen.id); }
+  // Algoritmo húngaro rectangular (11 puestos x N jugadores), minimizando coste.
+  const rowCount = slots.length;
+  const colCount = validPlayers.length;
+  const u = new Array(rowCount + 1).fill(0);
+  const v = new Array(colCount + 1).fill(0);
+  const matchedRow = new Array(colCount + 1).fill(0);
+  const previousCol = new Array(colCount + 1).fill(0);
+  for (let row = 1; row <= rowCount; row++) {
+    matchedRow[0] = row;
+    let col0 = 0;
+    const minCost = new Array(colCount + 1).fill(Infinity);
+    const used = new Array(colCount + 1).fill(false);
+    do {
+      used[col0] = true;
+      const row0 = matchedRow[col0];
+      let delta = Infinity;
+      let col1 = 0;
+      for (let col = 1; col <= colCount; col++) {
+        if (used[col]) continue;
+        const reduced = costs[row0 - 1][col - 1] - u[row0] - v[col];
+        if (reduced < minCost[col]) {
+          minCost[col] = reduced;
+          previousCol[col] = col0;
+        }
+        if (minCost[col] < delta) {
+          delta = minCost[col];
+          col1 = col;
+        }
+      }
+      if (!Number.isFinite(delta)) return [];
+      for (let col = 0; col <= colCount; col++) {
+        if (used[col]) {
+          u[matchedRow[col]] += delta;
+          v[col] -= delta;
+        } else {
+          minCost[col] -= delta;
+        }
+      }
+      col0 = col1;
+    } while (matchedRow[col0] !== 0);
+    do {
+      const col1 = previousCol[col0];
+      matchedRow[col0] = matchedRow[col1];
+      col0 = col1;
+    } while (col0 !== 0);
   }
-  if (assignment.some((player) => !player)) return [];
+
+  const assignment = new Array<AwardPlayer | null>(rowCount).fill(null);
+  for (let col = 1; col <= colCount; col++) {
+    if (matchedRow[col] > 0) assignment[matchedRow[col] - 1] = validPlayers[col - 1];
+  }
+  if (assignment.some((player, slotIndex) => !player || suitability[slotIndex][validPlayers.findIndex((candidate) => candidate.id === player.id)] <= 0)) return [];
   return assignment as AwardPlayer[];
 }
 
@@ -891,7 +942,8 @@ export function getSeasonXI(players = getPlayers(loadSave() ?? undefined), save 
 }
 
 function getEuropeanXI(competition: "ucl" | "uel" | "uecl", players = getPlayers(loadSave() ?? undefined), save = loadSave()): SeasonXI {
-  const minApps = competition === "ucl" ? 1 : 1;
+  // Una sola aparición no basta para representar una competición en el XI.
+  const minApps = 3;
   const candidates = players.filter((p) => (competition === "ucl" ? p.uclAppearances : competition === "uel" ? p.uelAppearances : p.ueclAppearances) >= minApps);
   return buildXI(candidates, competition, undefined, save ?? undefined);
 }
@@ -1076,7 +1128,7 @@ export function getMonthlyAward(
       const m = mergeMonthlyStats(persisted, calculated, year, month);
       return m ? { p, m } : null;
     })
-    .filter((x): x is { p: AwardPlayer; m: MonthlyStats } => !!x && x.m.appearances > 0 && ((x.m.teamId ? teamById(x.m.teamId)?.league : x.p.leagueId) === leagueId))
+    .filter((x): x is { p: AwardPlayer; m: MonthlyStats } => !!x && x.m.appearances >= 3 && ((x.m.teamId ? teamById(x.m.teamId)?.league : x.p.leagueId) === leagueId))
     .map(({ p, m }) => ({ ...p, points: monthlyPerformanceScore(m, p), monthlyStats: m }))
     .sort((a, b) => b.points - a.points || b.monthlyStats.mvpCount - a.monthlyStats.mvpCount || b.monthlyStats.appearances - a.monthlyStats.appearances || b.averageRating - a.averageRating);
 

@@ -10,6 +10,8 @@ import { usePlayersStore } from "@/store/playersStore";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
+import { TeamForm } from "@/components/TeamForm";
+import { getTeamForms } from "@/lib/teamForm";
 import { MatchStatsModal } from "@/components/MatchStatsModal";
 import { sortUCLTable, UCLTableEntry, UCLBracketSlot } from "@/data/ucl";
 import type { Fixture } from "@/lib/season";
@@ -113,29 +115,15 @@ function TableView({
   table,
   userTeamId,
   fixtures,
+  save,
 }: {
   table: UCLTableEntry[];
   userTeamId: string;
   fixtures: Fixture[];
+  save: SaveGame;
 }) {
   const sorted = sortUCLTable(table);
-
-  // Build form (last 5 results) per team — ONLY league-phase fixtures
-  function getForm(teamId: string): ("W" | "D" | "L")[] {
-    const played = fixtures
-      .filter(
-        (f) =>
-          f.result &&
-          f.round?.startsWith("Jornada") &&
-          (f.homeId === teamId || f.awayId === teamId),
-      )
-      .sort((a, b) => a.matchday - b.matchday);
-    return played.slice(-5).map((f) => {
-      const myGoals = f.homeId === teamId ? f.result!.homeGoals : f.result!.awayGoals;
-      const theirGoals = f.homeId === teamId ? f.result!.awayGoals : f.result!.homeGoals;
-      return myGoals > theirGoals ? "W" : myGoals < theirGoals ? "L" : "D";
-    });
-  }
+  const formsByTeam = getTeamForms(save, 5);
 
   return (
     <section className="overflow-hidden rounded-xl border border-border/80 bg-gradient-to-b from-card/90 to-background shadow-lg">
@@ -172,7 +160,7 @@ function TableView({
               const r16 = pos <= 8;
               const playoff = pos > 8 && pos <= 24;
               const elim = pos > 24;
-              const form = getForm(e.teamId);
+              const form = formsByTeam.get(e.teamId) ?? [];
 
               const rows: React.ReactNode[] = [];
 
@@ -260,21 +248,7 @@ function TableView({
                     {e.points}
                   </td>
                   <td className="py-2 pr-3">
-                    <div className="flex items-center justify-center gap-0.5">
-                      {form.map((r, fi) => (
-                        <span
-                          key={fi}
-                          className={[
-                            "inline-flex h-4 w-4 items-center justify-center rounded-full text-[0.55rem] font-bold",
-                            r === "W" ? "bg-emerald-500/80 text-white" : "",
-                            r === "D" ? "bg-muted-foreground/50 text-white" : "",
-                            r === "L" ? "bg-destructive/80 text-white" : "",
-                          ].join(" ")}
-                        >
-                          {r === "W" ? "V" : r === "D" ? "E" : "D"}
-                        </span>
-                      ))}
-                    </div>
+                    <TeamForm results={form} />
                   </td>
                 </tr>,
               );
@@ -312,14 +286,53 @@ function TableView({
 function FixtureRow({
   f,
   myTeamId,
+  fixtures,
   onClick,
 }: {
   f: Fixture;
   myTeamId: string;
+  fixtures: Fixture[];
   onClick?: (fixture: Fixture) => void;
 }) {
   const isUser = f.homeId === myTeamId || f.awayId === myTeamId;
   const played = !!f.result;
+  const roundPrefix = f.round?.replace(/-Leg[12]$/, "");
+  const otherLeg = roundPrefix && f.round?.includes("-Leg")
+    ? fixtures.find((candidate) => {
+        if (candidate.id === f.id || !candidate.result || !candidate.round?.startsWith(`${roundPrefix}-Leg`)) return false;
+        return [candidate.homeId, candidate.awayId].sort().join("|") === [f.homeId, f.awayId].sort().join("|");
+      })
+    : undefined;
+  const goalsForTeam = (fixture: Fixture, teamId: string) => {
+    const result = fixture.result;
+    if (!result) return 0;
+    const regular = fixture.homeId === teamId ? result.homeGoals : result.awayGoals;
+    const extra = fixture.homeId === teamId ? result.extraTime?.homeGoals : result.extraTime?.awayGoals;
+    return Number(regular ?? 0) + Number(extra ?? 0);
+  };
+  const aggregate = f.result && otherLeg?.result
+    ? {
+        home: goalsForTeam(f, f.homeId) + goalsForTeam(otherLeg, f.homeId),
+        away: goalsForTeam(f, f.awayId) + goalsForTeam(otherLeg, f.awayId),
+      }
+    : null;
+  const isSecondLeg = /-Leg2$/.test(f.round ?? "");
+  const advancingTeamId = aggregate && isSecondLeg
+    ? aggregate.home > aggregate.away
+      ? f.homeId
+      : aggregate.away > aggregate.home
+        ? f.awayId
+        : f.result?.penalties
+          ? f.result.penalties.homeGoals > f.result.penalties.awayGoals
+            ? f.homeId
+            : f.awayId
+          : undefined
+    : undefined;
+  const advancementDetail = f.result?.penalties
+    ? "por penaltis"
+    : f.result?.extraTime
+      ? "tras prórroga"
+      : "por el global";
   let resultBg = "";
   if (played && isUser) {
     const myGoals = f.homeId === myTeamId ? f.result!.homeGoals : f.result!.awayGoals;
@@ -355,6 +368,7 @@ function FixtureRow({
         <Logo id={f.homeId} />
       </div>
       <div className="w-24 text-center shrink-0 py-1">
+        {isUser && <div className="mb-1"><span className="rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-primary">Tu partido</span></div>}
         {played ? (
           (() => {
             const { homeGoals, awayGoals, extraTime, penalties } = f.result!;
@@ -393,6 +407,12 @@ function FixtureRow({
           })()
         ) : (
           <span className="text-muted-foreground text-xs font-medium">vs</span>
+        )}
+        {aggregate && (
+          <div className="mt-1 text-[0.58rem] font-bold text-primary whitespace-nowrap" title="Marcador global de la eliminatoria">
+            <div>Global {aggregate.home}–{aggregate.away}</div>
+            {advancingTeamId && <div className="max-w-[150px] truncate text-[0.52rem]" title={`Clasifica ${teamName(advancingTeamId)} ${advancementDetail}`}>Clasifica: {teamName(advancingTeamId)} {advancementDetail}</div>}
+          </div>
         )}
       </div>
       <div className="flex-1 flex items-center gap-2 min-w-0">
@@ -1116,7 +1136,7 @@ function BracketView({
         .bracket-match-container {
           position: relative;
         }
-        
+
         .bracket-connector-right {
           position: absolute;
           right: -16px;
@@ -1126,7 +1146,7 @@ function BracketView({
           height: 2px;
           background: rgba(59, 130, 246, 0.6);
         }
-        
+
         .bracket-connector-right::after {
           content: '';
           position: absolute;
@@ -1139,7 +1159,7 @@ function BracketView({
           border-right: 2px solid rgba(59, 130, 246, 0.6);
           border-top-right-radius: 4px;
         }
-        
+
         .bracket-connector-right-long {
           position: absolute;
           right: -24px;
@@ -1149,7 +1169,7 @@ function BracketView({
           height: 2px;
           background: rgba(59, 130, 246, 0.6);
         }
-        
+
         .bracket-connector-right-long::after {
           content: '';
           position: absolute;
@@ -1162,7 +1182,7 @@ function BracketView({
           border-right: 2px solid rgba(59, 130, 246, 0.6);
           border-top-right-radius: 4px;
         }
-        
+
         .bracket-connector-left {
           position: absolute;
           left: -16px;
@@ -1172,7 +1192,7 @@ function BracketView({
           height: 2px;
           background: rgba(147, 51, 234, 0.6);
         }
-        
+
         .bracket-connector-left::before {
           content: '';
           position: absolute;
@@ -1185,7 +1205,7 @@ function BracketView({
           border-left: 2px solid rgba(147, 51, 234, 0.6);
           border-top-left-radius: 4px;
         }
-        
+
         .bracket-connector-left-long {
           position: absolute;
           left: -24px;
@@ -1195,7 +1215,7 @@ function BracketView({
           height: 2px;
           background: rgba(147, 51, 234, 0.6);
         }
-        
+
         .bracket-connector-left-long::before {
           content: '';
           position: absolute;
@@ -1839,7 +1859,16 @@ function EuropeanCompetitionPage() {
       raw = initializeEuropeanCompetition(raw, competition);
       saveSave(raw);
     }
-    if (!raw[competition]?.drawState.leagueDone) {
+    const fixtureKey = competition === "uel" ? "uelFixtures" : "ueclFixtures";
+    const leagueFixtures = Array.isArray(raw[fixtureKey]) ? raw[fixtureKey] : [];
+    const state = raw[competition];
+    if (!state?.phase || !Array.isArray(state.participants)) {
+      setSave(raw);
+      return;
+    }
+    const leagueDrawDone = state.phase !== "league" || Boolean(state.drawState?.leagueDone) ||
+      leagueFixtures.some((fixture) => typeof fixture?.round === "string" && fixture.round.startsWith("Jornada"));
+    if (!leagueDrawDone) {
       setSave(raw);
       return;
     }
@@ -1854,9 +1883,10 @@ function EuropeanCompetitionPage() {
   }
 
   const ucl = save[competition];
-  const fixtures = save[competition === "uel" ? "uelFixtures" : "ueclFixtures"] ?? [];
+  const rawFixtures = save[competition === "uel" ? "uelFixtures" : "ueclFixtures"];
+  const fixtures = Array.isArray(rawFixtures) ? rawFixtures : [];
 
-  if (!ucl || !ucl.phase || !ucl.participants) {
+  if (!ucl || !ucl.phase || !Array.isArray(ucl.participants)) {
     return (
       <div className="p-6 text-center space-y-2">
         <div className="text-4xl">
@@ -1870,9 +1900,19 @@ function EuropeanCompetitionPage() {
     );
   }
 
-  const showBracket = (ucl.bracket?.length ?? 0) > 0;
+  const drawState = {
+    leagueDone: ucl.phase !== "league" || Boolean(ucl.drawState?.leagueDone) ||
+      fixtures.some((fixture) => typeof fixture?.round === "string" && fixture.round.startsWith("Jornada")),
+    playoffDone: ["playoff", "r16", "qf", "sf", "final", "done"].includes(ucl.phase) ||
+      Boolean(ucl.drawState?.playoffDone),
+    knockoutDone: ["r16", "qf", "sf", "final", "done"].includes(ucl.phase) ||
+      Boolean(ucl.drawState?.knockoutDone),
+  };
+  const bracket = Array.isArray(ucl.bracket) ? ucl.bracket : [];
+  const showBracket = bracket.length > 0;
   const isKnockoutPhase = ["playoff", "r16", "qf", "sf", "final", "done"].includes(ucl.phase);
-  const displayTable = ucl.phase === "league" ? (ucl.table ?? []) : (ucl.leaguePhaseTable ?? ucl.table ?? []);
+  const phaseTable = ucl.phase === "league" ? ucl.table : (ucl.leaguePhaseTable ?? ucl.table);
+  const displayTable = Array.isArray(phaseTable) ? phaseTable : [];
 
   // Group fixtures by round, sorted by matchday offset
   const leagueFixtures = fixtures.filter((f) => f.round?.startsWith("Jornada") && f.matchday > 0);
@@ -1938,7 +1978,7 @@ function EuropeanCompetitionPage() {
       {/* Content */}
       <div className="p-4">
         {tab === "tabla" && (
-          <TableView table={displayTable} userTeamId={save.myTeamId} fixtures={fixtures} />
+          <TableView table={displayTable} userTeamId={save.myTeamId} fixtures={fixtures} save={save} />
         )}
 
         {tab === "partidos" &&
@@ -1952,7 +1992,7 @@ function EuropeanCompetitionPage() {
             const sfFx = fixtures.filter((f) => f.round?.startsWith("SF") && f.matchday > 0);
             const finalFx = fixtures.filter((f) => f.round === "Final" && f.matchday > 0);
 
-            const maxUnlockedTab = uclPhaseToMaxTab(ucl.phase, ucl.drawState.playoffDone);
+            const maxUnlockedTab = uclPhaseToMaxTab(ucl.phase, drawState.playoffDone);
             const maxUnlockedIdx = PHASE_TAB_ORDER.indexOf(maxUnlockedTab);
 
             const phaseBuckets: { key: PhaseTab; label: string; fxs: Fixture[] }[] = [
@@ -1966,7 +2006,7 @@ function EuropeanCompetitionPage() {
               if (b.fxs.length === 0) return false;
               const idx = PHASE_TAB_ORDER.indexOf(b.key);
               if (idx > maxUnlockedIdx) return false;
-              if (b.key === "playoff" && !ucl.drawState.playoffDone) return false;
+              if (b.key === "playoff" && !drawState.playoffDone) return false;
               return true;
             });
 
@@ -2079,6 +2119,7 @@ function EuropeanCompetitionPage() {
                                           key={f.id}
                                           f={f}
                                           myTeamId={save.myTeamId}
+                                          fixtures={fixtures}
                                           onClick={setSelectedFixture}
                                         />
                                       ))}
@@ -2151,6 +2192,7 @@ function EuropeanCompetitionPage() {
                                     key={f.id}
                                     f={f}
                                     myTeamId={save.myTeamId}
+                                    fixtures={fixtures}
                                     onClick={setSelectedFixture}
                                   />
                                 ))}
@@ -2166,7 +2208,7 @@ function EuropeanCompetitionPage() {
 
         {tab === "bracket" && (
           <BracketView
-            bracket={ucl.bracket ?? []}
+            bracket={bracket}
             fixtures={fixtures}
             onOpenFixture={setSelectedFixture}
           />

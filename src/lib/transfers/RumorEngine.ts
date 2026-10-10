@@ -252,8 +252,12 @@ export function rumorConfirmedTransfer(
 ): Rumor | null {
   const player = getPlayer(playerId);
   const userClubId = getUserClubId();
-  if (!player || !sellerClubId) return null;
+  if (!player) return null;
   if (userClubId && (clubId === userClubId || sellerClubId === userClubId)) return null;
+
+  const confirmedText = sellerClubId
+    ? `Se confirma el fichaje de ${player.name}: el ${clubName(clubId)} llega a un acuerdo con el ${clubName(sellerClubId)}.`
+    : `Se confirma la incorporación de ${player.name} como agente libre al ${clubName(clubId)}.`;
 
   return publish({
     id: makeId("interest", clubId, playerId, date, "confirmed"),
@@ -262,7 +266,7 @@ export function rumorConfirmedTransfer(
     clubId,
     playerId,
     targetClubId: sellerClubId,
-    text: `Se confirma el fichaje de ${player.name}: el ${clubName(clubId)} llega a un acuerdo con el ${clubName(sellerClubId)}.`,
+    text: confirmedText,
     reliability: 1,
   });
 }

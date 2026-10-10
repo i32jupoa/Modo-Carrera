@@ -13,6 +13,7 @@ export type Team = {
   def: number;
   stars: string[]; // mejores jugadores
   color: string; // color base
+  secondaryColor?: string; // color de contraste para estadísticas/elementos bicolores
   category?: "Gigante" | "Aspirante" | "Modesto"; // clasificación del equipo
   budget?: number; // presupuesto inicial en millones €
 };
@@ -1721,6 +1722,12 @@ function getTeamsMap(): Map<string, Team> {
     for (const t of getDynamicTeams()) _allTeamsMap.set(t.id.toLowerCase(), t);
   }
   return _allTeamsMap;
+}
+
+/** Lookup exacto por ID; a diferencia de teamById, no usa un equipo de respaldo. */
+export function findTeamById(id: string): Team | null {
+  const normalized = String(id ?? "").toLowerCase().trim();
+  return normalized ? getTeamsMap().get(normalized) ?? null : null;
 }
 
 export function normalizeTeamLookup(value: string): string {

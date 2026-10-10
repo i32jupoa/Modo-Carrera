@@ -589,7 +589,7 @@ export function updateMomentum({
 
   for (const card of cards) {
     const sign = card.team === userSide ? -1 : 1;
-    delta += sign * (card.cardType === "red" ? 7 : 0.8);
+    delta += sign * (card.cardType === "red" || card.isSecondYellow ? 7 : 0.8);
   }
 
   for (const highlight of highlights) {
