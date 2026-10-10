@@ -478,23 +478,31 @@ function positionalAssignmentScore(player: Player, required: PosCode): number {
   const primary = positions[0] === required;
   const secondary = !primary && positions.includes(required);
   const rating = Number(player.rating) || 0;
+  const similarity = positions.reduce(
+    (best, position) => Math.max(best, calculatePositionSimilarity(position, required)),
+    0,
+  );
 
-  // El encaje pesa más que una diferencia normal de media: un extremo titular
-  // debe ocupar su banda por delante de otro jugador mejor valorado pero
-  // secundario/fuera de posición. La media sigue decidiendo entre encajes parecidos.
-  let score = rating * 0.55;
-  if (primary) score += 40;
-  else if (secondary) score += 12;
-  else {
-    const similarity = positions.reduce(
-      (best, position) => Math.max(best, calculatePositionSimilarity(position, required)),
-      0,
-    );
-    score -= 26 - similarity * 5;
-  }
+  // No permitir que una estrella atacante ocupe automáticamente un puesto
+  // defensivo incompatible (p. ej. Rodrygo como lateral izquierdo). La IA
+  // conserva polivalencia real, pero solo si existe afinidad posicional clara.
+  if (required === "GK" && !positions.includes("GK")) return -10000;
+  if (required !== "GK" && positions.includes("GK")) return -10000;
+  if (!positions.includes(required) && similarity < 0.32) return rating - 24;
 
+  // El OVR debe decidir más que una rigidez artificial de demarcación. La
+  // posición principal suma una preferencia pequeña, una secundaria casi no
+  // penaliza y las afinidades reales (MCD↔MC, EI↔MI, LD↔DFC...) siguen siendo
+  // utilizables. Así Rodri puede ganar el puesto de MC si su calidad lo justifica.
+  let score = rating;
+  if (primary) score += 4;
+  else if (secondary) score += 2;
+  else score += similarity * 3 - 2;
+
+  // El portero fuera de portería es una conversión total; en el hueco de GK
+  // sólo puede ser asignado un guardameta natural o secundario declarado.
   if (required === "GK" && !positions.includes("GK")) score -= 100;
-  if (required !== "GK" && positions.includes("GK")) score -= 30;
+  if (required !== "GK" && positions.includes("GK")) score -= 100;
   return score;
 }
 
@@ -887,7 +895,13 @@ export type SaveGame = {
 
   myLeague: LeagueId;
 
+  /** Último partido cuyas alertas de lesión/expulsión ya se han leído en Central. */
+  matchAlertsReadFixtureId?: string;
+
   season: string;
+
+  /** Fecha actual persistida para reconstruir pantallas y continuar la carrera. */
+  currentDate?: string;
 
   // league
 
@@ -959,6 +973,8 @@ export type SaveGame = {
   /** Version of the appearance-counter repair already applied to this save. */
   appearanceStatsRepairVersion?: number;
 
+  /** Noticias estructuradas de la carrera; opcional para partidas antiguas. */
+  news?: import("@/lib/news/NewsEvents").NewsState;
   /** Hechos estructurados de cantera, compactos y reutilizables por Noticias/Buzón. */
   academyEvents?: import("@/lib/academy/academyTypes").AcademyPromotionEvent[];
   /** Negociaciones internas abiertas/recientes, opcional para compatibilidad con partidas antiguas. */
@@ -2698,13 +2714,17 @@ function getCupSimulationBench(
   const team = teamById(teamId);
   const md = team ? (save.currentMatchday[team.league] ?? 1) : 1;
   const currentDate = store.currentDate;
-  return store
+  const eligible = store
     .getSimSquad(teamId)
-    .filter(
-      (p) => !xiIds.has(p.id) && !suspended.has(p.id) && !isPlayerInjuredAtDate(p, currentDate, md),
-    )
-    .sort((a, b) => b.rating - a.rating)
-    .slice(0, 12);
+    .filter((p) => !xiIds.has(p.id) && !suspended.has(p.id) && !isPlayerInjuredAtDate(p, currentDate, md))
+    .sort((a, b) => b.rating - a.rating);
+  const bench = eligible.slice(0, 12);
+  const keeper = eligible.find((p) => Array.isArray(p.positions) && p.positions.includes("GK"));
+  if (keeper && !bench.some((p) => p.id === keeper.id)) {
+    if (bench.length >= 12) bench[bench.length - 1] = keeper;
+    else bench.push(keeper);
+  }
+  return bench;
 }
 
 export function getBenchForTeam(
@@ -2739,12 +2759,9 @@ export function getBenchForTeam(
   const xiIds = new Set(xi.map((p) => p.id));
   const configured = save.substitutes?.[teamId];
 
-  // A configured bench is authoritative, even when it contains fewer than 12
-  // players: the rest of the roster stays in "Reservas" and is not eligible
-  // for in-match substitutions. For the user's team, an absent/empty bench is
-  // also authoritative: NEVER promote Reservas automatically. CPU teams keep
-  // the fallback below because they do not manage a manual convocatoria here.
-  if (teamId === save.myTeamId || Array.isArray(configured)) {
+  // La convocatoria manual del usuario es autoritativa: no se suben reservas
+  // automáticamente ni se altera el banquillo que ha elegido.
+  if (teamId === save.myTeamId) {
     return (Array.isArray(configured) ? configured : [])
       .map((id) => squad.find((p) => p.id === id))
       .filter((p): p is Player => !!p)
@@ -2752,11 +2769,31 @@ export function getBenchForTeam(
       .slice(0, 12);
   }
 
-  // CPU teams: generate a realistic bench from their current squad.
-  return squad
+  // La IA conserva sus jugadores convocados válidos, pero también completa la
+  // lista desde la plantilla para no quedarse sin cambios por una convocatoria
+  // antigua/incompleta. Se reserva SIEMPRE un portero suplente si hay alguno
+  // disponible, incluso si su valoración no entra entre los doce mejores.
+  const configuredPlayers = (Array.isArray(configured) ? configured : [])
+    .map((id) => squad.find((p) => p.id === id))
+    .filter((p): p is Player => !!p)
+    .filter((p) => !xiIds.has(p.id) && !unavailable.has(p.id));
+  const eligible = squad
     .filter((p) => !xiIds.has(p.id) && !unavailable.has(p.id))
-    .sort((a, b) => b.rating - a.rating)
-    .slice(0, 12);
+    .sort((a, b) => b.rating - a.rating);
+  const combined: Player[] = [];
+  const seenBench = new Set<string>();
+  for (const player of [...configuredPlayers, ...eligible]) {
+    if (seenBench.has(player.id)) continue;
+    seenBench.add(player.id);
+    combined.push(player);
+  }
+  let bench = combined.slice(0, 12);
+  const reserveKeeper = eligible.find((p) => Array.isArray(p.positions) && p.positions.includes("GK"));
+  if (reserveKeeper && !bench.some((p) => p.id === reserveKeeper.id)) {
+    if (bench.length >= 12) bench[bench.length - 1] = reserveKeeper;
+    else bench.push(reserveKeeper);
+  }
+  return bench;
 }
 
 export function squadOf(_save: SaveGame, teamId: string): Player[] {

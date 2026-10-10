@@ -102,6 +102,12 @@ import {
   type TransferRecord,
   type TransferType,
 } from "./types";
+function priorityOf(urgency: number): "low" | "medium" | "high" {
+  if (urgency >= 0.72) return "high";
+  if (urgency >= 0.45) return "medium";
+  return "low";
+}
+
 
 /** Escala un valor a 0..1 dentro de un rango. */
 function normalize(value: number, min: number, max: number): number {

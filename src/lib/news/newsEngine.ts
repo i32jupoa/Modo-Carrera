@@ -14,6 +14,7 @@
 import { LEAGUES, teamById } from "@/data/teams";
 import type { Fixture } from "@/lib/season";
 import type { SaveGame } from "@/lib/store";
+import type { TeamOfRoundData } from "@/lib/teamOfRound";
 import { getPlayer } from "@/lib/transfers/PlayerIndex";
 import { listRenewals } from "@/lib/transfers/RenewalLog";
 import { listTransfers } from "@/lib/transfers/TransferHistory";
@@ -102,6 +103,8 @@ export interface NewsItem {
   transfer?: NewsTransfer;
   /** Datos de la lesión. */
   injury?: NewsInjury;
+  /** XI ideal de la jornada/competición, visible al abrir la noticia. */
+  teamOfRound?: TeamOfRoundData;
 }
 
 const TOP_LEAGUES = ["laliga", "premier", "seriea", "bundesliga", "ligue1"];

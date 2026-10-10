@@ -745,6 +745,10 @@ export function scoutPlayer(
       wantsOut: wantsOut(playerId, cacheKey),
     };
   } catch {
+    // getPlayer puede fallar antes de recuperar el jugador. En ese caso no hay
+    // datos canónicos con los que construir el informe, así que se omite.
+    if (!player) return null;
+
     // El informe nunca debe hacer caer la ruta por un dato contextual del motor
     // de mercado. El fallback no vuelve a llamar al motor de valoración:
     // utiliza únicamente los datos canónicos que ya están disponibles en el

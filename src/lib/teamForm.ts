@@ -83,3 +83,37 @@ export function getTeamForm(
 ): TeamFormResult[] {
   return teamId ? (getTeamForms(save, n).get(teamId) ?? []) : [];
 }
+
+export type FormCompetition = "league" | "cup" | "ucl" | "uel" | "uecl";
+
+/** Últimos resultados limitados a una competición concreta. */
+export function getTeamFormsForCompetition(
+  save: SaveWithFixtures | null | undefined,
+  n = 5,
+  competition: FormCompetition,
+): Map<string, TeamFormResult[]> {
+  if (!save) return new Map();
+  const all = getAllPlayedFixtures(save);
+  const matching = all.filter((fixture: any) => {
+    const european = fixture.europeanCompetition;
+    if (competition === "league") return fixture.competition === "league" && !european;
+    if (competition === "cup") return fixture.competition === "cup" && !european;
+    if (competition === "ucl") return european === "ucl" || (fixture.competition === "ucl" && !european);
+    return european === competition;
+  });
+  const limit = Math.max(0, Math.floor(n));
+  const byTeam = new Map<string, TeamFormResult[]>();
+  if (limit === 0) return byTeam;
+  matching.sort((a, b) => playedDate(b).localeCompare(playedDate(a)) || b.matchday - a.matchday);
+  for (const fixture of matching) {
+    for (const teamId of [fixture.homeId, fixture.awayId]) {
+      const form = byTeam.get(teamId) ?? [];
+      if (form.length < limit) {
+        form.push(teamResult(fixture, teamId));
+        byTeam.set(teamId, form);
+      }
+    }
+  }
+  for (const [teamId, form] of byTeam) byTeam.set(teamId, form.reverse());
+  return byTeam;
+}

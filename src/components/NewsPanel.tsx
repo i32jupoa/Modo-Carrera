@@ -29,7 +29,7 @@ import { TeamBadge } from "@/components/TeamBadge";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { faceUrl } from "@/lib/playerFaces";
 import { usePlayersStore } from "@/store/playersStore";
-import { renderNewsEvent, type NewsRenderedItem } from "@/lib/news/NewsText";
+import { renderNewsEvent, type NewsRenderedItem } from "@/lib/news/newsText";
 import { markNewsStoryRead, normalizeNewsState, type NewsCategory } from "@/lib/news/NewsEvents";
 import type { CentralTheme } from "@/lib/seasonExtras";
 
@@ -130,8 +130,8 @@ export function NewsPanel({ save, theme }: { save: SaveGame; theme: CentralTheme
   }, [items.length, reducedMotion, paused, detailOpen, autoAdvance]);
 
   const current = items[index];
-  const meta = current ? categoryMeta(current.category) : null;
-  const MetaIcon = meta?.icon;
+  const meta = categoryMeta(current?.category ?? "liga");
+  const MetaIcon = meta.icon;
   const playerId = current ? eventPlayerId(current) : undefined;
   const simPlayer = playerId ? usePlayersStore.getState().getSimPlayer(playerId) : undefined;
   const playerTeam = simPlayer?.teamId ? teamById(simPlayer.teamId) : undefined;

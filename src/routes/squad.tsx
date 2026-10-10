@@ -21,7 +21,6 @@ import {
   Wallet,
   Tag,
   X,
-  Activity,
   ShieldAlert,
   Goal,
   Sparkles,
@@ -37,7 +36,6 @@ import {
 } from "lucide-react";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { useUserMarket } from "@/hooks/useUserMarket";
-import { MarketStatusBanner } from "@/components/MarketStatusBanner";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
 import { LoanSearchModal } from "@/components/LoanSearchModal";
 import { ContractNegotiationModal } from "@/components/contracts/ContractNegotiationModal";
@@ -68,6 +66,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 
+import type { MonthlyStats } from "@/types/playerStats";
+
 export const Route = createFileRoute("/squad")({ component: SquadPage });
 
 function getLeagueName(leagueId: string): string {
@@ -82,10 +82,10 @@ const POSITION_FULL: Record<Position, string> = {
   FWD: "Delanteros",
 };
 const POSITION_ACCENT: Record<Position, string> = {
-  GK: "from-muted/40 to-card/20 border-border/60 text-foreground",
-  DEF: "from-muted/40 to-card/20 border-border/60 text-foreground",
-  MID: "from-muted/40 to-card/20 border-border/60 text-foreground",
-  FWD: "from-muted/40 to-card/20 border-border/60 text-foreground",
+  GK: "from-orange-500/15 to-card/20 border-orange-500/35 text-orange-300",
+  DEF: "from-sky-500/15 to-card/20 border-sky-500/35 text-sky-300",
+  MID: "from-emerald-500/15 to-card/20 border-emerald-500/35 text-emerald-300",
+  FWD: "from-rose-500/15 to-card/20 border-rose-500/35 text-rose-300",
 };
 
 function ovrTone(ovr: number): string {
@@ -234,7 +234,7 @@ function DetailMetric({
 function SeasonProgressChart({
   monthlyStats,
 }: {
-  monthlyStats: NonNullable<ReturnType<typeof usePlayersStore.getState>["stats"][string]>["monthlyStats"];
+  monthlyStats: MonthlyStats[] | undefined;
 }) {
   const points = useMemo(
     () =>
@@ -384,12 +384,10 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
   const primaryPosition = detailedPositions[0] ?? null;
   const secondaryPositions = detailedPositions.slice(1);
   const morale = stats?.morale ?? 70;
-  const injured = (stats?.injuredUntil ?? 0) > 0;
   const contract = getPlayer(String(p.ID))?.contract;
   const wage = contract?.wage ?? getPlayerAnnualWage(String(p.ID));
   const dynamicOvr = Math.round(Number(stats?.dynamicStats?.currentOVR ?? p.OVR));
   const potential = Number(stats?.dynamicStats?.potentialOVR ?? p.potential ?? p.OVR);
-  const progressionDelta = dynamicOvr - Math.round(Number(stats?.dynamicStats?.baseOVR ?? p.OVR));
 
   return (
     <button
@@ -409,35 +407,19 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
         <div className="flex shrink-0 flex-col gap-1">
           <div
             className={`grid h-10 w-12 place-items-center rounded-xl border scoreline text-lg font-black ${ovrTone(
-              p.OVR,
+              dynamicOvr,
             )}`}
           >
-            {Math.round(p.OVR)}
+            {dynamicOvr}
           </div>
-          {Math.abs(progressionDelta) >= 1 && (
-            <div
-              title={stats?.dynamicStats?.lastProgressionReason ?? "Evolución durante la temporada"}
-              className={`text-center text-[0.55rem] font-black ${progressionDelta > 0 ? "text-emerald-300" : "text-destructive"}`}
-            >
-              {progressionDelta > 0 ? "↑" : "↓"} {progressionDelta > 0 ? "+" : ""}{Math.abs(progressionDelta)}
-            </div>
-          )}
           <div className="px-1 text-center">
             <p className="text-[0.48rem] font-bold uppercase tracking-wider text-muted-foreground">POT</p>
-            <p className="scoreline text-sm font-black text-muted-foreground">{potential}</p>
+            <p className="scoreline text-sm font-black text-muted-foreground">{Math.round(potential)}</p>
           </div>
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-black">{p.Name}</span>
-            {p.card === "academy" && (
-              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[0.48rem] font-black uppercase tracking-wider text-emerald-300">Canterano{p.academyPromotionYear ? ` · ${p.academyPromotionYear}` : ""}</span>
-            )}
-            {injured && (
-              <span title="Lesionado" className="text-destructive">
-                <Activity className="h-3 w-3" />
-              </span>
-            )}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             {primaryPosition ? (
@@ -462,18 +444,15 @@ function PlayerCard({ p, onClick }: { p: FcPlayer; onClick: () => void }) {
             )}
             <RoleBadge role={stats?.squadRole} compact />
             <span className="text-[0.58rem] font-bold uppercase tracking-wider text-muted-foreground">{p.Age} años</span>
-            <span className="text-[0.58rem] font-bold uppercase tracking-wider text-muted-foreground">{contract?.yearsLeft ?? "—"} temp.</span>
+            <span className="text-[0.58rem] font-bold uppercase tracking-wider text-muted-foreground">{contract?.yearsLeft ?? "—"} años contrato</span>
           </div>
           <div className="mt-2 flex items-center gap-2">
             <span className="text-[0.58rem] uppercase tracking-wider text-muted-foreground">Salario</span>
             <span className="scoreline text-xs font-black text-primary">{formatEuro(wage)}/año</span>
           </div>
         </div>
-        <div className="hidden flex-col items-end gap-1 sm:flex">
-          <MoodFace morale={morale} size={18} showLabel />
-          {stats?.satisfactionLastReason && (
-            <span className="max-w-[150px] text-right text-[0.5rem] leading-tight text-muted-foreground">{stats.satisfactionLastReason}</span>
-          )}
+        <div className="flex shrink-0 items-center" title={`Satisfacción ${morale}/100`}>
+          <MoodFace morale={morale} size={18} showLabel={false} />
         </div>
       </div>
     </button>
@@ -618,8 +597,6 @@ function SquadPage() {
 
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-6">
-      <MarketStatusBanner className="mb-6" />
-
       {/* Header card */}
       <div className="panel-glow mb-6 overflow-hidden">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 p-5 sm:flex sm:flex-wrap sm:justify-between">

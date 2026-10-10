@@ -1,0 +1,30 @@
+
+> test:season-balance
+> node scripts/season-balance-test.mjs
+
+Season-balance Monte Carlo · 250 temporadas · seed 20261010
+Partidos simulados: 95.000 · media goles/partido: 2.94
+Correlación Pearson entre ranking de plantilla (1=mejor) y posición final media (1=mejor): 0.997
+Victorias sorpresa registradas entre equipos con diferencia OVR >= 8: 7114
+
+Ranking plantilla | OVR referencia | Puntos/temporada | Posición final media | % top 5 | % top 10
+ 1 | 90.00 |   80.5 |  2.51 |  92.0% |  99.6%
+ 2 | 88.55 |   78.6 |  2.84 |  90.8% | 100.0%
+ 3 | 87.10 |   75.8 |  3.61 |  82.8% | 100.0%
+ 4 | 85.65 |   74.0 |  4.00 |  78.0% | 100.0%
+ 5 | 84.20 |   70.2 |  5.18 |  55.2% |  98.4%
+ 6 | 82.75 |   67.1 |  6.04 |  38.8% |  95.2%
+ 7 | 81.30 |   65.2 |  6.60 |  34.0% |  94.8%
+ 8 | 79.85 |   60.5 |  7.98 |  14.4% |  87.6%
+ 9 | 78.40 |   58.3 |  8.80 |  10.4% |  76.4%
+10 | 76.95 |   54.4 |  9.98 |   3.2% |  60.8%
+11 | 75.50 |   50.7 | 11.16 |   0.0% |  40.4%
+12 | 74.05 |   48.0 | 12.07 |   0.4% |  20.4%
+13 | 72.60 |   44.7 | 13.09 |   0.0% |  14.8%
+14 | 71.15 |   41.7 | 13.96 |   0.0% |   6.4%
+15 | 69.70 |   38.3 | 15.04 |   0.0% |   2.0%
+16 | 68.25 |   35.2 | 16.11 |   0.0% |   2.4%
+17 | 66.80 |   33.2 | 16.65 |   0.0% |   0.0%
+18 | 65.35 |   30.0 | 17.61 |   0.0% |   0.4%
+19 | 63.90 |   28.0 | 18.20 |   0.0% |   0.0%
+20 | 62.45 |   26.4 | 18.56 |   0.0% |   0.4%

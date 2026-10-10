@@ -341,30 +341,10 @@ function AcademyPage() {
             <Stat icon={Users} label="Canteranos" value={String(players.length)} />
             <Stat icon={TrendingUp} label="Listos para subir" value={String(readyCount)} />
             <Stat icon={Sparkles} label="POT 78+" value={String(highPotentialCount)} />
-            <Stat icon={WalletCards} label="Instalaciones" value={`${facilityLevel}/5`} />
           </div>
         </header>
 
         <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <div className="panel rounded-2xl p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-black"><Settings2 className="h-4 w-4 text-emerald-300" /> Instalaciones de cantera</div><span className="scoreline text-xs font-black text-emerald-300">{facilityLevel}/5</span></div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary/70" role="progressbar" aria-label="Nivel de instalaciones" aria-valuemin={0} aria-valuemax={5} aria-valuenow={facilityLevel}><div className="h-full rounded-full bg-emerald-400" style={{ width: `${(facilityLevel / 5) * 100}%` }} /></div>
-                <p className="mt-2 text-xs text-muted-foreground">Mejoran la calidad inicial, el potencial visible y la velocidad de desarrollo; también pueden ampliar la promoción anual.</p>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-[0.65rem]">
-                  <MiniEffect label="Progresión" value={`+${currentFacilityGrowth - 100}%`} />
-                  <MiniEffect label="POT adicional" value={`+${facilityPotential}`} />
-                  <MiniEffect label="OVR inicial" value={`+${ACADEMY_FACILITIES.ovrBonusByLevel[facilityLevel] ?? 0}`} />
-                  <MiniEffect label="Promoción anual" value={`+${intakeBonus} jugador${intakeBonus === 1 ? "" : "es"}`} />
-                </div>
-              </div>
-              <button type="button" onClick={() => setUpgradeType("facility")} disabled={facilityLevel >= ACADEMY_FACILITIES.max} className="shrink-0 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[0.65rem] font-black text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40">
-                {facilityLevel >= ACADEMY_FACILITIES.max ? "Máximo" : `Mejorar · ${facilityCost.toLocaleString("es-ES")} €`}
-              </button>
-            </div>
-          </div>
-
           <div className="panel rounded-2xl p-4">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -386,8 +366,7 @@ function AcademyPage() {
         <section className="panel rounded-2xl p-4" aria-label="Buscar y filtrar canteranos">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="text-sm font-black">Promesas de la academia</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">Filtra por demarcación o cambia el criterio de ordenación.</p>
+              <p className="text-xs font-bold text-muted-foreground">Filtra y ordena los jugadores de la cantera.</p>
             </div>
             <span className="rounded-full border border-border/60 bg-secondary/50 px-3 py-1 text-[0.65rem] font-black text-muted-foreground">{filtered.length} de {players.length} jugadores</span>
           </div>
@@ -398,22 +377,20 @@ function AcademyPage() {
           </div>
         </section>
 
-        <section className="grid grid-cols-1 gap-3 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="panel rounded-2xl p-4">
-            <div className="flex items-center gap-2 text-sm font-black"><BarChart3 className="h-4 w-4 text-primary" /> Mapa de necesidades</div>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {(needsReport?.needs ?? []).map((need) => <div key={need.group} className="rounded-xl border border-border/50 bg-secondary/25 p-3"><div className="flex items-center justify-between text-[0.62rem] font-black"><span>{need.group}</span><span className={need.priority === "critical" ? "text-rose-300" : need.priority === "high" ? "text-amber-300" : "text-muted-foreground"}>{need.priority}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(need.urgency * 100)}%` }} /></div><p className="mt-1 text-[0.55rem] text-muted-foreground">{need.count} jugadores · {Math.round(need.quality)} OVR</p></div>)}
-              {!needsReport?.needs?.length && <p className="text-xs text-muted-foreground">La plantilla está cubierta.</p>}
-            </div>
-          </div>
-          <div className="panel rounded-2xl p-4">
-            <div className="flex items-center gap-2 text-sm font-black"><GitCompareArrows className="h-4 w-4 text-primary" /> Comparador</div>
-            <select value={compareId ?? ""} onChange={(event) => setCompareId(event.target.value ? Number(event.target.value) : null)} className="mt-3 w-full rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-bold"><option value="">Selecciona una segunda promesa</option>{players.filter((player) => player.id !== selectedId).map((player) => <option key={player.id} value={player.id}>{player.name} · {Math.round(player.ovr)} OVR</option>)}</select>
-            {selected && comparePlayer && <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-secondary/30 p-2"><b>{Math.round(selected.ovr)}</b><span className="mt-1 block text-[0.55rem] text-muted-foreground">{selected.name.split(" ")[0]}</span></div><div className="rounded-xl bg-secondary/20 p-2 text-muted-foreground"><b>VS</b></div><div className="rounded-xl bg-secondary/30 p-2"><b>{Math.round(comparePlayer.ovr)}</b><span className="mt-1 block text-[0.55rem] text-muted-foreground">{comparePlayer.name.split(" ")[0]}</span></div></div>}
-          </div>
-        </section>
+        
 
-        {loading ? <div className="panel rounded-2xl p-8 text-center text-sm text-muted-foreground">Generando la cantera de forma determinista…</div> : filtered.length === 0 ? <div className="panel rounded-2xl p-8 text-center"><GraduationCap className="mx-auto h-10 w-10 text-muted-foreground" /><p className="mt-3 text-sm font-black">No hay canteranos que coincidan</p><p className="mt-1 text-xs text-muted-foreground">Prueba otro filtro o espera a la siguiente promoción.</p></div> : <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{filtered.map((player) => <AcademyCard key={player.id} player={player} onClick={() => setSelectedId(player.id)} />)}</div>}
+        {loading ? <div className="panel rounded-2xl p-8 text-center text-sm text-muted-foreground">Generando la cantera de forma determinista…</div> : filtered.length === 0 ? <div className="panel rounded-2xl p-8 text-center"><GraduationCap className="mx-auto h-10 w-10 text-muted-foreground" /><p className="mt-3 text-sm font-black">No hay canteranos que coincidan</p><p className="mt-1 text-xs text-muted-foreground">Prueba otro filtro o espera a la siguiente promoción.</p></div> : <div className="space-y-5">{(["POR", "DEF", "MED", "DEL"] as const).map((group) => {
+          const groupPlayers = filtered.filter((player) => {
+            const pos = player.positions[0] ?? "MC";
+            const normalized = positionGroupFromCode(pos);
+            return (group === "POR" && normalized === "GK") || (group === "DEF" && normalized === "DEF") || (group === "MED" && normalized === "MID") || (group === "DEL" && normalized === "FWD");
+          });
+          if (!groupPlayers.length) return null;
+          const groupLabel = group === "POR" ? "Porteros" : group === "DEF" ? "Defensas" : group === "MED" ? "Centrocampistas" : "Delanteros";
+          const tone = group === "POR" ? "border-orange-500/35 from-orange-500/15 text-orange-300" : group === "DEF" ? "border-sky-500/35 from-sky-500/15 text-sky-300" : group === "MED" ? "border-emerald-500/35 from-emerald-500/15 text-emerald-300" : "border-rose-500/35 from-rose-500/15 text-rose-300";
+          const avg = Math.round(groupPlayers.reduce((sum, player) => sum + Number(player.internalOvr ?? player.ovr), 0) / groupPlayers.length);
+          return <section key={group} className="space-y-3"><div className={`mb-3 flex flex-wrap items-center gap-3 rounded-xl border bg-gradient-to-r to-card/20 p-3 ${tone}`}><span className="scoreline text-lg font-black">{group}</span><div className="flex-1"><p className="text-sm font-bold uppercase tracking-wider">{groupLabel}</p><p className="text-[0.65rem] uppercase tracking-wider opacity-70">{groupPlayers.length} jugadores · OVR medio {avg}</p></div></div><div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{groupPlayers.map((player) => <AcademyCard key={player.id} player={player} onClick={() => setSelectedId(player.id)} />)}</div></section>;
+        })}</div>}
       </div>
 
       <PlayerDetailDialog

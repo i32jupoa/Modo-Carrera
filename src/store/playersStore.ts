@@ -33,7 +33,7 @@
 
  */
 
-import { create } from "zustand";
+import { create, type StoreApi, type UseBoundStore } from "zustand";
 
 import { persist, createJSONStorage } from "zustand/middleware";
 
@@ -1133,7 +1133,7 @@ type PendingDrawEvent =
   | "uecl-playoff"
   | "uecl-knockout";
 
-type PlayersState = {
+export type PlayersState = {
   loaded: boolean;
 
   myTeamId: string | null;
@@ -1694,7 +1694,7 @@ function initialWageBudget(totalBudget: number): number {
   return wageAllocation(totalBudget, 0.2);
 }
 
-export const usePlayersStore = create<PlayersState>()(
+export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<PlayersState>()(
   persist(
     (set, get) => ({
       loaded: false,

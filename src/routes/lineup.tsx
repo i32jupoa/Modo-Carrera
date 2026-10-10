@@ -205,6 +205,14 @@ function LineupPage() {
     return "league";
   }, [liveFixture, save, matchType]);
   const [live, setLive] = useState<LiveMatchState | null>(null);
+  // En partido en directo, la energía del snapshot es la misma que usa el
+  // minimapa. No se debe mostrar el 100% persistido antes del encuentro.
+  const playerEnergy = (player: any) => {
+    const liveEnergy = live?.stamina?.[player.id];
+    const raw = liveEnergy !== undefined && Number.isFinite(Number(liveEnergy)) ? liveEnergy : player.energy;
+    const value = Number(raw ?? player.energy ?? 100);
+    return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 100));
+  };
   const liveBaseXIRef = useRef<string[]>([]);
   // Players taken off the pitch during this live edit (cannot come back).
   const liveGoneRef = useRef<string[]>([]);
@@ -564,7 +572,7 @@ function LineupPage() {
   }, [startingXI]);
 
   const isLineupComplete = activeStartersCount === 11;
-  const liveRedCardIds = useMemo(() => {
+  const liveRedCardIds = useMemo<string[]>(() => {
     if (!liveMode || !live || !save) return [] as string[];
     const side = live.result?.homeId === save.myTeamId ? "home" : "away";
     return Array.from(
@@ -576,8 +584,8 @@ function LineupPage() {
               (card.cardType === "red" || card.isSecondYellow) &&
               Number(card.minute ?? 0) <= Number(live.minute ?? 0),
           )
-          .map((card: any) => card.playerId)
-          .filter(Boolean),
+          .map((card: any) => String(card.playerId ?? ""))
+          .filter((id: string) => id.length > 0),
       ),
     );
   }, [liveMode, live, save]);
@@ -2073,13 +2081,7 @@ function LineupPage() {
         </div>
       )}
 
-      <nav aria-label="Atajos de dirección de equipo" className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/45 p-2">
-        <span className="px-2 text-[0.6rem] font-black uppercase tracking-[0.16em] text-muted-foreground">Ir a</span>
-        <a href="#tactics-lineup" className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-xs font-bold transition hover:border-primary/50 hover:text-primary">Alineación y banquillo</a>
-        {!liveMode && tacticPlanState && <a href="#tactics-plans" className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-xs font-bold transition hover:border-primary/50 hover:text-primary">Planes de juego</a>}
-        <a href="#tactics-advanced" className="rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-xs font-bold transition hover:border-primary/50 hover:text-primary">Tácticas avanzadas</a>
-        <span className="ml-auto hidden text-[0.65rem] text-muted-foreground sm:block">Los cambios se conservan al guardar la alineación.</span>
-      </nav>
+
 
       <div id="tactics-lineup" className="grid lg:grid-cols-2 gap-6 mb-6 scroll-mt-4">
         {/* Football Pitch */}
@@ -2107,7 +2109,7 @@ function LineupPage() {
                       id: player.id,
                       name: player.name,
                       rating: player.rating,
-                      energy: player.energy,
+                      energy: playerEnergy(player),
                       position: player.position,
                       slotLabel: getSlotCodeForKey(posKey),
                       otherPositions: posCodesOf(player).filter(
@@ -2357,14 +2359,14 @@ function LineupPage() {
                     </div>
                     <div className="mt-1 flex items-center gap-2">
                       <span className={`inline-flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[0.55rem] font-black ${
-                        (player.energy ?? 100) >= 80
+                        playerEnergy(player) >= 80
                           ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-                          : (player.energy ?? 100) >= 55
+                          : playerEnergy(player) >= 55
                             ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
                             : "border-destructive/30 bg-destructive/10 text-destructive"
                       }`}>
                         <Zap className="h-2.5 w-2.5 fill-current" />
-                        <span>{Math.round(player.energy ?? 100)}%</span>
+                        <span>{Math.round(playerEnergy(player))}%</span>
                       </span>
                     </div>
                   </div>
@@ -2465,14 +2467,14 @@ function LineupPage() {
                         </p>
                         <div className="mt-1">
                           <span className={`inline-flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[0.55rem] font-black ${
-                            (player.energy ?? 100) >= 80
+                            playerEnergy(player) >= 80
                               ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-                              : (player.energy ?? 100) >= 55
+                              : playerEnergy(player) >= 55
                                 ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
                                 : "border-destructive/30 bg-destructive/10 text-destructive"
                           }`}>
                             <Zap className="h-2.5 w-2.5 fill-current" />
-                            <span>{Math.round(player.energy ?? 100)}%</span>
+                            <span>{Math.round(playerEnergy(player))}%</span>
                           </span>
                         </div>
                         {isInjured && (
@@ -3017,6 +3019,55 @@ function TacticsPanel({
               );
             })}
           </div>
+        </div>
+      </div>
+
+      {/* Instrucciones avanzadas con ventajas y costes reales en el motor */}
+      <div className="mb-5 rounded-xl border border-border/60 bg-background/40 p-3">
+        <div className="mb-3">
+          <p className="text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">Plan de partido</p>
+          <p className="mt-1 text-[0.65rem] text-muted-foreground">Cada ajuste cambia posesión, xG, fatiga, riesgo defensivo o disciplina; no hay una opción sin contrapartidas.</p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Ritmo
+            <select value={tactics.tempo} onChange={(e) => updateTactics({ tempo: e.target.value as TeamTactics["tempo"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
+              <option value="slow">Pausado</option><option value="normal">Normal</option><option value="high">Alto</option>
+            </select>
+          </label>
+          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Anchura del equipo
+            <select value={tactics.width} onChange={(e) => updateTactics({ width: e.target.value as TeamTactics["width"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
+              <option value="narrow">Estrecha</option><option value="normal">Equilibrada</option><option value="wide">Ancha</option>
+            </select>
+          </label>
+          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Amplitud ofensiva
+            <select value={tactics.attackingWidth} onChange={(e) => updateTactics({ attackingWidth: e.target.value as TeamTactics["attackingWidth"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
+              <option value="narrow">Por dentro</option><option value="normal">Mixta</option><option value="wide">Abrir el campo</option>
+            </select>
+          </label>
+          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Estilo de pase
+            <select value={tactics.passingStyle} onChange={(e) => updateTactics({ passingStyle: e.target.value as TeamTactics["passingStyle"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
+              <option value="short">Corto</option><option value="mixed">Mixto</option><option value="direct">Directo</option>
+            </select>
+          </label>
+          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Marcaje
+            <select value={tactics.marking} onChange={(e) => updateTactics({ marking: e.target.value as TeamTactics["marking"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
+              <option value="zonal">Zonal</option><option value="man">Al hombre</option><option value="intense">Agresivo</option>
+            </select>
+          </label>
+          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Agresividad
+            <select value={tactics.aggressionLevel} onChange={(e) => updateTactics({ aggressionLevel: e.target.value as TeamTactics["aggressionLevel"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
+              <option value="low">Contenida</option><option value="normal">Normal</option><option value="high">Alta</option>
+            </select>
+          </label>
+          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Pérdida de tiempo
+            <select value={tactics.timeWasting} onChange={(e) => updateTactics({ timeWasting: e.target.value as TeamTactics["timeWasting"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
+              <option value="low">Nunca</option><option value="normal">Situacional</option><option value="high">Frecuente</option>
+            </select>
+          </label>
+          <button type="button" aria-pressed={tactics.counterAttack} onClick={() => updateTactics({ counterAttack: !tactics.counterAttack })} className={`flex items-center justify-between gap-2 rounded-lg border p-3 text-left text-xs font-bold transition ${tactics.counterAttack ? "border-primary bg-primary/10 text-primary" : "border-border/50 bg-card/50 text-muted-foreground hover:border-primary/40"}`}>
+            <span><span className="block">Contraataque</span><span className="mt-1 block text-[0.6rem] font-medium opacity-80">Castiga al rival adelantado</span></span>
+            <span className={`h-4 w-7 rounded-full p-0.5 ${tactics.counterAttack ? "bg-primary" : "bg-muted"}`}><span className={`block h-3 w-3 rounded-full bg-background transition-transform ${tactics.counterAttack ? "translate-x-3" : "translate-x-0"}`} /></span>
+          </button>
         </div>
       </div>
 

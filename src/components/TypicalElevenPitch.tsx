@@ -78,7 +78,7 @@ export function TypicalElevenPitch({ eleven, formation, className = "" }: Props)
                 />
                 {slot.player && (
                   <span className="absolute -bottom-1 -right-1 rounded-full bg-background/90 px-1 text-[0.55rem] font-black leading-tight text-foreground shadow">
-                    {slot.player.OVR}
+                    {slot.matchRating !== undefined ? slot.matchRating.toFixed(1) : slot.player.OVR}
                   </span>
                 )}
               </div>

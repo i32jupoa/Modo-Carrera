@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { renderNewsEvent } from "../NewsText.ts";
+import { renderNewsEvent } from "../newsText.ts";
 import { detectFixtureFacts, detectStandingsFacts } from "../NewsDetectorCore.ts";
 
 test("las noticias sólo redactan datos presentes en el hecho", () => {

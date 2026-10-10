@@ -256,17 +256,12 @@ export function expectedGoals(
   const awayListedOverall = (Number(away.att) + Number(away.mid) + Number(away.def)) / 3;
 
   const homeStrength =
-    homeXIOverall * 0.62 +
-    homeListedOverall * 0.18 +
-    homeAttack * 0.12 +
-    homeDefense * 0.08;
+    homeXIOverall * 0.62 + homeListedOverall * 0.18 + homeAttack * 0.12 + homeDefense * 0.08;
   const awayStrength =
-    awayXIOverall * 0.62 +
-    awayListedOverall * 0.18 +
-    awayAttack * 0.12 +
-    awayDefense * 0.08;
+    awayXIOverall * 0.62 + awayListedOverall * 0.18 + awayAttack * 0.12 + awayDefense * 0.08;
 
-  // Las tácticas modifican el rendimiento sin borrar la jerarquía de calidad.
+  // Las tácticas modifican rendimiento, posesión y creación de ocasiones sin
+  // borrar la jerarquía de calidad de plantilla.
   const homeTacticalStrength = homeStrength * ((hMod.attack + hMod.defense) / 2);
   const awayTacticalStrength = awayStrength * ((aMod.attack + aMod.defense) / 2);
 
@@ -276,21 +271,21 @@ export function expectedGoals(
   // amenaza para marcar y dar la sorpresa. La curva es deliberadamente más
   // fuerte que en V5, aunque limitada para evitar partidos convertidos en
   // goleadas automáticas.
-  const qualityDiff = Math.max(-30, Math.min(30, homeTacticalStrength - awayTacticalStrength));
+  const possessionDiff = (hMod.possession - aMod.possession) * 14;
+  const qualityDiff = Math.max(-30, Math.min(30, homeTacticalStrength - awayTacticalStrength + possessionDiff));
   const HOME_MATCH_ADVANTAGE = 2.0;
   const effectiveDiff = qualityDiff + HOME_MATCH_ADVANTAGE;
 
-  // 34% de reparto por diferencia de fuerza, con un techo de 78/22. Esto deja
-  // a un gran favorito con una ventaja clara (aprox. 2.6 xG vs 0.7-0.9 xG),
-  // pero incluso el débil mantiene una probabilidad real de marcar.
-  const rawShare = 0.5 + 0.34 * Math.tanh(effectiveDiff / 8.5);
-  const share = Math.max(0.22, Math.min(0.78, rawShare));
+  // La diferencia de calidad pesa claramente, pero la ventaja de campo y la
+  // varianza por partido permiten que la jerarquía cambie a corto plazo. El
+  // reparto está limitado al 24/76 para que incluso los favoritos grandes
+  // concedan ocasiones reales sin regalar al débil un partido equilibrado.
+  const rawShare = 0.5 + 0.26 * Math.tanh(effectiveDiff / 10.5);
+  const share = Math.max(0.24, Math.min(0.76, rawShare));
 
-  // Entorno de goles algo más alto: alrededor de 3.35 goles esperados por
-  // partido antes de los pequeños modificadores tácticos/aleatorios. Así una
-  // estrella de un equipo dominante puede acercarse a cifras de élite sin que
-  // los partidos equilibrados se conviertan en una lluvia de goles.
-  const totalXg = 3.35;
+  // Unos 2.95 xG de base mantiene una media de goles cercana a la de una liga
+  // moderna, antes de presión, estilo, contraataques y creación de ocasiones.
+  const totalXg = 2.95;
 
   let lh = totalXg * share;
   let la = totalXg * (1 - share);
@@ -299,8 +294,31 @@ export function expectedGoals(
   // final para no perder por completo el efecto táctico.
   const styleGoalFactorHome = hMod.attack * 0.55 + hMod.defense * 0.45;
   const styleGoalFactorAway = aMod.attack * 0.55 + aMod.defense * 0.45;
-  lh *= 1 + (styleGoalFactorHome - 1) * 0.35;
-  la *= 1 + (styleGoalFactorAway - 1) * 0.35;
+  lh *= (1 + (styleGoalFactorHome - 1) * 0.35) * hMod.chanceCreation;
+  la *= (1 + (styleGoalFactorAway - 1) * 0.35) * aMod.chanceCreation;
+
+  const homeStyle = homeTactics ?? {};
+  const awayStyle = awayTactics ?? {};
+  // Interacciones entre los dos planes. La presión alta puede forzar pérdidas
+  // ante salida corta, pero el juego directo/contraataque castiga una línea alta.
+  if (homeStyle.pressure === "high" && awayStyle.passingStyle === "short") {
+    lh *= 1.045; la *= 0.965;
+  }
+  if (awayStyle.pressure === "high" && homeStyle.passingStyle === "short") {
+    la *= 1.045; lh *= 0.965;
+  }
+  const awayUsesTransition = awayStyle.counterAttack === true || awayStyle.passingStyle === "direct";
+  const homeUsesTransition = homeStyle.counterAttack === true || homeStyle.passingStyle === "direct";
+  if (homeStyle.defenseLine === "high" && awayUsesTransition) la *= 1.075;
+  if (awayStyle.defenseLine === "high" && homeUsesTransition) lh *= 1.075;
+  if (homeStyle.counterAttack && (awayStyle.style === "offensive" || awayStyle.tempo === "high")) lh *= 1.045;
+  if (awayStyle.counterAttack && (homeStyle.style === "offensive" || homeStyle.tempo === "high")) la *= 1.045;
+  // El juego muy ancho genera centros y ocasiones, pero pierde algo de control;
+  // el bloque estrecho protege el área a cambio de conceder espacio exterior.
+  if (homeStyle.attackingWidth === "wide" && awayStyle.width === "narrow") lh *= 1.025;
+  if (awayStyle.attackingWidth === "wide" && homeStyle.width === "narrow") la *= 1.025;
+  lh *= 1 + (hMod.defensiveRisk - 1) * 0.38;
+  la *= 1 + (aMod.defensiveRisk - 1) * 0.38;
 
   // Un toque pequeño de variación por partido evita que el mismo emparejamiento
   // se repita siempre con el mismo xG, pero la aleatoriedad ya no domina el
@@ -527,7 +545,7 @@ function maybeInjury(
   tactics: SimTactics | null = null,
   leagueTeamCount = 20,
 ): InjuryEvent | null {
-  const minute = 5 + Math.floor(rand() * 80);
+  const minute = 5 + Math.floor(rand() * 90);
   const active = activePlayersAt(xi, bench, plannedSubs, redCards, team, minute);
   if (active.length === 0) return null;
 
@@ -592,8 +610,14 @@ function maybeInjury(
     .slice()
     .sort((a, b) => b.rating - a.rating)[0];
 
-  const teamSubCount = plannedSubs.filter((s) => s.team === team).length;
-  const canForceSub = teamSubCount < 5 && !!replacement && minute < 88;
+  const teamSubs = plannedSubs.filter((sub) => sub.team === team);
+  const teamSubCount = teamSubs.length;
+  const windowAlreadyOpen = teamSubs.some((sub) => Math.abs(sub.minute - minute) <= 3);
+  const windowsUsed = countSubWindows(plannedSubs, team);
+  const canForceSub = teamSubCount < 5
+    && (windowsUsed < 3 || windowAlreadyOpen)
+    && !!replacement
+    && minute < 88;
   const reason = `${profile.diagnosis} · ${profile.area}`;
 
   return {
@@ -626,7 +650,7 @@ function seededNoise(value: string): number {
   return (h % 10000) / 10000;
 }
 
-function goalMinute(from = 1, to = 90): number {
+function goalMinute(from = 1, to = 94): number {
   const span = to - from + 1;
   const r = rand();
   // Skew towards the end of the match (quadratic-ish bias).
@@ -799,11 +823,19 @@ function addSub(
 }
 
 function countSubWindows(substitutions: SubstitutionEvent[], team: "home" | "away"): number {
-  return new Set(
-    substitutions
-      .filter((s) => s.team === team)
-      .map((s) => Number(s.minute) || 0),
-  ).size;
+  const minutes = substitutions
+    .filter((sub) => sub.team === team)
+    .map((sub) => Number(sub.minute) || 0)
+    .sort((a, b) => a - b);
+  let windows = 0;
+  let lastWindowMinute = -Infinity;
+  for (const minute of minutes) {
+    if (minute - lastWindowMinute > 3) {
+      windows += 1;
+      lastWindowMinute = minute;
+    }
+  }
+  return windows;
 }
 
 /**
@@ -911,7 +943,7 @@ function activePlayersAt(
     entered.add(sub.playerInId);
   }
 
-  return all.filter((p) => {
+  const active = all.filter((p) => {
     const wasStarter = starters.has(p.id);
     const onPitch = wasStarter ? !left.has(p.id) : entered.has(p.id);
     if (!onPitch) return false;
@@ -925,6 +957,77 @@ function activePlayersAt(
     );
     return !wasInjured;
   });
+
+  // Emergency keeper: if the only goalkeeper has been dismissed/injured and
+  // no legal keeper substitution could be made, an active outfielder takes the
+  // gloves for simulation purposes. It remains the same player/id in stats.
+  if (!active.some((player) => isGoalkeeper(player.positions))) {
+    const unavailableStartingKeeper = xi.some((player) => {
+      if (!isGoalkeeper(player.positions)) return false;
+      const redMinute = redCards.get(player.id);
+      const dismissed = redMinute !== undefined && redMinute <= minute;
+      const injured = injuries.some((injury) => injury.team === team && injury.playerId === player.id && injury.minute !== undefined && injury.minute <= minute);
+      return dismissed || injured;
+    });
+    if (unavailableStartingKeeper && active.length > 0) {
+      const emergency = active
+        .filter((player) => !isGoalkeeper(player.positions))
+        .sort((a, b) => {
+          const keeperFit = (player: Player) => (isDefensive(player.positions) ? 8 : 0) + Number(player.attributes?.DEF ?? 0) * 0.04 + Number(player.attributes?.PHY ?? 0) * 0.03 + player.rating * 0.01;
+          return keeperFit(b) - keeperFit(a);
+        })[0];
+      if (emergency) {
+        return active.map((player) => player.id === emergency.id
+          ? { ...player, positions: ["GK", ...player.positions.filter((position) => position !== "GK")] as PosCode[] }
+          : player);
+      }
+    }
+  }
+  return active;
+}
+
+/**
+ * If a goalkeeper is sent off, use the reserve goalkeeper and remove an
+ * outfielder when a substitution and a window remain. Otherwise activePlayersAt
+ * automatically makes the best emergency outfielder act as keeper.
+ */
+function replaceDismissedGoalkeepers(
+  xi: Player[], bench: Player[], team: "home" | "away",
+  redCards: Map<string, number>, substitutions: SubstitutionEvent[],
+  injuries: InjuryEvent[] = [],
+): void {
+  const sentOffKeepers = xi.filter((player) => isGoalkeeper(player.positions) && redCards.has(player.id))
+    .map((player) => ({ player, minute: Number(redCards.get(player.id)) }))
+    .sort((a, b) => a.minute - b.minute);
+  const usedIncoming = new Set(substitutions.filter((sub) => sub.team === team).map((sub) => sub.playerInId));
+  for (const dismissal of sentOffKeepers) {
+    const minute = dismissal.minute;
+    if (!Number.isFinite(minute)) continue;
+    const stillHasKeeper = activePlayersAt(xi, bench, substitutions, redCards, team, minute, injuries)
+      .some((player) => isGoalkeeper(player.positions));
+    if (stillHasKeeper) continue;
+    const incomingKeeper = bench.find((player) => isGoalkeeper(player.positions) && !usedIncoming.has(player.id) && !redCards.has(player.id));
+    if (!incomingKeeper) continue;
+    const teamSubs = substitutions.filter((sub) => sub.team === team);
+    const windows = countSubWindows(substitutions, team);
+    const alreadyInWindow = teamSubs.some((sub) => Math.abs(sub.minute - minute) <= 3);
+    if (teamSubs.length >= 5 || (windows >= 3 && !alreadyInWindow)) continue;
+    const activeOutfield = activePlayersAt(xi, bench, substitutions, redCards, team, minute, injuries)
+      .filter((player) => !isGoalkeeper(player.positions))
+      .sort((a, b) => a.rating - b.rating);
+    const outgoing = activeOutfield[0];
+    if (!outgoing) continue;
+    substitutions.push({
+      minute,
+      team,
+      playerOutId: outgoing.id,
+      playerOutName: outgoing.name,
+      playerInId: incomingKeeper.id,
+      playerInName: incomingKeeper.name,
+    });
+    usedIncoming.add(incomingKeeper.id);
+    substitutions.sort((a, b) => a.minute - b.minute);
+  }
 }
 
 /** Public wrapper used by tournament/store flows that need the exact players
@@ -1245,23 +1348,23 @@ export function simulateMatchFast(
   const RED_REASONS = ["entrada muy dura", "mano en el área", "última falta", "conducta violenta"];
 
   function simulateTeamCardsFast(xi: Player[], bench: Player[], team: "home" | "away") {
-    const homeAggression = (homeTactics as SimTactics & { aggression?: number } | null)?.aggression;
-    const awayAggression = (awayTactics as SimTactics & { aggression?: number } | null)?.aggression;
-    const aggression = (team === "home" ? homeAggression : awayAggression) ?? 1;
+    const mods = tacticsModifiers(team === "home" ? homeTactics : awayTactics);
+    const aggression = mods.aggression * mods.foulRisk;
 
     for (const player of [...xi, ...bench]) {
-      const base =
+      const base = Math.min(0.20,
         (isGoalkeeper(player.positions)
           ? 0.02
           : isDefensive(player.positions)
             ? 0.115
             : isMidfield(player.positions)
               ? 0.095
-              : 0.055) * aggression;
+              : 0.055) * aggression,
+      );
 
       // Direct red: rare, but available in every competition/match mode.
       if (rand() < 0.0035) {
-        const minute = 15 + Math.floor(rand() * 75);
+        const minute = 15 + Math.floor(rand() * 80);
         const active = activePlayersAt(xi, bench, substitutions, new Map(), team, minute);
         if (!active.some((p) => p.id === player.id)) continue;
         cards.push({
@@ -1278,7 +1381,7 @@ export function simulateMatchFast(
 
       if (rand() >= base) continue;
 
-      const firstMinute = 8 + Math.floor(rand() * 75);
+      const firstMinute = 8 + Math.floor(rand() * 87);
       const activeAtFirst = activePlayersAt(xi, bench, substitutions, new Map(), team, firstMinute);
       if (!activeAtFirst.some((p) => p.id === player.id)) continue;
 
@@ -1293,12 +1396,12 @@ export function simulateMatchFast(
       });
 
       // A booked player can later receive a second yellow and be sent off.
-      const timeLeft = Math.max(0, 90 - firstMinute) / 90;
+      const timeLeft = Math.max(0, 94 - firstMinute) / 94;
       const secondYellowChance = 0.1 * timeLeft * (isDefensive(player.positions) ? 1.4 : 1);
       if (rand() < secondYellowChance) {
         const secondMinute = Math.min(
-          90,
-          firstMinute + 5 + Math.floor(rand() * Math.max(1, 90 - firstMinute)),
+          94,
+          firstMinute + 5 + Math.floor(rand() * Math.max(1, 94 - firstMinute)),
         );
         const activeAtSecond = activePlayersAt(
           xi,
@@ -1336,6 +1439,9 @@ export function simulateMatchFast(
     if (card.team === "home") fastHomeRedCardedPlayers.set(card.playerId, card.minute);
     else fastAwayRedCardedPlayers.set(card.playerId, card.minute);
   }
+  replaceDismissedGoalkeepers(homeXI, homeBench, "home", fastHomeRedCardedPlayers, substitutions, injuries);
+  replaceDismissedGoalkeepers(awayXI, awayBench, "away", fastAwayRedCardedPlayers, substitutions, injuries);
+
   const fastRedCardedPlayers = {
     home: fastHomeRedCardedPlayers,
     away: fastAwayRedCardedPlayers,
@@ -1396,8 +1502,8 @@ export function simulateMatchFast(
   };
   const homeRedExposure = redExposure(cards, "home");
   const awayRedExposure = redExposure(cards, "away");
-  const lh = Math.max(0.05, baseHomeLambda * Math.max(0.68, 1 - homeRedExposure * 0.18 + awayRedExposure * 0.06));
-  const la = Math.max(0.05, baseAwayLambda * Math.max(0.68, 1 - awayRedExposure * 0.18 + homeRedExposure * 0.06));
+  const lh = Math.max(0.05, baseHomeLambda * Math.max(0.55, 1 - homeRedExposure * 0.24 + awayRedExposure * 0.10));
+  const la = Math.max(0.05, baseAwayLambda * Math.max(0.55, 1 - awayRedExposure * 0.24 + homeRedExposure * 0.10));
 
   // Poisson keeps the goal distribution realistic, and cards are generated
   // before this draw so an early dismissal impacts the score probability.
@@ -1461,7 +1567,7 @@ export function simulateMatchFast(
     const candidates = pool.length > 0 ? pool : team === "home" ? homeXI : awayXI;
     if (candidates.length === 0) return;
     for (let i = 0; i < missing; i++) {
-      const minute = Math.min(90, Math.max(1, 8 + Math.floor((80 * (i + 1)) / (missing + 1))));
+      const minute = Math.min(94, Math.max(1, 8 + Math.floor((86 * (i + 1)) / (missing + 1))));
       const teamXI = team === "home" ? homeXI : awayXI;
       const teamBench = team === "home" ? homeBench : awayBench;
       const teamReds = team === "home" ? fastHomeRedCardedPlayers : fastAwayRedCardedPlayers;
@@ -1512,7 +1618,7 @@ export function simulateMatchFast(
   const addFastSaves = (xi: Player[], bench: Player[], team: "home" | "away") => {
     const count = 1 + Math.floor(rand() * 3);
     for (let i = 0; i < count; i++) {
-      const minute = 3 + Math.floor(rand() * 85);
+      const minute = 3 + Math.floor(rand() * 92);
       const activeKeeperPool = activePlayersAt(
       xi,
       bench,
@@ -1552,7 +1658,7 @@ export function simulateMatchFast(
 
   const addFastWoodwork = (xi: Player[], bench: Player[], team: "home" | "away") => {
     if (rand() > 0.18) return;
-    const minute = 3 + Math.floor(rand() * 85);
+    const minute = 3 + Math.floor(rand() * 92);
     const candidates = activePlayersAt(
       xi,
       bench,
@@ -1737,21 +1843,23 @@ export function simulateMatch(
   function simulateTeamCards(xi: Player[], bench: Player[], team: "home" | "away"): number {
     let reds = 0;
     // A high press produces more fouls, a low block fewer.
-    const aggression = team === "home" ? homeMods.aggression : awayMods.aggression;
+    const cardMods = team === "home" ? homeMods : awayMods;
+    const aggression = cardMods.aggression * cardMods.foulRisk;
     for (const player of [...xi, ...bench]) {
       // Defenders and defensive midfielders commit more fouls than keepers.
-      const base =
+      const base = Math.min(0.20,
         (isGoalkeeper(player.positions)
           ? 0.02
           : isDefensive(player.positions)
             ? 0.115
             : isMidfield(player.positions)
               ? 0.095
-              : 0.055) * aggression;
+              : 0.055) * aggression,
+      );
 
       // Direct red card: rare (~0.35% per player => ~4% per team per match).
       if (rand() < 0.0035) {
-        const minute = 15 + Math.floor(rand() * 75);
+        const minute = 15 + Math.floor(rand() * 80);
         const active = activePlayersAt(xi, bench, substitutions, new Map(), team, minute);
         if (!active.some((p) => p.id === player.id)) continue;
         reds++;
@@ -1769,7 +1877,7 @@ export function simulateMatch(
 
       if (rand() >= base) continue;
 
-      const firstMinute = 8 + Math.floor(rand() * 75);
+      const firstMinute = 8 + Math.floor(rand() * 87);
       const activeAtFirst = activePlayersAt(xi, bench, substitutions, new Map(), team, firstMinute);
       if (!activeAtFirst.some((p) => p.id === player.id)) continue;
       cards.push({
@@ -1784,12 +1892,12 @@ export function simulateMatch(
 
       // Contextual second yellow: only booked players can get one, it becomes
       // more likely the earlier the first yellow arrived and for defenders.
-      const timeLeft = Math.max(0, 90 - firstMinute) / 90;
+      const timeLeft = Math.max(0, 94 - firstMinute) / 94;
       const secondYellowChance = 0.1 * timeLeft * (isDefensive(player.positions) ? 1.4 : 1);
       if (rand() < secondYellowChance) {
         const secondMinute = Math.min(
-          90,
-          firstMinute + 5 + Math.floor(rand() * (90 - firstMinute)),
+          94,
+          firstMinute + 5 + Math.floor(rand() * Math.max(1, 94 - firstMinute)),
         );
         const activeAtSecond = activePlayersAt(
           xi,
@@ -1829,6 +1937,9 @@ export function simulateMatch(
       else awayRedCardedPlayers.set(card.playerId, card.minute);
     }
   }
+
+  replaceDismissedGoalkeepers(homeXI, homeBench, "home", homeRedCardedPlayers, substitutions);
+  replaceDismissedGoalkeepers(awayXI, awayBench, "away", awayRedCardedPlayers, substitutions);
 
   // Time-weighted strength: an expelled player only contributes the fraction of
   // the match he actually played.
@@ -1885,8 +1996,8 @@ export function simulateMatch(
   };
   const homeRedExposure = redExposure(cards, "home");
   const awayRedExposure = redExposure(cards, "away");
-  const homeLambda = Math.max(0.05, baseHomeLambda * Math.max(0.68, 1 - homeRedExposure * 0.18 + awayRedExposure * 0.06));
-  const awayLambda = Math.max(0.05, baseAwayLambda * Math.max(0.68, 1 - awayRedExposure * 0.18 + homeRedExposure * 0.06));
+  const homeLambda = Math.max(0.05, baseHomeLambda * Math.max(0.55, 1 - homeRedExposure * 0.24 + awayRedExposure * 0.10));
+  const awayLambda = Math.max(0.05, baseAwayLambda * Math.max(0.55, 1 - awayRedExposure * 0.24 + homeRedExposure * 0.10));
   // Keep the names consumed by the result/statistics builder, now reflecting
   // the red-card-adjusted expected-goal values.
   const lh = homeLambda;
@@ -2221,9 +2332,11 @@ export function simulateMatch(
     awayGoals,
     homeGoalMinutes: finalHomeGoalMinutes,
     awayGoalMinutes: finalAwayGoalMinutes,
-    homeStrength,
-    awayStrength,
+    homeStrength: homeStrength * homeMods.possession,
+    awayStrength: awayStrength * awayMods.possession,
   });
+  // Táctica de posesión/ritmo: se aplica también a estadísticas visibles.
+  // La función de base mantiene sus límites 20–80 y la suma en 100.
 
   // -------------------------------------------------------------------------
   // 5. Extra highlights: saves and woodwork, tied to the generated stats.
@@ -2232,7 +2345,7 @@ export function simulateMatch(
     const shown = Math.min(count, 4);
     const xi = team === "home" ? homeXI : awayXI;
     for (let i = 0; i < shown; i++) {
-      const minute = 3 + Math.floor(rand() * 85);
+      const minute = 3 + Math.floor(rand() * 92);
       const activeKeeperPool = activeAt(
         xi,
         team === "home" ? homeRedCardedPlayers : awayRedCardedPlayers,
@@ -2267,7 +2380,7 @@ export function simulateMatch(
   const addWoodwork = (team: "home" | "away") => {
     if (rand() > 0.18) return;
     const xi = team === "home" ? homeXI : awayXI;
-    const minute = 3 + Math.floor(rand() * 85);
+    const minute = 3 + Math.floor(rand() * 92);
     const active = activeAt(
       xi,
       team === "home" ? homeRedCardedPlayers : awayRedCardedPlayers,

@@ -5,8 +5,7 @@ import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { CountryFlag } from "@/components/CountryFlag";
 import { faceUrl } from "@/lib/playerFaces";
 import { usePlayersStore } from "@/store/playersStore";
-import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
-import { LeagueLogo } from "@/components/LeagueLogo";
+import { teamById } from "@/data/teams";
 
 function kindMeta(notification: MarketNotification) {
   switch (notification.kind) {
@@ -25,10 +24,12 @@ export function NotificationToast({ notification }: { notification: MarketNotifi
   const meta = kindMeta(notification);
   const Icon = meta.icon;
   const visual = notification.visual;
-  const player = visual?.playerId ? usePlayersStore.getState().getSimPlayer(visual.playerId) : undefined;
-  const from = visual?.fromTeamId ? teamById(visual.fromTeamId) : undefined;
-  const to = visual?.toTeamId ? teamById(visual.toTeamId) : undefined;
-  const league = visual?.leagueId ? LEAGUES[visual.leagueId as LeagueId] : undefined;
+  const playerInfo = visual?.players?.[0];
+  const player = playerInfo ? usePlayersStore.getState().getSimPlayer(playerInfo.id) : undefined;
+  const teamIds = visual?.teamIds ?? [];
+  const from = teamIds[0] ? teamById(teamIds[0]) : undefined;
+  const to = teamIds[1] ? teamById(teamIds[1]) : undefined;
+  const country = visual?.countries?.[0];
 
   return (
     <div className="w-[min(390px,calc(100vw-2rem))] rounded-2xl border border-border/70 bg-card/95 p-3 shadow-2xl backdrop-blur">
@@ -40,16 +41,14 @@ export function NotificationToast({ notification }: { notification: MarketNotifi
         </div>
       </div>
 
-      {(player || from || to) && (
+      {(playerInfo || from || to || country) && (
         <div className="mt-3 flex items-center gap-2 rounded-xl border border-border/50 bg-background/40 p-2">
-          {player && <PlayerFace name={player.name} image={faceUrl(player.id, player.cardImage)} role={roleFromPosition(player.positions?.[0] ?? "MID")} size={38} showRing={false} />}
-          {visual?.country && <CountryFlag country={visual.country} />}
+          {playerInfo && <PlayerFace name={playerInfo.name} image={faceUrl(playerInfo.id, player?.cardImage)} role={roleFromPosition(player?.positions?.[0] ?? "MID")} size={38} showRing={false} />}
+          {country && <CountryFlag country={country} />}
           {from && <TeamBadge team={from} size={30} />}
           {from && to && <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />}
           {to && <TeamBadge team={to} size={30} />}
-          {league && <LeagueLogo league={league.name} size="sm" fallback={<span className="grid h-6 w-6 place-items-center rounded-md border border-border/50 text-[0.55rem] font-black text-muted-foreground">L</span>} />}
-          {visual?.fee != null && visual.fee > 0 && <span className="ml-auto text-xs font-black">{visual.fee >= 1_000_000 ? `${(visual.fee / 1_000_000).toFixed(1)} M€` : `${Math.round(visual.fee / 1000)} K€`}</span>}
-          {!player && visual?.playerId && <BriefcaseBusiness className="ml-auto h-4 w-4 text-muted-foreground" />}
+          {!player && playerInfo && <BriefcaseBusiness className="ml-auto h-4 w-4 text-muted-foreground" />}
         </div>
       )}
     </div>

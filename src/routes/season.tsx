@@ -74,7 +74,9 @@ import {
   type CentralTheme,
 } from "@/lib/seasonExtras";
 import { NewsCarousel } from "@/components/news/NewsCarousel";
+import { buildLatestTeamOfRoundsData } from "@/lib/teamOfRound";
 import { getCachedGameNews } from "@/lib/news/newsCache";
+import { getAllPlayedFixtures } from "@/lib/teamForm";
 
 // Helper to get league name from league ID
 
@@ -189,11 +191,77 @@ function SeasonPage() {
     /* intentionally ignored */
   }
 
-  // Noticias reales derivadas de lo ocurrido en la partida (con caché por estado)
-  const news = getCachedGameNews(save);
+  // Alertas persistentes de la última incidencia sufrida por el equipo del usuario.
+  const latestMyFixture = getAllPlayedFixtures(save)
+    .filter((fixture) => fixture.homeId === save.myTeamId || fixture.awayId === save.myTeamId)
+    .sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")) || a.matchday - b.matchday)
+    .at(-1);
+  const latestMySide = latestMyFixture?.homeId === save.myTeamId ? "home" : "away";
+  const latestInjuries = latestMyFixture?.result?.injuries?.filter((injury) => injury.team === latestMySide) ?? [];
+  const latestDismissals = latestMyFixture?.result?.cards?.filter((card) => card.team === latestMySide && (card.cardType === "red" || card.isSecondYellow)) ?? [];
+  const unreadMatchAlerts = latestMyFixture && latestMyFixture.id !== save.matchAlertsReadFixtureId && (latestInjuries.length > 0 || latestDismissals.length > 0);
 
-  // UCL phase table (only used when ucl theme)
-  const uclTable = save.ucl?.leaguePhaseTable ?? save.ucl?.table ?? [];
+  function markMatchAlertsRead() {
+    if (!save || !latestMyFixture) return;
+    const nextSave = { ...save, matchAlertsReadFixtureId: latestMyFixture.id };
+    saveSaveWithRetry(nextSave);
+    setSave(nextSave);
+  }
+
+  // Noticias reales derivadas de lo ocurrido en la partida (con caché por estado)
+  const generatedNews = getCachedGameNews(save);
+  const teamsOfRounds = buildLatestTeamOfRoundsData(save);
+  const teamOfRoundNews = teamsOfRounds.map((teamOfRound) => ({
+    id: teamOfRound.id,
+    cat: teamOfRound.category === "ucl" || teamOfRound.category === "uel" || teamOfRound.category === "uecl" ? "europa" as const : "liga" as const,
+    icon: "🏅",
+    title: "Equipo de la jornada",
+    lead: `El XI ideal de ${teamOfRound.competitionLabel}, ${teamOfRound.roundLabel.toLowerCase()}, seleccionado según las notas de los partidos disputados.`,
+    body: [
+      `Este equipo reúne a los futbolistas mejor valorados de ${teamOfRound.competitionLabel} en ${teamOfRound.roundLabel.toLowerCase()}.`,
+      teamOfRound.playerOfRound ? `Jugador de la jornada: ${teamOfRound.playerOfRound.player.Name ?? "Jugador destacado"} (${teamOfRound.playerOfRound.rating}).` : "",
+      "Pulsa en la noticia para ver la alineación en el campo y la nota de cada jugador.",
+    ].filter(Boolean),
+    facts: [
+      { label: "Competición", value: teamOfRound.competitionLabel },
+      { label: "Jornada", value: teamOfRound.roundLabel },
+      { label: "Fecha", value: teamOfRound.dateLabel },
+      ...(teamOfRound.playerOfRound ? [{ label: "Jugador de la jornada", value: `${teamOfRound.playerOfRound.player.Name ?? "Jugador destacado"} · ${teamOfRound.playerOfRound.rating}` }] : []),
+    ],
+    visual: { teamIds: teamOfRound.teamIds, players: [], countries: [], leagueId: undefined },
+    score: 100,
+    when: `${teamOfRound.competitionLabel} · ${teamOfRound.roundLabel} · ${teamOfRound.dateLabel}`,
+    mine: teamOfRound.teamIds.includes(save.myTeamId),
+    theme: teamOfRound.category,
+    teamOfRound,
+  }));
+  const news = [...teamOfRoundNews, ...generatedNews.filter((item) => !item.id.startsWith("team-of-round:"))];
+
+  // La clasificación lateral sigue la competición del próximo encuentro, no
+  // la liga doméstica por defecto. Se admiten los tres torneos europeos.
+  const nextCompetitionCode = String(
+    nextFixture?.europeanCompetition
+      ?? (nextFixture as unknown as { competition?: string } | undefined)?.competition
+      ?? "",
+  );
+  const nextEuropeanCompetition = (["ucl", "uel", "uecl"].includes(nextCompetitionCode)
+    ? nextCompetitionCode
+    : undefined) as "ucl" | "uel" | "uecl" | undefined;
+  const europeanTableState = nextEuropeanCompetition === "ucl"
+    ? save.ucl
+    : nextEuropeanCompetition === "uel"
+      ? save.uel
+      : nextEuropeanCompetition === "uecl"
+        ? save.uecl
+        : undefined;
+  const activeEuropeanTable = europeanTableState?.leaguePhaseTable ?? europeanTableState?.table ?? [];
+  const activeEuropeanTitle = nextEuropeanCompetition === "ucl"
+    ? "Champions · Fase de Liga"
+    : nextEuropeanCompetition === "uel"
+      ? "Europa League · Fase de Liga"
+      : nextEuropeanCompetition === "uecl"
+        ? "Conference League · Fase de Liga"
+        : "Clasificación";
 
   function handlePlayMatch(fixture: Fixture) {
     if (!save || !isLineupComplete) {
@@ -441,6 +509,24 @@ function SeasonPage() {
   return (
     <>
       <div className={`p-4 md:p-6 max-w-6xl mx-auto relative ${theme.bgOverlay}`}>
+        {unreadMatchAlerts && latestMyFixture && (
+          <section className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3" role="status" aria-live="polite">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-black uppercase tracking-wider text-amber-300">Incidencias del último partido</p>
+                <p className="mt-1 text-[0.72rem] text-foreground/90">{myTeam.name} · {latestMyFixture.date ?? `Jornada ${latestMyFixture.matchday}`}</p>
+                <div className="mt-2 space-y-1.5">
+                  {latestInjuries.map((injury, i) => <p key={`injury-${injury.playerId}-${i}`} className="text-xs">🩹 <strong>{injury.playerName}</strong>: {injury.injuryType ?? "lesión"}{injury.bodyPart ? ` (${injury.bodyPart})` : ""}; baja estimada de {injury.weeks} semana(s){injury.durationDays ? ` · ${injury.durationDays} días` : ""}.</p>)}
+                  {latestDismissals.map((card, i) => {
+                    const suspension = save.suspensions?.[save.myTeamId]?.find((item: any) => String(item.playerId) === String(card.playerId));
+                    return <p key={`red-${card.playerId}-${i}`} className="text-xs">🟥 <strong>{card.playerName}</strong>: expulsión en el {card.minute}′{card.isSecondYellow ? " por doble amarilla" : " por roja directa"}{suspension?.matchdaysRemaining ? ` · sanción pendiente: ${suspension.matchdaysRemaining} partido(s)` : ""}.</p>;
+                  })}
+                </div>
+              </div>
+              <button type="button" onClick={markMatchAlertsRead} className="rounded-lg border border-amber-400/30 px-3 py-2 text-[0.65rem] font-black text-amber-200 hover:bg-amber-400/10">Marcar como leídas</button>
+            </div>
+          </section>
+        )}
         {/* Theme banner */}
         {theme.id !== "default" && (
           <div
@@ -455,82 +541,34 @@ function SeasonPage() {
           </div>
         )}
 
-        {/* Season dashboard header */}
-        <div
-          className={`mb-6 panel p-4 sm:p-5 rounded-2xl border ${theme.cardBorder} flex flex-col gap-4`}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-[0.62rem] font-black uppercase tracking-[0.2em] text-primary">Central de temporada</p>
-              <p className="mt-1 text-xs text-muted-foreground">Resumen deportivo, próximo compromiso y evolución en la liga.</p>
-            </div>
-            <span className={`rounded-full border px-3 py-1 text-[0.65rem] font-black ${seasonComplete ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-border/60 bg-secondary/40 text-muted-foreground"}`}>
-              {seasonComplete ? "Temporada finalizada" : `Jornada ${Math.min(currentMd, myLeagueTotalMatchdays)} de ${myLeagueTotalMatchdays}`}
+        {/* Resumen de temporada compacto: una única fila en escritorio. */}
+        <div className={`mb-4 panel rounded-2xl border ${theme.cardBorder} px-3 py-2.5`}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <p className="text-[0.6rem] font-black uppercase tracking-[0.16em] text-primary">Central</p>
+            <span className={`rounded-full border px-2 py-1 text-[0.6rem] font-black ${seasonComplete ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-border/60 bg-secondary/40 text-muted-foreground"}`}>
+              {seasonComplete ? "Finalizada" : `J${Math.min(currentMd, myLeagueTotalMatchdays)}/${myLeagueTotalMatchdays}`}
             </span>
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-secondary/70" role="progressbar" aria-label="Progreso de la temporada" aria-valuemin={0} aria-valuemax={100} aria-valuenow={seasonComplete ? 100 : Math.min(100, Math.max(0, Math.round(((currentMd - 1) / Math.max(1, myLeagueTotalMatchdays)) * 100)))}>
-            <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${seasonComplete ? 100 : Math.min(100, Math.max(0, Math.round(((currentMd - 1) / Math.max(1, myLeagueTotalMatchdays)) * 100)))}%` }} />
-          </div>
-          <div className="flex items-center gap-4">
-            <div
-              className="relative rounded-xl p-2 bg-gradient-to-br from-background to-secondary"
-              style={{
-                transform: "perspective(400px) rotateX(6deg) rotateY(-6deg)",
-                boxShadow:
-                  "0 10px 24px -10px rgba(0,0,0,0.5), 0 2px 6px rgba(255,255,255,0.06) inset",
-              }}
-            >
-              <TeamLogo
-                teamName={myTeam.name}
-                leagueName={getLeagueName(myTeam.league)}
-                size={56}
-              />
-            </div>
-            <div>
-              <h1 className="text-2xl font-black leading-tight">{myTeam.name}</h1>
-              <p className="text-xs text-muted-foreground">
-                Jornada {currentMd} de {myLeagueTotalMatchdays} · {LEAGUES[save.myLeague].name}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <span className="chip text-[0.65rem]">
-                  PJ {standings.find((s) => s.teamId === save.myTeamId)?.played ?? 0}
-                </span>
-                <span className="chip text-[0.65rem]">
-                  V {standings.find((s) => s.teamId === save.myTeamId)?.won ?? 0}
-                </span>
-                <span className="chip text-[0.65rem]">
-                  E {standings.find((s) => s.teamId === save.myTeamId)?.drawn ?? 0}
-                </span>
-                <span className="chip text-[0.65rem]">
-                  D {standings.find((s) => s.teamId === save.myTeamId)?.lost ?? 0}
-                </span>
-                <span className="chip text-[0.65rem]">
-                  DG {(standings.find((s) => s.teamId === save.myTeamId)?.gd ?? 0) > 0 ? "+" : ""}
-                  {standings.find((s) => s.teamId === save.myTeamId)?.gd ?? 0}
-                </span>
+            <div className="flex min-w-0 items-center gap-2">
+              <TeamLogo teamName={myTeam.name} leagueName={getLeagueName(myTeam.league)} size={30} />
+              <div className="min-w-0">
+                <h1 className="truncate text-sm font-black leading-tight">{myTeam.name}</h1>
+                <p className="truncate text-[0.6rem] text-muted-foreground">{LEAGUES[save.myLeague].name}</p>
               </div>
             </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <MiniTrendChart history={posHistory} />
-            <div className="text-right">
-              <div className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-                Posición
+            <div className="flex flex-wrap gap-1">
+              <span className="chip text-[0.58rem]">PJ {standings.find((s) => s.teamId === save.myTeamId)?.played ?? 0}</span>
+              <span className="chip text-[0.58rem]">V {standings.find((s) => s.teamId === save.myTeamId)?.won ?? 0}</span>
+              <span className="chip text-[0.58rem]">E {standings.find((s) => s.teamId === save.myTeamId)?.drawn ?? 0}</span>
+              <span className="chip text-[0.58rem]">D {standings.find((s) => s.teamId === save.myTeamId)?.lost ?? 0}</span>
+              <span className="chip text-[0.58rem]">DG {(standings.find((s) => s.teamId === save.myTeamId)?.gd ?? 0) > 0 ? "+" : ""}{standings.find((s) => s.teamId === save.myTeamId)?.gd ?? 0}</span>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <MiniTrendChart history={posHistory} />
+              <div className="text-right">
+                <div className="text-[0.55rem] uppercase tracking-wider text-muted-foreground">Posición</div>
+                <div className={`text-xl font-black scoreline ${theme.accent}`}>{myPos || "-"}º</div>
+                {trend.delta !== 0 && <div className={`flex items-center justify-end gap-0.5 text-[0.6rem] font-bold ${trend.delta > 0 ? "text-emerald-400" : "text-destructive"}`}>{trend.delta > 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}{Math.abs(trend.delta)}</div>}
               </div>
-              <div className={`text-3xl font-black scoreline ${theme.accent}`}>{myPos || "-"}º</div>
-              {trend.delta !== 0 && (
-                <div
-                  className={`flex items-center justify-end gap-1 text-xs font-bold ${trend.delta > 0 ? "text-emerald-400" : "text-destructive"}`}
-                >
-                  {trend.delta > 0 ? (
-                    <ArrowUp className="w-3.5 h-3.5" />
-                  ) : (
-                    <ArrowDown className="w-3.5 h-3.5" />
-                  )}
-                  {Math.abs(trend.delta)}
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -589,6 +627,7 @@ function SeasonPage() {
 
             <NewsCarousel news={news} theme={theme} myId={save.myTeamId} />
 
+
             <OtherLeaguesPanel save={save} />
           </div>
 
@@ -596,10 +635,10 @@ function SeasonPage() {
             <div className={`panel p-5 border ${theme.cardBorder}`}>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold">
-                  {theme.id === "ucl" ? "Champions · Fase de Liga" : "Clasificación"}
+                  {activeEuropeanTitle}
                 </h3>
 
-                {theme.id !== "ucl" && (
+                {!nextEuropeanCompetition && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button className="bg-secondary border border-border rounded px-2 py-1 text-xs flex items-center gap-2 hover:border-primary/60 transition">
@@ -632,8 +671,8 @@ function SeasonPage() {
                 )}
               </div>
 
-              {theme.id === "ucl" && uclTable.length > 0 ? (
-                <UCLMiniTable table={uclTable} myTeamId={save.myTeamId} />
+              {nextEuropeanCompetition && activeEuropeanTable.length > 0 ? (
+                <UCLMiniTable table={activeEuropeanTable} myTeamId={save.myTeamId} />
               ) : (
                 <StandingsTable standings={standings} myTeamId={save.myTeamId} />
               )}
@@ -761,7 +800,7 @@ function NextMatchCard({
 
   const awayRecent = save ? getTeamRecentResults(save, fixture.awayId, save.myLeague, 5) : [];
 
-  const referee = refereeFor(fixture.id);
+  const referee = refereeFor(fixture.id, fixture);
   const weather = weatherFor(fixture.id);
 
   return (

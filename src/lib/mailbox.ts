@@ -403,7 +403,7 @@ export function generateMailboxMessages(
 
       // Estos mensajes son event-driven: no se sortean. Solo aparecen cuando
       // la situación del jugador realmente lo justifica.
-      let kind: MailboxMessageKind | null = null;
+      let kind: "complaint" | "wants_out" | "injury_update" | null = null;
       let priority = 0;
       if (!isSuspended && isInjured) {
         kind = conversation?.lastKind === "injury_update" ? null : "injury_update";
@@ -418,7 +418,7 @@ export function generateMailboxMessages(
       if (!kind || !cooldownAllows(conversation, kind, ctx.matchDate)) return null;
       return { player, stats, kind, priority, sort: hashSeed(`${ctx.matchDate}:event:${player.id}:${kind}`) };
     })
-    .filter((candidate): candidate is { player: Player; stats: NonNullable<MailboxContext["stats"][string]>; kind: MailboxMessageKind; priority: number; sort: number } => !!candidate)
+    .filter((candidate): candidate is { player: Player; stats: NonNullable<MailboxContext["stats"][string]>; kind: "complaint" | "wants_out" | "injury_update"; priority: number; sort: number } => !!candidate)
     .sort((a, b) => b.priority - a.priority || a.sort - b.sort);
 
   // Primero damos hueco a un único mensaje contextual por día. Si existe una

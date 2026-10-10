@@ -9,8 +9,9 @@ import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import { TeamForm } from "@/components/TeamForm";
-import { getTeamForms } from "@/lib/teamForm";
+import { getTeamFormsForCompetition } from "@/lib/teamForm";
 import { MatchStatsModal } from "@/components/MatchStatsModal";
+import { KnockoutTieList } from "@/components/competition/KnockoutTieList";
 import { sortUCLTable, UCLTableEntry, UCLBracketSlot, UCL_START } from "@/data/ucl";
 import type { Fixture } from "@/lib/season";
 
@@ -109,7 +110,7 @@ function TableView({
   save: SaveGame;
 }) {
   const sorted = sortUCLTable(table);
-  const formsByTeam = getTeamForms(save, 5);
+  const formsByTeam = getTeamFormsForCompetition(save, 5, "ucl");
 
   return (
     <section className="overflow-hidden rounded-xl border border-border/80 bg-gradient-to-b from-card/90 to-background shadow-lg">
@@ -1498,30 +1499,47 @@ function ResultsListView({
     if (round.includes("Playoff")) return "Play-off";
     if (round.includes("R16")) return "Octavos";
     if (round.includes("QF")) return "Cuartos";
-    if (round.includes("SF")) return "Semifinales";
+    if (round.includes("SF")) return "Semifinal";
     if (round === "Final") return "Final";
     return round;
   };
 
+  const matchGoals = (fixture: Fixture) => ({
+    home: Number(fixture.result?.homeGoals ?? 0) + Number(fixture.result?.extraTime?.homeGoals ?? 0),
+    away: Number(fixture.result?.awayGoals ?? 0) + Number(fixture.result?.extraTime?.awayGoals ?? 0),
+  });
+
   const getAggregateScore = (leg1: Fixture, leg2: Fixture): { home: number; away: number } => {
-    const h1 = leg1.result?.homeGoals || 0;
-    const a1 = leg1.result?.awayGoals || 0;
-    const h2 = leg2.result?.homeGoals || 0;
-    const a2 = leg2.result?.awayGoals || 0;
-
-    // Aggregate: leg1.home + leg2.away (team from leg1 home)
-    const aggHome = h1 + a2;
-    const aggAway = a1 + h2;
-
-    return { home: aggHome, away: aggAway };
+    const one = matchGoals(leg1);
+    const two = matchGoals(leg2);
+    // Global orientado según la ida: local de ida vs visitante de ida.
+    return { home: one.home + (leg2.homeId === leg1.homeId ? two.home : two.away),
+      away: one.away + (leg2.homeId === leg1.awayId ? two.home : two.away) };
   };
 
-  const formatDate = (matchday: number): string => {
-    const baseDate = new Date(UCL_START + "T00:00:00Z");
-    baseDate.setUTCDate(baseDate.getUTCDate() + matchday);
-    return baseDate
-      .toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })
-      .toUpperCase();
+  const formatDate = (matchday: number, fixture?: Fixture): string => {
+    const actual = fixture?.date && /^\d{4}-\d{2}-\d{2}/.test(fixture.date)
+      ? new Date(`${fixture.date.slice(0, 10)}T12:00:00Z`)
+      : (() => { const d = new Date(UCL_START + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + matchday); return d; })();
+    return actual.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).toUpperCase();
+  };
+
+  const formatLegScore = (fixture: Fixture): string => {
+    if (!fixture.result) return "- -";
+    const { home, away } = matchGoals(fixture);
+    const extraTime = !!fixture.result.extraTime;
+    const penalties = fixture.result.penalties;
+    return `${home} - ${away}${extraTime ? " (a.p.)" : ""}${penalties ? ` · Pen. ${penalties.homeGoals}-${penalties.awayGoals}` : ""}`;
+  };
+
+  const legWinnerId = (fixture: Fixture): string | null => {
+    if (!fixture.result) return null;
+    const { home, away } = matchGoals(fixture);
+    if (home > away) return fixture.homeId;
+    if (away > home) return fixture.awayId;
+    const pens = fixture.result.penalties;
+    if (!pens || pens.homeGoals === pens.awayGoals) return null;
+    return pens.homeGoals > pens.awayGoals ? fixture.homeId : fixture.awayId;
   };
 
   return (
@@ -1549,6 +1567,15 @@ function ResultsListView({
             const roundLabel = getRoundLabel(leg1.round);
 
             const aggregate = leg1.result && leg2.result ? getAggregateScore(leg1, leg2) : null;
+            const aggregateWinnerId = aggregate
+              ? aggregate.home > aggregate.away ? leg1.homeId
+                : aggregate.away > aggregate.home ? leg1.awayId
+                : leg2?.result?.penalties
+                  ? (leg2.homeId === leg1.homeId
+                    ? (leg2.result.penalties.homeGoals > leg2.result.penalties.awayGoals ? leg1.homeId : leg1.awayId)
+                    : (leg2.result.penalties.homeGoals > leg2.result.penalties.awayGoals ? leg1.awayId : leg1.homeId))
+                  : null
+              : (legWinnerId(leg1));
 
             const homeLogo1 = getTeamLogoPath(leg1.homeId);
             const awayLogo1 = getTeamLogoPath(leg1.awayId);
@@ -1577,15 +1604,17 @@ function ResultsListView({
                         ) : (
                           <TeamBadge teamId={leg1.homeId} size={20} />
                         )}
-                        <span className="text-white text-sm font-medium">
+                        <span className={`text-sm ${aggregateWinnerId === leg1.homeId ? "font-black text-white" : "font-medium text-gray-300"}`}>
                           {safeTeamName(leg1.homeId)}
                         </span>
                       </div>
-                      <div className="text-cyan-400 text-lg font-bold">
+                      <div className="text-center text-cyan-400 text-lg font-bold">
                         {aggregate.home} - {aggregate.away}
+                        {leg2?.result?.extraTime && <span className="ml-1 text-[0.62rem] font-bold text-gray-300">(a.p.)</span>}
+                        {leg2?.result?.penalties && <span className="ml-1 block text-[0.62rem] font-bold text-gray-300">Pen. {leg2.homeId === leg1.homeId ? `${leg2.result.penalties.homeGoals}-${leg2.result.penalties.awayGoals}` : `${leg2.result.penalties.awayGoals}-${leg2.result.penalties.homeGoals}`}</span>}
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-white text-sm font-medium">
+                        <span className={`text-sm ${aggregateWinnerId === leg1.awayId ? "font-black text-white" : "font-medium text-gray-300"}`}>
                           {safeTeamName(leg1.awayId)}
                         </span>
                         {awayLogo1 ? (
@@ -1608,9 +1637,7 @@ function ResultsListView({
                 {/* Leg 1 */}
                 <div className="px-4 py-3 border-b border-gray-800/50">
                   <div className="flex items-center justify-between">
-                    <div className="w-12 h-5 bg-gray-700 rounded flex items-center justify-center">
-                      <span className="text-white text-[10px] font-bold">FIN</span>
-                    </div>
+                    <div className="w-12 shrink-0" aria-hidden="true" />
                     <div className="flex-1 flex flex-col items-center">
                       <span className="text-gray-400 text-xs mb-1">{roundLabel}</span>
                       <div className="flex items-center justify-between w-full max-w-xs">
@@ -1627,30 +1654,13 @@ function ResultsListView({
                           ) : (
                             <TeamBadge teamId={leg1.homeId} size={16} />
                           )}
-                          <span className="text-gray-300 text-xs">{safeTeamName(leg1.homeId)}</span>
+                          <span className={`text-xs ${legWinnerId(leg1) === leg1.homeId ? "font-black text-white" : "text-gray-300"}`}>{safeTeamName(leg1.homeId)}</span>
                         </div>
                         <span className="text-white text-sm font-bold whitespace-nowrap">
-                          {leg1.result
-                            ? (() => {
-                                const { homeGoals, awayGoals, extraTime, penalties } = leg1.result;
-                                if (penalties) {
-                                  const totalHome = homeGoals + (extraTime?.homeGoals || 0);
-                                  const totalAway = awayGoals + (extraTime?.awayGoals || 0);
-                                  return `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
-                                } else if (extraTime) {
-                                  const totalHome = homeGoals + extraTime.homeGoals;
-                                  const totalAway = awayGoals + extraTime.awayGoals;
-                                  if (totalHome !== totalAway) {
-                                    return `${totalHome} - ${totalAway} (prórroga)`;
-                                  }
-                                  return `${totalHome} - ${totalAway}`;
-                                }
-                                return `${homeGoals} - ${awayGoals}`;
-                              })()
-                            : " - "}
+                          {formatLegScore(leg1)}
                         </span>
                         <div className="flex items-center gap-2">
-                          <span className="text-gray-300 text-xs">{safeTeamName(leg1.awayId)}</span>
+                          <span className={`text-xs ${legWinnerId(leg1) === leg1.awayId ? "font-black text-white" : "text-gray-300"}`}>{safeTeamName(leg1.awayId)}</span>
                           {awayLogo1 ? (
                             <img
                               src={awayLogo1}
@@ -1666,7 +1676,7 @@ function ResultsListView({
                         </div>
                       </div>
                       <span className="text-gray-500 text-[10px] mt-1">
-                        {formatDate(leg1.matchday)}
+                        {formatDate(leg1.matchday, leg1)}
                       </span>
                     </div>
                     <div className="w-12"></div>
@@ -1677,9 +1687,7 @@ function ResultsListView({
                 {leg2 && (
                   <div className="px-4 py-3">
                     <div className="flex items-center justify-between">
-                      <div className="w-12 h-5 bg-gray-700 rounded flex items-center justify-center">
-                        <span className="text-white text-[10px] font-bold">FIN</span>
-                      </div>
+                      <div className="w-12 shrink-0" aria-hidden="true" />
                       <div className="flex-1 flex flex-col items-center">
                         <span className="text-gray-400 text-xs mb-1">{roundLabel}</span>
                         <div className="flex items-center justify-between w-full max-w-xs">
@@ -1696,30 +1704,12 @@ function ResultsListView({
                             ) : (
                               <TeamBadge teamId={leg2.homeId} size={16} />
                             )}
-                            <span className="text-gray-300 text-xs">
+                            <span className={`text-xs ${legWinnerId(leg2) === leg2.homeId ? "font-black text-white" : "text-gray-300"}`}>
                               {safeTeamName(leg2.homeId)}
                             </span>
                           </div>
                           <span className="text-white text-sm font-bold whitespace-nowrap">
-                            {leg2.result
-                              ? (() => {
-                                  const { homeGoals, awayGoals, extraTime, penalties } =
-                                    leg2.result;
-                                  if (penalties) {
-                                    const totalHome = homeGoals + (extraTime?.homeGoals || 0);
-                                    const totalAway = awayGoals + (extraTime?.awayGoals || 0);
-                                    return `${totalHome} (${penalties.homeGoals}) - (${penalties.awayGoals}) ${totalAway}`;
-                                  } else if (extraTime) {
-                                    const totalHome = homeGoals + extraTime.homeGoals;
-                                    const totalAway = awayGoals + extraTime.awayGoals;
-                                    if (totalHome !== totalAway) {
-                                      return `${totalHome} - ${totalAway} (prórroga)`;
-                                    }
-                                    return `${totalHome} - ${totalAway}`;
-                                  }
-                                  return `${homeGoals} - ${awayGoals}`;
-                                })()
-                              : " - "}
+                            {formatLegScore(leg2)}
                           </span>
                           <div className="flex items-center gap-2">
                             <span className="text-gray-300 text-xs">
@@ -1740,7 +1730,7 @@ function ResultsListView({
                           </div>
                         </div>
                         <span className="text-gray-500 text-[10px] mt-1">
-                          {formatDate(leg2.matchday)}
+                          {formatDate(leg2.matchday, leg2)}
                         </span>
                       </div>
                       <div className="w-12"></div>
@@ -2056,70 +2046,11 @@ function UCLPage() {
                       );
                     }
 
-                    // Knockout phase: group by Leg1 / Leg2 (or just list for Final)
-                    const byRound = [
-                      ...new Map(
-                        activePhase.fxs.reduce((acc, f) => {
-                          const r = f.round ?? "";
-                          if (!acc.has(r))
-                            acc.set(r, { matchday: f.matchday, fxs: [] as Fixture[] });
-                          acc.get(r)!.fxs.push(f);
-                          return acc;
-                        }, new Map<string, { matchday: number; fxs: Fixture[] }>()),
-                      ).entries(),
-                    ].sort((a, b) => a[1].matchday - b[1].matchday);
-
-                    const roundLabel: Record<string, string> = {
-                      "Playoff-Leg1": "Ida",
-                      "Playoff-Leg2": "Vuelta",
-                      "R16-Leg1": "Ida",
-                      "R16-Leg2": "Vuelta",
-                      "QF-Leg1": "Ida",
-                      "QF-Leg2": "Vuelta",
-                      "SF-Leg1": "Ida",
-                      "SF-Leg2": "Vuelta",
-                      Final: "Final",
-                    };
-
                     return (
-                      <div className="space-y-3">
-                        {byRound.map(([r, { matchday, fxs }]) => (
-                          <div key={r} className="rounded-lg border border-border overflow-hidden">
-                            <div className="bg-blue-950/60 px-4 py-2.5 flex items-center justify-between">
-                              <div>
-                                <span className="text-sm font-bold text-blue-200">
-                                  {roundLabel[r] ?? r}
-                                </span>
-                                <span className="ml-2 text-xs text-blue-400">
-                                  {uclFixtureDate(matchday)}
-                                </span>
-                              </div>
-                              <span className="text-xs text-blue-400">
-                                {fxs.filter((f) => f.result).length}/{fxs.length} jugados
-                              </span>
-                            </div>
-                            <div className="divide-y divide-border">
-                              {fxs
-                                .sort((a, b) => {
-                                  const aU =
-                                    a.homeId === save.myTeamId || a.awayId === save.myTeamId;
-                                  const bU =
-                                    b.homeId === save.myTeamId || b.awayId === save.myTeamId;
-                                  return aU === bU ? 0 : aU ? -1 : 1;
-                                })
-                                .map((f) => (
-                                  <FixtureRow
-                                    key={f.id}
-                                    f={f}
-                                    myTeamId={save.myTeamId}
-                                    fixtures={fixtures}
-                                    onClick={setSelectedFixture}
-                                  />
-                                ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <KnockoutTieList
+                        fixtures={activePhase.fxs}
+                        onOpenFixture={setSelectedFixture}
+                      />
                     );
                   })()}
               </div>

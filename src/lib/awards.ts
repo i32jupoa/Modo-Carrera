@@ -9,6 +9,8 @@ import type { DynamicPlayerStats, MonthlyStats } from "@/types/playerStats";
 
 export type AwardPlayer = Player & {
   stats: PlayerStats;
+  cupGoals: number;
+  cupAssists: number;
   teamName: string;
   leagueId: LeagueId;
   leagueName: string;
@@ -90,7 +92,7 @@ export type MonthlyAward = {
   label: string;
   leagueId: LeagueId;
   leagueName: string;
-  player: AwardPlayer | null;
+  player: MonthlyRankingEntry | null;
   xi: AwardPlayer[];
   ranking: MonthlyRankingEntry[];
   available: boolean;
@@ -137,6 +139,22 @@ function getZeroStats(): PlayerStats {
     motm: 0,
     cupMotm: 0,
     uclMotm: 0,
+    uelGoals: 0,
+    uelAssists: 0,
+    uelAppearances: 0,
+    uelCleanSheets: 0,
+    uelMotm: 0,
+    ueclGoals: 0,
+    ueclAssists: 0,
+    ueclAppearances: 0,
+    ueclCleanSheets: 0,
+    ueclMotm: 0,
+    uclYellowCards: 0,
+    uclRedCards: 0,
+    uelYellowCards: 0,
+    uelRedCards: 0,
+    ueclYellowCards: 0,
+    ueclRedCards: 0,
     yellowCards: 0,
     redCards: 0,
     accumulatedYellowCards: 0,
@@ -144,7 +162,7 @@ function getZeroStats(): PlayerStats {
     morale: 70,
     formHistory: [],
     dynamicStats: undefined,
-  } as PlayerStats;
+  } as unknown as PlayerStats;
 }
 
 function clamp(value: number, min = 0, max = 100): number {
@@ -468,6 +486,8 @@ function getPlayers(save = loadSave()): AwardPlayer[] {
       leagueName: LEAGUES[league]?.name ?? league,
       leagueId: league,
       leagueMultiplier: goldenShoeMultiplier(league),
+      cupGoals: st.cupGoals ?? 0,
+      cupAssists: st.cupAssists ?? 0,
       leagueGoals: domestic.goals,
       leagueAssists: domestic.assists,
       leagueAppearances: domestic.appearances,

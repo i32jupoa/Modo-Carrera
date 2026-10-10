@@ -106,7 +106,7 @@ function applyMonthlyYouthGrowthToPlayer(player: AcademyPlayer, state: ClubAcade
   const attributes = Object.fromEntries(Object.entries(player.attributes).map(([key, value]) => [
     key,
     Math.round(clamp(value + spread * (0.7 + seededUnit(saveId, player.id, key, monthKey(date)) * 0.6), 20, 99) * 10) / 10,
-  ])) as AcademyPlayer["attributes"];
+  ])) as unknown as AcademyPlayer["attributes"];
   const retrainingActive = player.retrainingUntil && date <= player.retrainingUntil;
   const nextStats = withMonthlyOvrSnapshot(stats, date, nextInternalOvr, stats.startingOvr || Math.round(currentInternalOvr));
   return {

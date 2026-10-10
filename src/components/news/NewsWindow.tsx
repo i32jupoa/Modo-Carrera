@@ -6,6 +6,7 @@ import { NewsMatchRow } from "./NewsMatch";
 import { LeagueCrest, NewsPlayerFace, TeamCrest, TransferArrow, leaguesOfVisual } from "./NewsVisuals";
 import { CountryFlag } from "@/components/CountryFlag";
 import { teamById } from "@/data/teams";
+import { TypicalElevenPitch } from "@/components/TypicalElevenPitch";
 
 function clubName(id?: string): string {
   if (!id) return "";
@@ -40,7 +41,7 @@ export function NewsWindow({
   return (
     <Dialog open={!!item} onOpenChange={(o) => !o && onClose()}>
       <DialogContent
-        className={`max-w-2xl max-h-[90vh] overflow-y-auto p-0 gap-0 border-2 sm:rounded-2xl ${st.window}`}
+        className={`${item?.teamOfRound ? "max-w-4xl" : "max-w-2xl"} max-h-[92vh] overflow-y-auto p-0 gap-0 border-2 sm:rounded-2xl ${st.window}`}
       >
         {item && (
           <>
@@ -72,6 +73,20 @@ export function NewsWindow({
             </div>
 
             <div className="px-6 pb-6 pt-4 space-y-4">
+              {item.teamOfRound && (
+                <section className={`rounded-2xl border p-3 sm:p-5 ${st.block}`}>
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className={`text-[0.65rem] font-black uppercase tracking-[0.16em] ${st.accent}`}>{item.teamOfRound.competitionLabel}</p>
+                      <h3 className="mt-1 text-base font-black">{item.teamOfRound.roundLabel} · {item.teamOfRound.dateLabel}</h3>
+                    </div>
+                    <span className={`rounded-full border px-3 py-1 text-[0.62rem] font-black uppercase tracking-wider ${st.chip}`}>XI ideal</span>
+                  </div>
+                  <div className="mx-auto w-full max-w-lg">
+                    <TypicalElevenPitch eleven={item.teamOfRound.eleven} formation={item.teamOfRound.formation} />
+                  </div>
+                </section>
+              )}
               {/* ---------- Partido (igual que en Jornadas) ---------- */}
               {item.fixture && (
                 <div className="space-y-1.5">
@@ -121,7 +136,7 @@ export function NewsWindow({
               )}
 
               {/* ---------- Visual genérico (sin partido, traspaso ni lesión) ---------- */}
-              {!item.fixture && !item.transfer && !item.injury && (
+              {!item.fixture && !item.transfer && !item.injury && !item.teamOfRound && (
                 <div className={`rounded-xl border p-4 flex flex-wrap items-center gap-3 ${st.block}`}>
                   {item.visual.players.map((p) => (
                     <NewsPlayerFace key={p.id} playerId={p.id} name={p.name} size={48} />

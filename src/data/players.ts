@@ -3,6 +3,7 @@ import playersData from "./playersData";
 import {
   buildPositions,
   canPlayPosition,
+  calculatePositionSimilarity,
   isNaturalFor,
   playerPosCodes,
   toPosCode,
@@ -87,7 +88,7 @@ export function getPlayerShootingStats(
   // hacia arriba/abajo a medida que progresa.
   const baseSHO = playerId != null ? BASE_SHO_BY_ID.get(String(playerId)) : undefined;
   const dynamicSHO = Number(dynamicAttributes?.SHO);
-  const deltaSHO = Number.isFinite(baseSHO) && Number.isFinite(dynamicSHO) ? (dynamicSHO - baseSHO) : 0;
+  const deltaSHO = baseSHO !== undefined && Number.isFinite(baseSHO) && Number.isFinite(dynamicSHO) ? (dynamicSHO - baseSHO) : 0;
   const adjust = (value: number, influence: number) => Math.max(1, Math.min(99, value + deltaSHO * influence));
 
   return {
@@ -116,7 +117,7 @@ export function getPlayerCreativeStats(
   };
   const basePAS = playerId != null ? BASE_PAS_BY_ID.get(String(playerId)) : undefined;
   const dynamicPAS = Number(dynamicAttributes?.PAS);
-  const deltaPAS = Number.isFinite(basePAS) && Number.isFinite(dynamicPAS) ? (dynamicPAS - basePAS) : 0;
+  const deltaPAS = basePAS !== undefined && Number.isFinite(basePAS) && Number.isFinite(dynamicPAS) ? (dynamicPAS - basePAS) : 0;
   const adjust = (value: number, influence: number) => Math.max(1, Math.min(99, value + deltaPAS * influence));
 
   return {
@@ -616,25 +617,35 @@ const DEFAULT_LINEUP_SLOTS: PosCode[] = [
 
 export function defaultLineup(squad: Player[], unavailable: Set<string> = new Set()): string[] {
   const available = squad.filter((p) => !unavailable.has(p.id));
-  const byRating = [...available].sort((a, b) => b.rating - a.rating);
   const used = new Set<string>();
-  // Mantenemos los índices alineados con los huecos de la formación:
-  // si un hueco se queda vacío NO se desplazan los demás.
   const lineup: string[] = DEFAULT_LINEUP_SLOTS.map(() => "");
+  const scoreFor = (player: Player, slot: PosCode) => {
+    const positions = playerPosCodes(player);
+    if (slot === "GK" && !positions.includes("GK")) return -10000;
+    if (slot !== "GK" && positions.includes("GK")) return -10000;
+    const rating = Number(player.rating) || 0;
+    const primary = positions[0] === slot;
+    const secondary = positions.includes(slot);
+    const similarity = positions.reduce((best, p) => Math.max(best, calculatePositionSimilarity(p, slot)), 0);
+    return rating + (primary ? 4 : secondary ? 2 : similarity * 3 - 2);
+  };
 
-  // 1ª pasada: sólo demarcación exacta (sin privilegiar la principal).
+  // El portero se asigna primero. Para los jugadores de campo se elige el
+  // mejor encaje disponible con penalizaciones pequeñas: no se dejan huecos
+  // sólo porque la plantilla no declare literalmente la misma demarcación.
+  const keeperIndex = DEFAULT_LINEUP_SLOTS.findIndex((slot) => slot === "GK");
+  if (keeperIndex >= 0) {
+    const keeper = available.filter((p) => !used.has(p.id) && playerPosCodes(p).includes("GK"))
+      .sort((a, b) => scoreFor(b, "GK") - scoreFor(a, "GK"))[0];
+    if (keeper) { lineup[keeperIndex] = keeper.id; used.add(keeper.id); }
+  }
   DEFAULT_LINEUP_SLOTS.forEach((slot, i) => {
-    const pick = byRating.find((p) => !used.has(p.id) && isNaturalFor(playerPosCodes(p), slot));
-    if (pick) {
-      used.add(pick.id);
-      lineup[i] = pick.id;
-    }
+    if (slot === "GK") return;
+    const pick = available.filter((p) => !used.has(p.id) && !playerPosCodes(p).includes("GK"))
+      .sort((a, b) => scoreFor(b, slot) - scoreFor(a, slot) || b.rating - a.rating)[0];
+    if (pick) { used.add(pick.id); lineup[i] = pick.id; }
   });
-
-  // No hay segunda/tercera pasada: nunca se coloca a un jugador en una
-  // demarcación que no tenga declarada. Los huecos incompatibles quedan vacíos.
-
-  return lineup.filter((id) => id !== "");
+  return lineup.filter(Boolean);
 }
 
 export function avgForm(p: Player): number {

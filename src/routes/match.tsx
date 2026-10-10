@@ -382,6 +382,9 @@ function MatchPage() {
   const lastDangerAttackerRef = useRef<Record<"home" | "away", string | null>>({ home: null, away: null });
   const [forcedOutId, setForcedOutId] = useState<string | null>(null);
   const handledInjuriesRef = useRef<string[]>([]);
+  // Lesiones ocurridas en un minuto cuya jugada principal está en una escena
+  // interactiva (previa, gol/VAR o penalti). Se muestran al cerrar esa secuencia.
+  const deferredInjuryMinuteRef = useRef<number | null>(null);
   const isExtraTimeRef = useRef(false);
   const halftimeDoneRef = useRef(false);
   const etHalftimeDoneRef = useRef(false);
@@ -2420,80 +2423,144 @@ function MatchPage() {
     setStamina(next);
   }
 
-  /** Injury of one of my players at this exact minute → the player leaves the pitch immediately. */
+  /**
+   * Procesa todas las lesiones propias que ocurren en el mismo minuto. El
+   * motor puede registrar una lesión para cada equipo a la vez; detenerse en
+   * el primer `find()` ocultaba la segunda lesión y podía saltarse el cambio
+   * forzado del rival al abrir el editor de alineación.
+   */
   function checkInjuriesAt(m: number) {
     const fx = fixtureRef.current;
     if (!fx?.result) return false;
-    const mySide = fx.homeId === (myTeamIdRef.current || save?.myTeamId) ? "home" : "away";
-    const inj = (fx.result.injuries ?? []).find(
-      (i: any) =>
-        i.team === mySide &&
-        (i.minute ?? 60) === m &&
-        !handledInjuriesRef.current.includes(i.playerId),
+    const myId = myTeamIdRef.current || save?.myTeamId;
+    const mySide = fx.homeId === myId ? "home" : "away";
+    const opponentSide = mySide === "home" ? "away" : "home";
+    const sameMinute = (injury: any) => Number(injury.minute ?? 60) === m;
+
+    const ownInjuries = (fx.result.injuries ?? []).filter(
+      (injury: any) => injury.team === mySide && sameMinute(injury) &&
+        !handledInjuriesRef.current.includes(String(injury.playerId)) &&
+        myXIRef.current.includes(String(injury.playerId)),
     );
-    if (!inj) return false;
-    handledInjuriesRef.current = [...handledInjuriesRef.current, inj.playerId];
+    const opponentInjuries = (fx.result.injuries ?? []).filter(
+      (injury: any) => injury.team === opponentSide && sameMinute(injury) &&
+        !handledInjuriesRef.current.includes(`opponent:${injury.playerId}`) &&
+        oppXIRef.current.some((player: any) => String(player?.id) === String(injury.playerId)),
+    );
+    if (ownInjuries.length === 0 && opponentInjuries.length === 0) return false;
 
-    // Registrar la lesión en el estado persistente en el mismo instante en que
-    // ocurre. Así el jugador queda bloqueado también si el entrenador entra en
-    // el editor de alineación durante la pausa por lesión. Al terminar el
-    // encuentro se vuelve a confirmar y se guarda el snapshot definitivo.
+    // El mismo snapshot puede contener lesiones de ambos equipos en el mismo
+    // minuto: se marcan todas como atendidas antes de mostrar una única parada.
+    handledInjuriesRef.current = Array.from(new Set([
+      ...handledInjuriesRef.current,
+      ...ownInjuries.map((injury: any) => String(injury.playerId)),
+      ...opponentInjuries.map((injury: any) => `opponent:${injury.playerId}`),
+    ]));
     commitLiveInjuriesToPlayersStore(fx, fx.result);
-    const currentIndex = myXIRef.current.indexOf(inj.playerId);
-    if (currentIndex < 0) return false;
 
-    const check = canSubstitute(
-      {
-        subsUsed: subsUsedRef.current,
-        windowsUsed: windowsUsedRef.current,
+    const legalBenchIds = () => myBenchRef.current.filter((id) =>
+      !!id && !goneRef.current.includes(id) &&
+      !isPlayerInjuredAtDate(playerById(id), usePlayersStore.getState().currentDate),
+    );
+    const injuryNames: string[] = [];
+    let canReplaceAny = false;
+
+    ownInjuries.forEach((injury: any, index: number) => {
+      const playerId = String(injury.playerId);
+      const currentIndex = myXIRef.current.indexOf(playerId);
+      if (currentIndex < 0) return;
+      injuryNames.push(String(injury.playerName ?? playerById(playerId)?.name ?? "Jugador"));
+
+      const check = canSubstitute({
+        subsUsed: subsUsedRef.current + index,
+        windowsUsed: windowsUsedRef.current + (index > 0 ? 1 : 0),
         isExtraTime: isExtraTimeRef.current,
         phase: currentLivePhase(),
-      },
-      1,
-    );
-    const benchAvailable = myBenchRef.current.some(
-      (id) =>
-        !goneRef.current.includes(id) &&
-        !isPlayerInjuredAtDate(playerById(id), usePlayersStore.getState().currentDate),
-    );
-    const canReplaceNow = check.ok && benchAvailable;
+      }, 1);
+      const canReplace = check.ok && legalBenchIds().length > index;
+      playWithOneLess(playerId, injury.playerName, "injury", false);
+      if (canReplace) {
+        pendingForcedInjurySlotsRef.current = {
+          ...pendingForcedInjurySlotsRef.current,
+          [playerId]: currentIndex,
+        };
+        canReplaceAny = true;
+      }
+    });
 
-    pauseMatch("injury");
-
-    // A real injury always removes the player from the pitch immediately.
-    // When a legal replacement exists, remember the exact slot and force the
-    // manager to fill it in the live lineup editor before returning.
-    playWithOneLess(inj.playerId, inj.playerName, "injury");
-    if (canReplaceNow) {
-      pendingForcedInjurySlotsRef.current = {
-        ...pendingForcedInjurySlotsRef.current,
-        [inj.playerId]: currentIndex,
-      };
+    const previousOpponentSubs = oppSubsDoneRef.current.length;
+    if (opponentInjuries.length > 0) {
+      applyOpponentForcedInjurySubsAt(m);
+      const newlyApplied = oppSubsDoneRef.current.slice(previousOpponentSubs);
+      if (newlyApplied.length > 0) {
+        const forcedHighlights = newlyApplied.map((sub: any) => ({
+          minute: m,
+          team: opponentSide,
+          type: "forced_sub",
+          playerId: sub.playerInId,
+          playerName: sub.inName,
+          detail: `Entra por ${sub.outName} (cambio forzado por lesión)`,
+        }));
+        playedHighlightsRef.current = [...playedHighlightsRef.current, ...forcedHighlights];
+        setHighlightFeed((previous) => [...forcedHighlights, ...previous]);
+      }
     }
-    persistLive();
 
+    const rivalDetails = opponentInjuries.map((injury: any) => {
+      const outgoingId = String(injury.playerId);
+      const sub = oppSubsDoneRef.current.find((entry: any) =>
+        Number(entry.minute) === m && String(entry.playerOutId ?? entry.outId) === outgoingId,
+      );
+      const name = String(injury.playerName ?? outgoingId);
+      return sub
+        ? `${name}: entra ${sub.inName}.`
+        : `${name}: no quedaba un cambio de campo disponible y el equipo sigue con un jugador menos.`;
+    });
+    const bodyParts = [
+      ...(ownInjuries.length > 0 ? [canReplaceAny
+        ? `${injuryNames.join(", ")} ${injuryNames.length > 1 ? "salen" : "sale"} por lesión. Puedes completar los huecos disponibles en la alineación antes de continuar.`
+        : `${injuryNames.join(", ")} ${injuryNames.length > 1 ? "salen" : "sale"} por lesión y el equipo seguirá con menos jugadores porque no hay cambios legales disponibles.`] : []),
+      ...(rivalDetails.length > 0 ? [`Incidencia médica del rival: ${rivalDetails.join(" ")}`] : []),
+    ];
+    const mainInjury = ownInjuries[0] ?? opponentInjuries[0];
+    const mainSide = ownInjuries.length > 0 ? mySide : opponentSide;
+    const isRivalOnly = ownInjuries.length === 0;
     const moment = {
-      id: `injury-sub-${m}-${inj.playerId}`,
-      type: "injury_substitution",
+      id: `injury-${m}-${[...ownInjuries, ...opponentInjuries].map((injury: any) => injury.playerId).join("-")}`,
+      type: isRivalOnly ? "injury" : "injury_substitution",
       minute: m,
-      kicker: "🚑 Lesión",
-      title: "LESIÓN",
-      body: canReplaceNow
-        ? `${inj.playerName} sale del campo por lesión. Puedes sustituirlo o reorganizar el hueco antes de continuar.`
-        : `${inj.playerName} sale del campo por lesión y el equipo seguirá con uno menos.`,
-      playerName: inj.playerName,
-      playerId: inj.playerId,
-      teamName: mySide === "home" ? home.name : away.name,
-      teamSide: mySide,
-      teamLeagueName: getLeagueName(mySide === "home" ? home.league : away.league),
+      kicker: "🚑 Parte médico",
+      title: ownInjuries.length > 1 ? "LESIONES MÚLTIPLES" : isRivalOnly ? "LESIÓN DEL RIVAL" : "LESIÓN",
+      body: bodyParts.join(" "),
+      playerName: String(mainInjury?.playerName ?? "Jugador lesionado"),
+      playerId: String(mainInjury?.playerId ?? ""),
+      teamName: mainSide === "home" ? home.name : away.name,
+      teamSide: mainSide,
+      teamLeagueName: getLeagueName(mainSide === "home" ? home.league : away.league),
       emoji: "🚑",
-      detail: inj.reason || "Lesión",
-      forceLineupEdit: canReplaceNow,
+      detail: [...ownInjuries, ...opponentInjuries].map((injury: any) =>
+        `${injury.playerName ?? "Jugador"}: ${injury.reason || "Lesión"}`,
+      ).join(" · "),
+      forceLineupEdit: ownInjuries.length > 0 && canReplaceAny,
       hardPause: true,
     } as any;
     pendingSceneRef.current = null;
     showLiveMoment(moment, 3200);
+    if (deferredInjuryMinuteRef.current === m) deferredInjuryMinuteRef.current = null;
     return true;
+  }
+
+  function deferInjuriesUntilMinuteSceneEnds(m: number) {
+    const injuries = fixtureRef.current?.result?.injuries ?? [];
+    if (injuries.some((injury: any) => Number(injury.minute ?? 60) === m)) {
+      deferredInjuryMinuteRef.current = m;
+    }
+  }
+
+  function processDeferredInjuriesAt(m: number) {
+    if (deferredInjuryMinuteRef.current !== m) return false;
+    deferredInjuryMinuteRef.current = null;
+    return checkInjuriesAt(m);
   }
 
   function playWithOneLess(
@@ -3201,21 +3268,72 @@ function MatchPage() {
       const outIndex = xi.findIndex((player: any) => player?.id === injury.playerId);
       if (outIndex < 0) continue;
       const outgoing = xi[outIndex];
+      const outgoingIsKeeper = isGkPlayer(outgoing);
       const replacementId = injury?.replacementId ? String(injury.replacementId) : "";
       const key = `${m}|${injury.playerId}|${replacementId}`;
-      if (replacementId && alreadyDone.has(key)) continue;
-      const incoming = injury.forcedSub && replacementId
-        ? (bench.find((player: any) => player?.id === replacementId) ?? bench.find((player: any) => player && !isGkPlayer(player)))
-        : null;
+      if (alreadyDone.has(key)) continue;
+
+      // La simulación precomputada no siempre añade `forcedSub` o `replacementId`
+      // para lesiones rivales. Seleccionamos igualmente a un suplente real del
+      // banquillo; si cae el portero y no queda otro POR, un jugador de campo
+      // ocupa la portería de emergencia para que nunca quede vacía.
+      const currentPitchIds = new Set(xi.filter(Boolean).map((player: any) => String(player.id)));
+      const eligibleBench = bench.filter((player: any) =>
+        player && String(player.id) !== String(injury.playerId) && !currentPitchIds.has(String(player.id)),
+      );
+      const keeperCandidates = eligibleBench.filter((player: any) => isGkPlayer(player));
+      const fieldCandidates = eligibleBench.filter((player: any) => !isGkPlayer(player));
+      const outgoingPosition = String(outgoing?.position ?? "").toUpperCase();
+      const groupForPosition = (position: string) => {
+        if (["GK", "POR", "GOALKEEPER", "PORTERO"].includes(position)) return "GK";
+        if (/^(CB|LCB|RCB|LB|RB|LWB|RWB|DEF|LI|LD|DFC|CAI|CAD)/.test(position)) return "DEF";
+        if (/^(CDM|DM|MCD|CM|MC|CAM|AM|MCO|LM|RM|MI|MD|MID)/.test(position)) return "MID";
+        if (/^(ST|CF|FW|LW|RW|EI|ED|DEL)/.test(position)) return "FWD";
+        return "OTHER";
+      };
+      const outgoingGroup = groupForPosition(outgoingPosition);
+      const rankCandidates = (pool: any[]) => pool.slice().sort((a: any, b: any) => {
+        const samePosition = (player: any) => {
+          const positions = [player?.position, ...(Array.isArray(player?.positions) ? player.positions : [])]
+            .filter(Boolean).map((value: any) => String(value).toUpperCase());
+          if (positions.includes(outgoingPosition)) return 0;
+          if (positions.some((value: string) => groupForPosition(value) === outgoingGroup)) return 1;
+          return 2;
+        };
+        return samePosition(a) - samePosition(b) || Number(b.rating ?? b.OVR ?? 0) - Number(a.rating ?? a.OVR ?? 0);
+      });
+      let incoming = replacementId
+        ? eligibleBench.find((player: any) => String(player.id) === replacementId && (outgoingIsKeeper ? isGkPlayer(player) : !isGkPlayer(player)))
+        : undefined;
+      if (!incoming) {
+        const preferredPool = outgoingIsKeeper ? keeperCandidates : fieldCandidates;
+        incoming = rankCandidates(preferredPool)[0];
+      }
+      let emergencyKeeper = false;
+      if (!incoming && outgoingIsKeeper && fieldCandidates.length > 0) {
+        incoming = rankCandidates(fieldCandidates)[0];
+        emergencyKeeper = true;
+      }
 
       if (!incoming) {
+        // Sin sustituto legal, el lesionado abandona el campo y el equipo juega
+        // en inferioridad; nunca mantenemos al futbolista lesionado en el XI.
         xi[outIndex] = null;
         oppPlanRef.current = oppPlanRef.current.filter((plan) => plan.outId !== injury.playerId);
         continue;
       }
 
+      if (emergencyKeeper) {
+        incoming = {
+          ...incoming,
+          position: "GK",
+          positions: ["GK"],
+          originalPosition: incoming.position,
+          emergencyGoalkeeper: true,
+        };
+      }
       xi[outIndex] = incoming;
-      bench = bench.filter((player: any) => player?.id !== incoming.id);
+      bench = bench.filter((player: any) => String(player?.id) !== String(incoming.id));
       oppPlanRef.current = oppPlanRef.current.filter(
         (plan) => !(plan.minute > m && (plan.inId === incoming.id || plan.outId === injury.playerId)),
       );
@@ -3227,6 +3345,7 @@ function MatchPage() {
         playerInId: incoming.id,
         playerOutId: outgoing?.id ?? injury.playerId,
         forcedInjury: true,
+        emergencyGoalkeeper: emergencyKeeper,
       });
     }
 
@@ -3382,9 +3501,20 @@ function MatchPage() {
         isExpulsionCard(card),
       );
       if (myRedCardAtMinute) {
+        // La edición obligatoria del once también permite resolver un hueco por
+        // lesión que haya coincidido con la tarjeta roja en el mismo minuto.
+        if (deferredInjuryMinuteRef.current === currentMinute) {
+          const hasOwnInjury = (fixtureRef.current?.result?.injuries ?? []).some((injury: any) =>
+            Number(injury.minute ?? 60) === currentMinute &&
+            injury.team === mySideOf(fixtureRef.current) &&
+            myXIRef.current.includes(String(injury.playerId)),
+          );
+          if (hasOwnInjury && processDeferredInjuriesAt(currentMinute)) return;
+        }
         goEditLineupLive();
         return;
       }
+      if (processDeferredInjuriesAt(currentMinute)) return;
       if (scene.source?.nextHalftime || (currentMinute === 45 && !isExtraTimeRef.current)) {
         runAddedTimeTicks("firstHalf");
         return;
@@ -3480,6 +3610,7 @@ function MatchPage() {
 
       pendingSceneRef.current = null;
       setLiveMoment(null);
+      if (processDeferredInjuriesAt(currentMinute)) return;
       if (currentMinute === 45 && !isExtraTimeRef.current) {
         halftimePendingAfterMomentRef.current = false;
         runAddedTimeTicks("firstHalf");
@@ -3526,6 +3657,7 @@ function MatchPage() {
         setLiveMoment(pendingSceneRef.current.moment);
         return;
       }
+      if (processDeferredInjuriesAt(currentMinute)) return;
       if (currentMinute >= 90 && !isExtraTimeRef.current) {
         runAddedTimeTicks("secondHalf");
         return;
@@ -4080,6 +4212,7 @@ function MatchPage() {
     setPendingPenalty(null);
     pendingSceneRef.current = null;
     const currentMinute = minuteRef.current;
+    if (processDeferredInjuriesAt(currentMinute)) return;
     if (currentMinute >= 90 && !isExtraTimeRef.current) {
       runAddedTimeTicks("secondHalf");
       return;
@@ -4860,14 +4993,89 @@ function MatchPage() {
 
     const dangerTeamName = attackingSide === "home" ? home.name : away.name;
     const attacking = attackingSide === mySideOf(fx);
+    // La previa no describe el resultado ni el tipo exacto de desenlace: todos
+    // los textos pueden preceder a gol, parada, poste o fallo. La variedad se
+    // elige de forma determinista por partido/minuto para que no se repita una
+    // única plantilla y tampoco dependa del resultado que ya esté simulado.
+    const actor = String(dangerBase?.playerName ?? "El equipo");
+    const narratives = [
+      ["CAMBIO DE RITMO", `${actor} participa en una acción que acelera el partido. Los dos equipos ajustan sus posiciones.`],
+      ["EL PARTIDO SE ESTIRA", `La jugada gana metros y obliga a ambas líneas defensivas a reorganizarse.`],
+      ["DUELO EN EL ÚLTIMO TERCIO", `${actor} entra en una zona decisiva y el rival se prepara para disputar cada balón.`],
+      ["ESPACIO ENTRE LÍNEAS", `Aparece un pasillo por el que puede progresar la acción. La siguiente decisión será importante.`],
+      ["ATAQUE EN MARCHA", `El equipo mueve el balón con intención y busca la mejor forma de continuar la jugada.`],
+      ["PRESIÓN CERCA DEL ÁREA", `La defensa recibe presión y debe coordinar las coberturas sin perder las marcas.`],
+      ["UNA DECISIÓN POR TOMAR", `${actor} interviene cerca de la zona de ataque. Hay varias opciones abiertas para continuar.`],
+      ["SE ABRE UNA VÍA", `Un movimiento cambia las referencias defensivas y crea una nueva línea de pase.`],
+      ["TRANSICIÓN EN CURSO", `El balón cambia de zona con rapidez y los dos equipos se recolocan sobre la marcha.`],
+      ["EL BLOQUE SE MUEVE", `El equipo rival bascula para proteger los espacios mientras la posesión busca una salida.`],
+      ["ACCIÓN POR LA BANDA", `La jugada se desplaza hacia un costado y aparecen compañeros para apoyar la continuación.`],
+      ["COMBINACIÓN CORTA", `${actor} conecta con sus compañeros en una secuencia rápida que mueve a la defensa.`],
+      ["BALÓN DIVIDIDO", `Ambos equipos se preparan para disputar una pelota que puede cambiar el sentido del ataque.`],
+      ["ATAQUE CON PACIENCIA", `La posesión circula y espera el momento adecuado para encontrar un espacio.`],
+      ["SE BUSCA PROFUNDIDAD", `El equipo intenta ganar terreno a la espalda de la línea rival, que vigila los desmarques.`],
+      ["MOVIMIENTO SIN BALÓN", `${actor} cambia la referencia de marca y provoca ajustes en la defensa.`],
+      ["SEGUNDA JUGADA", `El balón queda en una zona disputada y varios jugadores se acercan para ganar la siguiente acción.`],
+      ["EL RIVAL SE REPLIEGA", `El equipo atacante se aproxima y encuentra una defensa que intenta cerrar los espacios interiores.`],
+      ["APOYO CERCANO", `${actor} recibe ayuda de un compañero y la acción puede continuar por más de una vía.`],
+      ["PASE ENTRE DEFENSAS", `Se intenta conectar con un compañero entre líneas, mientras la zaga protege el área.`],
+      ["RITMO ALTO", `La acción se desarrolla con pocos toques y obliga a reaccionar rápido a los futbolistas cercanos.`],
+      ["CAMBIO DE ORIENTACIÓN", `El balón busca otro sector del campo y la defensa debe ajustar distancias y referencias.`],
+      ["MARCAJE AJUSTADO", `${actor} encuentra oposición cerca y debe decidir cómo seguir ante la presión rival.`],
+      ["OPCIÓN POR DENTRO", `Una línea interior queda disponible durante un instante; el rival intenta anticiparse.`],
+      ["APOYO POR FUERA", `Un compañero ofrece amplitud y la defensa valora si mantener la posición o salir a presionar.`],
+      ["SE CARGA EL ÁREA", `Varios futbolistas se acercan a la zona de acción y preparan las posibles continuaciones.`],
+      ["LA JUGADA CAMBIA", `Un toque altera la dirección de la acción y obliga a ambos equipos a reaccionar.`],
+      ["VENTANA DE PASE", `Hay una posibilidad para avanzar, aunque las líneas de cobertura siguen muy cerca.`],
+      ["DUELO TÁCTICO", `El movimiento ofensivo se encuentra con una respuesta defensiva y la jugada sigue abierta.`],
+      ["BALÓN EN ZONA CLAVE", `La pelota llega a un sector importante del campo. Todavía no está decidido cómo acabará la acción.`],
+      ["PROGRESIÓN POR DENTRO", `${actor} acompaña el avance y los defensores intentan impedir que el equipo gire hacia portería.`],
+      ["APARECE UN APOYO", `La llegada de un compañero abre una alternativa y fuerza al rival a repartir responsabilidades.`],
+      ["PUGNA POR LA POSESIÓN", `La presión aumenta alrededor del balón, con varias opciones de pase y recuperación.`],
+      ["ATAQUE EN CONSTRUCCIÓN", `La posesión continúa cerca de la zona ofensiva y la defensa prepara el siguiente ajuste.`],
+      ["MOVIMIENTO HACIA EL ESPACIO", `${actor} se desplaza para ofrecer una línea de pase mientras el rival intenta seguirle.`],
+      ["UNA ACCIÓN ABIERTA", `La jugada está viva y puede resolverse de distintas maneras; los jugadores se preparan para el siguiente toque.`],
+      ["EL JUEGO BUSCA CONTINUIDAD", `El equipo intenta enlazar una acción con la siguiente sin perder el orden colectivo.`],
+      ["SE ABRE EL CAMPO", `Los jugadores ocupan nuevas zonas y aparece más de una alternativa para avanzar.`],
+      ["COBERTURA A TIEMPO", `La defensa ajusta una marca y los apoyos cercanos siguen atentos a la segunda jugada.`],
+      ["LECTURA DEL ESPACIO", `${actor} observa las opciones cercanas mientras el rival intenta cerrar los caminos.`],
+      ["EL BALÓN VIAJA ENTRE LÍNEAS", `La posesión cambia de altura y los centrocampistas se preparan para la siguiente disputa.`],
+      ["UN APOYO EN DIAGONAL", `Un compañero se mueve hacia dentro y obliga a reajustar las referencias defensivas.`],
+      ["LA ZAGA AJUSTA DISTANCIAS", `Los defensores coordinan sus movimientos para proteger los espacios entre ellos.`],
+      ["EL CENTRO DEL CAMPO SE ACTIVA", `Varios jugadores se acercan a la pelota y la siguiente decisión puede cambiar la orientación.`],
+      ["CAMBIO DE REFERENCIAS", `El movimiento ofensivo altera los emparejamientos y el rival reorganiza sus coberturas.`],
+      ["SE PREPARA UNA COMBINACIÓN", `${actor} dispone de apoyos próximos y la posesión busca una conexión limpia.`],
+      ["LA PRESIÓN SE INTENSIFICA", `El espacio alrededor del balón se reduce y cada equipo prepara una respuesta inmediata.`],
+      ["UN PASILLO QUE VIGILAR", `Se dibuja un espacio junto a la línea defensiva, aunque todavía hay coberturas por delante.`],
+      ["EL BLOQUE BASCULA", `El rival desplaza su estructura para acompañar el balón y proteger el lado contrario.`],
+      ["LA POSESIÓN CAMBIA DE ZONA", `El balón se mueve hacia otro sector y los jugadores reajustan sus posiciones.`],
+      ["SE BUSCA EL TERCER HOMBRE", `Una combinación intenta encontrar un apoyo libre mientras las marcas siguen la circulación.`],
+      ["DUELO EN EL CARRIL", `La acción se concentra en una banda y los apoyos de ambos equipos se aproximan.`],
+      ["EL EQUIPO MIDE LOS RIESGOS", `Los jugadores valoran si acelerar o mantener la posesión ante la organización rival.`],
+      ["SE MUEVE LA SEGUNDA LÍNEA", `Los centrocampistas acompañan la acción para ofrecer una salida y cubrir una posible pérdida.`],
+      ["OPCIONES A AMBOS LADOS", `La posesión conserva alternativas por dentro y por fuera, y la defensa debe repartir atención.`],
+      ["SE CIERRA UN CAMINO", `Una cobertura rival tapa una línea de pase y obliga a buscar otra solución.`],
+      ["EL BALÓN REGRESA AL APOYO", `La acción vuelve a un compañero cercano para reorganizar el siguiente movimiento.`],
+      ["CAMBIO DE ALTURA", `El equipo intenta progresar por otra línea mientras los rivales reajustan su presión.`],
+      ["MARCAS EN MOVIMIENTO", `Los jugadores siguen los desmarques y buscan conservar las distancias entre líneas.`],
+      ["EL PARTIDO SIGUE ABIERTO", `Ninguno de los equipos ha cerrado la jugada y varias continuaciones siguen siendo posibles.`],
+    ] as const;
+    let narrativeHash = 2166136261;
+    const narrativeSeed = `${String(fx.id)}|${Number(m)}|${attackingSide}|${String(dangerBase?.playerId ?? "")}|${rawHighlights.length}`;
+    for (let index = 0; index < narrativeSeed.length; index++) {
+      narrativeHash ^= narrativeSeed.charCodeAt(index);
+      narrativeHash = Math.imul(narrativeHash, 16777619);
+    }
+    const narrativeIndex = (narrativeHash >>> 0) % narratives.length;
+    const narrative = narratives[narrativeIndex];
+    const kickers = ["⚽ Partido en directo", "📍 Acción sobre el césped", "🏟️ Sigue el encuentro", "🔎 Atención a esta jugada", "⚡ Ritmo de partido", "🎯 Momento de decisión"];
     const danger = {
       ...dangerBase,
-      type: goal ? "goal_prelude" : dangerBase.type,
-      kicker: "🚨 Jugada en directo",
-      title: goal ? "¡PELIGRO!" : dangerBase.title,
-      body: attacking
-        ? dangerBase.body
-        : `${dangerBase.body} Tu defensa intenta cerrar el último pase y obligar al atacante a decidir con prisa.`,
+      type: "danger_chance",
+      kicker: kickers[narrativeIndex % kickers.length],
+      title: narrative[0],
+      body: narrative[1],
+      detail: "",
       // No decision wheel/choice: this scene is pure match presentation.
       actionPrompt: undefined,
       choices: undefined,
@@ -5073,6 +5281,7 @@ function MatchPage() {
         rawEvents.find((e: any) => e.type === "penalty_goal") ??
         rawHighlights.find((h: any) => h.type === "penalty_missed");
       if (penaltySource) {
+        deferInjuriesUntilMinuteSceneEnds(m);
         queueInteractivePenalty(penaltySource);
         return;
       }
@@ -5080,6 +5289,7 @@ function MatchPage() {
       // The most memorable scoring moments start with a short danger scene.
       // This is the key MADFUT/Pacybits-like rhythm: anticipation -> resolution.
       if (stageDangerBeforeResolution(m, rawEvents, rawCards, rawHighlights)) {
+        deferInjuriesUntilMinuteSceneEnds(m);
         return;
       }
 
@@ -5109,13 +5319,9 @@ function MatchPage() {
 
       drainStamina();
 
-      // Injuries keep their own manager flow (medical stop → mandatory change),
-      // but the major-moment overlay is shown first so the incident actually
-      // feels important rather than being hidden inside the substitution panel.
-      const injury = rawHighlights.find((h: any) => h.type === "injury" && (h.minute ?? 0) === m);
-      if (injury && mySide === injury.team && myXIRef.current.includes(injury.playerId)) {
-        if (checkInjuriesAt(m)) return;
-      }
+      // Processar lesiones de ambos equipos antes de seleccionar cualquier otra
+      // escena impide que la lesión de un equipo oculte la del otro en ese minuto.
+      if (checkInjuriesAt(m)) return;
 
       const selected = selectMajorMoment(events, cards, rawHighlights, m);
       const importantMoment = selected?.moment ?? null;
@@ -5162,8 +5368,6 @@ function MatchPage() {
         showLiveMoment(importantMoment, isEmergency ? 3200 : 2600, !transientCardOrBreak);
         return;
       }
-
-      if (checkInjuriesAt(m)) return;
 
       if (m === 45 && !halftimeDoneRef.current) {
         runAddedTimeTicks("firstHalf");
@@ -5516,7 +5720,7 @@ function MatchPage() {
       return;
     }
 
-    const currentMinute = Math.max(0, Math.min(90, Number(minuteRef.current) || 0));
+    const currentMinute = Math.max(0, Math.min(94, Number(minuteRef.current) || 0));
     const result = fx.result;
     const mySide = mySideOf(fx);
     const opponentSide: "home" | "away" = mySide === "home" ? "away" : "home";
@@ -5559,18 +5763,18 @@ function MatchPage() {
 
     appendUnique(
       playedEventsRef.current,
-      normalizeLiveArray(result.events).filter((e: any) => Number(e?.minute ?? 0) > currentMinute && Number(e?.minute ?? 0) <= 90),
+      normalizeLiveArray(result.events).filter((e: any) => Number(e?.minute ?? 0) > currentMinute && Number(e?.minute ?? 0) <= 94),
       eventKey,
     );
     appendUnique(
       playedCardsRef.current,
-      normalizeLiveArray(result.cards).filter((c: any) => Number(c?.minute ?? 0) > currentMinute && Number(c?.minute ?? 0) <= 90),
+      normalizeLiveArray(result.cards).filter((c: any) => Number(c?.minute ?? 0) > currentMinute && Number(c?.minute ?? 0) <= 94),
       cardKey,
     );
     appendUnique(
       playedHighlightsRef.current,
       normalizeLiveArray(result.highlights)
-        .filter((h: any) => Number(h?.minute ?? 0) > currentMinute && Number(h?.minute ?? 0) <= 90)
+        .filter((h: any) => Number(h?.minute ?? 0) > currentMinute && Number(h?.minute ?? 0) <= 94)
         .filter((h: any) => !(h.type === "forced_sub" && h.team === mySide)),
       highlightKey,
     );
@@ -5591,7 +5795,7 @@ function MatchPage() {
     );
 
     const futureSubstitutions = normalizeLiveArray(result.substitutions)
-      .filter((s: any) => Number(s?.minute ?? 0) > currentMinute && Number(s?.minute ?? 0) <= 90)
+      .filter((s: any) => Number(s?.minute ?? 0) > currentMinute && Number(s?.minute ?? 0) <= 94)
       .sort((a: any, b: any) => Number(a?.minute ?? 0) - Number(b?.minute ?? 0));
 
     const newMySubs: any[] = [];
@@ -5719,7 +5923,7 @@ function MatchPage() {
     };
 
     const myFutureSubsSorted = (subsRef.current || [])
-      .filter((s: any) => Number(s.minute) > currentMinute && Number(s.minute) <= 90)
+      .filter((s: any) => Number(s.minute) > currentMinute && Number(s.minute) <= 94)
       .slice()
       .sort((a: any, b: any) => Number(a.minute) - Number(b.minute));
     let staminaMinute = currentMinute;
@@ -5734,7 +5938,7 @@ function MatchPage() {
         stamina[sub.inId] = STAMINA_START;
       }
     }
-    drainPlayers(90 - staminaMinute);
+    drainPlayers(94 - staminaMinute);
     staminaRef.current = stamina;
 
     if (newMySubs.length || newOppSubs.length) {
@@ -5747,34 +5951,34 @@ function MatchPage() {
     const countChronicleGoals = (team: "home" | "away") =>
       playedEventsRef.current.filter((e: any) => e.team === team && regularGoalTypes.has(e.type)).length;
 
-    // Legacy European saves can contain a final score without every goal event.
-    // Restore only the missing goal records once, then continue to the normal
-    // finalization path.
-    for (const team of ["home", "away"] as const) {
-      const expected = Number(team === "home" ? result.homeGoals : result.awayGoals) || 0;
-      const existing = countChronicleGoals(team);
-      if (expected <= existing) continue;
-      const sideXI = team === "home" ? homeXIRef.current : awayXIRef.current;
-      const candidates = sideXI.filter(Boolean);
-      for (let i = existing; i < expected && candidates.length; i++) {
-        const p = candidates[i % candidates.length];
-        playedEventsRef.current.push({
-          minute: Math.min(90, Math.max(1, 5 + Math.floor((84 * (i - existing + 1)) / Math.max(1, expected - existing + 1)))),
-          team,
-          type: "goal",
-          scorerId: p.id,
-          scorerName: p.name,
-          detail: "Gol generado al cerrar la simulación",
-        });
+    // Compatibilidad con partidas antiguas que guardaban el marcador final
+    // pero no guardaban ningún evento de gol. Si existe historial de goles,
+    // incluida una decisión interactiva/VAR, NO se reconstruyen ni se resucitan
+    // goles a partir del resultado precalculado.
+    const goalTypes = new Set(["goal", "penalty_goal", "free_kick_goal", "own_goal"]);
+    const hasAnyGoalEvent = playedEventsRef.current.some((event: any) => goalTypes.has(event?.type));
+    if (!hasAnyGoalEvent) {
+      for (const team of ["home", "away"] as const) {
+        const expected = Math.max(0, Number(team === "home" ? result.homeGoals : result.awayGoals) || 0);
+        const sideXI = (team === "home" ? homeXIRef.current : awayXIRef.current).filter(Boolean);
+        for (let i = 0; i < expected && sideXI.length; i++) {
+          const player = sideXI[i % sideXI.length];
+          playedEventsRef.current.push({
+            minute: Math.min(90, Math.max(1, 5 + Math.floor((84 * (i + 1)) / (expected + 1)))),
+            team,
+            type: "goal",
+            scorerId: player.id,
+            scorerName: player.name,
+            detail: "Gol recuperado de una partida antigua sin eventos de gol",
+          });
+        }
       }
     }
 
+    // El registro cronológico es la única fuente de verdad. Nunca imponemos de
+    // nuevo el resultado precalculado: eso perdía goles del directo y decisiones VAR.
     homeScoreRef.current = countChronicleGoals("home");
     awayScoreRef.current = countChronicleGoals("away");
-    const finalHome = Number(result.homeGoals);
-    const finalAway = Number(result.awayGoals);
-    if (Number.isFinite(finalHome)) homeScoreRef.current = finalHome;
-    if (Number.isFinite(finalAway)) awayScoreRef.current = finalAway;
 
     try {
       finalizePlayedChronicle();
@@ -5928,6 +6132,7 @@ function MatchPage() {
   const fixture = fixtureRef.current;
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
+  const matchTeamColors = resolveMatchTeamColors(home, away);
   const myId = save.myTeamId || "";
   const isHome = fixture.homeId === myId;
   const isMe = (id: string) => id === myId;
@@ -6134,7 +6339,7 @@ function MatchPage() {
 
   return (
     <div
-      className={`p-1.5 md:p-2 max-w-[1240px] mx-auto ${phase === "playing" ? "pb-24 md:pb-5" : ""}`}
+      className={`w-full max-w-[1600px] mx-auto px-2 py-3 sm:px-4 md:px-6 lg:px-8 ${phase === "playing" ? "pb-24 md:pb-8" : ""}`}
     >
       {/* Always-visible match clock */}
       <div className="sticky top-0 z-30 -mx-3 md:-mx-4 mb-1 px-1.5 md:px-2 py-1 bg-background/85 backdrop-blur border-b border-border/60">
@@ -6156,7 +6361,7 @@ function MatchPage() {
       </div>
 
       {phase !== "preview" && (
-        <div className="mb-4 grid gap-2 lg:grid-cols-[0.8fr_1.2fr]">
+        <div className="mb-5 grid gap-3 xl:grid-cols-[minmax(360px,0.85fr)_minmax(0,1.15fr)]">
           <MomentumBar
             compact
             value={isHome ? 100 - momentum : momentum}
@@ -6167,6 +6372,8 @@ function MatchPage() {
               isHome ? home.name : away.name,
               isHome ? away.name : home.name,
             )}
+            homeColor={matchTeamColors.homeColor}
+            awayColor={matchTeamColors.awayColor}
           />
           <LiveCommentary
             latest={commentaryEntries[0] ?? null}
@@ -6176,9 +6383,9 @@ function MatchPage() {
         </div>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] items-start">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.9fr)] 2xl:gap-7 items-start">
         <div className="min-w-0">
-          <div className="panel-glow p-3 md:p-4">
+          <div className="panel-glow p-4 md:p-5 xl:p-6">
             <div className="flex items-center justify-between mb-4">
               <span className="chip">{headerText}</span>
               <div className="text-sm scoreline font-bold text-primary">{liveMinuteLabel}</div>
@@ -6502,8 +6709,7 @@ function MatchPage() {
               {fixture?.result?.stats &&
                 (() => {
                   const acc = accumulateStats(fixture.result.stats, phase === "done" ? 90 : minute);
-                  const colors = resolveMatchTeamColors(home, away);
-                  return <MatchStatsPanel home={acc.home} away={acc.away} homeColor={colors.homeColor} awayColor={colors.awayColor} />;
+                  return <MatchStatsPanel home={acc.home} away={acc.away} homeColor={matchTeamColors.homeColor} awayColor={matchTeamColors.awayColor} />;
                 })()}
               {phase === "done" && fixture?.result && (
                 <PlayerRatingsPanel
@@ -6518,7 +6724,7 @@ function MatchPage() {
         </div>
 
         <div className="min-w-0">
-          <div className="panel p-5 xl:sticky xl:top-16">
+          <div className="panel p-4 md:p-5 xl:p-6 xl:sticky xl:top-16">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold">Crónica del partido</h3>
               <span className="scoreline text-sm font-black text-primary tabular-nums">

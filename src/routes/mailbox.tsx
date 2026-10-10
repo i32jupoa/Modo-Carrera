@@ -190,7 +190,7 @@ function MailboxPage() {
               return (
                 <button key={conversation.playerId} type="button" onClick={() => { setSelectedPlayerId(player.id); setMobileChat(true); }} className={`flex w-full items-center gap-3 border-b border-border/40 p-3 text-left transition ${active ? "bg-primary/10" : "hover:bg-muted/40"}`}>
                   <div className="relative">
-                    <PlayerFace name={player.name} image={faceUrl(player.id, player.cardImage)} role={roleFromPosition(player.position)} size={44} showRing={false} />
+                    <PlayerFace name={player.name} image={faceUrl(player.id, player.cardImage)} role={roleFromPosition(player.positions?.[0] ?? "")} size={44} showRing={false} />
                     {conversation.unreadCount > 0 && (
                       <span
                         className="absolute -right-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-yellow-400 text-[0px] text-black ring-2 ring-background"
@@ -216,7 +216,7 @@ function MailboxPage() {
             <>
               <header className="flex items-center gap-3 border-b border-border/60 bg-card/70 px-4 py-3 backdrop-blur">
                 <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileChat(false)}><ArrowLeft className="h-4 w-4" /></Button>
-                <PlayerFace name={selectedPlayer.name} image={faceUrl(selectedPlayer.id, selectedPlayer.cardImage)} role={roleFromPosition(selectedPlayer.position)} size={42} showRing={false} />
+                <PlayerFace name={selectedPlayer.name} image={faceUrl(selectedPlayer.id, selectedPlayer.cardImage)} role={roleFromPosition(selectedPlayer.positions?.[0] ?? "")} size={42} showRing={false} />
                 <div className="min-w-0 flex-1"><div className="truncate font-black">{selectedPlayer.name}</div><div className="mt-1 flex items-center gap-2"><RoleBadge role={stats[selectedPlayer.id]?.squadRole} compact /><MoodFace morale={stats[selectedPlayer.id]?.morale ?? 70} size={15} showLabel /></div></div>
               </header>
 

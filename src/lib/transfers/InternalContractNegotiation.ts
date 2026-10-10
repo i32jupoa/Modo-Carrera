@@ -263,7 +263,7 @@ export function evaluateInternalOffer(input: {
   );
   const homegrownBonus = context.homegrown ? INTERNAL_CONTRACT_NEGOTIATION.homegrownBonus : 0;
   const satisfactionScore = clamp(
-    loyalty * 0.35 + morale * 0.25 + satisfaction * 0.20 + tenureBonus + homegrownBonus + (1 - player.personality.greedy) * 0.1,
+    loyalty * 0.35 + morale * 0.25 + satisfaction * 0.20 + tenureBonus + homegrownBonus + (1 - player.personality.greed) * 0.1,
     0,
     1,
   );
@@ -517,7 +517,7 @@ export function submitInternalContractOffer(input: {
     state.counterOffer = undefined;
   }
 
-  state.lastMessage = state.status === "accepted"
+  state.lastMessage = verdict === "accepted"
     ? evaluation.message
     : state.lastMessage;
   negotiations.set(state.id, state);

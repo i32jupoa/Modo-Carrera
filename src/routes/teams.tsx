@@ -40,6 +40,7 @@ import { PlayerFace, ROLE_TEXT, roleFromPosition } from "@/components/PlayerFace
 import { formatPositionLabel, sortByPositionGroupAndOvr } from "@/lib/positions";
 import { TypicalElevenPitch } from "@/components/TypicalElevenPitch";
 import { getPlayerForm } from "@/lib/playerForm";
+import { getAllPlayedFixtures } from "@/lib/teamForm";
 import { PlayerDetailDialog } from "@/components/PlayerDetailDialog";
 import { useAcademyStore } from "@/lib/academy/academyStore";
 import { loadAcademyAiClub } from "@/lib/academy/academyAiPersistence";
@@ -254,6 +255,33 @@ function TeamsPage() {
   const [otherClubAcademyError, setOtherClubAcademyError] = useState<string | null>(null);
   const currentDate = usePlayersStore((s: any) => s.currentDate);
   const playerStats = usePlayersStore((s: any) => s.stats);
+  // Media calculada desde las notas de todos los partidos disputados de la temporada,
+  // sin depender de la caché mensual de estadísticas de cada liga.
+  const seasonRatingByPlayer = useMemo(() => {
+    const totals = new Map<string, { total: number; count: number }>();
+    if (!save) return new Map<string, number>();
+    const seasonStart = Number(String(save.season ?? "").slice(0, 4));
+    for (const fixture of getAllPlayedFixtures(save)) {
+      if (!fixture.result) continue;
+      if (seasonStart && fixture.date && /^\d{4}-\d{2}-\d{2}/.test(fixture.date)) {
+        const year = Number(fixture.date.slice(0, 4));
+        const month = Number(fixture.date.slice(5, 7));
+        const inSeason = (year === seasonStart && month >= 7) || (year === seasonStart + 1 && month <= 6);
+        if (!inSeason) continue;
+      }
+      for (const rating of fixture.result.ratings ?? []) {
+        const id = String(rating.playerId ?? "");
+        const minutes = Number(rating.minutes ?? 0);
+        const value = Number(rating.rating);
+        if (!id || minutes <= 0 || !Number.isFinite(value)) continue;
+        const current = totals.get(id) ?? { total: 0, count: 0 };
+        current.total += value;
+        current.count += 1;
+        totals.set(id, current);
+      }
+    }
+    return new Map([...totals.entries()].map(([id, value]) => [id, value.total / value.count]));
+  }, [save]);
   const academyClub = useAcademyStore((state) => selectedTeam ? state.clubs[selectedTeam.id] : undefined);
   const ensureAcademyClub = useAcademyStore((state) => state.ensureClub);
   const teamsSectionRef = useRef<HTMLDivElement>(null);
@@ -350,10 +378,10 @@ function TeamsPage() {
   // cambian al cerrar una venta o una cesión. Sin ellos el `useMemo` devolvía
   // la plantilla cacheada y el jugador seguía apareciendo en la ficha del
   // equipo aunque ya se hubiera marchado.
-  const teamSquad = useMemo(() => {
+  const teamSquad = useMemo<FcPlayer[]>(() => {
     if (!selectedTeam) return [];
     try {
-      return getFcSquadByTeamId(selectedTeam.id) ?? [];
+      return (getFcSquadByTeamId(selectedTeam.id) ?? []) as FcPlayer[];
     } catch (error) {
       console.error("No se pudo cargar la plantilla del equipo; usando una plantilla vacía.", error);
       return [];
@@ -883,11 +911,12 @@ function TeamsPage() {
                       const goalContributions = stats.goals + stats.assists;
                       const dynamicStats = stats.dynamicStats;
                       const averageRating =
-                        (dynamicStats?.seasonAppearances ?? 0) > 0
-                          ? (dynamicStats?.seasonAverageRating ?? null)
-                          : stats.formHistory?.length
-                            ? stats.formHistory.reduce((sum, value) => sum + value, 0) / stats.formHistory.length
-                            : null;
+                        seasonRatingByPlayer.get(String(p.ID))
+                          ?? ((dynamicStats?.seasonAppearances ?? 0) > 0
+                            ? (dynamicStats?.seasonAverageRating ?? null)
+                            : stats.formHistory?.length
+                              ? stats.formHistory.reduce((sum, value) => sum + value, 0) / stats.formHistory.length
+                              : null);
                       const mvpCount = dynamicStats?.seasonMVPs ?? stats.motm ?? 0;
                       const cleanSheets = dynamicStats?.seasonCleanSheets ?? stats.cleanSheets ?? 0;
 

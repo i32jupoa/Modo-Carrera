@@ -206,17 +206,17 @@ export function canPlayPosition(codes: PosCode[], slot: PosCode): boolean {
  */
 const POSITION_SIMILARITY: Record<PosCode, Partial<Record<PosCode, number>>> = {
   GK: { GK: 1.0 },
-  DFC: { DFC: 1.0, LD: 0.7, LI: 0.7, MCD: 0.4 },
-  LD: { LD: 1.0, DFC: 0.7, LI: 0.3 },
-  LI: { LI: 1.0, DFC: 0.7, LD: 0.3 },
-  MCD: { MCD: 1.0, MC: 0.8, DFC: 0.4 },
-  MC: { MC: 1.0, MCD: 0.8, MCO: 0.8, MD: 0.7, MI: 0.7 },
-  MCO: { MCO: 1.0, MC: 0.8, MD: 0.6, MI: 0.6, DC: 0.5 },
-  MD: { MD: 1.0, MC: 0.7, ED: 0.85, MCO: 0.6, MI: 0.5 },
-  MI: { MI: 1.0, MC: 0.7, EI: 0.85, MCO: 0.6, MD: 0.5 },
-  ED: { ED: 1.0, MD: 0.85, DC: 0.6, EI: 0.4 },
-  EI: { EI: 1.0, MI: 0.85, DC: 0.6, ED: 0.4 },
-  DC: { DC: 1.0, MCO: 0.5, ED: 0.6, EI: 0.6 },
+  DFC: { DFC: 1.0, LD: 0.72, LI: 0.72, MCD: 0.48, MC: 0.20 },
+  LD: { LD: 1.0, DFC: 0.72, LI: 0.35, MCD: 0.32, MC: 0.28, MD: 0.48 },
+  LI: { LI: 1.0, DFC: 0.72, LD: 0.35, MCD: 0.32, MC: 0.28, MI: 0.48 },
+  MCD: { MCD: 1.0, MC: 0.88, DFC: 0.48, LD: 0.32, LI: 0.32 },
+  MC: { MC: 1.0, MCD: 0.88, MCO: 0.82, MD: 0.72, MI: 0.72, LD: 0.28, LI: 0.28 },
+  MCO: { MCO: 1.0, MC: 0.82, MD: 0.66, MI: 0.66, DC: 0.58, ED: 0.52, EI: 0.52 },
+  MD: { MD: 1.0, MC: 0.72, ED: 0.88, MCO: 0.66, MI: 0.52, LD: 0.48, DC: 0.48 },
+  MI: { MI: 1.0, MC: 0.72, EI: 0.88, MCO: 0.66, MD: 0.52, LI: 0.48, DC: 0.48 },
+  ED: { ED: 1.0, MD: 0.88, DC: 0.66, EI: 0.44, MCO: 0.52, MI: 0.42 },
+  EI: { EI: 1.0, MI: 0.88, DC: 0.66, ED: 0.44, MCO: 0.52, MD: 0.42 },
+  DC: { DC: 1.0, MCO: 0.58, ED: 0.66, EI: 0.66, MD: 0.48, MI: 0.48 },
 };
 
 /**
@@ -224,7 +224,10 @@ const POSITION_SIMILARITY: Record<PosCode, Partial<Record<PosCode, number>>> = {
  * @returns 0.0 (completamente diferentes) a 1.0 (idénticas)
  */
 export function calculatePositionSimilarity(pos1: PosCode, pos2: PosCode): number {
-  return POSITION_SIMILARITY[pos1]?.[pos2] ?? 0;
+  if (pos1 === pos2) return 1;
+  // Algunas afinidades son simétricas por diseño aunque una de las filas no
+  // las haya explicitado: MC↔MCD, lateral↔interior, etc.
+  return Math.max(POSITION_SIMILARITY[pos1]?.[pos2] ?? 0, POSITION_SIMILARITY[pos2]?.[pos1] ?? 0);
 }
 
 /**

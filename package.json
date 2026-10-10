@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test:season-balance": "node scripts/season-balance-test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

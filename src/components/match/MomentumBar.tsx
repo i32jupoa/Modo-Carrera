@@ -6,9 +6,11 @@ interface MomentumBarProps {
   awayLabel: string;
   status: string;
   compact?: boolean;
+  homeColor?: string;
+  awayColor?: string;
 }
 
-export function MomentumBar({ value, homeLabel, awayLabel, status, compact = false }: MomentumBarProps) {
+export function MomentumBar({ value, homeLabel, awayLabel, status, compact = false, homeColor = "#2563EB", awayColor = "#F97316" }: MomentumBarProps) {
   const clamped = Math.max(0, Math.min(100, value));
   const homePct = 100 - clamped;
   const homeDominant = homePct > 58;
@@ -24,23 +26,25 @@ export function MomentumBar({ value, homeLabel, awayLabel, status, compact = fal
           key={status}
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          className={`text-xs font-black ${homeDominant ? "text-primary" : awayDominant ? "text-destructive" : "text-foreground"}`}
+          className={`text-xs font-black ${homeDominant ? "text-primary" : awayDominant ? "text-sky-300" : "text-foreground"}`}
         >
           {status}
         </motion.div>
       </div>
       <div className={`flex items-center justify-between gap-3 ${compact ? "text-[0.68rem] mb-1" : "text-xs mb-2"} font-bold`}>
         <span className={homeDominant ? "text-primary" : "text-muted-foreground"}>{homeLabel}</span>
-        <span className={awayDominant ? "text-destructive" : "text-muted-foreground"}>{awayLabel}</span>
+        <span className={awayDominant ? "text-sky-300" : "text-muted-foreground"}>{awayLabel}</span>
       </div>
       <div className={`relative ${compact ? "h-2" : "h-3"} overflow-hidden rounded-full bg-secondary/80 border border-border/50`}>
         <motion.div
-          className="absolute inset-y-0 left-0 rounded-full bg-primary/80"
+          className="absolute inset-y-0 left-0 rounded-full"
+          style={{ backgroundColor: homeColor }}
           animate={{ width: `${homePct}%` }}
           transition={{ type: "spring", stiffness: 120, damping: 18 }}
         />
         <motion.div
-          className="absolute inset-y-0 right-0 rounded-full bg-destructive/70"
+          className="absolute inset-y-0 right-0 rounded-full"
+          style={{ backgroundColor: awayColor }}
           animate={{ width: `${clamped}%` }}
           transition={{ type: "spring", stiffness: 120, damping: 18 }}
         />

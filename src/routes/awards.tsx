@@ -102,7 +102,7 @@ function RankingRow({ rank, player, stat }: { rank: number; player: AwardPlayer;
   );
 }
 
-function RankingList({
+function RankingList<T extends AwardPlayer>({
   title,
   icon,
   entries,
@@ -111,8 +111,8 @@ function RankingList({
 }: {
   title: string;
   icon: ReactNode;
-  entries: AwardPlayer[];
-  renderStat?: (entry: AwardPlayer) => string;
+  entries: T[];
+  renderStat?: (entry: T) => string;
   maxHeight?: string;
 }) {
   return (

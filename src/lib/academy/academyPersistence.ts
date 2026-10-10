@@ -1,7 +1,7 @@
 import { getCurrentSaveId } from "@/lib/savedGames";
 import { idbGetItem, idbRemoveItem, idbSetItem } from "@/lib/transfers/marketIdb";
 import { createEmptyAcademySeasonStats } from "./academyTypes";
-import { toPosCode } from "@/lib/positions";
+import { toPosCode, type PosCode } from "@/lib/positions";
 import type { AcademyMonthlyStats, AcademySeasonStats, AcademyPlayer, ClubAcademyState } from "./academyTypes";
 
 export const ACADEMY_STATE_VERSION = 4;
@@ -75,7 +75,7 @@ function normalizePlayer(player: AcademyPlayer, season: number): AcademyPlayer {
   const positions = rawPositions
     .map((position) => toPosCode(String(position)))
     .filter((position): position is NonNullable<ReturnType<typeof toPosCode>> => Boolean(position));
-  const finalPositions = positions.length ? positions : ["MC"];
+  const finalPositions: PosCode[] = positions.length ? positions : ["MC"];
   const normalizedStats = normalizeSeasonStats(player.academyStats, season);
   const rawInternalOvr = Number(player.internalOvr);
   const latestRecordedOvr = normalizedStats.monthlyStats

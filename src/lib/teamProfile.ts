@@ -6,7 +6,7 @@ import type { Team } from "@/data/teams";
 import type { FcPlayer } from "@/store/playersStore";
 import type { DefenseLine, PlayStyle, Pressure } from "@/lib/teamTactics";
 import { ALL_FORMATIONS, FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
-import { buildPositions, canPlayPosition, type PosCode } from "@/lib/positions";
+import { buildPositions, canPlayPosition, calculatePositionSimilarity, type PosCode } from "@/lib/positions";
 
 /* ------------------------------------------------------- formaciones por estilo */
 
@@ -334,7 +334,7 @@ export function formationSlots(formation: string): Slot[] {
   });
 }
 
-export type ElevenSlot = { label: string; player: FcPlayer | null; natural: boolean };
+export type ElevenSlot = { label: string; player: FcPlayer | null; natural: boolean; matchRating?: number };
 
 /**
  * 11 tipo estimado: para cada hueco de la formación coge al jugador libre
@@ -373,29 +373,32 @@ export function estimatedEleven(formation: string, squad: FcPlayer[]): ElevenSlo
       return { label: slot.label, player: pick, natural: false };
     }
 
-    // Obtener jugadores que pueden jugar en la posición requerida
+    // Afinidad posicional: una posición secundaria conserva casi todo el OVR;
+    // las posiciones cercanas pueden adaptarse con una penalización gradual.
+    // Portero y jugador de campo no se convierten entre sí.
     const candidates = squad
       .filter((p) => !used.has(p.ID))
       .map((p) => {
         const codes = buildPositions(p.Position, p["Alternative positions"]);
-        const isPrimary = codes[0] === requiredPos; // La primera posición es la principal
-        const canPlay = codes.includes(requiredPos) || canPlayPosition(codes, requiredPos);
-        return { player: p, isPrimary, canPlay };
+        const isPrimary = codes[0] === requiredPos;
+        const isSecondary = !isPrimary && codes.includes(requiredPos);
+        const goalkeepingMismatch = (requiredPos === "GK") !== codes.includes("GK");
+        const similarity = goalkeepingMismatch
+          ? 0
+          : codes.reduce((best, code) => Math.max(best, calculatePositionSimilarity(code, requiredPos)), 0);
+        const exact = codes.includes(requiredPos);
+        const canPlay = !goalkeepingMismatch && (exact || similarity >= 0.35);
+        const penalty = exact ? (isPrimary ? 0 : 0.5) : (1 - similarity) * 15;
+        const score = Number(p.OVR || 0) - penalty + (isPrimary ? 0.5 : isSecondary ? 0.25 : 0);
+        return { player: p, isPrimary, canPlay, similarity, score };
       })
-      .filter((c) => c.canPlay);
+      .filter((candidate) => candidate.canPlay);
 
     if (candidates.length === 0) {
       return { label: slot.label, player: null, natural: false };
     }
 
-    // Ordenar: primero por OVR, luego por si es posición principal
-    candidates.sort((a, b) => {
-      if (b.player.OVR !== a.player.OVR) {
-        return b.player.OVR - a.player.OVR;
-      }
-      // Si mismo OVR, priorizar posición principal
-      return (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0);
-    });
+    candidates.sort((a, b) => b.score - a.score || b.similarity - a.similarity || b.player.OVR - a.player.OVR);
 
     const pick = candidates[0].player;
     used.add(pick.ID);

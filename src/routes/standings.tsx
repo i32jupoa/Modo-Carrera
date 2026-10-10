@@ -5,7 +5,7 @@ import { LEAGUES, teamById, teamsByLeague, type LeagueId } from "@/data/teams";
 import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
 import { TeamLogo } from "@/components/TeamLogo";
 import { TeamForm } from "@/components/TeamForm";
-import { getTeamForms } from "@/lib/teamForm";
+import { getTeamFormsForCompetition } from "@/lib/teamForm";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import {
   Select,
@@ -111,7 +111,7 @@ function StandingsTable({
   highlight?: string;
   save: SaveGame;
 }) {
-  const formsByTeam = getTeamForms(save, 5);
+  const formsByTeam = getTeamFormsForCompetition(save, 5, "league");
   return (
     <div className="text-xs">
       <div className="grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px_76px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
@@ -142,7 +142,7 @@ function StandingsTable({
         return (
           <div
             key={s.teamId}
-            className={`grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px_76px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : isHighlighted ? "bg-accent/10 ring-1 ring-accent/50 font-semibold" : ""}`}
+            className={`grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px_76px] items-center gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : isHighlighted ? "bg-accent/10 ring-1 ring-accent/50 font-semibold" : ""}`}
           >
             <span className="text-muted-foreground">{i + 1}</span>
             <span className="flex items-center gap-1.5 min-w-0">
@@ -157,7 +157,7 @@ function StandingsTable({
             <span className="text-center scoreline">{s.ga}</span>
             <span className="text-center scoreline">{s.gd > 0 ? `+${s.gd}` : s.gd}</span>
             <span className="text-center scoreline font-bold">{s.points}</span>
-            <TeamForm results={formsByTeam.get(s.teamId) ?? []} />
+            <TeamForm results={formsByTeam.get(s.teamId) ?? []} className="translate-y-0" />
           </div>
         );
       })}

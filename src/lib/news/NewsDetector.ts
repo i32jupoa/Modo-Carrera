@@ -17,7 +17,10 @@ function allFixtures(save: SaveGame): Fixture[] {
   out.push(...(save.ueclFixtures ?? []));
   const europeFromState = [save.ucl, save.uel, save.uecl]
     .filter(Boolean)
-    .flatMap((state) => Array.isArray(state?.fixtures) ? state.fixtures : []);
+    .flatMap((state) => {
+      const legacyFixtures = (state as (typeof state & { fixtures?: Fixture[] }) | null)?.fixtures;
+      return Array.isArray(legacyFixtures) ? legacyFixtures : [];
+    });
   out.push(...(europeFromState as Fixture[]));
   const seen = new Set<string>();
   return out.filter((fixture) => {
@@ -124,7 +127,7 @@ function transferEvent(record: ReturnType<typeof listTransfers>[number], userTea
     date: record.date || date,
     type: "transfer",
     category: "mercado",
-    relevance: Math.min(100, 45 + Math.min(35, fee / 4_000_000) + (player && player.rating >= 88 ? 12 : 0) + (userInvolved ? 18 : 0)),
+    relevance: Math.min(100, 45 + Math.min(35, fee / 4_000_000) + (player && Number((player as unknown as { ovr?: number; rating?: number }).ovr ?? (player as unknown as { rating?: number }).rating ?? 0) >= 88 ? 12 : 0) + (userInvolved ? 18 : 0)),
     entities: { teamIds, playerIds: [record.playerId], leagueId: teamById(record.toClubId)?.league },
     data: {
       scorerNames: [record.playerName],
@@ -305,7 +308,7 @@ export function detectNews(save: SaveGame, rawState: unknown, playerState?: News
       date: startDate,
       type: "injury",
       category: "jugadores",
-      relevance: Math.min(100, 50 + Math.min(30, Number(stats.injuryDurationDays ?? 0) / 4) + (player && player.rating >= 88 ? 10 : 0)),
+      relevance: Math.min(100, 50 + Math.min(30, Number(stats.injuryDurationDays ?? 0) / 4) + (player && Number((player as unknown as { ovr?: number; rating?: number }).ovr ?? (player as unknown as { rating?: number }).rating ?? 0) >= 88 ? 10 : 0)),
       entities: { playerIds: [playerId], teamIds: player?.teamId ? [player.teamId] : [] },
       data: {
         scorerNames: [player?.name ?? playerId],

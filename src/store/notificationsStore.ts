@@ -38,6 +38,7 @@ interface NotificationsState {
   addMailbox: (playerName: string, date: string, playerId?: string) => void;
   markMailboxRead: () => void;
   markSectionRead: (section: MarketNotificationSection) => void;
+  markNotificationRead: (id: string) => void;
   refreshCounts: () => void;
   markAllRead: () => void;
   clear: () => void;
@@ -200,10 +201,18 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     set({ items: read, counts: countUnread(read) });
   },
 
+  markNotificationRead: (id) => {
+    const { items } = get();
+    const read = items.map((item) => item.id === id ? { ...item, read: true } : item);
+    if (read.every((item, index) => item.read === items[index]?.read)) return;
+    persist(read);
+    set({ items: read, counts: countUnread(read) });
+  },
+
   markSectionRead: (section) => {
     const { items } = get();
-    const read = items.map((item) =>
-      sectionForNotification(item) === section ? { ...item, read: true } : item,
+    const read: MarketNotification[] = items.map((item): MarketNotification =>
+      sectionForNotification(item) === section ? { ...item, read: true, section } : item,
     );
     if (read.every((item, index) => item.read === items[index]?.read)) return;
     persist(read);
@@ -216,7 +225,8 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
       if (item.section || !item.dealId) return item;
       const deal = getUserDeal(item.dealId);
       if (!deal) return item;
-      return { ...item, section: deal.direction === "out" ? "offers" : "deals" };
+      const section: MarketNotificationSection = deal.direction === "out" ? "offers" : "deals";
+      return { ...item, section };
     });
     const changed = enriched.some((item, index) => item.section !== items[index]?.section);
     if (changed) persist(enriched);

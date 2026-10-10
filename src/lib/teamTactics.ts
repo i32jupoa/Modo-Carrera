@@ -4,11 +4,25 @@
 export type PlayStyle = "defensive" | "balanced" | "offensive";
 export type Pressure = "low" | "medium" | "high";
 export type DefenseLine = "low" | "medium" | "high";
+export type Tempo = "slow" | "normal" | "high";
+export type TeamWidth = "narrow" | "normal" | "wide";
+export type PassingStyle = "short" | "mixed" | "direct";
+export type TimeWasting = "low" | "normal" | "high";
+export type MarkingStyle = "zonal" | "man" | "intense";
+export type AggressionLevel = "low" | "normal" | "high";
 
 export type TeamTactics = {
   style: PlayStyle;
   pressure: Pressure;
   defenseLine: DefenseLine;
+  tempo: Tempo;
+  width: TeamWidth;
+  attackingWidth: TeamWidth;
+  passingStyle: PassingStyle;
+  counterAttack: boolean;
+  timeWasting: TimeWasting;
+  marking: MarkingStyle;
+  aggressionLevel: AggressionLevel;
   captainId: string | null;
   penaltyTakerId: string | null;
   freekickTakerId: string | null;
@@ -56,6 +70,14 @@ export const DEFAULT_TACTICS: TeamTactics = {
   style: "balanced",
   pressure: "medium",
   defenseLine: "medium",
+  tempo: "normal",
+  width: "normal",
+  attackingWidth: "normal",
+  passingStyle: "mixed",
+  counterAttack: false,
+  timeWasting: "normal",
+  marking: "zonal",
+  aggressionLevel: "normal",
   captainId: null,
   penaltyTakerId: null,
   freekickTakerId: null,
@@ -222,63 +244,111 @@ export function saveTactics(teamId: string, tactics: TeamTactics): void {
 // from what the user configures in "Editar alineación / Tácticas".
 
 export type TacticsModifiers = {
-  /** Multiplier applied to the team's attacking output. */
+  /** Multiplicadores de rendimiento ofensivo, defensivo y desgaste. */
   attack: number;
-  /** Multiplier applied to the team's defensive solidity. */
   defense: number;
-  /** Multiplier applied to per-minute energy drain. */
   stamina: number;
-  /** Multiplier applied to card/foul risk. */
   aggression: number;
+  possession: number;
+  chanceCreation: number;
+  defensiveRisk: number;
+  foulRisk: number;
 };
 
+/**
+ * Traduce la configuración táctica a efectos acotados y acumulables.
+ * Ninguna opción domina a todas las demás: cada mejora tiene coste o una
+ * vulnerabilidad compensatoria. Las interacciones contra el rival se aplican
+ * en expectedGoals(), donde están disponibles las dos configuraciones.
+ */
 export function tacticsModifiers(t?: Partial<TeamTactics> | null): TacticsModifiers {
   const style = t?.style ?? "balanced";
   const pressure = t?.pressure ?? "medium";
   const line = t?.defenseLine ?? "medium";
+  const tempo = t?.tempo ?? "normal";
+  const width = t?.width ?? "normal";
+  const attackingWidth = t?.attackingWidth ?? "normal";
+  const passing = t?.passingStyle ?? "mixed";
+  const counter = t?.counterAttack ?? false;
+  const wasting = t?.timeWasting ?? "normal";
+  const marking = t?.marking ?? "zonal";
+  const aggressionLevel = t?.aggressionLevel ?? "normal";
 
   let attack = 1;
   let defense = 1;
   let stamina = 1;
   let aggression = 1;
+  let possession = 1;
+  let chanceCreation = 1;
+  let defensiveRisk = 1;
+  let foulRisk = 1;
 
-  // Play style: the main lever. Offensive creates more chances but concedes
-  // more; defensive is the mirror image.
   if (style === "offensive") {
-    attack *= 1.07;
-    defense *= 0.96;
-    stamina *= 1.04;
+    attack *= 1.07; defense *= 0.96; stamina *= 1.04; defensiveRisk *= 1.06;
   } else if (style === "defensive") {
-    attack *= 0.94;
-    defense *= 1.06;
-    stamina *= 0.97;
+    attack *= 0.94; defense *= 1.06; stamina *= 0.97; defensiveRisk *= 0.94;
   }
-
-  // Pressure: high press wins the ball higher (more chances) but burns energy
-  // and produces more fouls.
   if (pressure === "high") {
-    attack *= 1.03;
-    defense *= 1.02;
-    stamina *= 1.06;
-    aggression *= 1.08;
+    attack *= 1.035; defense *= 1.025; stamina *= 1.075;
+    aggression *= 1.08; foulRisk *= 1.12;
   } else if (pressure === "low") {
-    attack *= 0.97;
-    defense *= 0.99;
-    stamina *= 0.94;
-    aggression *= 0.93;
+    attack *= 0.975; defense *= 0.99; stamina *= 0.94;
+    aggression *= 0.92; foulRisk *= 0.90;
   }
-
-  // Defensive line: high line compresses the pitch but is vulnerable to balls
-  // in behind; low line sits deep and concedes fewer clear chances.
   if (line === "high") {
-    attack *= 1.02;
-    defense *= 0.98;
-    stamina *= 1.02;
+    attack *= 1.015; defense *= 0.985; stamina *= 1.025; defensiveRisk *= 1.12;
   } else if (line === "low") {
-    attack *= 0.98;
-    defense *= 1.04;
-    stamina *= 0.97;
+    attack *= 0.985; defense *= 1.04; stamina *= 0.975; defensiveRisk *= 0.91;
+  }
+  if (tempo === "high") {
+    attack *= 1.035; chanceCreation *= 1.04; stamina *= 1.065; defensiveRisk *= 1.035;
+  } else if (tempo === "slow") {
+    attack *= 0.975; possession *= 1.045; stamina *= 0.955; defensiveRisk *= 0.97;
+  }
+  if (width === "wide") {
+    possession *= 1.015; defense *= 0.99; stamina *= 1.015;
+  } else if (width === "narrow") {
+    defense *= 1.015; possession *= 0.985; defensiveRisk *= 0.985;
+  }
+  if (attackingWidth === "wide") {
+    attack *= 1.025; chanceCreation *= 1.035; stamina *= 1.025; defense *= 0.99;
+  } else if (attackingWidth === "narrow") {
+    possession *= 1.02; chanceCreation *= 0.975; defense *= 1.01;
+  }
+  if (passing === "short") {
+    possession *= 1.045; attack *= 0.985; stamina *= 1.01;
+  } else if (passing === "direct") {
+    attack *= 1.025; chanceCreation *= 1.025; possession *= 0.965; defensiveRisk *= 1.025;
+  }
+  if (counter) {
+    attack *= 1.025; chanceCreation *= 1.02; possession *= 0.985; defense *= 0.995;
+  }
+  if (wasting === "high") {
+    attack *= 0.965; stamina *= 0.985; defensiveRisk *= 0.985;
+  } else if (wasting === "low") {
+    attack *= 1.01; stamina *= 1.005; defensiveRisk *= 1.015;
+  }
+  if (marking === "man") {
+    defense *= 1.025; stamina *= 1.025; foulRisk *= 1.10; defensiveRisk *= 1.025;
+  } else if (marking === "intense") {
+    defense *= 1.04; stamina *= 1.055; aggression *= 1.13; foulRisk *= 1.24; defensiveRisk *= 1.04;
+  }
+  if (aggressionLevel === "high") {
+    aggression *= 1.20; foulRisk *= 1.20; stamina *= 1.02; defense *= 1.005;
+  } else if (aggressionLevel === "low") {
+    aggression *= 0.82; foulRisk *= 0.82; defense *= 0.99;
   }
 
-  return { attack, defense, stamina, aggression };
+  // Evita que apilar varias instrucciones genere multiplicadores extremos.
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  return {
+    attack: clamp(attack, 0.82, 1.22),
+    defense: clamp(defense, 0.82, 1.22),
+    stamina: clamp(stamina, 0.88, 1.22),
+    aggression: clamp(aggression, 0.65, 1.65),
+    possession: clamp(possession, 0.88, 1.12),
+    chanceCreation: clamp(chanceCreation, 0.88, 1.15),
+    defensiveRisk: clamp(defensiveRisk, 0.80, 1.30),
+    foulRisk: clamp(foulRisk, 0.65, 1.65),
+  };
 }

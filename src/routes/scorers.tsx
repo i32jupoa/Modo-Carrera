@@ -115,7 +115,7 @@ function ScorersPage() {
   const [competition, setCompetition] = useState<"all" | "league" | "cup" | "ucl" | "uel" | "uecl">("all");
   const [league, setLeague] = useState<LeagueId | "all" | "big5">("all");
   const [cupCountry, setCupCountry] = useState<string>("all");
-  const currentDate = usePlayersStore((state) => state.currentDate) || save?.date || "2026-07-01";
+  const currentDate = usePlayersStore((state) => state.currentDate) || save?.currentDate || "2026-07-01";
 
   const isCardTab = tab === "yellows" || tab === "reds";
 
@@ -232,7 +232,7 @@ function ScorersPage() {
         )}
 
         {/* League filter — for league competition or card tabs */}
-        {(competition === "league" || (isCardTab && (competition === "all" || competition === "league"))) && (
+        {(competition === "league" || (isCardTab && competition === "all")) && (
           <Select value={league} onValueChange={(v) => setLeague(v as LeagueId | "all" | "big5")}>
             <SelectTrigger className="w-[210px]">
               <SelectValue placeholder="Todas las ligas" />

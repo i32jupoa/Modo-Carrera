@@ -153,12 +153,16 @@ function roleWeights(role: "GK" | "DEF" | "MID" | "FWD") {
       };
     case "DEF":
       return {
-        goal: 0.08,
-        assist: 0.12,
-        clean: 0.32,
-        goalWeight: 0.20,
-        assistWeight: 0.20,
-        cleanWeight: 0.60,
+        // Para centrales, la progresión se basa sobre todo en notas sólidas
+        // y porterías a cero. Los goles/asistencias son secundarios y no se
+        // exige a un defensa de un equipo modesto conceder tan poco como a uno
+        // de élite: su referencia se ajusta a la calidad media del equipo.
+        goal: 0.025,
+        assist: 0.06,
+        clean: 0.24,
+        goalWeight: 0.06,
+        assistWeight: 0.09,
+        cleanWeight: 0.85,
       };
     case "MID":
       return {
@@ -188,6 +192,7 @@ function clamp(value: number, min: number, max: number): number {
 function calculateProductionImpact(
   stats: DynamicPlayerStats,
   positions: PosCode[],
+  context?: { teamAverageOVR?: number },
 ): number {
   const role = roleFromPositions(positions);
   const weights = roleWeights(role);
@@ -196,13 +201,20 @@ function calculateProductionImpact(
   const goalsPer90 = (Math.max(0, stats.seasonGoals) / minutes) * 90;
   const assistsPer90 = (Math.max(0, stats.seasonAssists) / minutes) * 90;
   const cleanPerMatch = Math.max(0, stats.seasonCleanSheets) / apps;
+  const isDefender = positions.some((position) => ["DFC", "LD", "LI"].includes(position));
+  const teamOVR = Number(context?.teamAverageOVR);
+  // En plantillas modestas se espera menos porterías a cero; ajustar la
+  // referencia evita penalizar al central por el nivel defensivo colectivo.
+  const cleanReference = isDefender && Number.isFinite(teamOVR) && teamOVR > 0
+    ? clamp(0.24 + (teamOVR - 70) * 0.006, 0.12, 0.34)
+    : weights.clean;
 
   // Se compara la producción por 90 con una referencia razonable para el rol.
   // Puede superar 1 en temporadas excepcionales; no hay un techo artificial
   // que impida que una campaña histórica destaque.
   const goalRatio = clamp(goalsPer90 / Math.max(weights.goal, 0.01), 0, 2.5);
   const assistRatio = clamp(assistsPer90 / Math.max(weights.assist, 0.01), 0, 2.5);
-  const cleanRatio = clamp(cleanPerMatch / Math.max(weights.clean, 0.01), 0, 2.0);
+  const cleanRatio = clamp(cleanPerMatch / Math.max(cleanReference, 0.01), 0, 2.0);
 
   return clamp(
     goalRatio * weights.goalWeight +
@@ -226,8 +238,13 @@ function calculatePerformanceIndex(
   // de partido irregular, pero no ocultar una temporada realmente mala.
   const ratingPart = clamp((averageRating - 6.50) / 0.90, -1, 1);
 
-  const productionIndex = calculateProductionImpact(stats, positions);
-  const productionPart = clamp((productionIndex - 0.42) / 1.15, -0.60, 1);
+  const productionIndex = calculateProductionImpact(stats, positions, _context);
+  const isDefender = positions.some((position) => ["DFC", "LD", "LI"].includes(position));
+  // Para defensas, la producción tiene menos peso y el umbral es más bajo:
+  // no se penaliza en exceso a centrales de equipos que conceden más ocasiones.
+  const productionPart = isDefender
+    ? clamp((productionIndex - 0.22) / 1.35, -0.25, 0.75)
+    : clamp((productionIndex - 0.42) / 1.15, -0.60, 1);
 
   const mvpRate = stats.seasonMVPs / Math.max(1, stats.seasonAppearances);
   const mvpPart = clamp((mvpRate - 0.02) / 0.12, 0, 1);
@@ -239,8 +256,8 @@ function calculatePerformanceIndex(
   // que rinden igual deben recibir una evolución parecida con independencia de
   // que tengan 22, 29 o 31 años.
   return clamp(
-    ratingPart * 0.22 +
-      productionPart * 0.60 +
+    ratingPart * (isDefender ? 0.55 : 0.22) +
+      productionPart * (isDefender ? 0.27 : 0.60) +
       mvpPart * 0.13 +
       availability * 0.03 +
       minuteQuality * 0.02,

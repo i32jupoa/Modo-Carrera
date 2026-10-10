@@ -24,31 +24,37 @@ function pick<T>(rng: () => number, arr: readonly T[]): T {
 }
 
 // ---------- Referee ----------
-const REFEREES = [
-  "Mateu Lahoz",
-  "De Burgos Bengoetxea",
-  "Munuera Montero",
-  "Hernández Hernández",
-  "Gil Manzano",
-  "Cuadra Fernández",
-  "Sánchez Martínez",
-  "Soto Grado",
-  "Pizarro Gómez",
-  "González Fuertes",
-  "Martínez Munuera",
-  "Figueroa Vázquez",
-  "Daniele Orsato",
-  "Felix Brych",
-  "Anthony Taylor",
-  "Clément Turpin",
-  "Slavko Vinčić",
-  "István Kovács",
-  "Szymon Marciniak",
-  "Michael Oliver",
+const SPANISH_REFEREES = [
+  "Mateu Lahoz", "De Burgos Bengoetxea", "Munuera Montero", "Hernández Hernández",
+  "Gil Manzano", "Cuadra Fernández", "Sánchez Martínez", "Soto Grado",
+  "Pizarro Gómez", "González Fuertes", "Martínez Munuera", "Figueroa Vázquez",
 ];
-export function refereeFor(fixtureId: string): { name: string; strictness: number } {
+const ENGLISH_REFEREES = ["Michael Oliver", "Anthony Taylor", "Stuart Attwell", "Peter Bankes", "Craig Pawson", "Simon Hooper"];
+const ITALIAN_REFEREES = ["Daniele Orsato", "Maurizio Mariani", "Marco Guida", "Davide Massa", "Simone Sozza"];
+const GERMAN_REFEREES = ["Felix Brych", "Daniel Siebert", "Felix Zwayer", "Sascha Stegemann", "Harm Osmers"];
+const FRENCH_REFEREES = ["Clément Turpin", "François Letexier", "Benoît Bastien", "Jérôme Brisard", "Willy Delajod"];
+const INTERNATIONAL_REFEREES = [
+  "Daniele Orsato", "Felix Brych", "Anthony Taylor", "Clément Turpin", "Slavko Vinčić",
+  "István Kovács", "Szymon Marciniak", "Michael Oliver", "Danny Makkelie", "François Letexier",
+];
+
+/** Árbitro estable por partido y pool correcto según el tipo de competición. */
+export function refereeFor(fixtureId: string, fixture?: { league?: string; competition?: string; europeanCompetition?: string }) {
   const rng = mulberry(hashStr("ref:" + fixtureId));
-  return { name: pick(rng, REFEREES), strictness: Math.round(rng() * 50 + 50) }; // 50-100
+  const european = !!fixture?.europeanCompetition || fixture?.competition === "ucl";
+  const league = String(fixture?.league ?? "").toLowerCase();
+  const pool = european
+    ? INTERNATIONAL_REFEREES
+    : league.includes("premier") || league.includes("england")
+      ? ENGLISH_REFEREES
+      : league.includes("seriea") || league.includes("ital")
+        ? ITALIAN_REFEREES
+        : league.includes("bundesliga") || league.includes("german")
+          ? GERMAN_REFEREES
+          : league.includes("ligue1") || league.includes("france")
+            ? FRENCH_REFEREES
+            : SPANISH_REFEREES;
+  return { name: pick(rng, pool), strictness: Math.round(rng() * 50 + 50) };
 }
 
 // ---------- Weather ----------

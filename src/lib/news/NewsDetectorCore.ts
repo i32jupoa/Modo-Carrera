@@ -107,11 +107,11 @@ export function detectFixtureFacts(
   })();
 
   const decisiveMinute = regularGoalMinutes.at(-1);
-  const strengthGap = teamStrength
-    ? Math.abs((teamStrength(fixture.homeId)?.value ?? 0) - (teamStrength(fixture.awayId)?.value ?? 0))
-    : 0;
+  const homeStrength = teamStrength?.(fixture.homeId)?.value ?? 0;
+  const awayStrength = teamStrength?.(fixture.awayId)?.value ?? 0;
+  const strengthGap = Math.abs(homeStrength - awayStrength);
   const favoriteLost = winner !== null && strengthGap >= 12
-    ? (teamStrength(fixture.homeId)?.value ?? 0) > (teamStrength(fixture.awayId)?.value ?? 0)
+    ? homeStrength > awayStrength
       ? winner === fixture.awayId
       : winner === fixture.homeId
     : false;

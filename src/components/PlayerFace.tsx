@@ -61,6 +61,8 @@ interface PlayerFaceProps {
   className?: string;
   /** Borde neutro del retrato; ya no depende de la demarcación. */
   showRing?: boolean;
+  /** Use a rectangular card crop in expanded player details. */
+  shape?: "circle" | "square";
 }
 
 /**
@@ -75,13 +77,14 @@ export function PlayerFace({
   size = 32,
   className = "",
   showRing = true,
+  shape = "circle",
 }: PlayerFaceProps) {
   const [failed, setFailed] = useState(false);
   const showImage = !!image && !failed;
 
   return (
     <span
-      className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full ${
+      className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden ${shape === "square" ? "rounded-xl" : "rounded-full"} ${
         showRing ? `border-2 ${ROLE_BORDER[role]} ${ROLE_BG[role]}` : "border-0 bg-secondary"
       } ${className}`}
       style={{ width: size, height: size }}

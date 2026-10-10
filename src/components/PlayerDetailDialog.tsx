@@ -522,7 +522,7 @@ export function PlayerDetailDialog({
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
               <div className="flex items-end gap-3">
                 <div className="grid h-36 w-28 shrink-0 place-items-center overflow-hidden rounded-2xl border border-border/60 bg-secondary/50 shadow-xl">
-                  <PlayerFace name={selected.Name} image={faceUrl(String(selected.ID), selected.card)} role={roleFromPosition(selected.Position)} size={112} className="rounded-2xl" />
+                  <PlayerFace name={selected.Name} image={faceUrl(String(selected.ID), selected.card)} role={roleFromPosition(selected.Position)} size={112} shape="square" />
                 </div>
                 <div className="mb-1 flex flex-col items-center gap-2">
                   <div className={`grid h-16 w-16 place-items-center rounded-2xl border scoreline text-2xl font-black shadow-lg ${ovrTone(dynamicOvr)}`}>{dynamicOvr}</div>
@@ -623,7 +623,7 @@ export function PlayerDetailDialog({
 
           {academyMode && (
             <SeasonProgressChart
-              monthlyStats={academyStats?.monthlyStats ?? []}
+              monthlyStats={(academyStats?.monthlyStats ?? []).map((month) => ({ ...month, mvpCount: 0 }))}
               baseOvr={displayedBaseOvr}
               currentOvr={dynamicOvr}
             />

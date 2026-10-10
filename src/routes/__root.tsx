@@ -4,6 +4,7 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
@@ -141,19 +142,22 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const currentPath = useRouterState({ select: (router) => router.location.pathname });
+  const immersiveMatch = currentPath === "/match";
 
   return (
     <QueryClientProvider client={queryClient}>
       <AppShell />
       <MarketClock />
-      <MarketNotifier />
-      <MatchDayModal />
+      {!immersiveMatch && <MatchDayModal />}
     </QueryClientProvider>
   );
 }
 
 function AppShell() {
   usePlayersReady();
+  const currentPath = useRouterState({ select: (router) => router.location.pathname });
+  const immersiveMatch = currentPath === "/match";
 
   // IndexedDB se inicializa en segundo plano. El juego NO debe bloquear el
   // render esperando a IndexedDB: loadSave() dispone de `localStorage` como
@@ -196,13 +200,14 @@ function AppShell() {
 
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full">
-        <AppSidebar />
+      <div className={`min-h-screen flex w-full ${immersiveMatch ? "match-immersive" : ""}`}>
+        {!immersiveMatch && <MarketNotifier />}
+        {!immersiveMatch && <AppSidebar />}
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="h-12 flex items-center gap-3 border-b border-border/60 bg-background/70 backdrop-blur sticky top-0 z-40 px-3">
+          {!immersiveMatch && <header className="h-12 flex items-center gap-3 border-b border-border/60 bg-background/70 backdrop-blur sticky top-0 z-40 px-3">
             <SidebarTrigger />
             <GameDayBar />
-          </header>
+          </header>}
           <main className="flex-1 min-w-0">
             <Outlet />
           </main>

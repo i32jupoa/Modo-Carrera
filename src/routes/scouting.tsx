@@ -654,6 +654,11 @@ function ScoutingPage() {
       return;
     }
 
+    if (!myTeamId) {
+      toast.error("No se ha podido identificar el club para generar el informe.");
+      return;
+    }
+
     try {
       const generatedReport = scoutPlayer(entry.playerId, myTeamId, currentDate);
       if (!generatedReport) {

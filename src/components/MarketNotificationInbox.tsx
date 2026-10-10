@@ -1,14 +1,13 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Bell, CalendarDays, Mail, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
+import { Bell, CalendarDays, Mail, ArrowRight, CheckCircle2, XCircle, BriefcaseBusiness } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TeamBadge } from "@/components/TeamBadge";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
 import { CountryFlag } from "@/components/CountryFlag";
 import { faceUrl } from "@/lib/playerFaces";
 import { usePlayersStore } from "@/store/playersStore";
-import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
-import { LeagueLogo } from "@/components/LeagueLogo";
+import { teamById } from "@/data/teams";
 import { useNotificationsStore, type MarketNotification } from "@/store/notificationsStore";
 
 function dayLabel(date: string, today: string): string {
@@ -30,24 +29,25 @@ function categoryIcon(notification: MarketNotification) {
 
 function Visual({ notification }: { notification: MarketNotification }) {
   const visual = notification.visual;
-  const player = visual?.playerId ? usePlayersStore.getState().getSimPlayer(visual.playerId) : undefined;
-  const from = visual?.fromTeamId ? teamById(visual.fromTeamId) : undefined;
-  const to = visual?.toTeamId ? teamById(visual.toTeamId) : undefined;
-  const team = visual?.teamId ? teamById(visual.teamId) : undefined;
-  const league = visual?.leagueId ? LEAGUES[visual.leagueId as LeagueId] : undefined;
+  const playerInfo = visual?.players?.[0];
+  const player = playerInfo ? usePlayersStore.getState().getSimPlayer(playerInfo.id) : undefined;
+  const teamIds = visual?.teamIds ?? [];
+  const from = teamIds[0] ? teamById(teamIds[0]) : undefined;
+  const to = teamIds[1] ? teamById(teamIds[1]) : undefined;
+  const singleTeam = teamIds.length === 1 && !from ? teamById(teamIds[0]) : undefined;
+  const country = visual?.countries?.[0];
 
-  if (!player && !from && !to && !team && !visual?.country) return null;
+  if (!playerInfo && !from && !to && !singleTeam && !country) return null;
 
   return (
     <div className="mt-2 flex items-center gap-1.5 rounded-xl border border-border/50 bg-background/35 p-1.5">
-      {player && <PlayerFace name={player.name} image={faceUrl(player.id, player.cardImage)} role={roleFromPosition(player.positions?.[0] ?? "MID")} size={28} showRing={false} />}
-      {visual?.country && <CountryFlag country={visual.country} />}
+      {playerInfo && <PlayerFace name={playerInfo.name} image={faceUrl(playerInfo.id, player?.cardImage)} role={roleFromPosition(player?.positions?.[0] ?? "MID")} size={28} showRing={false} />}
+      {country && <CountryFlag country={country} />}
       {from && <TeamBadge team={from} size={24} />}
       {from && to && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
       {to && <TeamBadge team={to} size={24} />}
-      {!from && !to && team && <TeamBadge team={team} size={24} />}
-      {league && <LeagueLogo league={league.name} size="sm" fallback={<span className="grid h-6 w-6 place-items-center rounded-md border border-border/50 text-[0.5rem] font-black text-muted-foreground">L</span>} />}
-      {visual?.fee != null && visual.fee > 0 && <span className="ml-auto text-[0.62rem] font-black">{visual.fee >= 1_000_000 ? `${(visual.fee / 1_000_000).toFixed(1)} M€` : `${Math.round(visual.fee / 1000)} K€`}</span>}
+      {!from && !to && singleTeam && <TeamBadge team={singleTeam} size={24} />}
+      {!player && playerInfo && <BriefcaseBusiness className="ml-auto h-3.5 w-3.5 text-muted-foreground" />}
     </div>
   );
 }
@@ -56,9 +56,8 @@ export function MarketNotificationInbox() {
   const navigate = useNavigate();
   const currentDate = usePlayersStore((state) => state.currentDate);
   const items = useNotificationsStore((state) => state.items);
-  const markRead = useNotificationsStore((state) => state.markRead);
-  const markMarketRead = useNotificationsStore((state) => state.markMarketRead);
-  const markMailboxRead = useNotificationsStore((state) => state.markMailboxRead);
+  const markNotificationRead = useNotificationsStore((state) => state.markNotificationRead);
+  const markAllRead = useNotificationsStore((state) => state.markAllRead);
   const [open, setOpen] = useState(false);
 
   const grouped = useMemo(() => {
@@ -75,9 +74,9 @@ export function MarketNotificationInbox() {
 
   const openNotification = (notification: MarketNotification) => {
     setOpen(false);
-    markRead(notification.id);
+    markNotificationRead(notification.id);
     if (notification.section === "mailbox") navigate({ to: "/mailbox" });
-    else navigate({ to: "/transfers" });
+    else navigate({ to: "/transfers", search: { q: "" } });
   };
 
   return (
@@ -95,7 +94,7 @@ export function MarketNotificationInbox() {
             <div className="flex items-center gap-2 text-sm font-black"><Bell className="h-4 w-4 text-primary" /> Bandeja</div>
             <div className="mt-0.5 text-[0.62rem] text-muted-foreground">Mercado y buzón, agrupados por día</div>
           </div>
-          {unread > 0 && <button type="button" className="text-[0.62rem] font-bold text-primary hover:underline" onClick={() => { markMarketRead(); markMailboxRead(); }}>Marcar todo leído</button>}
+          {unread > 0 && <button type="button" className="text-[0.62rem] font-bold text-primary hover:underline" onClick={markAllRead}>Marcar todo leído</button>}
         </div>
         <div className="max-h-[430px] overflow-y-auto p-2">
           {grouped.length === 0 ? (

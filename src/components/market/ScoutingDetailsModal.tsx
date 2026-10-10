@@ -3,7 +3,7 @@ import { Activity, Clock3, Goal, SearchCheck, ShieldCheck, Sparkles, Target, Tre
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { faceUrl } from "@/lib/playerFaces";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
-import { getScoutCapabilities, type ScoutingEntry } from "@/lib/transfers/Scouting";
+import { getScoutCapabilities, type ScoutRating, type ScoutingEntry } from "@/lib/transfers/Scouting";
 import { buildPositions, formatShortPositions } from "@/lib/positions";
 import type { ScoutingReport } from "@/lib/transfers/UserNegotiation";
 import { estimateScoutingMoney, estimateScoutingPotential, isScoutingFieldDetected } from "@/lib/transfers/ScoutingReport";
@@ -34,9 +34,9 @@ function safeFormatEuro(value: unknown): string {
   }
 }
 
-function safeRating(entry?: ScoutingEntry | null): number {
+function safeRating(entry?: ScoutingEntry | null): ScoutRating {
   const value = safeNumber(entry?.scoutRating, 0.5);
-  return [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].includes(value) ? value : 0.5;
+  return ([0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5] as const).includes(value as ScoutRating) ? value as ScoutRating : 0.5;
 }
 
 function safePositions(player: FcPlayer): ReturnType<typeof buildPositions> {
