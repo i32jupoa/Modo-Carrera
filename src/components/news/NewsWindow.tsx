@@ -78,7 +78,8 @@ export function NewsWindow({
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <p className={`text-[0.65rem] font-black uppercase tracking-[0.16em] ${st.accent}`}>{item.teamOfRound.competitionLabel}</p>
-                      <h3 className="mt-1 text-base font-black">{item.teamOfRound.roundLabel} · {item.teamOfRound.dateLabel}</h3>
+                      <h3 className="mt-1 text-base font-black">11 de la jornada · {item.teamOfRound.competitionLabel}</h3>
+                      <p className="mt-0.5 text-[0.68rem] text-muted-foreground">{item.teamOfRound.roundLabel} · {item.teamOfRound.dateLabel} · Sistema {item.teamOfRound.formation.replace(/^Táctica /i, "").toLowerCase()}</p>
                     </div>
                     <span className={`rounded-full border px-3 py-1 text-[0.62rem] font-black uppercase tracking-wider ${st.chip}`}>XI ideal</span>
                   </div>

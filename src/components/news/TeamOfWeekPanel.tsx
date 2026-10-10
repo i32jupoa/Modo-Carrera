@@ -7,7 +7,7 @@ import { TypicalElevenPitch } from "@/components/TypicalElevenPitch";
 import { usePlayersStore, type FcPlayer } from "@/store/playersStore";
 import { buildPositions, positionGroupFromCode, type PosCode } from "@/lib/positions";
 
-const FORMATION = "Táctica 4-3-3";
+const FORMATION = "Táctica 4-3-3 con mediocentro ofensivo";
 type WeeklyCandidate = { player: FcPlayer; teamId: string; ratingTotal: number; appearances: number; lastRating: number };
 
 function dateKey(date?: string, matchday = 0): string {
@@ -104,7 +104,7 @@ export function TeamOfWeekPanel({ save }: { save: SaveGame }) {
       if (!candidate) candidate = selected.find((entry) => !used.has(String(entry.player.ID)));
       if (!candidate) return { label: slot.label, player: null, natural: false } as ElevenSlot;
       used.add(String(candidate.player.ID));
-      return { label: slot.label, player: candidate.player, natural: true, matchRating: Number((candidate.ratingTotal / candidate.appearances).toFixed(1)) } as ElevenSlot;
+      return { label: slot.label, player: candidate.player, natural: true, matchRating: Number((candidate.ratingTotal / candidate.appearances).toFixed(1)), teamId: candidate.teamId } as ElevenSlot;
     });
   }, [save, rawPlayers, latestDate]);
 

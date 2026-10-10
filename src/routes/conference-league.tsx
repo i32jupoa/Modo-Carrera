@@ -2130,6 +2130,7 @@ function EuropeanCompetitionPage() {
                     return (
                       <KnockoutTieList
                         fixtures={activePhase.fxs}
+                        competition="uecl"
                         onOpenFixture={setSelectedFixture}
                       />
                     );

@@ -24,7 +24,7 @@ export interface TeamOfRoundData {
 
 type Candidate = { player: FcPlayer; teamId: string; ratingTotal: number; appearances: number };
 type PositionGroup = "GK" | "DEF" | "MID" | "FWD";
-const FORMATION = "Táctica 4-3-3";
+const FORMATION = "Táctica 4-3-3 con mediocentro ofensivo";
 
 function dateKey(date?: string, matchday = 0): string {
   if (date && /^\d{4}-\d{2}-\d{2}/.test(date)) return date.slice(0, 10);
@@ -159,6 +159,7 @@ function buildForRound(
       player: candidate.player,
       natural: true,
       matchRating: Number(score(candidate).toFixed(1)),
+      teamId: candidate.teamId,
     };
   });
 

@@ -334,7 +334,7 @@ export function formationSlots(formation: string): Slot[] {
   });
 }
 
-export type ElevenSlot = { label: string; player: FcPlayer | null; natural: boolean; matchRating?: number };
+export type ElevenSlot = { label: string; player: FcPlayer | null; natural: boolean; matchRating?: number; teamId?: string };
 
 /**
  * 11 tipo estimado: para cada hueco de la formación coge al jugador libre

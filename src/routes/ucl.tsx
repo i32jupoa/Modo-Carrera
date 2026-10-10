@@ -2049,6 +2049,7 @@ function UCLPage() {
                     return (
                       <KnockoutTieList
                         fixtures={activePhase.fxs}
+                        competition="ucl"
                         onOpenFixture={setSelectedFixture}
                       />
                     );
