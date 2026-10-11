@@ -6,6 +6,7 @@ import { analyzeSquad } from "@/lib/transfers/SquadAnalyzer";
 import { getClubPlayers, registerDynamicMarketPlayer } from "@/lib/transfers/PlayerIndex";
 import { registerDynamicPlayer, usePlayersStore } from "@/store/playersStore";
 import { seededInt } from "@/lib/transfers/random";
+import { recordCalendarJumpCounter } from "@/lib/calendarJumpProfiler";
 import type { PositionGroup, SquadNeed } from "@/lib/transfers/types";
 import { DYNAMIC_BY_ID, recordAcademyPromotionEvent } from "./academyRuntime";
 import { academyContract, academyMarketValue, academyPlayerToFcPlayer, academyPlayerToStats } from "./academyAdapters";
@@ -15,6 +16,20 @@ import { advanceAcademyToDate, simulateAcademyLeagueMatchOnDate } from "./academ
 import type { AcademyPlayer, ClubAcademyState } from "./academyTypes";
 
 const academyCache = new Map<string, ClubAcademyState>();
+type AcademyAiStateChangeHandler = (saveId: string, teamId: string, state: ClubAcademyState) => void;
+let academyAiStateChangeHandler: AcademyAiStateChangeHandler | null = null;
+
+/** Permite que el salto agrupe también cambios hechos por promociones del mercado. */
+export function setAcademyAiStateChangeHandler(handler: AcademyAiStateChangeHandler | null): void {
+  academyAiStateChangeHandler = handler;
+}
+
+function cacheAcademyState(saveId: string, teamId: string, season: number, state: ClubAcademyState): void {
+  const key = cacheKey(saveId, teamId, season);
+  const previous = academyCache.get(key);
+  academyCache.set(key, state);
+  if (previous !== state) academyAiStateChangeHandler?.(saveId, teamId, state);
+}
 
 function cacheKey(saveId: string, teamId: string, season: number): string {
   return `${saveId}|${teamId}|${season}`;
@@ -31,10 +46,12 @@ function getState(saveId: string, teamId: string, season: number, date: string):
   const current = academyCache.get(key);
   if (current) {
     const advanced = advanceAcademyToDate(current, date, saveId);
-    academyCache.set(key, advanced);
+    cacheAcademyState(saveId, teamId, season, advanced);
     return advanced;
   }
+  recordCalendarJumpCounter("academy.ai.statesGenerated", 1);
   const generated = generateAcademyState(saveId, teamId, season);
+  recordCalendarJumpCounter("academy.ai.playersGenerated", generated.players.length);
   const filtered = {
     ...generated,
     // Los listados y cedidos siguen perteneciendo a la academia. Solo se
@@ -45,7 +62,7 @@ function getState(saveId: string, teamId: string, season: number, date: string):
     }),
   };
   const advanced = advanceAcademyToDate(filtered, date, saveId);
-  academyCache.set(key, advanced);
+  cacheAcademyState(saveId, teamId, season, advanced);
   return advanced;
 }
 
@@ -102,7 +119,7 @@ export function simulateAcademyLeagueMatchForAiClub(
   const simulated = simulateAcademyLeagueMatchOnDate(current, date, saveId);
   // Se conserva también la progresión mensual aunque el filial no alcance 11
   // jugadores disponibles para jugar el partido.
-  academyCache.set(key, simulated);
+  cacheAcademyState(saveId, teamId, season, simulated);
   return simulated;
 }
 
@@ -247,7 +264,7 @@ export function promoteAcademyPlayersForClub(teamId: string, date: string, mode:
     const promotedPlayer = promotePlayer(state, candidate, reasons[String(candidate.id)] ?? "Promoción de cantera", date);
     promoted.push(promotedPlayer);
   }
-  academyCache.set(cacheKey(saveId, teamId, season), state);
+  cacheAcademyState(saveId, teamId, season, state);
   refreshTeamRating(teamId);
   return { promoted, reasons };
 }
@@ -274,7 +291,7 @@ export function promoteBestAcademySolutionForNeed(clubId: string, date: string, 
   const reason = `Solución interna para una necesidad ${need.priority} de ${need.group}`;
   state = { ...state, players: state.players.filter((player) => player.id !== candidate.id) };
   promotePlayer(state, candidate, reason, date);
-  academyCache.set(cacheKey(saveId, clubId, season), state);
+  cacheAcademyState(saveId, clubId, season, state);
   refreshTeamRating(clubId);
   return true;
 }

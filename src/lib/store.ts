@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { persistCurrentSave, getCurrentSaveId } from "./savedGames";
+import { measureCalendarJumpPhase, recordCalendarJumpCounter, recordCalendarJumpDuration } from "./calendarJumpProfiler";
 import { getSaveItem, setSaveItem, removeSaveItem, isSaveStorageFallback } from "./saveStorage";
 
 import { saveTransferSystem } from "./transfers/Persistence";
@@ -986,6 +987,8 @@ const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
 
 // Caché del objeto SaveGame activo. Evita volver a ejecutar JSON.parse sobre
 // una carrera completa cada vez que una pantalla llama a loadSave().
+let legacySaveKeyCleanupDone = false;
+
 let parsedSaveCache: {
   saveId: string | null;
   save: SaveGame;
@@ -998,6 +1001,15 @@ let parsedSaveCache: {
 let pendingSaveForDisk: SaveGame | null = null;
 let pendingSaveTimer: number | null = null;
 let pendingSaveRevision = 0;
+
+// Durante un salto de calendario las mutaciones siguen publicándose en la caché
+// autoritativa; solo se difiere la serialización/IO. Se guarda un checkpoint
+// cada ciertos días y siempre al terminar, para no serializar la carrera varias
+// veces dentro de una misma fecha.
+let saveBatchDepth = 0;
+let saveBatchDaysSinceCheckpoint = 0;
+let saveBatchCheckpointEveryDays = 7;
+let saveBatchCheckpointSave: SaveGame | null = null;
 
 export type SavedGameMeta = {
   id: string;
@@ -1280,16 +1292,27 @@ export function initializeUserSquadRoles(save: SaveGame): SaveGame {
 }
 
 export function loadSave(): SaveGame | null {
+  recordCalendarJumpCounter("loadSave.calls");
+  return measureCalendarJumpPhase("loadSave.total", loadSaveImpl);
+}
+
+function loadSaveImpl(): SaveGame | null {
   if (typeof window === "undefined") return null;
 
   try {
     const activeId = getCurrentSaveId();
-    localStorage.removeItem("fcsim:save:v1");
-
     // Después de un guardado la memoria es la fuente de verdad inmediata.
     // Esto hace que volver a /season no dependa de leer/parsear la partida.
     if (parsedSaveCache?.saveId === activeId && parsedSaveCache.authoritative) {
       return parsedSaveCache.save;
+    }
+
+    // La clave v1 es obsoleta. Antes se intentaba borrarla en CADA loadSave(),
+    // incluso cuando la caché ya podía responder; en saltos largos sumaba I/O
+    // síncrono repetido sin aportar nada. Limpiarla una sola vez por sesión.
+    if (!legacySaveKeyCleanupDone) {
+      localStorage.removeItem("fcsim:save:v1");
+      legacySaveKeyCleanupDone = true;
     }
 
     const saveKey = activeId ? `${STORAGE_KEY}:${activeId}` : STORAGE_KEY;
@@ -1303,7 +1326,7 @@ export function loadSave(): SaveGame | null {
       return parsedSaveCache.save;
     }
 
-    const parsed = JSON.parse(raw) as LegacySave;
+    const parsed = measureCalendarJumpPhase("loadSave.JSON.parse", () => JSON.parse(raw) as LegacySave);
 
     if (parsed.version !== 2) return null;
 
@@ -1839,11 +1862,14 @@ export function slimSave(s: SaveGame): SaveGame {
  * fallback de `localStorage` sí mantiene el guardado síncrono.
  */
 export function saveSave(s: SaveGame): boolean {
+  recordCalendarJumpCounter("saveSave.calls");
+  return measureCalendarJumpPhase("saveSave.total", () => saveSaveImpl(s));
+}
+
+function saveSaveImpl(s: SaveGame): boolean {
   if (typeof window === "undefined") return false;
 
   const activeId = getCurrentSaveId();
-
-  if (activeId) removeSaveItem(STORAGE_KEY);
 
   // Publicamos el nuevo estado en memoria inmediatamente. La navegación y
   // los siguientes renders ya no esperan a compactar toda la temporada.
@@ -1856,14 +1882,25 @@ export function saveSave(s: SaveGame): boolean {
   pendingSaveForDisk = s;
   pendingSaveRevision += 1;
 
+  // Dentro del salto no se serializa ni se escribe en disco por cada mutación.
+  // loadSave() seguirá devolviendo este último objeto por la caché autoritativa.
+  if (saveBatchDepth > 0) {
+    recordCalendarJumpCounter("saveSave.deferredByBatch");
+    return true;
+  }
+
+  // Solo las escrituras normales necesitan eliminar la clave global antigua.
+  // Dentro del batch también evitamos esta operación síncrona por cada partido.
+  if (activeId) removeSaveItem(STORAGE_KEY);
+
   // Si IndexedDB no está disponible, localStorage es síncrono y no hay otro
   // camino seguro: mantenemos el guardado inmediato en ese entorno.
   if (isSaveStorageFallback()) {
     try {
-      const slim = slimSave(s);
+      const slim = measureCalendarJumpPhase("save.slimSave", () => slimSave(s));
       const ok = activeId
-        ? persistCurrentSave(slim, { immediate: true })
-        : setSaveItem(STORAGE_KEY, JSON.stringify(slim));
+        ? measureCalendarJumpPhase("save.persistCurrentSave", () => persistCurrentSave(slim, { immediate: true }))
+        : measureCalendarJumpPhase("save.JSON.stringify", () => setSaveItem(STORAGE_KEY, JSON.stringify(slim)));
       parsedSaveCache = {
         saveId: activeId,
         save: slim,
@@ -1871,7 +1908,7 @@ export function saveSave(s: SaveGame): boolean {
         authoritative: true,
       };
       pendingSaveForDisk = null;
-      void saveTransferSystem();
+      void measureCalendarJumpPhase("simulation.marketPersistence", () => saveTransferSystem());
       return ok;
     } catch (e) {
       console.error("Error persisting current save:", e);
@@ -1888,18 +1925,21 @@ function scheduleSaveForDisk(): void {
 
   const run = () => {
     pendingSaveTimer = null;
+    // Un requestIdleCallback puede haberse programado justo antes de empezar el
+    // salto. Si llega durante un batch no debe serializar un estado intermedio.
+    if (saveBatchDepth > 0) return;
     const target = pendingSaveForDisk;
     pendingSaveForDisk = null;
     if (!target) return;
 
     const revisionAtStart = pendingSaveRevision;
     try {
-      const slim = slimSave(target);
+      const slim = measureCalendarJumpPhase("save.slimSave", () => slimSave(target));
       const activeId = getCurrentSaveId();
       if (activeId) {
-        persistCurrentSave(slim, { immediate: true });
+        measureCalendarJumpPhase("save.persistCurrentSave", () => persistCurrentSave(slim, { immediate: true }));
       } else {
-        setSaveItem(STORAGE_KEY, JSON.stringify(slim));
+        measureCalendarJumpPhase("save.JSON.stringify", () => setSaveItem(STORAGE_KEY, JSON.stringify(slim)));
       }
 
       parsedSaveCache = {
@@ -1910,7 +1950,7 @@ function scheduleSaveForDisk(): void {
       };
 
       // El mercado también queda fuera del camino del click.
-      void saveTransferSystem();
+      void measureCalendarJumpPhase("simulation.marketPersistence", () => saveTransferSystem());
 
       if (pendingSaveRevision !== revisionAtStart && pendingSaveForDisk) {
         scheduleSaveForDisk();
@@ -1933,6 +1973,128 @@ function scheduleSaveForDisk(): void {
     if (typeof ric === "function") ric(run, { timeout: 1500 });
     else run();
   }, 100);
+}
+
+/** Inicia una sección de guardado por lotes. Se pueden anidar de forma segura. */
+export function beginSaveBatch(options?: { checkpointEveryDays?: number }): boolean {
+  if (saveBatchDepth === 0) {
+    // Cierra cualquier escritura pendiente anterior al salto para que el primer
+    // punto de recuperación corresponda exactamente al estado inicial.
+    if (pendingSaveForDisk && !flushSaveBatchNow()) return false;
+    saveBatchDaysSinceCheckpoint = 0;
+    saveBatchCheckpointEveryDays = Math.max(1, Math.floor(options?.checkpointEveryDays ?? 7));
+    if (pendingSaveTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(pendingSaveTimer);
+      pendingSaveTimer = null;
+    }
+    saveBatchCheckpointSave = parsedSaveCache?.save
+      ? createFastMutationSnapshot(parsedSaveCache.save)
+      : null;
+  }
+  saveBatchDepth += 1;
+  return true;
+}
+
+/** Indica si el próximo día completado exige checkpoint; permite drenar tareas asíncronas antes de fijarlo. */
+export function isSaveBatchCheckpointDueNextDay(): boolean {
+  return saveBatchDepth > 0 && saveBatchDaysSinceCheckpoint + 1 >= saveBatchCheckpointEveryDays;
+}
+
+/** Marca un día ya procesado y escribe un checkpoint solo cada N días. */
+/** Persiste y espera el almacenamiento separado del mercado durante un salto. */
+export async function persistCalendarJumpMarketState(): Promise<boolean> {
+  // Las partidas heredadas sin id no tienen una clave de mercado separada.
+  // No bloqueamos su calendario por un sidecar que no puede existir en ese caso.
+  if (!getCurrentSaveId()) return true;
+  return measureCalendarJumpPhase("simulation.marketPersistence", () => saveTransferSystem());
+}
+
+export function checkpointSaveBatchDay(): { checkpointed: boolean; persisted: boolean } {
+  if (saveBatchDepth <= 0) return { checkpointed: false, persisted: true };
+  saveBatchDaysSinceCheckpoint += 1;
+  if (saveBatchDaysSinceCheckpoint < saveBatchCheckpointEveryDays) {
+    return { checkpointed: false, persisted: true };
+  }
+  saveBatchDaysSinceCheckpoint = 0;
+  recordCalendarJumpCounter("saveBatch.checkpoints");
+  const persisted = flushSaveBatchNow();
+  return { checkpointed: persisted, persisted };
+}
+
+/** Finaliza el batch y persiste su último estado autoritativo. */
+export function endSaveBatch(): boolean {
+  if (saveBatchDepth <= 0) return true;
+  saveBatchDepth -= 1;
+  if (saveBatchDepth > 0) return true;
+  saveBatchDaysSinceCheckpoint = 0;
+  const persisted = flushSaveBatchNow();
+  // Si la escritura falla conservamos el snapshot anterior para que el llamador
+  // pueda revertir el batch; nunca descartamos el último checkpoint válido.
+  if (persisted) saveBatchCheckpointSave = null;
+  return persisted;
+}
+
+/** Descarta cambios no confirmados y devuelve el último checkpoint válido. */
+export function abortSaveBatch(): SaveGame | null {
+  saveBatchDepth = 0;
+  saveBatchDaysSinceCheckpoint = 0;
+  if (pendingSaveTimer !== null && typeof window !== "undefined") {
+    window.clearTimeout(pendingSaveTimer);
+    pendingSaveTimer = null;
+  }
+  pendingSaveForDisk = null;
+  pendingSaveRevision += 1;
+  const checkpoint = saveBatchCheckpointSave;
+  if (checkpoint) {
+    parsedSaveCache = {
+      saveId: getCurrentSaveId(),
+      save: checkpoint,
+      raw: null,
+      authoritative: true,
+    };
+  } else {
+    parsedSaveCache = null;
+  }
+  saveBatchCheckpointSave = null;
+  return checkpoint;
+}
+
+/** Escribe un checkpoint sin volver a entrar en saveSave(). */
+function flushSaveBatchNow(): boolean {
+  const target = pendingSaveForDisk ?? (parsedSaveCache?.authoritative ? parsedSaveCache.save : null);
+  if (!target || typeof window === "undefined") return true;
+
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  try {
+    const slim = measureCalendarJumpPhase("save.slimSave", () => slimSave(target));
+    const activeId = getCurrentSaveId();
+    const ok = activeId
+      ? measureCalendarJumpPhase("save.persistCurrentSave", () => persistCurrentSave(slim, { immediate: true }))
+      : measureCalendarJumpPhase("save.JSON.stringify", () => setSaveItem(STORAGE_KEY, JSON.stringify(slim)));
+
+    if (!ok) {
+      pendingSaveForDisk = target;
+      return false;
+    }
+
+    parsedSaveCache = {
+      saveId: activeId,
+      save: slim,
+      raw: null,
+      authoritative: true,
+    };
+    pendingSaveForDisk = null;
+    saveBatchCheckpointSave = createFastMutationSnapshot(slim);
+    recordCalendarJumpCounter("saveBatch.flushes");
+    return true;
+  } catch (error) {
+    pendingSaveForDisk = target;
+    console.error("Error persisting calendar-jump checkpoint:", error);
+    return false;
+  } finally {
+    const endedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    recordCalendarJumpDuration("saveBatch.flush", endedAt - startedAt);
+  }
 }
 
 export function saveSaveWithRetry(s: SaveGame): boolean {
@@ -2814,6 +2976,8 @@ function applyMatchToStats(
   options: {
     skipPerformanceTeamId?: string;
     skipPlayerPerformanceStats?: boolean;
+    /** Scheduler has already counted appearances/goals/assists, but ratings/MOTM/clean sheets are still required. */
+    skipAppearanceAndScoringStats?: boolean;
     skipInjuryRecord?: boolean;
     homeXI?: Player[];
     awayXI?: Player[];
@@ -2899,6 +3063,8 @@ function applyMatchToStats(
   // Keep the normal post-match bookkeeping for cards/suspensions/lineups, but
   // do not run the same performance mutations a second time.
   const skipPlayerPerformanceStats = options.skipPlayerPerformanceStats === true;
+  const skipAppearanceAndScoringStats =
+    skipPlayerPerformanceStats || options.skipAppearanceAndScoringStats === true;
   const skipInjuryRecord = options.skipInjuryRecord === true;
 
   // Persist the end-of-match physical energy. For live user matches the
@@ -2931,7 +3097,7 @@ function applyMatchToStats(
         ...(r.substitutions ?? []).map((sub) => sub.playerInId),
       ];
 
-  if (!skipPlayerPerformanceStats) {
+  if (!skipAppearanceAndScoringStats) {
     for (const playerId of [...new Set(participation)]) {
       if (skipTeamId && teamForPlayer(playerId) === skipTeamId) continue;
       store.recordAppearance(
@@ -5118,6 +5284,89 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
 }
 
 /**
+ * Persists the detailed results already simulated by the calendar scheduler.
+ * The scheduler owns the exact day/score shown to the player; this bridge
+ * updates the official save, league table, discipline, injuries and match
+ * bookkeeping without counting player appearances/goals twice.
+ */
+export function commitCalendarScheduleResults(
+  save: SaveGame,
+  results: Array<{ fixtureId: string; date?: string; result: SimResult; scoreOnly?: boolean }>,
+): SaveGame {
+  if (!save || !Array.isArray(results) || results.length === 0) return save;
+
+  const league = save.myLeague;
+  const originalFixtures = Array.isArray(save.fixtures?.[league]) ? save.fixtures[league] : [];
+  if (originalFixtures.length === 0) return save;
+
+  let next = createFastMutationSnapshot(save);
+  next.fixtures[league] = [...originalFixtures];
+  let changed = false;
+  const seen = new Set<string>();
+  const orderedResults = [...results].sort(
+    (a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")) || a.fixtureId.localeCompare(b.fixtureId),
+  );
+
+  for (const entry of orderedResults) {
+    if (!entry?.fixtureId || !entry.result || seen.has(entry.fixtureId)) continue;
+    seen.add(entry.fixtureId);
+
+    const fixtureIndex = next.fixtures[league].findIndex((fixture) => fixture.id === entry.fixtureId);
+    if (fixtureIndex < 0) continue;
+
+    const existing = next.fixtures[league][fixtureIndex];
+    // Existing official results are never applied to standings or discipline a second time.
+    if (existing.result) continue;
+
+    const officialFixture: Fixture = {
+      ...existing,
+      date: entry.date || existing.date || usePlayersStore.getState().currentDate,
+      result: entry.scoreOnly ? { ...entry.result, matchStatsApplied: true } : { ...entry.result },
+    };
+    next.fixtures[league][fixtureIndex] = officialFixture;
+    if (Array.isArray(next.standings?.[league])) {
+      next.standings[league] = applyResult(next.standings[league], officialFixture);
+    }
+
+    // Calendar simulations have already recorded appearances, goals and assists
+    // in the players store. Keep the rich result here for history/news, but only
+    // apply the remaining official post-match systems in this pass. Old saves may
+    // only have a score in the schedule; they contain no detail to reconstruct,
+    // so avoid fabricating player ratings, injuries, sanctions or MOTM.
+    if (!entry.scoreOnly) {
+      next = applyMatchToStats(next, officialFixture, { skipAppearanceAndScoringStats: true });
+    }
+    changed = true;
+
+    // `currentMatchday` means the next league round to process. Advance it only
+    // when every fixture in the current round has an official result, and do so
+    // sequentially in case several complete rounds were queued together.
+    let currentMatchday = Number(next.currentMatchday?.[league] ?? 1);
+    while (true) {
+      const roundFixtures = (next.fixtures[league] ?? []).filter(
+        (fixture) => Number(fixture.matchday) === currentMatchday,
+      );
+      if (roundFixtures.length === 0 || roundFixtures.some((fixture) => !fixture.result)) break;
+      next.currentMatchday[league] = currentMatchday + 1;
+      currentMatchday += 1;
+    }
+  }
+
+  if (!changed) return save;
+
+  const country = LEAGUES[league]?.country;
+  if (country) {
+    const cupLeague = getPrimaryLeagueForCountry(country) as LeagueId | undefined;
+    if (cupLeague && cupLeague !== league && next.currentMatchday[cupLeague] < next.currentMatchday[league]) {
+      next.currentMatchday[cupLeague] = next.currentMatchday[league];
+    }
+  }
+
+  saveSaveWithRetry(next);
+  return next;
+}
+
+/**
 
 
 
@@ -5134,6 +5383,87 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
 
 
  */
+
+/**
+ * Repara resultados 0-0 procedentes del antiguo fallback de XI vacío.
+ * Solo toca resultados sin xG, alineaciones, valoraciones ni eventos; los 0-0
+ * normales que sí guardan datos completos se conservan intactos.
+ */
+export function repairPlaceholderCalendarResults(save: SaveGame): { save: SaveGame; repairedIds: string[] } {
+  if (!save?.fixtures) return { save, repairedIds: [] };
+  const isEmpty = (value: any) => !Array.isArray(value) || value.length === 0;
+  const isPlaceholder = (fixture: Fixture) => {
+    const result: any = fixture.result;
+    if (!result || Number(result.homeGoals) !== 0 || Number(result.awayGoals) !== 0) return false;
+    if (Number(result.xgHome ?? 0) !== 0 || Number(result.xgAway ?? 0) !== 0) return false;
+    return [result.events, result.cards, result.injuries, result.ratings,
+      result.homeLineup, result.awayLineup, result.homeStartingLineup,
+      result.awayStartingLineup, result.homeFinalLineup, result.awayFinalLineup].every(isEmpty);
+  };
+
+  // Solo reparamos la liga del usuario. Los marcadores de ligas de fondo son
+  // deliberadamente compactos y pueden representar empates 0-0 legítimos.
+  const league = save.myLeague;
+  const placeholders = (save.fixtures[league] ?? [])
+    .filter((fixture) => isPlaceholder(fixture))
+    .map((fixture) => ({ league, fixture }));
+  if (placeholders.length === 0) return { save, repairedIds: [] };
+
+  let next: SaveGame = createFastMutationSnapshot(save);
+  const repairedIds: string[] = [];
+  const clonedLeagues = new Set<LeagueId>();
+
+  for (const { league, fixture } of placeholders) {
+    const list = next.fixtures?.[league];
+    if (!Array.isArray(list)) continue;
+    if (!clonedLeagues.has(league)) {
+      next.fixtures[league] = [...list];
+      clonedLeagues.add(league);
+    }
+    const index = next.fixtures[league].findIndex((candidate) => candidate.id === fixture.id);
+    if (index < 0 || !isPlaceholder(next.fixtures[league][index])) continue;
+    const home = teamById(fixture.homeId);
+    const away = teamById(fixture.awayId);
+    if (!home || !away) continue;
+
+    const homeContext = { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true,
+      competition: fixture.competition, matchday: fixture.matchday };
+    const awayContext = { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false,
+      competition: fixture.competition, matchday: fixture.matchday };
+    const homeData = getStartersWithFormation(next, fixture.homeId, { fixture: homeContext as any });
+    const awayData = getStartersWithFormation(next, fixture.awayId, { fixture: awayContext as any });
+    const result = homeData.players.length > 0 && awayData.players.length > 0
+      ? simulateMatchFast(home, away, homeData.players, awayData.players, {
+          homeTactics: loadTactics(fixture.homeId), awayTactics: loadTactics(fixture.awayId),
+          homeFormation: homeData.formation, awayFormation: awayData.formation,
+        })
+      : generateFakeMatchResult(home, away);
+
+    const repairedFixture = { ...next.fixtures[league][index], result };
+    next.fixtures[league][index] = repairedFixture;
+    if (homeData.players.length > 0 && awayData.players.length > 0) {
+      next = applyMatchToStats(next, repairedFixture, { homeXI: homeData.players, awayXI: awayData.players });
+    }
+    repairedIds.push(fixture.id);
+  }
+
+  for (const league of clonedLeagues) {
+    let standings = emptyStandings(league);
+    for (const fixture of next.fixtures[league] ?? []) {
+      if (fixture.result) standings = applyResult(standings, fixture);
+    }
+    next.standings[league] = sortStandings(standings);
+    let matchday = 1;
+    while (true) {
+      const round = (next.fixtures[league] ?? []).filter((fixture) => Number(fixture.matchday) === matchday);
+      if (round.length === 0 || round.some((fixture) => !fixture.result)) break;
+      matchday += 1;
+    }
+    next.currentMatchday[league] = matchday;
+  }
+
+  return { save: next, repairedIds };
+}
 
 export function playMyNextMatch(save: SaveGame): { save: SaveGame; fixture: Fixture | null } {
   let next: SaveGame = createFastMutationSnapshot(save);
@@ -5622,90 +5952,96 @@ export function simulateBackgroundLeaguesOnly(
   save: SaveGame,
   currentDate: string,
   nextMatchDate?: string,
-  onProgress?: (processed: number, total: number) => void,
-): Promise<SaveGame> {
-  const next: SaveGame = createFastMutationSnapshot(save);
+  includeAllLeagues = false,
+): SaveGame {
+  return measureCalendarJumpPhase("simulation.backgroundLeaguesSchedule", () =>
+    simulateBackgroundLeaguesOnlyImpl(save, currentDate, nextMatchDate, includeAllLeagues),
+  );
+}
 
-  const userLeague = next.myLeague;
+function simulateBackgroundLeaguesOnlyImpl(
+  save: SaveGame,
+  currentDate: string,
+  nextMatchDate?: string,
+  includeAllLeagues = false,
+): SaveGame {
+  const userLeague = save.myLeague;
+  const seasonStartYear = Number(String(save.season ?? "").split(/[\/-]/)[0]) || Number(currentDate.slice(0, 4));
+  const firstRoundDate = `${seasonStartYear}-08-14`;
+  const currentMs = new Date(`${currentDate}T00:00:00Z`).getTime();
+  const startMs = new Date(`${firstRoundDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(currentMs) || !Number.isFinite(startMs) || currentMs < startMs) return save;
 
-  const backgroundLeagues: LeagueId[] = [];
+  const newScheduledSims = [...(save.pendingBackgroundSims ?? [])];
+  const pendingIndex = new Map<string, number>();
+  newScheduledSims.forEach((entry, index) => {
+    if (entry.isCup) return;
+    pendingIndex.set(`${entry.league}:${Number(entry.matchday)}`, index);
+  });
 
-  // Collect background leagues that have fixtures to simulate
+  let changed = false;
+  const leagues = Object.keys(save.fixtures ?? {}) as LeagueId[];
+  for (let leagueIndex = 0; leagueIndex < leagues.length; leagueIndex += 1) {
+    const league = leagues[leagueIndex];
+    if (league === userLeague) continue; // La liga propia la gestiona el calendario visible.
+    if (!includeAllLeagues && isVIPLeague(league, userLeague)) continue;
 
-  for (const lg of Object.keys(next.fixtures) as LeagueId[]) {
-    const md = next.currentMatchday[lg];
-
-    const fixtures = next.fixtures[lg].filter((f) => f.matchday === md && !f.result);
-
-    const isVIP = isVIPLeague(lg, userLeague);
-
-    if (!isVIP && fixtures.length > 0) backgroundLeagues.push(lg);
-  }
-
-  if (backgroundLeagues.length === 0) return save;
-
-  // If there are already pending league sims not yet processed, skip re-scheduling
-
-  // to avoid duplicates and uneven distribution
-
-  const existingPending = (next.pendingBackgroundSims || []).filter((s) => !s.isCup);
-
-  if (existingPending.length > 0) return save;
-
-  // Use provided dates; fall back to +7 days if no match date known
-
-  const baseDate = nextMatchDate || addDaysToIso(currentDate, 7);
-
-  // Distribute across 3 days: -1, 0 (match day), +1
-
-  // For N=19: 6, 6, 7. For N=18: 6, 6, 6. General: floor(N/3) or ceil(N/3).
-
-  const newScheduledSims = [...(next.pendingBackgroundSims || [])];
-
-  const total = backgroundLeagues.length;
-
-  const perDay = Math.floor(total / 3);
-
-  const remainder = total % 3;
-
-  // slot sizes: day0 gets perDay, day1 gets perDay, day2 gets perDay + remainder
-
-  const slotSizes = [perDay, perDay, perDay + remainder];
-
-  const offsets = [-1, 0, 1];
-
-  let slotIndex = 0;
-
-  let countInSlot = 0;
-
-  for (const lg of backgroundLeagues) {
-    const matchday = next.currentMatchday[lg];
-
-    const alreadyScheduled = newScheduledSims.some(
-      (s) => s.league === lg && s.matchday === matchday && !s.isCup,
+    const fixtures = save.fixtures?.[league] ?? [];
+    if (fixtures.length === 0) continue;
+    // Una sola pasada por fixture evita crear varias listas/set y volver a
+    // recorrer toda la temporada para localizar la primera jornada incompleta.
+    const roundProgress = new Map<number, { total: number; unfinished: number }>();
+    let maxMatchday = 0;
+    for (const fixture of fixtures) {
+      const matchday = Number(fixture.matchday);
+      if (!Number.isFinite(matchday) || matchday <= 0) continue;
+      maxMatchday = Math.max(maxMatchday, matchday);
+      const progress = roundProgress.get(matchday) ?? { total: 0, unfinished: 0 };
+      progress.total += 1;
+      if (!fixture.result) progress.unfinished += 1;
+      roundProgress.set(matchday, progress);
+    }
+    const matchdays = [...roundProgress.keys()].sort((a, b) => a - b);
+    // El resultado oficial de los partidos tiene prioridad sobre un contador
+    // que pudiera haberse quedado adelantado en una versión anterior.
+    const firstIncompleteMatchday = matchdays.find((md) => (roundProgress.get(md)?.unfinished ?? 0) > 0);
+    const currentMatchday = firstIncompleteMatchday ?? Math.max(1, Number(save.currentMatchday?.[league] ?? maxMatchday + 1));
+    // Distribuir cada competición por un día fijo de la semana evita que todas
+    // jueguen simultáneamente y permite reconstruir temporadas de guardados que
+    // hayan pasado fechas sin simular las ligas secundarias.
+    const leagueOffset = leagueIndex % 7;
+    const elapsedDays = Math.floor((currentMs - startMs) / 86400000);
+    const maxDueMatchday = Math.min(
+      maxMatchday,
+      Math.floor((elapsedDays - leagueOffset) / 7) + 1,
     );
+    if (maxDueMatchday < currentMatchday) continue;
 
-    if (!alreadyScheduled) {
-      // Advance slot if current slot is full
-
-      while (slotIndex < 2 && countInSlot >= slotSizes[slotIndex]) {
-        slotIndex++;
-
-        countInSlot = 0;
+    for (let matchday = currentMatchday; matchday <= maxDueMatchday; matchday += 1) {
+      const round = fixtures.filter((fixture) => Number(fixture.matchday) === matchday);
+      if (round.length === 0 || round.every((fixture) => !!fixture.result)) continue;
+      const scheduledDate = addDaysToIso(firstRoundDate, (matchday - 1) * 7 + leagueOffset);
+      const key = `${league}:${matchday}`;
+      const existingAt = pendingIndex.get(key);
+      if (existingAt !== undefined) {
+        const existing = newScheduledSims[existingAt];
+        // Repara entradas que quedaron programadas para una fecha futura por
+        // la versión anterior y que bloquearían el avance pese a ser atrasadas.
+        if (existing.date > currentDate && scheduledDate <= currentDate) {
+          newScheduledSims[existingAt] = { ...existing, date: scheduledDate };
+          changed = true;
+        }
+        continue;
       }
-
-      const offset = offsets[slotIndex];
-
-      const scheduledDate = addDaysToIso(baseDate, offset);
-
-      newScheduledSims.push({ league: lg, matchday, isCup: false, date: scheduledDate });
-
-      countInSlot++;
+      newScheduledSims.push({ league, matchday, isCup: false, date: scheduledDate });
+      pendingIndex.set(key, newScheduledSims.length - 1);
+      changed = true;
     }
   }
 
+  if (!changed) return save;
+  const next: SaveGame = createFastMutationSnapshot(save);
   next.pendingBackgroundSims = newScheduledSims;
-
   return next;
 }
 
@@ -6265,10 +6601,21 @@ export function processScheduledBackgroundSims(
   today: string,
   skipCupTeamId?: string,
 ): SaveGame {
-  return withPlayerStatsBatch(() => {
+  return measureCalendarJumpPhase("simulation.processScheduledBackgroundSims", () =>
+    withPlayerStatsBatch(() => processScheduledBackgroundSimsImpl(save, today, skipCupTeamId)),
+  );
+}
+
+function processScheduledBackgroundSimsImpl(
+  save: SaveGame,
+  today: string,
+  skipCupTeamId?: string,
+): SaveGame {
     const pending = save.pendingBackgroundSims ?? [];
 
-    const due = pending.filter((p) => p.date === today);
+    const due = pending
+      .filter((p) => typeof p.date === "string" && p.date <= today)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.league.localeCompare(b.league) || Number(a.matchday) - Number(b.matchday));
 
     if (due.length === 0) return save;
 
@@ -6291,6 +6638,17 @@ export function processScheduledBackgroundSims(
       if (Array.isArray(save.cupFixtures[lg])) {
         next.cupFixtures[lg] = [...save.cupFixtures[lg]];
       }
+    }
+
+    // Índices por id: antes se hacía findIndex sobre la temporada completa por
+    // cada partido, disparando un coste cuadrático al cerrar jornadas grandes.
+    const leagueFixtureIndex = new Map<LeagueId, Map<string, number>>();
+    for (const lg of dueLeagues) {
+      leagueFixtureIndex.set(lg, new Map((next.fixtures[lg] ?? []).map((fixture, index) => [fixture.id, index])));
+    }
+    const cupFixtureIndex = new Map<LeagueId, Map<string, number>>();
+    for (const lg of dueCups) {
+      cupFixtureIndex.set(lg, new Map((next.cupFixtures[lg] ?? []).map((fixture, index) => [fixture.id, index])));
     }
 
     const processedKeys = new Set<string>();
@@ -6318,24 +6676,33 @@ export function processScheduledBackgroundSims(
         const list = next.cupFixtures[league];
 
         if (!list) {
-          processedKeys.add(key);
+          console.error("[processScheduledBackgroundSims] Copa pendiente: no existe la lista de partidos", { league, matchday });
           continue;
         }
 
-        const fixtures = list.filter(
+        const roundFixtures = list.filter((f) => f.matchday === matchday);
+        if (roundFixtures.length === 0) {
+          console.error("[processScheduledBackgroundSims] Copa pendiente: no existe la ronda programada", { league, matchday });
+          continue;
+        }
+        const fixtures = roundFixtures.filter(
           (f) =>
-            f.matchday === matchday &&
             !f.result &&
-            !(
-              skipCupTeamId &&
-              (f.homeId === skipCupTeamId || f.awayId === skipCupTeamId)
-            ),
+            !(skipCupTeamId && (f.homeId === skipCupTeamId || f.awayId === skipCupTeamId)),
         );
+        let entrySucceeded = true;
 
         for (const f of fixtures) {
           const home = teamById(f.homeId);
           const away = teamById(f.awayId);
-          if (!home || !away) continue;
+          if (!home || !away) {
+            entrySucceeded = false;
+            console.error("[processScheduledBackgroundSims] Copa pendiente: equipo no encontrado", {
+              league, matchday, fixtureId: f.id, homeId: f.homeId, awayId: f.awayId,
+            });
+            continue;
+          }
+          const simulatedDate = f.date || entry.date || today;
 
           const homeData = getStartersWithFormation(next, f.homeId, {
             fixture: {
@@ -6358,7 +6725,13 @@ export function processScheduledBackgroundSims(
           const homeXI = homeData.players;
           const awayXI = awayData.players;
 
-          if (homeXI.length === 0 || awayXI.length === 0) continue;
+          if (homeXI.length === 0 || awayXI.length === 0) {
+            entrySucceeded = false;
+            console.error("[processScheduledBackgroundSims] Copa pendiente: alineación vacía", {
+              league, matchday, fixtureId: f.id, homeXI: homeXI.length, awayXI: awayXI.length,
+            });
+            continue;
+          }
 
           const homeBench = getCupSimulationBench(next, f.homeId, homeXI, f.competition);
           const awayBench = getCupSimulationBench(next, f.awayId, awayXI, f.competition);
@@ -6412,9 +6785,9 @@ export function processScheduledBackgroundSims(
             }
           }
 
-          const idx = list.findIndex((x) => x.id === f.id);
+          const idx = cupFixtureIndex.get(league)?.get(f.id) ?? -1;
           if (idx >= 0) {
-            list[idx] = { ...f, result };
+            list[idx] = { ...f, date: simulatedDate, result };
             recordFakeMatchStats(
               store,
               homeXI,
@@ -6422,7 +6795,7 @@ export function processScheduledBackgroundSims(
               result,
               next.currentMatchday[league],
               "cup",
-              f.date,
+              simulatedDate,
             );
             next = consumeSuspensionsForFixture(next, [f.homeId, f.awayId], f.competition);
             if (result.cards?.length) {
@@ -6442,16 +6815,25 @@ export function processScheduledBackgroundSims(
           }
         }
 
-        processedKeys.add(key);
+        // Una ronda no se retira de la cola si quedó algún partido real sin
+        // resolver. El partido del equipo del usuario se excluye explícitamente
+        // arriba y lo resolverá el flujo normal del calendario.
+        if (entrySucceeded) processedKeys.add(key);
       } else {
         const leagueFixtures = next.fixtures[league];
 
         if (!leagueFixtures) {
-          processedKeys.add(key);
+          console.error("[processScheduledBackgroundSims] Liga pendiente: no existe la lista de partidos", { league, matchday });
           continue;
         }
 
-        const fixtures = leagueFixtures.filter((f) => f.matchday === matchday && !f.result);
+        const roundFixtures = leagueFixtures.filter((f) => f.matchday === matchday);
+        if (roundFixtures.length === 0) {
+          console.error("[processScheduledBackgroundSims] Liga pendiente: no existe la jornada programada", { league, matchday });
+          continue;
+        }
+        const fixtures = roundFixtures.filter((f) => !f.result);
+        let entrySucceeded = true;
 
         const allPlayersToRecord = new Map<string, Player[]>();
 
@@ -6462,7 +6844,13 @@ export function processScheduledBackgroundSims(
 
           const away = teamById(f.awayId);
 
-          if (!home || !away) continue;
+          if (!home || !away) {
+            entrySucceeded = false;
+            console.error("[processScheduledBackgroundSims] Liga pendiente: equipo no encontrado", {
+              league, matchday, fixtureId: f.id, homeId: f.homeId, awayId: f.awayId,
+            });
+            continue;
+          }
 
           const homeSuspendedIds = getSuspendedPlayerIdsForCompetition(
             next,
@@ -6482,7 +6870,7 @@ export function processScheduledBackgroundSims(
                 .filter(
                   (p) =>
                     !homeSuspendedIds.has(p.id) &&
-                    !isPlayerInjuredAtDate(p, f.date || today, matchday),
+                    !isPlayerInjuredAtDate(p, f.date || entry.date || today, matchday),
                 ),
             ),
           );
@@ -6495,7 +6883,7 @@ export function processScheduledBackgroundSims(
                 .filter(
                   (p) =>
                     !awaySuspendedIds.has(p.id) &&
-                    !isPlayerInjuredAtDate(p, f.date || today, matchday),
+                    !isPlayerInjuredAtDate(p, f.date || entry.date || today, matchday),
                 ),
             ),
           );
@@ -6510,9 +6898,13 @@ export function processScheduledBackgroundSims(
 
           const away = teamById(f.awayId);
 
-          if (!home || !away) continue;
+          if (!home || !away) {
+            entrySucceeded = false;
+            continue;
+          }
 
           const result = generateFakeMatchResult(home, away);
+          const simulatedDate = f.date || entry.date || today;
 
           // Las ligas simuladas en segundo plano también pueden generar lesiones.
           // Antes este camino no registraba ninguna, por lo que los jugadores
@@ -6527,10 +6919,11 @@ export function processScheduledBackgroundSims(
 
           result.injuries = [...(result.injuries ?? []), ...backgroundInjuries];
 
-          const idx = next.fixtures[league].findIndex((x) => x.id === f.id);
+          const idx = leagueFixtureIndex.get(league)?.get(f.id) ?? -1;
+          if (idx < 0) entrySucceeded = false;
 
           if (idx >= 0) {
-            next.fixtures[league][idx] = { ...f, result };
+            next.fixtures[league][idx] = { ...f, date: simulatedDate, result };
 
             next.standings[league] = applyResult(
               next.standings[league],
@@ -6544,7 +6937,7 @@ export function processScheduledBackgroundSims(
               result,
               next.currentMatchday[league],
               "league",
-              f.date,
+              simulatedDate,
             );
             next = consumeSuspensionsForFixture(next, [f.homeId, f.awayId], f.competition);
             if (result.cards?.length) {
@@ -6566,9 +6959,21 @@ export function processScheduledBackgroundSims(
 
         // National-cup fixtures use their own fixed round/date schedule; do not
         // advance the league's currentMatchday counter for a cup simulation.
-        if (!isCup && fixtures.length > 0) next.currentMatchday[league]++;
+        // Recalculate from official results rather than blindly incrementing: a
+        // catch-up jump can resolve several overdue rounds in a single call.
+        if (!isCup) {
+          let nextMatchday = Math.max(1, Number(next.currentMatchday?.[league] ?? 1));
+          while (true) {
+            const round = (next.fixtures[league] ?? []).filter((fixture) => Number(fixture.matchday) === nextMatchday);
+            if (round.length === 0 || round.some((fixture) => !fixture.result)) break;
+            nextMatchday += 1;
+          }
+          next.currentMatchday[league] = nextMatchday;
+        }
 
-        processedKeys.add(key);
+        // Si algún partido no se pudo aplicar, la jornada permanece pendiente y
+        // se podrá reintentar. Los partidos ya guardados no se simulan de nuevo.
+        if (entrySucceeded) processedKeys.add(key);
       }
     }
 
@@ -6581,7 +6986,6 @@ export function processScheduledBackgroundSims(
     });
 
     return next;
-  });
 }
 
 export async function advanceMatchdayLayered(

@@ -35,7 +35,7 @@
 
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 
-import { persist, createJSONStorage } from "zustand/middleware";
+import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import playersData from "@/data/playersData";
 import { DYNAMIC_BY_ID, DYNAMIC_MARKET_BY_ID, clearAcademyRuntime, getCalledUpPlayers, getCalledUpRuntimeVersion } from "@/lib/academy/academyRuntime";
@@ -94,8 +94,6 @@ import type { SimResult } from "@/lib/simulation";
 import {
   applyFixtureResult,
   involvesTeam,
-  simulateScheduleFixture,
-  simulateScheduleFixtureDetailed,
   simulateScheduleFixtureFastDetailed,
   unplayedOnDate,
 } from "@/lib/matchEngine";
@@ -122,6 +120,7 @@ import {
   simulatePendingEuropeanThroughDay,
   type SaveGame,
   applyDailyMailboxMessages,
+  commitCalendarScheduleResults,
 } from "@/lib/store";
 
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
@@ -149,6 +148,7 @@ import { estimateAnnualWage } from "@/lib/transfers/SalaryEngine";
 import { getClubWageBill, getPlayer } from "@/lib/transfers/PlayerIndex";
 import { renewUserPlayer, type UserRenewalInput } from "@/lib/transfers/ContractEngine";
 import { saveTransferSystem } from "@/lib/transfers/Persistence";
+import { measureCalendarJumpPhase, recordCalendarJumpCounter } from "@/lib/calendarJumpProfiler";
 
 // Big 5 European leagues for VIP deep simulation
 
@@ -177,12 +177,19 @@ function isVIPLeague(leagueId: LeagueId, userLeague: LeagueId): boolean {
 const CURRENT_SAVE_ID_STORAGE_KEY = "fcsim:save:current";
 let academySyncQueue: Promise<void> = Promise.resolve();
 let academyAiMatchdayQueue: Promise<void> = Promise.resolve();
+const calendarJumpBackgroundErrors: Array<{ task: string; error: unknown }> = [];
+
+/** Limpia fallos de tareas encoladas antes de iniciar un salto nuevo. */
+export function clearCalendarJumpBackgroundErrors(): void {
+  calendarJumpBackgroundErrors.length = 0;
+}
 
 function queueActiveAcademySync(
   teamId: string | null,
   targetDate: string,
   playLeagueMatch = false,
   leagueFixtures: readonly ScheduleFixture[] = [],
+  fastForward = false,
 ): void {
   if (!teamId || typeof window === "undefined") return;
   const isMonthBoundary = targetDate.slice(8, 10) === "01";
@@ -193,13 +200,14 @@ function queueActiveAcademySync(
   // al inicio de mes; no se retrasa por el procesamiento de otras academias.
   if (playLeagueMatch || isMonthBoundary) {
     academySyncQueue = academySyncQueue
-      .then(async () => {
+      .then(() => measureCalendarJumpPhase("simulation.academy.user", async () => {
         if (window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY) !== saveId) return;
         const { useAcademyStore } = await import("@/lib/academy/academyStore");
         if (window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY) !== saveId) return;
-        await useAcademyStore.getState().ensureClub(teamId, Number(targetDate.slice(0, 4)), targetDate, { playLeagueMatch });
-      })
+        await useAcademyStore.getState().ensureClub(teamId, Number(targetDate.slice(0, 4)), targetDate, { playLeagueMatch, fastForward });
+      }))
       .catch((error) => {
+        if (fastForward) calendarJumpBackgroundErrors.push({ task: "cantera del usuario", error });
         console.warn("[advanceTime] user academy sync failed:", error);
       });
   }
@@ -207,7 +215,7 @@ function queueActiveAcademySync(
   // Las academias de la IA tienen su propia cola. Los trabajos se trocean en
   // tareas pequeñas y persisten una sola vez por jornada, sin frenar el clic.
   academyAiMatchdayQueue = academyAiMatchdayQueue
-    .then(async () => {
+    .then(() => measureCalendarJumpPhase("simulation.academy.ai", async () => {
       if (window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY) !== saveId) return;
       const { simulateAiAcademiesForDate } = await import("@/lib/academy/academyAiMatchdayRunner");
       if (window.localStorage.getItem(CURRENT_SAVE_ID_STORAGE_KEY) !== saveId) return;
@@ -216,9 +224,11 @@ function queueActiveAcademySync(
         date: targetDate,
         userTeamId: teamId,
         userLeagueFixtures: leagueFixtures,
+        fastForward,
       });
-    })
+    }))
     .catch((error) => {
+      if (fastForward) calendarJumpBackgroundErrors.push({ task: "canteras de la IA", error });
       console.warn("[advanceTime] AI academy simulation failed:", error);
     });
 }
@@ -646,6 +656,50 @@ let SQUAD_CACHE = new Map<string, FcPlayer[]>();
 // objeto `stats` no cambie podemos reutilizar el mismo array y evitar volver a
 // mapear + ordenar toda la plantilla en cada acceso.
 let CLUB_MEMBERSHIP_VERSION = 0;
+/**
+ * Devuelve un XI equilibrado para la simulación rápida del calendario.
+ * El orden natural de getSimSquad agrupa posiciones (GK, DEF, MID, FWD),
+ * así que tomar slice(0, 11) podía seleccionar casi solo defensas; y pasar
+ * [] a getSimXI devolvía siempre una alineación vacía y un 0-0 de respaldo.
+ */
+export function calendarLineupIds(squad: Player[]): string[] {
+  const byRating = (a: Player, b: Player) => Number(b.rating ?? b.OVR ?? 0) - Number(a.rating ?? a.OVR ?? 0);
+  const group = (player: Player): "GK" | "DEF" | "MID" | "FWD" | "OTHER" => {
+    const primary = String((player as any).position ?? "").toUpperCase();
+    const positions = new Set((player as any).positions ?? []);
+    if (primary === "GK" || positions.has("GK")) return "GK";
+    if (primary === "DEF" || ["DFC", "LD", "LI", "CB", "RB", "LB", "RWB", "LWB"].some((p) => positions.has(p))) return "DEF";
+    if (primary === "MID" || ["MCD", "MC", "MCO", "MD", "MI", "CM", "CDM", "CAM", "RM", "LM"].some((p) => positions.has(p))) return "MID";
+    if (primary === "FWD" || ["DC", "ED", "EI", "ST", "CF", "LW", "RW"].some((p) => positions.has(p))) return "FWD";
+    return "OTHER";
+  };
+  const sorted = [...(squad ?? [])].sort(byRating);
+  const selected: Player[] = [];
+  const selectedIds = new Set<string>();
+  const take = (kind: ReturnType<typeof group>, count: number) => {
+    for (const player of sorted.filter((item) => group(item) === kind)) {
+      if (selected.length >= 11 || count <= 0) break;
+      if (selectedIds.has(String(player.id))) continue;
+      selected.push(player);
+      selectedIds.add(String(player.id));
+      count -= 1;
+    }
+  };
+  take("GK", 1);
+  take("DEF", 4);
+  take("MID", 3);
+  take("FWD", 3);
+  for (const player of sorted) {
+    if (selected.length >= 11) break;
+    const id = String(player.id);
+    if (!selectedIds.has(id)) {
+      selected.push(player);
+      selectedIds.add(id);
+    }
+  }
+  return selected.map((player) => String(player.id));
+}
+
 const SIM_SQUAD_VIEW_CACHE = new Map<
   string,
   {
@@ -1194,9 +1248,15 @@ export type PlayersState = {
 
   init: () => void;
 
-  advanceTime: (days: number) => number;
+  advanceTime: (days: number, options?: { simulateAllLeagues?: boolean; mode?: "single" | "jump"; targetDate?: string }) => number;
+
+  /** Espera a que terminen las sincronizaciones de cantera encoladas por los días procesados. */
+  waitForCalendarBackgroundTasks: () => Promise<void>;
 
   simulateMatch: (matchId: string) => void;
+
+  /** Simulación rápida pero con estadísticas persistidas, usada al saltar fechas desde el calendario. */
+  simulateMatchForCalendarJump: (matchId: string) => boolean;
 
   clearPendingMatch: () => void;
 
@@ -1816,6 +1876,48 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           lastUserMatchResult: null,
         })),
 
+      waitForCalendarBackgroundTasks: async () => {
+        await Promise.all([academySyncQueue, academyAiMatchdayQueue]);
+        if (calendarJumpBackgroundErrors.length > 0) {
+          const failedTasks = calendarJumpBackgroundErrors.splice(0, calendarJumpBackgroundErrors.length);
+          const summary = failedTasks.map((item) => item.task).join(", ");
+          throw new Error(`Falló la simulación asíncrona de ${summary}; el salto no se puede dar por completo.`, {
+            cause: failedTasks[0]?.error,
+          });
+        }
+      },
+
+      beginCalendarJumpAcademyAiBatch: async () => {
+        const saveId = typeof window === "undefined" ? null : window.localStorage.getItem("fcsim:save:current");
+        const state = get();
+        if (!saveId || !state.myTeamId) throw new Error("No se ha podido preparar la simulación de cantera para el salto.");
+        const { beginAcademyAiFastForward } = await import("@/lib/academy/academyAiMatchdayRunner");
+        const started = await beginAcademyAiFastForward(saveId, state.currentDate, state.myTeamId);
+        if (!started) throw new Error("No se pudo activar el modo de simulación por lotes de las academias de la IA.");
+      },
+
+      finishCalendarJumpAcademyAiBatch: async () => {
+        const saveId = typeof window === "undefined" ? null : window.localStorage.getItem("fcsim:save:current");
+        if (!saveId) return;
+        const { endAcademyAiFastForward } = await import("@/lib/academy/academyAiMatchdayRunner");
+        endAcademyAiFastForward(saveId);
+      },
+
+      flushCalendarJumpAcademyAiChanges: async () => {
+        const saveId = typeof window === "undefined" ? null : window.localStorage.getItem("fcsim:save:current");
+        if (!saveId) throw new Error("No hay una partida activa para confirmar las academias de la IA.");
+        const { flushAcademyAiPendingChanges } = await import("@/lib/academy/academyAiMatchdayRunner");
+        const persisted = await flushAcademyAiPendingChanges(saveId);
+        if (!persisted) throw new Error("No se pudieron confirmar las estadísticas pendientes de las academias de la IA.");
+      },
+
+      discardCalendarJumpAcademyAiChanges: async () => {
+        const saveId = typeof window === "undefined" ? null : window.localStorage.getItem("fcsim:save:current");
+        if (!saveId) return;
+        const { discardAcademyAiPendingChanges } = await import("@/lib/academy/academyAiMatchdayRunner");
+        await discardAcademyAiPendingChanges(saveId);
+      },
+
       simulateMatch: (matchId) => {
         const state = get();
 
@@ -1825,9 +1927,13 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
         if (!fixture || fixture.isPlayed) return;
 
-        const sim = simulateScheduleFixtureFastDetailed(fixture, (teamId, matchday) =>
-          state.getSimXI(teamId, [], matchday),
-        );
+        const sim = simulateScheduleFixtureFastDetailed(fixture, (teamId, matchday) => {
+          // Pasar [] como lineupIds devolvía siempre un XI vacío y convertía
+          // todos los partidos de calendario en 0-0. Usamos una alineación
+          // real de la plantilla simulada cuando no hay once manual guardado.
+          const squad = state.getSimSquad(teamId);
+          return state.getSimXI(teamId, calendarLineupIds(squad), matchday);
+        });
 
         if (sim.energyAtEnd) {
           state.setTeamMatchEnergy(fixture.homeTeam, sim.energyAtEnd, fixture.date);
@@ -1836,7 +1942,6 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
         const scores = {
           homeScore: sim.homeGoals,
-
           awayScore: sim.awayGoals,
         };
 
@@ -1847,11 +1952,15 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         );
 
         for (const other of sameDay) {
-          const otherScores = simulateScheduleFixture(other, (teamId, md) =>
-            state.getSimXI(teamId, [], md),
-          );
+          const otherResult = simulateScheduleFixtureFastDetailed(other, (teamId, md) => {
+            const squad = state.getSimSquad(teamId);
+            return state.getSimXI(teamId, calendarLineupIds(squad), md);
+          });
 
-          nextFixtures = applyFixtureResult(nextFixtures, other.id, otherScores);
+          nextFixtures = applyFixtureResult(nextFixtures, other.id, {
+            homeScore: otherResult.homeGoals,
+            awayScore: otherResult.awayGoals,
+          });
         }
 
         set({
@@ -1861,7 +1970,107 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         });
       },
 
-      advanceTime: (days) => {
+      simulateMatchForCalendarJump: (matchId) => {
+        const state = get();
+        state.init();
+        const fixture = get().fixtures.find((item) => item.id === matchId);
+        if (!fixture || fixture.isPlayed) {
+          // A repeated call is considered complete when the fixture already has
+          // a committed result. This makes a partially interrupted jump resumable.
+          return !!fixture?.isPlayed;
+        }
+
+        try {
+          const officialSave = loadSave();
+          const officialFixture = officialSave?.fixtures?.[officialSave.myLeague]?.find(
+            (item: any) => item.id === matchId,
+          );
+          // If a previous attempt wrote the official result but was interrupted
+          // before updating the calendar cache, reuse that result instead of
+          // generating a different score for the same fixture.
+          const alreadyCommittedResult = officialFixture?.result as SimResult | undefined;
+          const xiCache = new Map<string, Player[]>();
+          const getCalendarJumpXI = (teamId: string, matchday: number) => {
+            const key = `${teamId}:${matchday}`;
+            const cached = xiCache.get(key);
+            if (cached) return cached;
+            const current = get();
+            const squad = current.getSimSquad(teamId);
+            const xi = current.getSimXI(teamId, calendarLineupIds(squad), matchday);
+            xiCache.set(key, xi);
+            return xi;
+          };
+          const homeXI = alreadyCommittedResult ? [] : getCalendarJumpXI(fixture.homeTeam, fixture.matchday);
+          const awayXI = alreadyCommittedResult ? [] : getCalendarJumpXI(fixture.awayTeam, fixture.matchday);
+          if (!alreadyCommittedResult && (homeXI.length === 0 || awayXI.length === 0)) {
+            throw new Error(
+              `No hay una alineación válida para ${fixture.id} (${fixture.homeTeam}: ${homeXI.length}, ${fixture.awayTeam}: ${awayXI.length}).`,
+            );
+          }
+          const sim = alreadyCommittedResult ?? simulateScheduleFixtureFastDetailed(fixture, (teamId, matchday) => {
+            if (teamId === fixture.homeTeam) return homeXI;
+            if (teamId === fixture.awayTeam) return awayXI;
+            return getCalendarJumpXI(teamId, matchday);
+          });
+          // Una repetición tras un commit oficial debe reconstruir el calendario,
+          // pero no volver a acreditar goles/apariciones ya guardados en el save.
+          const needsPlayerStatsCommit = !alreadyCommittedResult;
+          const minuteMap = new Map(
+            (sim.ratings ?? []).map((rating: any) => [rating.playerId, Number(rating.minutes) || 0]),
+          );
+          let participants = (sim.ratings ?? []).map((rating: any) => rating.playerId);
+          if (participants.length === 0) {
+            participants = [
+              ...get().getSimXI(fixture.homeTeam, calendarLineupIds(get().getSimSquad(fixture.homeTeam)), fixture.matchday),
+              ...get().getSimXI(fixture.awayTeam, calendarLineupIds(get().getSimSquad(fixture.awayTeam)), fixture.matchday),
+            ].map((player) => player.id);
+          }
+
+          if (officialSave && !alreadyCommittedResult) {
+            commitCalendarScheduleResults(officialSave, [{ fixtureId: matchId, date: fixture.date, result: sim }]);
+          }
+
+          if (needsPlayerStatsCommit) {
+            withPlayerStatsBatch(() => {
+              for (const playerId of participants) {
+                get().recordAppearance(
+                  playerId,
+                  fixture.competition,
+                  minuteMap.has(playerId) ? minuteMap.get(playerId) : 90,
+                );
+              }
+              for (const event of [...(sim.events ?? []), ...(sim.extraTime?.events ?? [])]) {
+                if (!["goal", "penalty_goal", "free_kick_goal"].includes(event.type)) continue;
+                get().recordGoal(event.scorerId, fixture.competition);
+                if (event.assistId) get().recordAssist(event.assistId, fixture.competition);
+              }
+            });
+          }
+
+          // El motor oficial ya persiste la energía del equipo del usuario al
+          // aplicar el resultado. No guardamos la energía de los rivales como
+          // si fueran el club dirigido en esta partida.
+
+          const nextFixtures = applyFixtureResult(get().fixtures, matchId, {
+            homeScore: sim.homeGoals,
+            awayScore: sim.awayGoals,
+          });
+          set((latest) => ({
+            fixtures: nextFixtures,
+            pendingUserMatch: latest.pendingUserMatch?.id === matchId ? null : latest.pendingUserMatch,
+            lastUserMatchResult: null,
+            dismissedMatchIds: latest.dismissedMatchIds.includes(matchId)
+              ? latest.dismissedMatchIds
+              : [...latest.dismissedMatchIds, matchId],
+          }));
+          return true;
+        } catch (error) {
+          console.error("[simulateMatchForCalendarJump] No se pudo simular el partido:", matchId, error);
+          return false;
+        }
+      },
+
+      advanceTime: (days, options) => {
         if (days <= 0) return 0;
 
         let state = get();
@@ -1873,7 +2082,9 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             const prev = new Date(`${cursor}T00:00:00Z`);
             const next = new Date(`${nextDate}T00:00:00Z`);
             if (prev.getUTCMonth() !== next.getUTCMonth() || prev.getUTCFullYear() !== next.getUTCFullYear()) {
-              applyGlobalMonthlyProgression(next.getUTCMonth(), next.getUTCFullYear(), nextDate);
+              measureCalendarJumpPhase("simulation.monthlyProgression", () =>
+                applyGlobalMonthlyProgression(next.getUTCMonth(), next.getUTCFullYear(), nextDate),
+              );
             }
             cursor = nextDate;
           }
@@ -1891,6 +2102,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           // bloquear el avance del calendario. La fecha y los partidos se
           // gestionan por separado más abajo.
           console.error('[advanceTime] init failed:', err);
+          if (options?.mode === "jump") throw new Error("No se pudieron inicializar los datos de la partida para el salto.", { cause: err });
         }
 
         try {
@@ -1900,6 +2112,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           // reparación de fechas. Conservamos el calendario actual y dejamos
           // que el motor siga avanzando.
           console.error('[advanceTime] ensureLeagueSchedule failed:', err);
+          if (options?.mode === "jump") throw new Error("No se pudo verificar el calendario antes del salto.", { cause: err });
         }
         state = get();
 
@@ -1910,6 +2123,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               : [];
           } catch (err) {
             console.error('[advanceTime] current-day fixture lookup failed:', err);
+            if (options?.mode === "jump") throw new Error("No se pudo leer la jornada actual del calendario.", { cause: err });
             return [];
           }
         })();
@@ -1918,7 +2132,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
         if (userMatch) {
           if (userMatch.competition === "Liga") {
-            queueActiveAcademySync(state.myTeamId, state.currentDate, true, state.fixtures);
+            queueActiveAcademySync(state.myTeamId, state.currentDate, true, state.fixtures, options?.mode === "jump");
           }
           return 0;
         }
@@ -1932,6 +2146,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         if ((get().pendingDrawQueue ?? []).length > 0) return 0;
 
         const nextDate = addDaysToIso(state.currentDate, 1);
+        const isJumpTargetDate = options?.mode === "jump" && options.targetDate === nextDate;
         const drawQueue: PendingDrawEvent[] = [];
 
         // --- Copa: procesar al avanzar día, sin depender del calendario ---
@@ -1944,6 +2159,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             // Las migraciones/lecturas de la partida son auxiliares al avance.
             // Una carrera antigua o un save corrupto no puede impedir pasar de día.
             console.error('[advanceTime] loadSave (cup pipeline) failed:', err);
+            if (options?.mode === "jump") throw new Error(`No se pudo leer la partida al procesar las competiciones del ${nextDate}.`, { cause: err });
           }
 
           if (rawSave) {
@@ -1957,9 +2173,11 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
             const isCupSeason = month >= 7 || month <= 5; // Julio-Diciembre o Enero-Mayo
 
-            if (isCupSeason) {
+            if (isCupSeason && !isJumpTargetDate) {
               try {
-                currentSave = autoDrawForeignCups(fixCupDraws(rawSave), nextDate);
+                currentSave = measureCalendarJumpPhase("simulation.foreignCups.draw", () =>
+                  autoDrawForeignCups(fixCupDraws(rawSave), nextDate),
+                );
 
                 // National cups use the fixture's actual date as the only source
                 // of truth. Queue every round fixture scheduled for today, while
@@ -1997,31 +2215,60 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                     }
                   }
                 }
-                currentSave = processScheduledBackgroundSims(
-                  { ...currentSave, pendingBackgroundSims: pending },
-                  nextDate,
-                  currentSave.myTeamId,
+                currentSave = measureCalendarJumpPhase("simulation.foreignCups.matches", () =>
+                  processScheduledBackgroundSims(
+                    { ...currentSave, pendingBackgroundSims: pending },
+                    nextDate,
+                    currentSave.myTeamId,
+                  ),
                 );
                 saveSave(currentSave);
               } catch (err) {
                 console.error('[advanceTime] cup processing failed:', err);
+                if (options?.mode === "jump") {
+                  throw new Error(`Error procesando copas nacionales/extranjeras del ${nextDate}.`, { cause: err });
+                }
               }
             }
 
             // 3. Programar ligas background alrededor del próximo partido del usuario
 
             try {
-              // Programar y resolver ligas en segundo plano sin tocar sus fechas.
-              // Las copas se resuelven por `fixture.date` de forma determinista
-              // más abajo; no existe un segundo calendario que pueda moverlas.
-              const storeState = usePlayersStore.getState();
-              const nextScheduledMatch = storeState.fixtures.find((f) => !f.isPlayed);
-              const nextMatchDate = nextScheduledMatch?.date;
+              if (!isJumpTargetDate) {
+                // Programar y resolver ligas en segundo plano sin tocar sus fechas.
+                const storeState = usePlayersStore.getState();
+                const nextScheduledMatch = storeState.fixtures.find((f) => !f.isPlayed);
+                const nextMatchDate = nextScheduledMatch?.date;
 
-              currentSave = simulateBackgroundLeaguesOnly(currentSave, nextDate, nextMatchDate);
-              saveSave(currentSave);
-            } catch {
-              /* keep currentSave */
+                currentSave = measureCalendarJumpPhase("simulation.backgroundLeagues", () =>
+                  simulateBackgroundLeaguesOnly(
+                    currentSave,
+                    nextDate,
+                    nextMatchDate,
+                    options?.simulateAllLeagues === true,
+                  ),
+                );
+                currentSave = measureCalendarJumpPhase("simulation.backgroundMatches", () =>
+                  processScheduledBackgroundSims(currentSave, nextDate, currentSave.myTeamId),
+                );
+
+                if (options?.mode === "jump") {
+                  const overdue = (currentSave.pendingBackgroundSims ?? []).filter(
+                    (entry) => typeof entry.date === "string" && entry.date <= nextDate,
+                  );
+                  if (overdue.length > 0) {
+                    throw new Error(
+                      `Quedan ${overdue.length} jornada(s) de otras ligas/copa sin resolver hasta ${nextDate}.`,
+                    );
+                  }
+                }
+                saveSave(currentSave);
+              }
+            } catch (error) {
+              console.error('[advanceTime] background leagues processing failed:', error);
+              if (options?.mode === "jump") {
+                throw error instanceof Error ? error : new Error(`Error simulando las demás ligas del ${nextDate}.`);
+              }
             }
 
             // 2. Detectar si hoy es día de sorteo del usuario
@@ -2119,7 +2366,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                 }
               }
 
-              for (const dueMatchday of dueUserCupMatchdays) {
+              if (!isJumpTargetDate) for (const dueMatchday of dueUserCupMatchdays) {
                 const pending = [...(currentSave.pendingBackgroundSims ?? [])].filter(
                   (entry) =>
                     !(
@@ -2148,8 +2395,10 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                 );
               }
 
-              saveSave(currentSave);
+              if (!isJumpTargetDate) saveSave(currentSave);
             } catch (e) {
+              console.error('[advanceTime] user national-cup processing failed:', e);
+              if (options?.mode === "jump") throw e;
               saveSave(currentSave);
             }
           }
@@ -2213,8 +2462,10 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               }
 
               // Catch up all UCL AI fixtures through this date (play-offs, knockouts, etc.)
-              if (ucl.drawState.leagueDone && offset >= UCL_CALENDAR.leagueDay[0]) {
-                const synced = simulatePendingUCLThroughDay(rawSave, offset, rawSave.myTeamId);
+              if (!isJumpTargetDate && ucl.drawState.leagueDone && offset >= UCL_CALENDAR.leagueDay[0]) {
+                const synced = measureCalendarJumpPhase("simulation.champions", () =>
+                  simulatePendingUCLThroughDay(rawSave, offset, rawSave.myTeamId),
+                );
                 if (synced !== rawSave) {
                   rawSave.uclFixtures = synced.uclFixtures;
                   if (synced.ucl) rawSave.ucl = synced.ucl;
@@ -2226,6 +2477,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           }
         } catch (err) {
           console.error('[advanceTime] UCL processing failed:', err);
+          if (options?.mode === "jump") throw new Error(`Error procesando Champions League del ${nextDate}.`, { cause: err });
         }
 
         // --- Europa League + Conference League: mismo motor que UCL, siempre +1 día ---
@@ -2263,8 +2515,10 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                 return;
               }
 
-              if (offset >= calendar.leagueDay[0]) {
-                const synced = simulatePendingEuropeanThroughDay(rawSave, comp, offset, rawSave.myTeamId);
+              if (!isJumpTargetDate && offset >= calendar.leagueDay[0]) {
+                const synced = measureCalendarJumpPhase("simulation.europaConference", () =>
+                  simulatePendingEuropeanThroughDay(rawSave, comp, offset, rawSave.myTeamId),
+                );
                 if (synced !== rawSave) {
                   Object.assign(rawSave, synced);
                   saveSave(rawSave);
@@ -2277,6 +2531,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           }
         } catch (err) {
           console.error('[advanceTime] UEL/UECL processing failed:', err);
+          if (options?.mode === "jump") throw new Error(`Error procesando Europa League/Conference League del ${nextDate}.`, { cause: err });
         }
 
         if (drawQueue.length > 0) {
@@ -2295,10 +2550,40 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           ];
           const queue = [...new Set(drawQueue)].sort((a, b) => order.indexOf(a) - order.indexOf(b));
           const first = queue[0];
+          // El día de sorteo también cuenta como un día completo de temporada.
+          // Esta rama retorna antes del bucle normal de avance, así que procesa
+          // aquí la progresión mensual y la recuperación de energía para no
+          // saltarse esos efectos justo cuando cambia el mes.
+          try {
+            const previousDay = new Date(`${state.currentDate}T00:00:00Z`);
+            const nextDay = new Date(`${nextDate}T00:00:00Z`);
+            if (
+              previousDay.getUTCMonth() !== nextDay.getUTCMonth() ||
+              previousDay.getUTCFullYear() !== nextDay.getUTCFullYear()
+            ) {
+              measureCalendarJumpPhase("simulation.monthlyProgression", () =>
+                applyGlobalMonthlyProgression(nextDay.getUTCMonth(), nextDay.getUTCFullYear(), nextDate),
+              );
+            }
+          } catch (error) {
+            console.warn("[advanceTime] monthly progression on draw day failed:", error);
+            if (options?.mode === "jump") throw new Error(`Falló la progresión mensual del ${nextDate}.`, { cause: error });
+          }
+          try {
+            get().recoverPlayerEnergyToDate(nextDate);
+          } catch (error) {
+            console.warn("[advanceTime] energy recovery on draw day failed:", error);
+            if (options?.mode === "jump") throw new Error(`Falló la recuperación de energía del ${nextDate}.`, { cause: error });
+          }
           const latest = loadSave();
           if (latest) saveSave(latest);
           const mailboxSave = loadSave();
-          if (mailboxSave) saveSave(applyDailyMailboxMessages(mailboxSave, nextDate));
+          if (mailboxSave) {
+            const dailyMailbox = measureCalendarJumpPhase("simulation.mailboxNews", () =>
+              applyDailyMailboxMessages(mailboxSave, nextDate),
+            );
+            saveSave(dailyMailbox);
+          }
           syncPlayerAgesForDate(nextDate);
           set({
             currentDate: nextDate,
@@ -2306,7 +2591,38 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             pendingCupDraw: first === "cup",
             pendingUclDraw: first !== "cup" ? first : null,
           });
-          queueActiveAcademySync(state.myTeamId, nextDate, false, state.fixtures);
+          queueActiveAcademySync(state.myTeamId, nextDate, false, state.fixtures, options?.mode === "jump");
+          return 1;
+        }
+
+        if (isJumpTargetDate) {
+          // Llegamos al día solicitado sin simular sus partidos. Todos los días
+          // anteriores ya pasaron por el pipeline completo; en la fecha objetivo
+          // solo se aplican efectos de calendario que ocurren al entrar en el día.
+          const previousDay = new Date(`${state.currentDate}T00:00:00Z`);
+          const targetDay = new Date(`${nextDate}T00:00:00Z`);
+          if (
+            previousDay.getUTCMonth() !== targetDay.getUTCMonth() ||
+            previousDay.getUTCFullYear() !== targetDay.getUTCFullYear()
+          ) {
+            measureCalendarJumpPhase("simulation.monthlyProgression", () =>
+              applyGlobalMonthlyProgression(targetDay.getUTCMonth(), targetDay.getUTCFullYear(), nextDate),
+            );
+          }
+          get().recoverPlayerEnergyToDate(nextDate);
+          const targetSave = loadSave();
+          if (targetSave) {
+            const dailyMailbox = measureCalendarJumpPhase("simulation.mailboxNews", () =>
+              applyDailyMailboxMessages(targetSave, nextDate),
+            );
+            saveSave(dailyMailbox);
+          }
+          syncPlayerAgesForDate(nextDate);
+          set({ currentDate: nextDate, pendingUserMatch: null });
+          // La fecha objetivo se deja íntegra: no se ejecutan tampoco partidos
+          // juveniles de esa fecha ni su sincronización asíncrona. Se pondrán al
+          // día cuando el jugador continúe normalmente desde el calendario.
+          recordCalendarJumpCounter("calendar.targetDayLeftUnsimulated");
           return 1;
         }
 
@@ -2326,20 +2642,39 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         let academyLeagueMatchDate: string | null = null;
 
         let pendingUserMatch: ScheduleFixture | null = null;
+        let scheduleResultsToCommit: Array<{ fixtureId: string; date?: string; result: SimResult }> = [];
+        const persistScheduleResults = () => {
+          if (scheduleResultsToCommit.length === 0) return;
+          const currentSave = loadSave();
+          if (currentSave) commitCalendarScheduleResults(currentSave, scheduleResultsToCommit);
+          scheduleResultsToCommit = [];
+        };
         const simXICache = new Map<string, Player[]>();
         const getCachedScheduleXI = (teamId: string, md: number) => {
           const key = `${teamId}:${md}`;
           const cached = simXICache.get(key);
           if (cached) return cached;
-          const xi = get().getSimXI(teamId, [], md);
+          // La simulación real del avance diario debe recibir un XI válido.
+          // Pasar [] provocaba que el motor resolviese como 0-0 todos los partidos.
+          const squad = get().getSimSquad(teamId);
+          const xi = get().getSimXI(teamId, calendarLineupIds(squad), md);
           simXICache.set(key, xi);
           return xi;
         };
 
         const simFixture = (f: ScheduleFixture) => {
           try {
-            const result = simulateScheduleFixtureFastDetailed(f, (teamId, md) =>
-              getCachedScheduleXI(teamId, md),
+            const homeXI = getCachedScheduleXI(f.homeTeam, f.matchday);
+            const awayXI = getCachedScheduleXI(f.awayTeam, f.matchday);
+            if (homeXI.length === 0 || awayXI.length === 0) {
+              throw new Error(
+                `Alineación vacía en ${f.id} (${f.homeTeam}: ${homeXI.length}, ${f.awayTeam}: ${awayXI.length}).`,
+              );
+            }
+            const result = measureCalendarJumpPhase("simulation.userLeagueFixture", () =>
+              simulateScheduleFixtureFastDetailed(f, (teamId, md) =>
+                teamId === f.homeTeam ? homeXI : teamId === f.awayTeam ? awayXI : getCachedScheduleXI(teamId, md),
+              ),
             );
 
             const minuteMap = new Map(
@@ -2364,19 +2699,22 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                 );
               } catch (err) {
                 console.warn('[advanceTime] appearance update skipped:', playerId, err);
+                if (options?.mode === "jump") throw new Error(`No se pudo actualizar la aparición del jugador ${playerId} en ${f.id}.`, { cause: err });
               }
             }
 
-            for (const ev of result.events) {
-              if (ev.type !== "goal") continue;
+            for (const ev of [...(result.events ?? []), ...(result.extraTime?.events ?? [])]) {
+              if (!["goal", "penalty_goal", "free_kick_goal"].includes(ev.type)) continue;
               try {
                 get().recordGoal(ev.scorerId);
                 if (ev.assistId) get().recordAssist(ev.assistId);
               } catch (err) {
                 console.warn('[advanceTime] goal stat update skipped:', err);
+                if (options?.mode === "jump") throw new Error(`No se pudieron actualizar las estadísticas de goles de ${f.id}.`, { cause: err });
               }
             }
 
+            scheduleResultsToCommit.push({ fixtureId: f.id, date: f.date, result });
             const index = fixtureIndex.get(f.id);
             if (index !== undefined) {
               fixtures[index] = {
@@ -2396,7 +2734,23 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               awayTeam: f.awayTeam,
               error: err instanceof Error ? err.stack || err.message : err,
             });
+            if (options?.mode === "jump") {
+              throw new Error(`No se pudo simular el partido ${f.id} (${f.homeTeam}–${f.awayTeam}); no se guardará un 0-0 ficticio.`, { cause: err });
+            }
 
+            const fallbackResult: SimResult = {
+              homeGoals: 0,
+              awayGoals: 0,
+              events: [],
+              cards: [],
+              injuries: [],
+              xgHome: 0,
+              xgAway: 0,
+              highlights: [],
+              ratings: [],
+              substitutions: [],
+            };
+            scheduleResultsToCommit.push({ fixtureId: f.id, date: f.date, result: fallbackResult });
             const index = fixtureIndex.get(f.id);
             if (index !== undefined) {
               fixtures[index] = {
@@ -2410,6 +2764,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         };
 
         for (let d = 0; d < days; d++) {
+          scheduleResultsToCommit = [];
           const previousDate = date;
           const nextDate = addDaysToIso(date, 1);
 
@@ -2423,10 +2778,13 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             const nextMonth = next.getUTCMonth();
             const nextYear = next.getUTCFullYear();
             if (nextMonth !== prevMonth || nextYear !== prevYear) {
-              applyGlobalMonthlyProgression(nextMonth, nextYear, nextDate);
+              measureCalendarJumpPhase("simulation.monthlyProgression", () =>
+                applyGlobalMonthlyProgression(nextMonth, nextYear, nextDate),
+              );
             }
           } catch (error) {
             console.warn("[advanceTime] monthly progression failed:", error);
+            if (options?.mode === "jump") throw new Error(`Falló la progresión mensual del ${nextDate}.`, { cause: error });
           }
 
           // La energía se recupera con el paso del calendario, nunca por forma.
@@ -2434,6 +2792,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             get().recoverPlayerEnergyToDate(nextDate);
           } catch (err) {
             console.error('[advanceTime] energy recovery failed:', err);
+            if (options?.mode === "jump") throw new Error(`Falló la recuperación de energía del ${nextDate}.`, { cause: err });
           }
 
           const onDay = (() => {
@@ -2441,6 +2800,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               return unplayedOnDate(fixtures, nextDate);
             } catch (err) {
               console.error('[advanceTime] fixture lookup failed for next day:', err);
+              if (options?.mode === "jump") throw new Error(`No se pudo leer la jornada del ${nextDate}.`, { cause: err });
               return [];
             }
           })();
@@ -2460,6 +2820,8 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             date = nextDate;
             advanced++;
             pendingUserMatch = fixtures.find((f) => f.id === userMatch.id) ?? userMatch;
+            if (days === 1) set({ currentDate: date, fixtures: [...fixtures], pendingUserMatch });
+            persistScheduleResults();
             break;
           }
 
@@ -2468,11 +2830,19 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           });
 
           date = nextDate;
+          if (days === 1) set({ currentDate: date, fixtures: [...fixtures], pendingUserMatch: null });
+          persistScheduleResults();
           try {
             const dailySave = loadSave();
-            if (dailySave) saveSave(applyDailyMailboxMessages(dailySave, nextDate));
+            if (dailySave) {
+              const dailyMailbox = measureCalendarJumpPhase("simulation.mailboxNews", () =>
+                applyDailyMailboxMessages(dailySave, nextDate),
+              );
+              saveSave(dailyMailbox);
+            }
           } catch (err) {
             console.warn("[advanceTime] daily mailbox generation failed:", err);
+            if (options?.mode === "jump") throw new Error(`No se pudieron procesar los mensajes/noticias del ${nextDate}.`, { cause: err });
           }
           advanced++;
         }
@@ -2488,7 +2858,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           squad: state.squad.length ? [...state.squad] : state.squad,
         });
 
-        queueActiveAcademySync(state.myTeamId, date, academyLeagueMatchDate === date, fixtures);
+        queueActiveAcademySync(state.myTeamId, date, academyLeagueMatchDate === date, fixtures, options?.mode === "jump");
 
         return advanced;
       },
@@ -3482,30 +3852,28 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
       // verdad). Además, el propio juego borraba esta clave en cada arranque
       // y al cargar una partida, así que sólo consumía cuota. Se mantiene
       // como caché de sesión en memoria para no cambiar el comportamiento.
-      storage: createJSONStorage(() => {
-        const mem = new Map<string, string>();
-        // Limpia cualquier resto de la versión anterior que siguiera
-        // ocupando cuota en `localStorage`.
+      storage: (() => {
+        // Caché de sesión en memoria. Se guarda el OBJETO (sin JSON.stringify):
+        // serializar ~27 MB en cada set costaba ~90 ms y nadie leía esa copia.
+        const mem = new Map<string, StorageValue<Partial<PlayersState>>>();
         if (typeof window !== "undefined") {
           try {
             localStorage.removeItem("fcsim:players:v1");
           } catch {
-            /* si falla no es crítico */
+            /* no crítico */
           }
         }
-        return {
-          length: 0,
-          key: () => null,
-          clear: () => mem.clear(),
-          getItem: (k: string) => mem.get(k) ?? null,
-          removeItem: (k: string) => {
-            mem.delete(k);
-          },
-          setItem: (k: string, v: string) => {
+        const storage: PersistStorage<Partial<PlayersState>> = {
+          getItem: (k) => mem.get(k) ?? null,
+          setItem: (k, v) => {
             mem.set(k, v);
           },
-        } as unknown as Storage;
-      }),
+          removeItem: (k) => {
+            mem.delete(k);
+          },
+        };
+        return storage;
+      })(),
 
       merge: (persisted, current) => {
         const saved = (persisted as Partial<PlayersState>) ?? {};

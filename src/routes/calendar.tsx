@@ -1,11 +1,19 @@
 // @ts-nocheck
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   loadSave,
   saveSave,
+  beginSaveBatch,
+  checkpointSaveBatchDay,
+  isSaveBatchCheckpointDueNextDay,
+  endSaveBatch,
+  abortSaveBatch,
+  persistCalendarJumpMarketState,
+  commitCalendarScheduleResults,
+  repairPlaceholderCalendarResults,
   applyCupDraw,
   autoDrawForeignCups,
   simulateRemainingCupMatches,
@@ -24,13 +32,34 @@ import {
   applyUCLKnockoutDraw,
   simulatePendingUCLThroughDay,
   simulatePendingEuropeanThroughDay,
+  simulateUCLMatchday,
+  simulateUCLKnockoutMatchday,
+  processUCLKnockoutProgress,
+  applyEuropeanLeagueDraw,
+  applyEuropeanPlayoffDraw,
+  applyEuropeanKnockoutDraw,
+  simulateEuropeanLeagueMatchday,
+  simulateEuropeanKnockoutMatchday,
+  processEuropeanKnockoutProgress,
+  initializeEuropeanCompetition,
 } from "@/lib/store";
 
 import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
 
+import {
+  startCalendarJumpProfile,
+  finishCalendarJumpProfile,
+  isCalendarJumpProfileActive,
+  recordCalendarJumpCounter,
+  recordCalendarJumpDuration,
+  measureCalendarJumpPhase,
+} from "@/lib/calendarJumpProfiler";
+
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 
-import { usePlayersStore } from "@/store/playersStore";
+import { usePlayersStore, clearCalendarJumpBackgroundErrors } from "@/store/playersStore";
+
+import { snapshotTransferSystem, applyTransferSnapshot } from "@/lib/transfers/Persistence";
 
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 
@@ -46,7 +75,8 @@ import { UCLDrawModal } from "@/components/UCLDrawModal";
 import { EuropeanDrawModal } from "@/components/EuropeanDrawModal";
 import { Trophy } from "lucide-react";
 
-import { UCL_START, UCL_CALENDAR, uclDayOffset } from "@/data/ucl";
+import { UCL_START, UCL_CALENDAR, UCL_SEASON1_IDS, uclDayOffset } from "@/data/ucl";
+import { runSwissDraw } from "@/lib/uclDraw";
 import { EUROPEAN_CONFIGS, europeanCalendar, EUROPEAN_START } from "@/data/europeanCompetitions";
 
 import { teamById, LEAGUES, getPrimaryLeagueForCountry, type LeagueId } from "@/data/teams";
@@ -112,6 +142,16 @@ export const Route = createFileRoute("/calendar")({ component: CalendarPage });
 const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
 function CalendarPage() {
+  const renderStartedAtRef = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
+  renderStartedAtRef.current = typeof performance !== "undefined" ? performance.now() : Date.now();
+  // Contador y duración de render/commit: solo tienen coste apreciable si se
+  // activa el profiler opt-in durante un salto.
+  recordCalendarJumpCounter("calendar.reactRenders");
+  useLayoutEffect(() => {
+    if (!isCalendarJumpProfileActive()) return;
+    const endedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    recordCalendarJumpDuration("calendar.reactRenderCommit", endedAt - renderStartedAtRef.current);
+  });
   const navigate = useNavigate();
 
   const currentDateIso = usePlayersStore((s) => s.currentDate);
@@ -136,6 +176,10 @@ function CalendarPage() {
   const [showCupDrawModal, setShowCupDrawModal] = useState(false);
 
   const [isAdvancing, setIsAdvancing] = useState(false);
+  const jumpInProgressRef = useRef(false);
+  const [jumpStartDate, setJumpStartDate] = useState<string | null>(null);
+  const [selectedJumpDate, setSelectedJumpDate] = useState<string | null>(null);
+  const [jumpMessage, setJumpMessage] = useState<string | null>(null);
 
   const pendingUclDraw = usePlayersStore((s) => s.pendingUclDraw);
   const pendingDrawQueue = usePlayersStore((s) => s.pendingDrawQueue ?? []);
@@ -197,7 +241,9 @@ function CalendarPage() {
   // Check for cup draw pending after save changes
 
   useEffect(() => {
-    if (!save) return;
+    // Los sorteos intermedios se procesan en el motor del salto. Este efecto
+    // solo administra los modales de la fecha actual cuando no hay salto activo.
+    if (!save || isAdvancing) return;
 
     try {
       const userCountry = LEAGUES[save.myLeague]?.country;
@@ -276,14 +322,6 @@ function CalendarPage() {
         ? cupFixtures.some((f) => f.round === currentDrawRound.round)
         : false;
 
-      console.log(
-        `[Calendar cup check] userCountry: ${userCountry}, myTeamId: ${myTeamId}, isInPreliminary: ${isInPreliminary}`,
-      );
-
-      console.log(
-        `[Calendar cup check] today: ${today}, isDrawDay: ${isDrawDay}, hasCurrentRoundFixtures: ${hasCurrentRoundFixtures}, cupDrawPending: ${!!save.cupDrawPending}`,
-      );
-
       // Check if user is eliminated from cup (team not in any unplayed cup fixture)
 
       const userInCup = cupFixtures.some(
@@ -305,10 +343,6 @@ function CalendarPage() {
 
         return toDateOnly(matchDate) === today;
       })?.matchday;
-
-      console.log(
-        `[Calendar cup check] userInCup: ${userInCup}, isCupMatchDay: ${isCupMatchDay}, currentCupMatchday: ${currentCupMatchday}`,
-      );
 
       // Los partidos de copa se simulan desde el store/background scheduler.
       // El calendario solo presenta las fechas y los sorteos; no ejecuta una
@@ -362,13 +396,7 @@ function CalendarPage() {
 
           // Use surviving teams if available, otherwise use initial participants
 
-          console.log(
-            `[Calendar] About to call getSurvivingCupTeams for round: ${currentRound.round}`,
-          );
-
           const survivingTeams = getSurvivingCupTeams(updated, cupKey);
-
-          console.log(`[Calendar] getSurvivingCupTeams returned ${survivingTeams.length} teams`);
 
           // The first non-preliminary round in the schedule (R32, R16, Octavos, etc.)
 
@@ -392,18 +420,12 @@ function CalendarPage() {
 
             drawTeams = [...prelimWinners, ...mainBracketTeams];
 
-            console.log(
-              `[Calendar] ${currentRound.round} after prelim: combining ${prelimWinners.length} prelim winners with ${mainBracketTeams.length} main bracket teams`,
-            );
+
           } else {
             // For all subsequent rounds (QF, SF, Final), use surviving teams from previous round
 
             drawTeams = survivingTeams.length > 0 ? survivingTeams : cupData.participants;
           }
-
-          console.log(
-            `[Calendar] Using ${drawTeams.length} teams for draw of round ${currentRound.round}`,
-          );
 
           updated.cupDrawPending = { league: cupKey, round: currentRound.round, teams: drawTeams };
 
@@ -429,12 +451,16 @@ function CalendarPage() {
     } catch (err) {
       console.error("Error in cup draw check:", err);
     }
-  }, [save?.cupDrawPending, currentDateIso]); // Re-run when cupDrawPending or current date changes
+  }, [save?.cupDrawPending, currentDateIso, isAdvancing]); // Re-run outside automated jumps
 
   useEffect(() => {
+    // Durante el salto cada día se procesa en memoria y se persiste por el motor;
+    // releer todo el JSON en cada cambio de fecha solo ralentiza la animación.
+    // La partida visible se refresca una vez al terminar el salto.
+    if (isAdvancing) return;
     const latest = loadSave();
     if (latest) setSave(latest);
-  }, [currentDateIso]);
+  }, [currentDateIso, isAdvancing]);
 
   useLayoutEffect(() => {
     setBrowseMonth(null);
@@ -444,7 +470,6 @@ function CalendarPage() {
 
   const viewMonth = browseMonth?.month ?? gameDate.getMonth();
 
-  const calendarKey = `${currentDateIso}-${viewYear}-${viewMonth}`;
 
   const grid = useMemo(
     () => monthDays(viewYear, viewMonth),
@@ -708,19 +733,9 @@ function CalendarPage() {
       // La tienda es la única autoridad que avanza el calendario. Antes esta
       // pantalla programaba ligas/copas y después volvía a llamar a advanceTime,
       // dejando dos pipelines compitiendo por el mismo save.
-      const advanced = advanceTime(1);
-      const latest = usePlayersStore.getState();
-
       // `advanceTime` puede pausar voluntariamente para mostrar un partido o un
       // sorteo pendiente. En ese caso el propio store ya ha actualizado el estado.
-      if (advanced === 0) {
-        console.log('[Calendar] advanceTime pausado:', {
-          currentDate: latest.currentDate,
-          pendingUserMatch: !!latest.pendingUserMatch,
-          pendingCupDraw: !!latest.pendingCupDraw,
-          pendingUclDraw: !!latest.pendingUclDraw,
-        });
-      }
+      advanceTime(1);
 
     } catch (err) {
       console.error('[Calendar] Error al avanzar el día:',
@@ -728,6 +743,599 @@ function CalendarPage() {
       );
     } finally {
       setIsAdvancing(false);
+    }
+  };
+
+  // Cede el control un instante para que React/navegador puedan pintar la fecha
+  // nueva, sin esperar un fotograma completo (~16 ms) por día. La simulación sigue
+  // ejecutándose en orden, pero el salto largo tarda mucho menos.
+  const waitForCalendarEffects = () => new Promise<void>((resolve) => {
+    if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+      window.setTimeout(resolve, 0);
+    } else {
+      resolve();
+    }
+  });
+
+  function shuffledMatchups(teams: string[]): [string, string][] {
+    const shuffled = [...teams];
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      const other = Math.floor(Math.random() * (index + 1));
+      [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+    }
+    const matchups: [string, string][] = [];
+    for (let index = 0; index + 1 < shuffled.length; index += 2) {
+      matchups.push([shuffled[index], shuffled[index + 1]]);
+    }
+    return matchups;
+  }
+
+  function resolveNationalCupDraw(currentSave: ReturnType<typeof loadSave>, date: string) {
+    if (!currentSave?.myTeamId) return null;
+    const country = LEAGUES[currentSave.myLeague]?.country;
+    if (!country) return null;
+    const cupLeague = (getPrimaryLeagueForCountry(country) || currentSave.myLeague) as LeagueId;
+    const storedPending = currentSave.cupDrawPending;
+    if (storedPending && storedPending.league === cupLeague && Array.isArray(storedPending.teams) && storedPending.teams.length >= 2) {
+      return applyCupDraw(currentSave, cupLeague, storedPending.round, shuffledMatchups(storedPending.teams));
+    }
+    const cupData = initCup(country);
+    const fullSchedule =
+      ((currentSave.cupFixtures as any)?.[`${cupLeague}_structure`]?.schedule ??
+        getCupStructureForCountry(country).schedule) as any[];
+    const isInPreliminary = !!cupData.preliminaryParticipants?.includes(currentSave.myTeamId);
+    const relevantSchedule = fullSchedule.filter((step) => step.round !== "Preliminar" || isInPreliminary);
+    const cupFixtures = Array.isArray(currentSave.cupFixtures?.[cupLeague])
+      ? currentSave.cupFixtures[cupLeague]
+      : [];
+    const cupStart = parseDateOnly("2026-07-07");
+    const dueStep = relevantSchedule.find((step) => {
+      const drawDate = new Date(cupStart.getTime() + Number(step.drawMatchday) * 86400000);
+      const drawIso = toDateOnly(drawDate);
+      if (drawIso > date || cupFixtures.some((fixture: any) => fixture.round === step.round)) return false;
+      const previousStep = fullSchedule.find((candidate) => candidate.globalSlot === step.globalSlot - 1);
+      return !previousStep || isGlobalNationalCupRoundComplete(currentSave, previousStep.globalSlot);
+    });
+    if (!dueStep) return null;
+
+    let drawTeams: string[];
+    const firstFullStep = fullSchedule[0];
+    const firstMainRound = relevantSchedule.find((step) => step.round !== "Preliminar");
+    if (dueStep.round === "Preliminar") {
+      drawTeams = [...(cupData.preliminaryParticipants ?? [])];
+    } else if (firstFullStep?.round === "Preliminar" && dueStep.round === firstMainRound?.round) {
+      const preliminaryWinners = getSurvivingCupTeams(currentSave, cupLeague);
+      const mainBracketTeams = cupData.participants.filter((id) => !cupData.preliminaryParticipants?.includes(id));
+      drawTeams = [...preliminaryWinners, ...mainBracketTeams];
+    } else {
+      const survivingTeams = getSurvivingCupTeams(currentSave, cupLeague);
+      drawTeams = survivingTeams.length > 0 ? survivingTeams : [...cupData.participants];
+    }
+    if (drawTeams.length < 2) return null;
+    const next = applyCupDraw(currentSave, cupLeague, dueStep.round, shuffledMatchups(drawTeams));
+    saveSave(next);
+    return next;
+  }
+
+  function resolvePendingDrawsForJump(date: string): boolean {
+    // La mayoría de los días no tienen sorteos. Consultar el estado primero evita
+    // parsear el guardado completo en cada día de un salto largo.
+    const store = usePlayersStore.getState();
+    let queue = [...(store.pendingDrawQueue ?? [])];
+    if (queue.length === 0) {
+      if (store.pendingCupDraw) queue.push("cup");
+      if (store.pendingUclDraw) queue.push(store.pendingUclDraw as any);
+    }
+    if (queue.length === 0) return false;
+    let currentSave = loadSave();
+    if (!currentSave) return false;
+
+    for (const draw of queue) {
+      try {
+        if (draw === "cup") {
+          const resolvedCupDraw = resolveNationalCupDraw(currentSave, date);
+          if (!resolvedCupDraw) return false;
+          currentSave = resolvedCupDraw;
+        } else if (draw === "league") {
+          if (!currentSave.ucl?.drawState?.leagueDone) {
+            currentSave = applyUCLLeagueDraw(currentSave, runSwissDraw(UCL_SEASON1_IDS));
+          }
+          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date), currentSave.myTeamId);
+        } else if (draw === "playoff") {
+          if (currentSave.ucl && !currentSave.ucl.drawState.playoffDone) currentSave = applyUCLPlayoffDraw(currentSave);
+          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date), currentSave.myTeamId);
+        } else if (draw === "knockout") {
+          if (currentSave.ucl && !currentSave.ucl.drawState.knockoutDone) currentSave = applyUCLKnockoutDraw(currentSave);
+          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date), currentSave.myTeamId);
+        } else {
+          const [competition, phase] = draw.split("-") as ["uel" | "uecl", "league" | "playoff" | "knockout"];
+          currentSave = initializeEuropeanCompetition(currentSave, competition);
+          const europeanState = (currentSave as any)[competition];
+          if (phase === "league" && !europeanState?.drawState?.leagueDone) {
+            currentSave = applyEuropeanLeagueDraw(
+              currentSave,
+              competition,
+              runSwissDraw(EUROPEAN_CONFIGS[competition].participants),
+            );
+          } else if (phase === "playoff" && !europeanState?.drawState?.playoffDone) {
+            currentSave = applyEuropeanPlayoffDraw(currentSave, competition);
+          } else if (phase === "knockout" && !europeanState?.drawState?.knockoutDone) {
+            currentSave = applyEuropeanKnockoutDraw(currentSave, competition);
+          }
+          currentSave = simulatePendingEuropeanThroughDay(
+            currentSave,
+            competition,
+            Math.floor((parseDateOnly(date).getTime() - parseDateOnly(EUROPEAN_START).getTime()) / 86400000),
+            currentSave.myTeamId,
+          );
+        }
+        saveSave(currentSave);
+        usePlayersStore.getState().finishPendingDraw();
+      } catch (error) {
+        console.error("[Calendar] No se pudo resolver automáticamente un sorteo durante el salto:", draw, error);
+        return false;
+      }
+    }
+    // SORTEO_VISIBLE_EN_SALTO: un sorteo es un evento raro (unas pocas veces por
+    // temporada), así que publicamos el save ya sorteado también durante el salto.
+    // Así los partidos nuevos de tu equipo aparecen en el calendario al momento y
+    // no solo al llegar a la fecha final.
+    setSave(currentSave);
+    return true;
+  }
+
+  function persistScheduledLeagueResults(date: string): any | null {
+    // Primero filtrar el pequeño calendario en memoria. En un día normal no hay
+    // resultados pendientes aquí, así que no hace falta leer/parsing del guardado.
+    const candidates = usePlayersStore.getState().fixtures
+      .filter((fixture) => fixture.date === date && fixture.isPlayed && fixture.homeScore != null && fixture.awayScore != null);
+    if (candidates.length === 0) return null;
+
+    const currentSave = loadSave();
+    if (!currentSave) return null;
+
+    const officialFixtures = currentSave.fixtures?.[currentSave.myLeague] ?? [];
+    const officialPendingIds = new Set(
+      officialFixtures.filter((fixture: any) => !fixture.result).map((fixture: any) => fixture.id),
+    );
+    const scheduledResults = candidates
+      .filter((fixture) => officialPendingIds.has(fixture.id))
+      .map((fixture) => ({
+        fixtureId: fixture.id,
+        date: fixture.date,
+        result: {
+          homeGoals: Number(fixture.homeScore) || 0,
+          awayGoals: Number(fixture.awayScore) || 0,
+          events: [],
+          cards: [],
+          injuries: [],
+          xgHome: 0,
+          xgAway: 0,
+          highlights: [],
+          ratings: [],
+          substitutions: [],
+        },
+        scoreOnly: true,
+      }));
+
+    if (scheduledResults.length === 0) return null;
+
+    const updatedSave = commitCalendarScheduleResults(currentSave, scheduledResults);
+    saveSave(updatedSave);
+    return updatedSave;
+  }
+
+  async function resolveIntermediateDate(date: string): Promise<boolean> {
+    const store = usePlayersStore.getState();
+    const teamId = store.myTeamId;
+    if (!teamId) return false;
+    let handled = false;
+    // Suprimir primero cualquier modal del día intermedio; el partido sigue en
+    // el calendario y se simulará justo después por el mismo motor rápido.
+    const pendingAtStart = usePlayersStore.getState().pendingUserMatch;
+    if (pendingAtStart) {
+      usePlayersStore.getState().dismissMatch(pendingAtStart.id);
+      handled = true;
+    }
+    if (measureCalendarJumpPhase("simulation.drawResolution", () => resolvePendingDrawsForJump(date))) handled = true;
+
+    // En días normales advanceTime ya resuelve los partidos de IA. Si un sorteo
+    // bloqueó ese tick, aquí recuperamos también cualquier partido de liga que
+    // quedara sin procesar. Primero IA y después el equipo del usuario.
+    const scheduleMatches = usePlayersStore.getState().fixtures
+      .filter((fixture) => fixture.date === date && !fixture.isPlayed)
+      .sort((a, b) => Number(involvesTeam(a, teamId)) - Number(involvesTeam(b, teamId)) || a.id.localeCompare(b.id));
+    for (const fixture of scheduleMatches) {
+      if (usePlayersStore.getState().simulateMatchForCalendarJump(fixture.id)) handled = true;
+    }
+    const unresolvedLeagueMatches = usePlayersStore.getState().fixtures.filter(
+      (fixture) => fixture.date === date && !fixture.isPlayed,
+    );
+    if (unresolvedLeagueMatches.length > 0) {
+      throw new Error(
+        `No se han podido completar todos los partidos de liga del ${date}: ${unresolvedLeagueMatches.length} pendiente(s). El salto se ha detenido para no perder resultados.`,
+      );
+    }
+
+    const persistedSave = persistScheduledLeagueResults(date);
+    if (persistedSave) handled = true;
+    let currentSave = persistedSave ?? loadSave();
+    if (currentSave) {
+      const country = LEAGUES[currentSave.myLeague]?.country;
+      const cupLeague = (country ? getPrimaryLeagueForCountry(country) : currentSave.myLeague) as LeagueId;
+      const countryCup = currentSave.cupFixtures?.[cupLeague];
+      if (Array.isArray(countryCup)) {
+        const cupMatchdays = new Set<number>(
+          countryCup
+            .filter((fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId))
+            .filter((fixture: any) => getCupFixtureDateIso(fixture) === date)
+            .map((fixture: any) => Number(fixture.matchday)),
+        );
+        for (const matchday of cupMatchdays) {
+          currentSave = await simulateCupMatchdayLayered(currentSave, matchday, undefined, cupLeague);
+          saveSave(currentSave);
+          handled = true;
+        }
+        const unresolvedCupMatches = (currentSave?.cupFixtures?.[cupLeague] ?? []).filter(
+          (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getCupFixtureDateIso(fixture) === date,
+        );
+        if (unresolvedCupMatches.length > 0) {
+          throw new Error(`No se han podido completar todos los partidos de copa del ${date}. El salto se ha detenido para no perder resultados.`);
+        }
+      }
+
+      const uclMatchdays = new Set<number>(
+        (currentSave.uclFixtures ?? [])
+          .filter((fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId))
+          .filter((fixture: any) => getEuropeanFixtureDateIso(fixture, "ucl") === date)
+          .map((fixture: any) => Number(fixture.matchday)),
+      );
+      for (const matchday of uclMatchdays) {
+        const dayFixtures = (currentSave.uclFixtures ?? []).filter((fixture: any) => fixture.matchday === matchday && !fixture.result);
+        const isLeaguePhase = dayFixtures.some((fixture: any) => /^Jornada\s+\d+$/i.test(String(fixture.round ?? "")));
+        currentSave = isLeaguePhase
+          ? simulateUCLMatchday(currentSave, matchday)
+          : simulateUCLKnockoutMatchday(currentSave, matchday);
+        currentSave = processUCLKnockoutProgress(currentSave, uclDayOffset(date));
+        saveSave(currentSave);
+        handled = true;
+      }
+      const unresolvedUclMatches = (currentSave.uclFixtures ?? []).filter(
+        (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getEuropeanFixtureDateIso(fixture, "ucl") === date,
+      );
+      if (unresolvedUclMatches.length > 0) {
+        throw new Error(`No se han podido completar todos los partidos de Champions del ${date}. El salto se ha detenido para no perder resultados.`);
+      }
+
+      for (const competition of ["uel", "uecl"] as const) {
+        const fixtureKey = competition === "uel" ? "uelFixtures" : "ueclFixtures";
+        const europeanMatchdays = new Set<number>(
+          (((currentSave as any)[fixtureKey] ?? []) as any[])
+            .filter((fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId))
+            .filter((fixture: any) => getEuropeanFixtureDateIso(fixture, competition) === date)
+            .map((fixture: any) => Number(fixture.matchday)),
+        );
+        for (const matchday of europeanMatchdays) {
+          const list = (((currentSave as any)[fixtureKey] ?? []) as any[]).filter((fixture: any) => Number(fixture.matchday) === matchday && !fixture.result);
+          const isLeaguePhase = list.some((fixture: any) => /^Jornada\s+\d+$/i.test(String(fixture.round ?? "")));
+          currentSave = isLeaguePhase
+            ? simulateEuropeanLeagueMatchday(currentSave, competition, matchday)
+            : simulateEuropeanKnockoutMatchday(currentSave, competition, matchday);
+          const europeanOffset = Math.floor(
+            (parseDateOnly(date).getTime() - parseDateOnly(EUROPEAN_START).getTime()) / 86400000,
+          );
+          currentSave = processEuropeanKnockoutProgress(currentSave, competition, europeanOffset);
+          saveSave(currentSave);
+          handled = true;
+        }
+        const finalList = (((currentSave as any)[fixtureKey] ?? []) as any[]);
+        const unresolvedEuropeanMatches = finalList.filter(
+          (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getEuropeanFixtureDateIso(fixture, competition) === date,
+        );
+        if (unresolvedEuropeanMatches.length > 0) {
+          const label = competition === "uel" ? "Europa League" : "Conference League";
+          throw new Error(`No se han podido completar todos los partidos de ${label} del ${date}. El salto se ha detenido para no perder resultados.`);
+        }
+      }
+    }
+
+    // Suprimir los avisos de partido que correspondían a eventos ya resueltos.
+    const latest = usePlayersStore.getState();
+    if (latest.pendingUserMatch) {
+      const pendingId = latest.pendingUserMatch.id;
+      latest.dismissMatch(pendingId);
+      handled = true;
+    }
+
+    if (handled && currentSave && !jumpInProgressRef.current) setSave(currentSave);
+    return handled;
+  }
+
+  const handleJumpToDate = async () => {
+    const targetDate = selectedJumpDate;
+    const initialDate = usePlayersStore.getState().currentDate;
+    if (!targetDate || targetDate <= initialDate || jumpInProgressRef.current) return;
+
+    const profileEnabled = startCalendarJumpProfile(initialDate, targetDate);
+    let batchOpen = false;
+    let outcome: "ok" | "error" = "error";
+    let lastCheckpointState: any = null;
+    let lastCheckpointMarketState: any = null;
+
+    const restoreCheckpointMarketState = async () => {
+      if (!lastCheckpointMarketState) return;
+      try {
+        applyTransferSnapshot(lastCheckpointMarketState);
+        const persisted = await persistCalendarJumpMarketState();
+        if (!persisted) {
+          console.error("[Calendar] No se pudo persistir la restauración del mercado tras el rollback.");
+        }
+      } catch (marketRollbackError) {
+        console.error("[Calendar] Falló la restauración del mercado durante el rollback:", marketRollbackError);
+      }
+    };
+
+    const captureRollbackState = () => {
+      const state = usePlayersStore.getState();
+      return {
+        ...state,
+        squad: state.squad.map((player: any) => ({
+          ...player,
+          dynamicStats: player.dynamicStats ? { ...player.dynamicStats } : player.dynamicStats,
+        })),
+        fixtures: state.fixtures.map((fixture: any) => ({ ...fixture, result: fixture.result ? { ...fixture.result } : fixture.result })),
+        stats: Object.fromEntries(Object.entries(state.stats ?? {}).map(([id, stat]: [string, any]) => [
+          id,
+          { ...stat, formHistory: Array.isArray(stat.formHistory) ? [...stat.formHistory] : stat.formHistory },
+        ])),
+        dismissedMatchIds: [...(state.dismissedMatchIds ?? [])],
+        pendingDrawQueue: (state.pendingDrawQueue ?? []).map((item: any) => ({ ...item })),
+        loanedPlayers: { ...(state.loanedPlayers ?? {}) },
+        clubOverrides: { ...(state.clubOverrides ?? {}) },
+        dynamicPlayers: Object.fromEntries(Object.entries(state.dynamicPlayers ?? {}).map(([id, player]: [string, any]) => [
+          id,
+          { ...player, dynamicStats: player.dynamicStats ? { ...player.dynamicStats } : player.dynamicStats },
+        ])),
+      };
+    };
+
+    // Reparación única de placeholders históricos. Se hace antes de iniciar el
+    // batch, de forma que la reparación válida no dependa de cómo termine el salto.
+    try {
+      const officialBeforeJump = loadSave();
+      if (officialBeforeJump) {
+        const repaired = measureCalendarJumpPhase("calendar.repairPlaceholderResults", () =>
+          repairPlaceholderCalendarResults(officialBeforeJump),
+        );
+        if (typeof performance !== "undefined") {
+          recordCalendarJumpCounter("calendar.placeholderResultsRepaired", repaired.repairedIds.length);
+        }
+        if (repaired.repairedIds.length > 0) {
+          saveSave(repaired.save);
+          const leagueResults = new Map(
+            (repaired.save.fixtures?.[repaired.save.myLeague] ?? []).map((fixture: any) => [fixture.id, fixture]),
+          );
+          usePlayersStore.setState((state: any) => ({
+            fixtures: state.fixtures.map((fixture: any) => {
+              if (!repaired.repairedIds.includes(fixture.id)) return fixture;
+              const official: any = leagueResults.get(fixture.id);
+              if (!official?.result) return fixture;
+              return {
+                ...fixture,
+                isPlayed: true,
+                homeScore: Number(official.result.homeGoals) || 0,
+                awayScore: Number(official.result.awayGoals) || 0,
+              };
+            }),
+          }));
+        }
+      }
+    } catch (repairError) {
+      console.warn("[Calendar] No se pudieron reparar resultados antiguos vacíos:", repairError);
+    }
+
+    // Bloquea nuevos clics mientras terminan posibles tareas del avance manual
+    // anterior. Ese drenaje ocurre ANTES de abrir el batch de persistencia.
+    jumpInProgressRef.current = true;
+    setIsAdvancing(true);
+    setJumpStartDate(initialDate);
+    setJumpMessage(null);
+    clearCalendarJumpBackgroundErrors();
+    try {
+      await measureCalendarJumpPhase("calendar.awaitInitialBackgroundTasks", () =>
+        usePlayersStore.getState().waitForCalendarBackgroundTasks(),
+      );
+    } catch (backgroundError) {
+      setJumpMessage(backgroundError instanceof Error ? backgroundError.message : "No se pudieron completar las tareas previas al salto.");
+      jumpInProgressRef.current = false;
+      setJumpStartDate(null);
+      setIsAdvancing(false);
+      if (profileEnabled) finishCalendarJumpProfile(usePlayersStore.getState().currentDate, "error");
+      return;
+    }
+
+    try {
+      const marketPersisted = await persistCalendarJumpMarketState();
+      if (!marketPersisted) throw new Error("El almacenamiento del mercado no confirmó el guardado inicial.");
+      lastCheckpointMarketState = snapshotTransferSystem();
+    } catch (marketError) {
+      setJumpMessage(marketError instanceof Error ? marketError.message : "No se pudo guardar el mercado antes del salto.");
+      jumpInProgressRef.current = false;
+      setJumpStartDate(null);
+      setIsAdvancing(false);
+      if (profileEnabled) finishCalendarJumpProfile(usePlayersStore.getState().currentDate, "error");
+      return;
+    }
+
+    if (!beginSaveBatch({ checkpointEveryDays: 7 })) {
+      setJumpMessage("No se ha podido guardar el estado actual antes del salto. No se ha avanzado el calendario.");
+      jumpInProgressRef.current = false;
+      setJumpStartDate(null);
+      setIsAdvancing(false);
+      if (profileEnabled) finishCalendarJumpProfile(usePlayersStore.getState().currentDate, "error");
+      return;
+    }
+    batchOpen = true;
+
+    let iterations = 0;
+    try {
+      await usePlayersStore.getState().beginCalendarJumpAcademyAiBatch();
+      lastCheckpointState = captureRollbackState();
+
+      while (usePlayersStore.getState().currentDate < targetDate && iterations < 800) {
+        iterations += 1;
+        recordCalendarJumpCounter("calendar.loopIterations");
+        const before = usePlayersStore.getState().currentDate;
+
+        // Modo jump usa los mismos subsistemas que el avance normal, pero evita
+        // simular el día destino y no persiste cada mutación intermedia en disco.
+        const advanced = measureCalendarJumpPhase("calendar.advanceTime", () =>
+          advanceTime(1, { simulateAllLeagues: true, mode: "jump", targetDate }),
+        );
+        const after = usePlayersStore.getState().currentDate;
+        recordCalendarJumpCounter("calendar.advanceTime.calls");
+
+        if (after === before || advanced === 0) {
+          // El reloj se puede detener para un sorteo o un partido del usuario.
+          // Resolvemos el evento y repetimos el mismo día hasta que el pipeline
+          // normal pueda continuar; no se descarta ni se salta el bloqueo.
+          const dateToResolve = after === before ? before : after;
+          const handled = await measureCalendarJumpPhase("calendar.resolveIntermediateDate", () =>
+            resolveIntermediateDate(dateToResolve),
+          );
+          if (!handled && usePlayersStore.getState().currentDate === before) {
+            throw new Error(`El calendario no pudo avanzar desde ${before}; hay un evento pendiente que no se ha podido resolver.`);
+          }
+
+          const currentAfterResolve = usePlayersStore.getState().currentDate;
+          await measureCalendarJumpPhase("calendar.yieldToBrowser", waitForCalendarEffects);
+          if (currentAfterResolve > before) {
+            recordCalendarJumpCounter("calendar.daysAdvanced");
+            const checkpointDue = isSaveBatchCheckpointDueNextDay();
+            if (checkpointDue) {
+              await measureCalendarJumpPhase("calendar.awaitCheckpointBackgroundTasks", () =>
+                usePlayersStore.getState().waitForCalendarBackgroundTasks(),
+              );
+              await measureCalendarJumpPhase("calendar.flushAcademyAiCheckpoint", () =>
+                usePlayersStore.getState().flushCalendarJumpAcademyAiChanges(),
+              );
+              const marketPersisted = await persistCalendarJumpMarketState();
+              if (!marketPersisted) throw new Error(`No se pudo guardar el mercado en el checkpoint del ${currentAfterResolve}.`);
+            }
+            const checkpoint = checkpointSaveBatchDay();
+            if (!checkpoint.persisted) throw new Error(`No se pudo guardar el checkpoint del ${currentAfterResolve}. El salto se ha detenido.`);
+            if (checkpoint.checkpointed) {
+              lastCheckpointState = captureRollbackState();
+              lastCheckpointMarketState = snapshotTransferSystem();
+            }
+          }
+          continue;
+        }
+
+        // Días intermedios: cerrar competiciones del día que acaba de abrirse.
+        // La fecha final se deja intacta para que aparezcan sus eventos habituales.
+        if (after < targetDate) {
+          await measureCalendarJumpPhase("calendar.resolveIntermediateDate", () => resolveIntermediateDate(after));
+        }
+
+        recordCalendarJumpCounter("calendar.daysAdvanced");
+        await measureCalendarJumpPhase("calendar.yieldToBrowser", waitForCalendarEffects);
+        const checkpointDue = isSaveBatchCheckpointDueNextDay();
+        if (checkpointDue) {
+          await measureCalendarJumpPhase("calendar.awaitCheckpointBackgroundTasks", () =>
+            usePlayersStore.getState().waitForCalendarBackgroundTasks(),
+          );
+          await measureCalendarJumpPhase("calendar.flushAcademyAiCheckpoint", () =>
+            usePlayersStore.getState().flushCalendarJumpAcademyAiChanges(),
+          );
+          const marketPersisted = await persistCalendarJumpMarketState();
+          if (!marketPersisted) throw new Error(`No se pudo guardar el mercado en el checkpoint del ${after}.`);
+        }
+
+        const checkpoint = checkpointSaveBatchDay();
+        if (!checkpoint.persisted) throw new Error(`No se pudo guardar el checkpoint del ${after}. El salto se ha detenido.`);
+        if (checkpoint.checkpointed) {
+          lastCheckpointState = captureRollbackState();
+          lastCheckpointMarketState = snapshotTransferSystem();
+        }
+      }
+
+      if (usePlayersStore.getState().currentDate !== targetDate) {
+        throw new Error(iterations >= 800
+          ? "El salto supera el límite de seguridad de días procesables."
+          : `El calendario se detuvo en ${usePlayersStore.getState().currentDate}, antes de la fecha solicitada ${targetDate}.`);
+      }
+
+      await measureCalendarJumpPhase("calendar.awaitBackgroundTasks", () =>
+        usePlayersStore.getState().waitForCalendarBackgroundTasks(),
+      );
+      await measureCalendarJumpPhase("calendar.flushAcademyAiFinal", () =>
+        usePlayersStore.getState().flushCalendarJumpAcademyAiChanges(),
+      );
+      await measureCalendarJumpPhase("calendar.finalYield", waitForCalendarEffects);
+
+      // El mercado vive en IndexedDB separado; se persiste y confirma ANTES del
+      // commit final del SaveGame para evitar declarar éxito con ese sidecar pendiente.
+      const finalMarketPersisted = await persistCalendarJumpMarketState();
+      if (!finalMarketPersisted) throw new Error("No se ha podido guardar el mercado al finalizar el salto.");
+
+      // Una única persistencia final, salvo checkpoints de seguridad cada 7 días.
+      if (!endSaveBatch()) {
+        // endSaveBatch conserva su snapshot si el guardado final falla; abort lo
+        // restaura en memoria para que la carrera no parezca completada sin guardarse.
+        const checkpointSave = abortSaveBatch();
+        batchOpen = false;
+        if (lastCheckpointState) {
+          usePlayersStore.setState(lastCheckpointState, true);
+          usePlayersStore.getState().init();
+        }
+        if (checkpointSave) setSave(checkpointSave);
+        throw new Error("No se pudo guardar el estado final del salto. Se ha restaurado el último checkpoint válido.");
+      }
+      batchOpen = false;
+      await usePlayersStore.getState().finishCalendarJumpAcademyAiBatch();
+
+      const finalDate = usePlayersStore.getState().currentDate;
+      setSave(loadSave());
+      setSelectedJumpDate(null);
+      setJumpMessage(`Calendario avanzado hasta el ${parseDateOnly(finalDate).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}. Se han procesado los eventos de los días anteriores; los del día destino siguen pendientes.`);
+      outcome = "ok";
+    } catch (error) {
+      console.error("[Calendar] Error al saltar hasta la fecha seleccionada:", error);
+      try {
+        await usePlayersStore.getState().waitForCalendarBackgroundTasks();
+      } catch (backgroundError) {
+        console.warn("[Calendar] No se pudieron drenar todas las tareas de fondo antes del rollback:", backgroundError);
+      }
+      try {
+        await usePlayersStore.getState().discardCalendarJumpAcademyAiChanges();
+      } catch (academyRollbackError) {
+        console.error("[Calendar] No se pudieron descartar las academias de IA pendientes:", academyRollbackError);
+      }
+      try {
+        await usePlayersStore.getState().finishCalendarJumpAcademyAiBatch();
+      } catch (academyBatchError) {
+        console.error("[Calendar] No se pudo cerrar el modo batch de academias IA:", academyBatchError);
+      }
+      clearCalendarJumpBackgroundErrors();
+      if (batchOpen) {
+        const checkpointSave = abortSaveBatch();
+        batchOpen = false;
+        if (lastCheckpointState) {
+          usePlayersStore.setState(lastCheckpointState, true);
+          usePlayersStore.getState().init();
+        }
+        if (checkpointSave) setSave(checkpointSave);
+        else setSave(loadSave());
+      }
+      await restoreCheckpointMarketState();
+      setJumpMessage(error instanceof Error ? error.message : "No se ha podido completar el salto de calendario.");
+    } finally {
+      const finalDate = usePlayersStore.getState().currentDate;
+      jumpInProgressRef.current = false;
+      setJumpStartDate(null);
+      setIsAdvancing(false);
+      if (profileEnabled) finishCalendarJumpProfile(finalDate, outcome);
     }
   };
 
@@ -742,15 +1350,7 @@ function CalendarPage() {
 
     const cupKey = (primaryLeague || save.myLeague) as LeagueId;
 
-    console.log(
-      `handleCupDrawComplete called with ${matchups.length} matchups for league ${cupKey}`,
-    );
-
     const next = applyCupDraw(save, cupKey, save.cupDrawPending.round, matchups);
-
-    console.log(
-      `After applyCupDraw, cupFixtures[${cupKey}] has ${next.cupFixtures[cupKey]?.length || 0} fixtures`,
-    );
 
     saveSave(next);
 
@@ -801,7 +1401,7 @@ function CalendarPage() {
 
       <MarketStatusBanner className="mb-6" />
 
-      <div className="panel-glow p-4" key={calendarKey}>
+      <div className="panel-glow p-4">
         <div className="flex items-center justify-between mb-4">
           <button
             type="button"
@@ -854,6 +1454,8 @@ function CalendarPage() {
             const iso = toDateOnly(day);
 
             const isToday = iso === currentDateIso;
+            const canSelectJumpDate = iso > currentDateIso && !isAdvancing;
+            const isSelectedJumpDate = selectedJumpDate === iso;
 
             const isWindow = isSummerTransferWindow(day) || isWinterTransferWindow(day);
 
@@ -866,10 +1468,28 @@ function CalendarPage() {
             return (
               <div
                 key={iso + String(inMonth)}
+                role={canSelectJumpDate ? "button" : undefined}
+                tabIndex={canSelectJumpDate ? 0 : -1}
+                aria-pressed={isSelectedJumpDate}
+                aria-label={canSelectJumpDate ? `Seleccionar ${iso} para saltar el calendario` : undefined}
+                onClick={() => {
+                  if (!canSelectJumpDate) return;
+                  setSelectedJumpDate(iso);
+                  setJumpMessage(null);
+                }}
+                onKeyDown={(event) => {
+                  if (canSelectJumpDate && (event.key === "Enter" || event.key === " ")) {
+                    event.preventDefault();
+                    setSelectedJumpDate(iso);
+                    setJumpMessage(null);
+                  }
+                }}
                 className={[
                   "min-h-[4.5rem] rounded-md border p-1 flex flex-col items-stretch justify-start gap-0.5 transition",
 
                   inMonth ? "border-border/60 bg-card/40" : "border-transparent opacity-30",
+                  canSelectJumpDate ? "cursor-pointer hover:border-primary/60 hover:bg-primary/5" : "",
+                  isSelectedJumpDate ? "ring-2 ring-amber-400 border-amber-400 bg-amber-400/10 z-[2]" : "",
 
                   isWindow && inMonth ? "bg-emerald-500/5 border-emerald-500/20" : "",
 
@@ -980,6 +1600,55 @@ function CalendarPage() {
             );
           })}
         </div>
+
+        {selectedJumpDate && selectedJumpDate > currentDateIso && (
+          <div className="mt-5 flex flex-col gap-3 rounded-xl border border-primary/30 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-bold">Saltar al {parseDateOnly(selectedJumpDate).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}</p>
+              {isAdvancing ? (
+                <p className="mt-1 text-xs text-muted-foreground" aria-live="polite">
+                  Procesando {parseDateOnly(currentDateIso).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })} · quedan {Math.max(0, Math.round((parseDateOnly(selectedJumpDate).getTime() - parseDateOnly(currentDateIso).getTime()) / 86400000))} días
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-muted-foreground">Se simularán los días intermedios en orden, incluidos partidos, sorteos, estadísticas, sanciones, lesiones y eventos del mercado. Los eventos del propio día seleccionado quedarán pendientes como de costumbre.</p>
+              )}
+              {isAdvancing && jumpStartDate && (
+                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted" aria-label="Progreso del salto">
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-100"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, ((parseDateOnly(currentDateIso).getTime() - parseDateOnly(jumpStartDate).getTime()) / Math.max(1, parseDateOnly(selectedJumpDate).getTime() - parseDateOnly(jumpStartDate).getTime())) * 100))}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                disabled={isAdvancing}
+                onClick={() => setSelectedJumpDate(null)}
+                className="rounded-lg border border-border px-3 py-2 text-xs font-bold hover:bg-muted disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isAdvancing || !selectedJumpDate || selectedJumpDate <= currentDateIso}
+                onClick={handleJumpToDate}
+                className="rounded-lg bg-primary px-4 py-2 text-xs font-black text-primary-foreground shadow-sm hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isAdvancing ? `Simulando ${Math.max(0, Math.round((parseDateOnly(selectedJumpDate).getTime() - parseDateOnly(currentDateIso).getTime()) / 86400000))} días…` : "Confirmar salto"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {jumpMessage && (
+          <div className="mt-3 rounded-lg border border-border bg-card/70 px-4 py-3 text-xs text-muted-foreground">
+            {jumpMessage}
+          </div>
+        )}
 
         <div className="mt-6 pt-4 border-t border-border/40 flex flex-wrap gap-4 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-2">

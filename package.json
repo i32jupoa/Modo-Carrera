@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
-    "test:season-balance": "node scripts/season-balance-test.mjs"
+    "test:season-balance": "node scripts/season-balance-test.mjs",
+    "test:calendar-jump": "node scripts/calendar-jump-invariants.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

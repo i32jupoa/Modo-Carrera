@@ -96,35 +96,47 @@ function selectionScore(player: AcademyPlayer, date: string): number {
   return Number(player.internalOvr ?? player.ovr) * 0.72 + form * 2.25 + player.potential * 0.05 - appearances * 0.72 - minutes * 0.012 + rotation;
 }
 
-function sortedCandidates(players: AcademyPlayer[], group: "GK" | "DEF" | "MID" | "FWD", date: string): AcademyPlayer[] {
+function sortedCandidates(
+  players: AcademyPlayer[],
+  group: "GK" | "DEF" | "MID" | "FWD",
+  scoreById: ReadonlyMap<number, number>,
+): AcademyPlayer[] {
+  // La puntuación incluye un hash determinista; calcularla en cada llamada
+  // del comparador multiplica innecesariamente el trabajo de Array.sort.
   return players
     .filter((player) => groupForPlayer(player) === group)
     .slice()
-    .sort((a, b) => selectionScore(b, date) - selectionScore(a, date) || b.ovr - a.ovr || a.id - b.id);
+    .sort((a, b) => (scoreById.get(b.id) ?? 0) - (scoreById.get(a.id) ?? 0) || b.ovr - a.ovr || a.id - b.id);
 }
 
 function selectParticipants(players: AcademyPlayer[], date: string): Participant[] {
+  // Cada juvenil recibe una única puntuación por partido. Se reutiliza en las
+  // ordenaciones por posición, en el once de emergencia y en los suplentes.
+  const scoreById = new Map<number, number>();
+  for (const player of players) scoreById.set(player.id, selectionScore(player, date));
+
   const selected: AcademyPlayer[] = [];
   const targets = ACADEMY_SIMULATION.lineup;
   for (const [group, target] of Object.entries(targets) as Array<["GK" | "DEF" | "MID" | "FWD", number]>) {
-    const candidates = sortedCandidates(players, group, date);
+    const candidates = sortedCandidates(players, group, scoreById);
     for (const player of candidates.slice(0, target)) selected.push(player);
   }
 
   // Si la cantera tiene una composición atípica por una partida antigua,
   // completamos el once con los mejores jugadores aún no seleccionados.
   if (selected.length < 11) {
-    const fallback = players
+    selected.push(...players
       .filter((player) => !selected.includes(player))
       .slice()
-      .sort((a, b) => selectionScore(b, date) - selectionScore(a, date) || b.ovr - a.ovr);
-    selected.push(...fallback.slice(0, 11 - selected.length));
+      .sort((a, b) => (scoreById.get(b.id) ?? 0) - (scoreById.get(a.id) ?? 0) || b.ovr - a.ovr)
+      .slice(0, 11 - selected.length));
   }
 
+  const selectedIds = new Set(selected.map((player) => player.id));
   const benchCandidates = players
-    .filter((player) => !selected.includes(player))
+    .filter((player) => !selectedIds.has(player.id))
     .slice()
-    .sort((a, b) => selectionScore(b, date) - selectionScore(a, date) || b.ovr - a.ovr);
+    .sort((a, b) => (scoreById.get(b.id) ?? 0) - (scoreById.get(a.id) ?? 0) || b.ovr - a.ovr);
 
   const participants: Participant[] = selected.map((player, index) => ({
     player,

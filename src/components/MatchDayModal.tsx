@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { usePlayersStore } from "@/store/playersStore";
+import { calendarLineupIds, usePlayersStore } from "@/store/playersStore";
 import {
   applyFixtureResult,
   involvesTeam,
@@ -58,7 +58,10 @@ export function MatchDayModal() {
       let nextFixtures = store.fixtures;
       for (const f of onDay) {
         if (f.id === today.id) continue;
-        const scores = simulateScheduleFixture(f, (teamId, md) => store.getSimXI(teamId, [], md));
+        const scores = simulateScheduleFixture(f, (teamId, md) => {
+          const squad = store.getSimSquad(teamId);
+          return store.getSimXI(teamId, calendarLineupIds(squad), md);
+        });
         nextFixtures = applyFixtureResult(nextFixtures, f.id, scores);
       }
       usePlayersStore.setState({

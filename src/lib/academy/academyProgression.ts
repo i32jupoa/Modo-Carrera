@@ -20,14 +20,24 @@ function monthIndex(month: number, year: number): number {
 }
 
 function previousMonthStats(stats: AcademyPlayer["academyStats"], date: string) {
-  if (!stats?.monthlyStats?.length) return undefined;
+  const monthlyStats = stats?.monthlyStats;
+  if (!monthlyStats?.length) return undefined;
   const year = Number(date.slice(0, 4));
   const month = Number(date.slice(5, 7));
   const currentIndex = monthIndex(month, year);
-  return stats.monthlyStats
-    .filter((entry) => monthIndex(entry.month, entry.year) < currentIndex)
-    .slice()
-    .sort((a, b) => monthIndex(b.month, b.year) - monthIndex(a.month, a.year))[0];
+  let latest: NonNullable<AcademyPlayer["academyStats"]>["monthlyStats"][number] | undefined;
+  let latestIndex = Number.NEGATIVE_INFINITY;
+
+  // Este cálculo se hace para cada jugador y cada progresión mensual. Escanear
+  // una vez evita crear arrays temporales y ordenar el historial completo.
+  for (const entry of monthlyStats) {
+    const entryIndex = monthIndex(entry.month, entry.year);
+    if (entryIndex < currentIndex && entryIndex > latestIndex) {
+      latest = entry;
+      latestIndex = entryIndex;
+    }
+  }
+  return latest;
 }
 
 function withMonthlyOvrSnapshot(stats: AcademyPlayer["academyStats"], date: string, ovr: number, startingOvr: number): NonNullable<AcademyPlayer["academyStats"]> {

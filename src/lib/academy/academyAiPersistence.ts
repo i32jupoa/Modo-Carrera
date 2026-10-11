@@ -92,6 +92,7 @@ export async function saveAcademyAiClubStates(
   saveId: string,
   clubs: Record<string, ClubAcademyState>,
   shouldContinue: () => boolean = () => true,
+  options: { yieldBetweenBatches?: boolean } = {},
 ): Promise<boolean> {
   if (!saveId) return false;
   const entries: Record<string, string> = {};
@@ -103,7 +104,11 @@ export async function saveAcademyAiClubStates(
       if (!teamId || !state || state.teamId !== teamId) continue;
       entries[clubKey(saveId, teamId)] = JSON.stringify(state);
     }
-    if (index + batchSize < changes.length && typeof window !== "undefined") {
+    if (
+      options.yieldBetweenBatches !== false &&
+      index + batchSize < changes.length &&
+      typeof window !== "undefined"
+    ) {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     }
   }

@@ -19,8 +19,9 @@ import { getPlayer } from "@/lib/transfers/PlayerIndex";
 import { saveTransferSystem } from "@/lib/transfers/Persistence";
 import type { AcademyPlayer, AcademyCareerRecord, ClubAcademyState } from "./academyTypes";
 import type { MarketPlayer } from "@/lib/transfers/types";
+import { measureCalendarJumpPhase } from "@/lib/calendarJumpProfiler";
 
-type AcademySyncOptions = { playLeagueMatch?: boolean };
+type AcademySyncOptions = { playLeagueMatch?: boolean; fastForward?: boolean };
 
 type AcademyState = {
   loaded: boolean;
@@ -71,10 +72,36 @@ function advanceAndMaybePlayLeagueMatch(
   options?: AcademySyncOptions,
 ): ClubAcademyState {
   if (!currentDate) return state;
-  const advanced = advanceAcademyToDate(state, currentDate, saveId);
+  const advanced = measureCalendarJumpPhase("simulation.academy.user.progression", () =>
+    advanceAcademyToDate(state, currentDate, saveId),
+  );
   return options?.playLeagueMatch
-    ? simulateAcademyLeagueMatchOnDate(advanced, currentDate, saveId)
+    ? measureCalendarJumpPhase("simulation.academy.user.match", () =>
+      simulateAcademyLeagueMatchOnDate(advanced, currentDate, saveId),
+    )
     : advanced;
+}
+
+async function persistAcademyAdvanceState(
+  saveId: string,
+  userTeamId: string,
+  teamId: string,
+  club: ClubAcademyState,
+  currentDate: string | undefined,
+  options?: AcademySyncOptions,
+): Promise<void> {
+  const persisted = await measureCalendarJumpPhase("simulation.academy.user.persist", () => saveAcademySave({
+    version: ACADEMY_STATE_VERSION,
+    savedAt: new Date().toISOString(),
+    userTeamId,
+    clubs: { [teamId]: club },
+  }, saveId));
+  // En el avance manual se mantiene el comportamiento tolerante histórico.
+  // En un salto, un fallo de IndexedDB debe cancelar la operación: continuar
+  // dejaría la cantera desfasada con respecto al calendario.
+  if (!persisted && options?.fastForward) {
+    throw new Error(`No se pudo guardar la cantera del ${currentDate ?? "día actual"}.`);
+  }
 }
 
 function dynamicMarketFromAcademy(player: AcademyPlayer, date: string, status: "academy" | "listed" | "loaned"): MarketPlayer | null {
@@ -133,7 +160,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
   loadForCurrentSave: async (teamId, season, currentDate, options) => {
     const saveId = getCurrentSaveId();
     if (!saveId) throw new Error("No hay una partida activa.");
-    const existing = await loadAcademySave(saveId);
+    const existing = await measureCalendarJumpPhase("simulation.academy.user.load", () => loadAcademySave(saveId));
     // IndexedDB es asíncrono: si el usuario cambia de carrera mientras se lee
     // el save, nunca debemos aplicar el resultado de la carrera anterior.
     if (getCurrentSaveId() !== saveId) {
@@ -162,7 +189,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
         const nextClubs = { ...get().clubs, [teamId]: advanced };
         set({ loaded: true, clubs: nextClubs });
         if (teamId === userTeamId) {
-          await saveAcademySave({ version: ACADEMY_STATE_VERSION, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
+          await persistAcademyAdvanceState(saveId, userTeamId, teamId, advanced, currentDate, options);
         }
         return advanced;
       }
@@ -174,7 +201,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     const finalClubs = { ...get().clubs, [teamId]: advanced };
     set({ loaded: true, saveId, clubs: finalClubs });
     if (teamId === userTeamId) {
-      await saveAcademySave({ version: ACADEMY_STATE_VERSION, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
+      await persistAcademyAdvanceState(saveId, userTeamId, teamId, advanced, currentDate, options);
     }
     return advanced;
   },
@@ -199,7 +226,7 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
       set({ clubs });
       const userTeamId = usePlayersStore.getState().myTeamId ?? teamId;
       if (teamId === userTeamId && getCurrentSaveId() === saveId) {
-        await saveAcademySave({ version: ACADEMY_STATE_VERSION, savedAt: new Date().toISOString(), userTeamId, clubs: { [teamId]: advanced } }, saveId);
+        await persistAcademyAdvanceState(saveId, userTeamId, teamId, advanced, currentDate, options);
       }
       return advanced;
     }
