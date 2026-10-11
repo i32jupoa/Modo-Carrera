@@ -21,6 +21,7 @@ import { Zap } from "lucide-react";
 import { loadSave, type SaveGame } from "@/lib/store";
 import { getEuropeanFixtureDateIso, getCupFixtureDateIso } from "@/lib/fixtureDates";
 import { themeForScheduleFixture } from "@/lib/seasonExtras";
+import { useCalendarJumpState } from "@/lib/calendarJumpState";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -38,6 +39,9 @@ export function MatchDayModal() {
   const dismissMatch = usePlayersStore((s) => s.dismissMatch);
   const dismissedMatchIds = usePlayersStore((s) => s.dismissedMatchIds);
   const [save, setSave] = useState<SaveGame | null>(null);
+  // Durante un salto de calendario los partidos intermedios se resuelven solos:
+  // no hay que abrir el aviso de "Día de partido" en cada fecha que se cruza.
+  const jumpActive = useCalendarJumpState((s) => s.active);
 
   // loadSave can migrate old careers and update shared stores. Keep that work
   // out of render so the global sidebar/other subscribers are never updated
@@ -47,7 +51,7 @@ export function MatchDayModal() {
   }, [currentDate, fixtures, myTeamId]);
 
   useEffect(() => {
-    if (!myTeamId || pending) return;
+    if (!myTeamId || pending || jumpActive) return;
 
     // Check league fixtures first
     const onDay = unplayedOnDate(fixtures, currentDate);
@@ -167,14 +171,14 @@ export function MatchDayModal() {
         }
       }
     }
-  }, [currentDate, fixtures, myTeamId, pending, dismissedMatchIds, save]);
+  }, [currentDate, fixtures, myTeamId, pending, dismissedMatchIds, save, jumpActive]);
 
   const live = useMemo(() => {
     if (!pending) return null;
     return fixtures.find((f) => f.id === pending.id) ?? pending;
   }, [pending, fixtures]);
 
-  if (!pending || !myTeamId || !live) return null;
+  if (jumpActive || !pending || !myTeamId || !live) return null;
 
   const theme = themeForScheduleFixture(live);
   const competitionLabel = theme.label;

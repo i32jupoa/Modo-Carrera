@@ -24,6 +24,7 @@ export function simulateScheduleFixture(
 export function simulateScheduleFixtureFastDetailed(
   fixture: ScheduleFixture,
   getXI: (teamId: string, matchday: number) => Player[],
+  matchOptions: Parameters<typeof simulateMatchFast>[4] = {},
 ): SimResult {
   const home = teamById(fixture.homeTeam);
   const away = teamById(fixture.awayTeam);
@@ -92,7 +93,7 @@ export function simulateScheduleFixtureFastDetailed(
     };
   }
 
-  return simulateMatchFast(home, away, homeXI, awayXI);
+  return simulateMatchFast(home, away, homeXI, awayXI, matchOptions);
 }
 
 export function simulateScheduleFixtureDetailed(

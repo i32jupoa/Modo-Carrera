@@ -2958,6 +2958,122 @@ export function getBenchForTeam(
   return bench;
 }
 
+/**
+ * Once, banquillo y formación para un partido de LIGA simulado por el calendario
+ * (avance diario o salto de fechas). Usa exactamente la misma lógica que el
+ * resto del juego (`getStartersWithFormation`): el once del usuario respeta su
+ * alineación guardada y su formación; la IA elige formación y jugadores por
+ * posición. El orden del array coincide con los huecos de la formación.
+ *
+ * Si algún titular del usuario no está disponible (lesión/sanción/traspaso), se
+ * sustituye EN SU HUECO por el mejor jugador disponible de su misma demarcación,
+ * porque en una simulación automática el usuario no puede intervenir.
+ */
+export function getCalendarMatchTeamData(
+  save: SaveGame,
+  teamId: string,
+  fixture: { id: string; homeTeam: string; awayTeam: string; matchday: number },
+): { players: Player[]; formation: FormationName; bench: Player[] } {
+  const isHome = fixture.homeTeam === teamId;
+  const base = getStartersWithFormation(save, teamId, {
+    fixture: {
+      fixtureId: fixture.id,
+      opponentId: isHome ? fixture.awayTeam : fixture.homeTeam,
+      isHome,
+      competition: "league",
+      matchday: fixture.matchday,
+    },
+  });
+  let players = base.players;
+
+  const rawLineup = (save.lineups?.[teamId] ?? []).filter(Boolean).slice(0, 11);
+  if (teamId === save.myTeamId && rawLineup.length > 0 && !(rawLineup.length === 11 && players.length === 11)) {
+    const store = usePlayersStore.getState();
+    const team = teamById(teamId);
+    const md = team ? (save.currentMatchday?.[team.league] ?? 1) : 1;
+    const suspended = getSuspendedPlayerIdsForCompetition(save, teamId, "league");
+    const squad = store.getSimSquad(teamId);
+    const isOut = (p: Player) =>
+      suspended.has(p.id) || isPlayerInjuredAtDate(p, store.currentDate, md);
+    const used = new Set<string>();
+    const kept: Array<Player | null> = rawLineup.map((id) => {
+      const p = store.getSimPlayer(id);
+      if (!p || p.teamId !== teamId || isOut(p) || used.has(p.id)) return null;
+      used.add(p.id);
+      return p;
+    });
+    const groupOf = (p?: Player | null) => {
+      const pos = p?.positions ?? [];
+      if (isGoalkeeper(pos)) return "GK";
+      if (isDefensive(pos.slice(0, 1))) return "DEF";
+      if (isMidfield(pos.slice(0, 1))) return "MID";
+      return "FWD";
+    };
+    const pool = squad.filter((p) => !isOut(p)).sort((a, b) => b.rating - a.rating);
+    const filled = kept.map((p, index) => {
+      if (p) return p;
+      const wanted = store.getSimPlayer(rawLineup[index]);
+      const wantedGroup = wanted ? groupOf(wanted) : null;
+      const candidates = pool.filter((c) => !used.has(c.id));
+      const replacement =
+        (wanted && candidates.find((c) => c.positions?.[0] === wanted.positions?.[0])) ||
+        (wantedGroup && candidates.find((c) => groupOf(c) === wantedGroup)) ||
+        candidates[0];
+      if (!replacement) return null;
+      used.add(replacement.id);
+      return replacement;
+    });
+    // Alineación guardada incompleta (<11): completar con lo mejor disponible,
+    // asegurando un portero.
+    while (filled.length < 11) {
+      const candidates = pool.filter((c) => !used.has(c.id));
+      const needsGk = !filled.some((p) => p && groupOf(p) === "GK");
+      const next = (needsGk && candidates.find((c) => groupOf(c) === "GK")) || candidates[0];
+      if (!next) break;
+      used.add(next.id);
+      filled.push(next);
+    }
+    const complete = filled.filter((p): p is Player => !!p);
+    if (complete.length > players.length) players = complete;
+  }
+
+  // La alineación guardada del usuario se interpreta por índice (hueco i de la
+  // formación). Si se guardó para otra formación (p. ej. la alineación inicial
+  // se genera en 4-4-2 y luego se juega en 4-3-3) o tras una baja, hay jugadores
+  // en huecos que no son los suyos (un delantero de central, un extremo de
+  // mediocentro). En ese caso se recolocan los MISMOS 11 en los huecos que mejor
+  // les encajan. Si el orden guardado ya es coherente se respeta tal cual.
+  if (teamId === save.myTeamId && players.length === 11 && !isXIPositionallyCoherent(players, base.formation)) {
+    const arranged = pickXIForFormationWithRotation(players, new Set(), base.formation, 0, "").ids;
+    if (arranged.length === 11) {
+      const byId = new Map(players.map((p) => [p.id, p]));
+      players = arranged.map((id) => byId.get(id)!).filter(Boolean);
+    }
+  }
+
+  return {
+    players,
+    formation: base.formation,
+    bench: players.length > 0 ? getBenchForTeam(save, teamId, players, "league") : [],
+  };
+}
+
+function isXIPositionallyCoherent(players: Player[], formation: FormationName): boolean {
+  const slotKeys = Object.keys(FORMATION_COORDINATES[formation] ?? {});
+  if (slotKeys.length !== players.length) return true;
+  return players.every((player, index) => {
+    const required = slotPosCode(slotKeys[index]);
+    const positions = Array.isArray(player.positions) ? player.positions : [];
+    if (positions.includes(required)) return true;
+    if ((required === "GK") !== positions.includes("GK")) return false;
+    const similarity = positions.reduce(
+      (best, position) => Math.max(best, calculatePositionSimilarity(position, required)),
+      0,
+    );
+    return similarity >= 0.5;
+  });
+}
+
 export function squadOf(_save: SaveGame, teamId: string): Player[] {
   const store = usePlayersStore.getState();
 
@@ -5334,7 +5450,26 @@ export function commitCalendarScheduleResults(
     // only have a score in the schedule; they contain no detail to reconstruct,
     // so avoid fabricating player ratings, injuries, sanctions or MOTM.
     if (!entry.scoreOnly) {
-      next = applyMatchToStats(next, officialFixture, { skipAppearanceAndScoringStats: true });
+      // Reutilizar el once y la formación con los que se simuló el partido: así
+      // las tarjetas/sanciones/estadísticas se aplican a los jugadores que de
+      // verdad jugaron, en vez de regenerar una alineación distinta.
+      const simResult: any = entry.result;
+      const simHomeXI = Array.isArray(simResult.homeStartingLineup) && simResult.homeStartingLineup.length > 0
+        ? simResult.homeStartingLineup
+        : undefined;
+      const simAwayXI = Array.isArray(simResult.awayStartingLineup) && simResult.awayStartingLineup.length > 0
+        ? simResult.awayStartingLineup
+        : undefined;
+      next = applyMatchToStats(
+        next,
+        simHomeXI && simAwayXI
+          ? ({ ...officialFixture, homeFormation: simResult.homeFormation, awayFormation: simResult.awayFormation } as any)
+          : officialFixture,
+        {
+          skipAppearanceAndScoringStats: true,
+          ...(simHomeXI && simAwayXI ? { homeXI: simHomeXI, awayXI: simAwayXI } : {}),
+        },
+      );
     }
     changed = true;
 

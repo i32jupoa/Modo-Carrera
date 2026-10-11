@@ -54,6 +54,7 @@ import {
   recordCalendarJumpDuration,
   measureCalendarJumpPhase,
 } from "@/lib/calendarJumpProfiler";
+import { setCalendarJumpActive } from "@/lib/calendarJumpState";
 
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 
@@ -1137,6 +1138,7 @@ function CalendarPage() {
     // Bloquea nuevos clics mientras terminan posibles tareas del avance manual
     // anterior. Ese drenaje ocurre ANTES de abrir el batch de persistencia.
     jumpInProgressRef.current = true;
+    setCalendarJumpActive(true);
     setIsAdvancing(true);
     setJumpStartDate(initialDate);
     setJumpMessage(null);
@@ -1148,6 +1150,7 @@ function CalendarPage() {
     } catch (backgroundError) {
       setJumpMessage(backgroundError instanceof Error ? backgroundError.message : "No se pudieron completar las tareas previas al salto.");
       jumpInProgressRef.current = false;
+      setCalendarJumpActive(false);
       setJumpStartDate(null);
       setIsAdvancing(false);
       if (profileEnabled) finishCalendarJumpProfile(usePlayersStore.getState().currentDate, "error");
@@ -1161,6 +1164,7 @@ function CalendarPage() {
     } catch (marketError) {
       setJumpMessage(marketError instanceof Error ? marketError.message : "No se pudo guardar el mercado antes del salto.");
       jumpInProgressRef.current = false;
+      setCalendarJumpActive(false);
       setJumpStartDate(null);
       setIsAdvancing(false);
       if (profileEnabled) finishCalendarJumpProfile(usePlayersStore.getState().currentDate, "error");
@@ -1170,6 +1174,7 @@ function CalendarPage() {
     if (!beginSaveBatch({ checkpointEveryDays: 7 })) {
       setJumpMessage("No se ha podido guardar el estado actual antes del salto. No se ha avanzado el calendario.");
       jumpInProgressRef.current = false;
+      setCalendarJumpActive(false);
       setJumpStartDate(null);
       setIsAdvancing(false);
       if (profileEnabled) finishCalendarJumpProfile(usePlayersStore.getState().currentDate, "error");
@@ -1333,6 +1338,7 @@ function CalendarPage() {
     } finally {
       const finalDate = usePlayersStore.getState().currentDate;
       jumpInProgressRef.current = false;
+      setCalendarJumpActive(false);
       setJumpStartDate(null);
       setIsAdvancing(false);
       if (profileEnabled) finishCalendarJumpProfile(finalDate, outcome);

@@ -121,7 +121,9 @@ import {
   type SaveGame,
   applyDailyMailboxMessages,
   commitCalendarScheduleResults,
+  getCalendarMatchTeamData,
 } from "@/lib/store";
+import { loadTactics } from "@/lib/teamTactics";
 
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 
@@ -698,6 +700,48 @@ export function calendarLineupIds(squad: Player[]): string[] {
     }
   }
   return selected.map((player) => String(player.id));
+}
+
+/**
+ * Simula un partido de liga del calendario con el once y la formación REALES de
+ * cada club (alineación guardada del usuario / selección por posiciones de la
+ * IA), en lugar del once genérico de `calendarLineupIds`. Ese once genérico no
+ * conocía la formación, así que al mostrarlo sobre el campo (4-4-2 por defecto)
+ * aparecían, por ejemplo, centrales de delanteros o extremos de mediocentros.
+ * Si no hay partida cargada se cae al once genérico como último recurso.
+ */
+function simulateCalendarLeagueFixture(
+  fixture: ScheduleFixture,
+  state: { getSimSquad: (teamId: string) => Player[]; getSimXI: (teamId: string, ids: string[], md: number) => Player[] },
+): { sim: SimResult; homeXI: Player[]; awayXI: Player[] } {
+  const save = loadSave();
+  if (save) {
+    const home = getCalendarMatchTeamData(save, fixture.homeTeam, fixture);
+    const away = getCalendarMatchTeamData(save, fixture.awayTeam, fixture);
+    if (home.players.length > 0 && away.players.length > 0) {
+      const sim = simulateScheduleFixtureFastDetailed(
+        fixture,
+        (teamId) => (teamId === fixture.homeTeam ? home.players : away.players),
+        {
+          homeBench: home.bench,
+          awayBench: away.bench,
+          homeTactics: loadTactics(fixture.homeTeam),
+          awayTactics: loadTactics(fixture.awayTeam),
+          homeFormation: home.formation,
+          awayFormation: away.formation,
+        },
+      );
+      return { sim, homeXI: home.players, awayXI: away.players };
+    }
+  }
+  const xiFor = (teamId: string) =>
+    state.getSimXI(teamId, calendarLineupIds(state.getSimSquad(teamId)), fixture.matchday);
+  const homeXI = xiFor(fixture.homeTeam);
+  const awayXI = xiFor(fixture.awayTeam);
+  const sim = simulateScheduleFixtureFastDetailed(fixture, (teamId) =>
+    teamId === fixture.homeTeam ? homeXI : awayXI,
+  );
+  return { sim, homeXI, awayXI };
 }
 
 const SIM_SQUAD_VIEW_CACHE = new Map<
@@ -1927,13 +1971,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
         if (!fixture || fixture.isPlayed) return;
 
-        const sim = simulateScheduleFixtureFastDetailed(fixture, (teamId, matchday) => {
-          // Pasar [] como lineupIds devolvía siempre un XI vacío y convertía
-          // todos los partidos de calendario en 0-0. Usamos una alineación
-          // real de la plantilla simulada cuando no hay once manual guardado.
-          const squad = state.getSimSquad(teamId);
-          return state.getSimXI(teamId, calendarLineupIds(squad), matchday);
-        });
+        const { sim } = simulateCalendarLeagueFixture(fixture, state);
 
         if (sim.energyAtEnd) {
           state.setTeamMatchEnergy(fixture.homeTeam, sim.energyAtEnd, fixture.date);
@@ -1952,10 +1990,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         );
 
         for (const other of sameDay) {
-          const otherResult = simulateScheduleFixtureFastDetailed(other, (teamId, md) => {
-            const squad = state.getSimSquad(teamId);
-            return state.getSimXI(teamId, calendarLineupIds(squad), md);
-          });
+          const { sim: otherResult } = simulateCalendarLeagueFixture(other, state);
 
           nextFixtures = applyFixtureResult(nextFixtures, other.id, {
             homeScore: otherResult.homeGoals,
@@ -1989,29 +2024,21 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           // before updating the calendar cache, reuse that result instead of
           // generating a different score for the same fixture.
           const alreadyCommittedResult = officialFixture?.result as SimResult | undefined;
-          const xiCache = new Map<string, Player[]>();
-          const getCalendarJumpXI = (teamId: string, matchday: number) => {
-            const key = `${teamId}:${matchday}`;
-            const cached = xiCache.get(key);
-            if (cached) return cached;
-            const current = get();
-            const squad = current.getSimSquad(teamId);
-            const xi = current.getSimXI(teamId, calendarLineupIds(squad), matchday);
-            xiCache.set(key, xi);
-            return xi;
-          };
-          const homeXI = alreadyCommittedResult ? [] : getCalendarJumpXI(fixture.homeTeam, fixture.matchday);
-          const awayXI = alreadyCommittedResult ? [] : getCalendarJumpXI(fixture.awayTeam, fixture.matchday);
-          if (!alreadyCommittedResult && (homeXI.length === 0 || awayXI.length === 0)) {
-            throw new Error(
-              `No hay una alineación válida para ${fixture.id} (${fixture.homeTeam}: ${homeXI.length}, ${fixture.awayTeam}: ${awayXI.length}).`,
-            );
+          let homeXI: Player[] = [];
+          let awayXI: Player[] = [];
+          let simulated: SimResult | null = null;
+          if (!alreadyCommittedResult) {
+            const calendarSim = simulateCalendarLeagueFixture(fixture, get());
+            homeXI = calendarSim.homeXI;
+            awayXI = calendarSim.awayXI;
+            simulated = calendarSim.sim;
+            if (homeXI.length === 0 || awayXI.length === 0) {
+              throw new Error(
+                `No hay una alineación válida para ${fixture.id} (${fixture.homeTeam}: ${homeXI.length}, ${fixture.awayTeam}: ${awayXI.length}).`,
+              );
+            }
           }
-          const sim = alreadyCommittedResult ?? simulateScheduleFixtureFastDetailed(fixture, (teamId, matchday) => {
-            if (teamId === fixture.homeTeam) return homeXI;
-            if (teamId === fixture.awayTeam) return awayXI;
-            return getCalendarJumpXI(teamId, matchday);
-          });
+          const sim = (alreadyCommittedResult ?? simulated) as SimResult;
           // Una repetición tras un commit oficial debe reconstruir el calendario,
           // pero no volver a acreditar goles/apariciones ya guardados en el save.
           const needsPlayerStatsCommit = !alreadyCommittedResult;
@@ -2020,10 +2047,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           );
           let participants = (sim.ratings ?? []).map((rating: any) => rating.playerId);
           if (participants.length === 0) {
-            participants = [
-              ...get().getSimXI(fixture.homeTeam, calendarLineupIds(get().getSimSquad(fixture.homeTeam)), fixture.matchday),
-              ...get().getSimXI(fixture.awayTeam, calendarLineupIds(get().getSimSquad(fixture.awayTeam)), fixture.matchday),
-            ].map((player) => player.id);
+            participants = [...homeXI, ...awayXI].map((player) => player.id);
           }
 
           if (officialSave && !alreadyCommittedResult) {
@@ -2649,33 +2673,16 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           if (currentSave) commitCalendarScheduleResults(currentSave, scheduleResultsToCommit);
           scheduleResultsToCommit = [];
         };
-        const simXICache = new Map<string, Player[]>();
-        const getCachedScheduleXI = (teamId: string, md: number) => {
-          const key = `${teamId}:${md}`;
-          const cached = simXICache.get(key);
-          if (cached) return cached;
-          // La simulación real del avance diario debe recibir un XI válido.
-          // Pasar [] provocaba que el motor resolviese como 0-0 todos los partidos.
-          const squad = get().getSimSquad(teamId);
-          const xi = get().getSimXI(teamId, calendarLineupIds(squad), md);
-          simXICache.set(key, xi);
-          return xi;
-        };
-
         const simFixture = (f: ScheduleFixture) => {
           try {
-            const homeXI = getCachedScheduleXI(f.homeTeam, f.matchday);
-            const awayXI = getCachedScheduleXI(f.awayTeam, f.matchday);
+            const { sim: result, homeXI, awayXI } = measureCalendarJumpPhase("simulation.userLeagueFixture", () =>
+              simulateCalendarLeagueFixture(f, get()),
+            );
             if (homeXI.length === 0 || awayXI.length === 0) {
               throw new Error(
                 `Alineación vacía en ${f.id} (${f.homeTeam}: ${homeXI.length}, ${f.awayTeam}: ${awayXI.length}).`,
               );
             }
-            const result = measureCalendarJumpPhase("simulation.userLeagueFixture", () =>
-              simulateScheduleFixtureFastDetailed(f, (teamId, md) =>
-                teamId === f.homeTeam ? homeXI : teamId === f.awayTeam ? awayXI : getCachedScheduleXI(teamId, md),
-              ),
-            );
 
             const minuteMap = new Map(
               (result.ratings ?? []).map((r: any) => [r.playerId, Number(r.minutes) || 0]),
@@ -2685,8 +2692,6 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               : [];
 
             if (participants.length === 0) {
-              const homeXI = getCachedScheduleXI(f.homeTeam, f.matchday);
-              const awayXI = getCachedScheduleXI(f.awayTeam, f.matchday);
               participants = [...homeXI, ...awayXI].map((player) => player.id);
             }
 

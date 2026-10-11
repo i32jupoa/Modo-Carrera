@@ -59,8 +59,18 @@ assert.match(store, /export async function persistCalendarJumpMarketState[\s\S]*
 assert.match(jumpHandler, /const finalMarketPersisted = await persistCalendarJumpMarketState\(\)/,
   'El salto no debe declararse completo antes de esperar el guardado final del mercado.');
 
-assert.match(matchForJump, /getSimXI\(teamId, calendarLineupIds\(squad\), matchday\)/,
-  'Los partidos de salto deben obtener un XI desde la plantilla actual.');
+assert.match(matchForJump, /simulateCalendarLeagueFixture\(fixture, get\(\)\)/,
+  'Los partidos de salto deben usar el once y la formación reales de cada club (no un XI genérico).');
+assert.doesNotMatch(matchForJump, /calendarLineupIds/,
+  'El salto no debe volver al XI genérico por rating, que ignora posiciones y formación.');
+assert.match(advanceTime, /simulateCalendarLeagueFixture\(f, get\(\)\)/,
+  'El avance diario debe simular la liga con alineaciones reales.');
+{
+  const modal = fs.readFileSync(path.join(root, 'src/components/MatchDayModal.tsx'), 'utf8');
+  assert.match(modal, /useCalendarJumpState/, 'El aviso de día de partido debe respetar el salto de calendario.');
+  assert.match(jumpHandler, /setCalendarJumpActive\(true\)[\s\S]*setCalendarJumpActive\(false\)/,
+    'El salto debe activar y liberar el indicador que silencia el aviso de partido.');
+}
 assert.match(matchForJump, /catch \(error\)[\s\S]*return false/,
   'Los errores del partido deben comunicarse al caller para que no avance silenciosamente.');
 assert.match(matchForJump, /No hay una alineación válida/,
