@@ -1479,7 +1479,7 @@ function mutatePlayerStat(
 }
 
 
-function daysRemainingForInjury(stats: PlayerStats, currentDate: string): number {
+export function daysRemainingForInjury(stats: PlayerStats, currentDate: string): number {
   const until = stats.injuredUntilDate;
   if (!until || !currentDate) return 0;
   const end = new Date(`${until}T00:00:00Z`).getTime();

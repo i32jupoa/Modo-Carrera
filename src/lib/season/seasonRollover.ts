@@ -167,7 +167,10 @@ export function canAdvanceToNextSeason(save: SaveGame): { ok: boolean; reason?: 
   return { ok: true };
 }
 
+let lastRolloverStage = "init";
 function emitProgress(options: AdvanceSeasonOptions, stage: RolloverProgressStage, progress: number, message: string) {
+  lastRolloverStage = stage;
+  console.info(`[season-rollover] ${progress}% · ${stage} · ${message}`);
   options.onProgress?.({ stage, progress, message });
 }
 
@@ -472,6 +475,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
   let nextSeasonEconomyLedger: string[] = [...(current.seasonEconomyLedger ?? [])];
   let postSeasonTransferPlayerIds = new Set<string>();
 
+  lastRolloverStage = "init";
   try {
     emitProgress(options, "checkpoint", 2, "Preparando punto de recuperación…");
     // Ensure market runtime represents this save before taking its checkpoint.
@@ -919,6 +923,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     emitProgress(options, "commit", 100, `Temporada ${dates.toSeason} preparada.`);
     return nextSave;
   } catch (error) {
+    console.error(`[season-rollover] FALLÓ en la fase "${lastRolloverStage}". Se revierte al punto de recuperación.`, error);
     try {
       if (backup) await rollbackFromBackup(backup);
       else {
