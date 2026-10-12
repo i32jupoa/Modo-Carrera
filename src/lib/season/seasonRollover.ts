@@ -6,6 +6,7 @@ import type { SaveGame } from "../store";
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 import { getSeasonCalendarAnchors, getSeasonStartYear } from "./calendarFactory";
 import { getSeasonRolloverDates, isSeasonRolloverDue, resetPlayerSeasonCounters, type RolloverProgress, type RolloverProgressStage } from "./seasonRolloverCore";
+import { beginSeasonRollover, endSeasonRollover, waitForMarketBackgroundTasks } from "./seasonRolloverLock";
 export { isSeasonRolloverDue };
 import { selectSeasonRetirements, type RetiredPlayerRecord } from "./retirements";
 import { buildSeasonArchive, getSeasonArchive, listSeasonArchives, persistSeasonArchive, type PlayerSeasonArchiveRecord, type SeasonArchive } from "./seasonHistory";
@@ -168,6 +169,7 @@ export function canAdvanceToNextSeason(save: SaveGame): { ok: boolean; reason?: 
 }
 
 let lastRolloverStage = "init";
+let lastRolloverError: unknown = null;
 function emitProgress(options: AdvanceSeasonOptions, stage: RolloverProgressStage, progress: number, message: string) {
   lastRolloverStage = stage;
   console.info(`[season-rollover] ${progress}% · ${stage} · ${message}`);
@@ -350,11 +352,12 @@ function notification(
 function ensureValidAiSquads(teamIds: string[], overrides: Record<string, string>, userTeamId: string, nextDate: string) {
   // Emergency free-agent fills are deliberately limited to clubs with a missing
   // XI or a missing core position; normal market strategy remains untouched.
-  return import("../transfers/PlayerIndex").then(({ getClubPlayers, getFreeAgents, reassignPlayerClub, updatePlayer }) => {
+  return import("../transfers/PlayerIndex").then(async ({ getClubPlayers, getFreeAgents, reassignPlayerClub, updatePlayer }) => {
     const { getTeamLeagueId, teamById } = requireTeams();
     let free = getFreeAgents();
     const needFor = (players: any[], group: string) => players.filter((p) => p.group === group).length;
-    for (const teamId of teamIds) {
+    for (let i = 0; i < teamIds.length; i++) {
+      const teamId = teamIds[i];
       if (teamId === userTeamId) continue;
       let roster = getClubPlayers(teamId);
       const leagueId = getTeamLeagueId(teamId, { teamLeagueOverrides: overrides }) ?? teamById(teamId).league;
@@ -390,6 +393,7 @@ function ensureValidAiSquads(teamIds: string[], overrides: Record<string, string
         roster = getClubPlayers(teamId);
         free = free.filter((candidate) => candidate.id !== player.id);
       }
+      if ((i + 1) % 20 === 0) await yieldToUi();
     }
   });
 }
@@ -414,15 +418,31 @@ export function advanceToNextSeason(save: SaveGame, options: AdvanceSeasonOption
     if (activeRollover.key === key) return activeRollover.promise;
     return Promise.reject(new Error("Ya hay una transición de temporada activa en otra carrera."));
   }
+  // Acquire synchronously, before runAdvanceToNextSeason can update currentDate.
+  // The MarketClock effect and simulateDay share this guard.
+  beginSeasonRollover();
+  lastRolloverStage = "init";
+  lastRolloverError = null;
   const promise = runAdvanceToNextSeason(save, options);
   activeRollover = { key, promise };
-  return promise.finally(() => {
-    if (activeRollover?.promise === promise) activeRollover = null;
-  });
+  return promise
+    .catch((error) => {
+      if (lastRolloverError !== error) {
+        console.error(`[season-rollover] FALLÓ en la fase "${lastRolloverStage}".`, error);
+      }
+      throw error;
+    })
+    .finally(() => {
+      // This also runs after rollback, so no failed transition can leave market frozen.
+      endSeasonRollover();
+      if (activeRollover?.promise === promise) activeRollover = null;
+    });
 }
 
 async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOptions = {}): Promise<SaveGame> {
   if (typeof window === "undefined") throw new Error("El cambio de temporada solo puede ejecutarse en el navegador.");
+  // Drain market tasks that started before the lock, before taking the backup.
+  await waitForMarketBackgroundTasks();
   const { initSaveStorage, getSaveItem, setSaveItem, removeSaveItem, flushSaveStorage } = await import("../saveStorage");
   const { getCurrentSaveId, persistCurrentSave, restorePlayersStoreState } = await import("../savedGames");
   const { loadSave, saveSave, applySeasonEndProgressionToAllPlayers, recalculateUserSquadRoles, initializeEuropeanCompetition, initializeChampionsCompetition } = await import("../store");
@@ -440,7 +460,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
   const { loadAcademySave, saveAcademySave, clearAcademySave } = await import("../academy/academyPersistence");
   const { useAcademyStore } = await import("../academy/academyStore");
   const { beginAcademyAiFastForward, endAcademyAiFastForward, flushAcademyAiPendingChanges } = await import("../academy/academyAiMatchdayRunner");
-  const { runAcademyAnnualIntakeForAllClubs, runAcademyPreseasonPromotions } = await import("../academy/academyPromotionEngine");
+  const { runAcademyAnnualIntakeForAllClubs, runAcademyPreseasonPromotionsBatched } = await import("../academy/academyPromotionEngine");
   const { getAwardsSnapshot } = await import("../awards");
   const { listTransfers } = await import("../transfers/TransferHistory");
   const { getTeamLeagueId: resolveTeamLeague } = await import("@/data/teams");
@@ -475,7 +495,6 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
   let nextSeasonEconomyLedger: string[] = [...(current.seasonEconomyLedger ?? [])];
   let postSeasonTransferPlayerIds = new Set<string>();
 
-  lastRolloverStage = "init";
   try {
     emitProgress(options, "checkpoint", 2, "Preparando punto de recuperación…");
     // Ensure market runtime represents this save before taking its checkpoint.
@@ -544,16 +563,19 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     // Keep the market's OVR/potential index in sync with the progression layer
     // before AI contract decisions and retirement checks run.
     const progressedRaw = usePlayersStore.getState().getRawPlayers();
-    for (const raw of progressedRaw as any[]) {
+    for (let i = 0; i < progressedRaw.length; i++) {
+      const raw = progressedRaw[i] as any;
       const playerId = String(raw.ID);
       const marketPlayer = getMarketIndex().byId.get(playerId);
-      if (!marketPlayer) continue;
-      const rating = Number(raw.OVR);
-      const potential = Number(raw.potential);
-      const patch: Record<string, any> = {};
-      if (Number.isFinite(rating) && rating > 0 && rating !== marketPlayer.ovr) patch.ovr = rating;
-      if (Number.isFinite(potential) && potential > 0 && potential !== marketPlayer.potential) patch.potential = potential;
-      if (Object.keys(patch).length) updatePlayer(playerId, patch);
+      if (marketPlayer) {
+        const rating = Number(raw.OVR);
+        const potential = Number(raw.potential);
+        const patch: Record<string, any> = {};
+        if (Number.isFinite(rating) && rating > 0 && rating !== marketPlayer.ovr) patch.ovr = rating;
+        if (Number.isFinite(potential) && potential > 0 && potential !== marketPlayer.potential) patch.potential = potential;
+        if (Object.keys(patch).length) updatePlayer(playerId, patch);
+      }
+      if ((i + 1) % 500 === 0) await yieldToUi();
     }
     await yieldToUi();
 
@@ -569,7 +591,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       const team = allTeams[i];
       if (team.id === current.myTeamId) continue;
       runClubContractCycle(team.id, { date: dates.endDate, maxRenewals: 2, reviewList: false, excludePlayerIds: postSeasonTransferPlayerIds });
-      if (i % 20 === 0) await yieldToUi();
+      if ((i + 1) % 20 === 0) await yieldToUi();
     }
     advanceContracts(dates.endDate, { excludePlayerIds: postSeasonTransferPlayerIds });
     const userExpiries: Array<{ playerId: string; playerName: string; fromClubId: string }> = [];
@@ -595,27 +617,37 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const rawAtNext = usePlayersStore.getState().getRawPlayers();
     const rawById = new Map(rawAtNext.map((player: any) => [String(player.ID), player]));
     const nextStatsWithAge = { ...statsNow } as Record<string, any>;
-    for (const raw of rawAtNext as any[]) {
+    for (let i = 0; i < rawAtNext.length; i++) {
+      const raw = rawAtNext[i] as any;
       const playerId = String(raw.ID);
       const previous = nextStatsWithAge[playerId] ?? defaultStats();
       if (!raw.birthdate && previous.ageOverrideSeason !== dates.toSeason) {
         nextStatsWithAge[playerId] = { ...previous, ageOverride: Math.max(0, Number(previous.ageOverride ?? raw.Age ?? 0) + 1), ageOverrideSeason: dates.toSeason };
       }
+      if ((i + 1) % 500 === 0) await yieldToUi();
     }
     usePlayersStore.setState({ stats: nextStatsWithAge, currentDate: dates.nextStartDate } as any);
     const rawAtNextUpdated = usePlayersStore.getState().getRawPlayers();
     const ageById = new Map<string, number>(rawAtNextUpdated.map((player: any) => [String(player.ID), Number(player.Age) || 0] as [string, number]));
-    for (const player of getMarketIndex().byId.values()) {
+    const marketPlayers = Array.from(getMarketIndex().byId.values());
+    for (let i = 0; i < marketPlayers.length; i++) {
+      const player = marketPlayers[i];
       const age = ageById.get(player.id);
       if (age !== undefined && age > 0 && age !== player.age) updatePlayer(player.id, { age });
+      if ((i + 1) % 500 === 0) await yieldToUi();
     }
-    const candidates = Array.from(getMarketIndex().byId.values()).map((player: any) => {
+    const candidates: Array<{
+      id: string; name: string; age: number; ovr: number; clubId: string | null;
+      isGoalkeeper: boolean; isLegend: boolean; injuryDaysRemaining: number; alreadyRetired: boolean;
+    }> = [];
+    for (let i = 0; i < marketPlayers.length; i++) {
+      const player = marketPlayers[i] as any;
       const stats = usePlayersStore.getState().stats?.[player.id];
       const raw = rawById.get(player.id) as any;
       const injuryDaysRemaining = stats?.injuredUntilDate
         ? Math.max(0, Math.ceil((Date.parse(`${stats.injuredUntilDate}T00:00:00Z`) - Date.parse(`${dates.nextStartDate}T00:00:00Z`)) / 86_400_000))
         : 0;
-      return {
+      candidates.push({
         id: player.id,
         name: player.name,
         age: player.age,
@@ -625,8 +657,9 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
         isLegend: player.ovr >= 90 || Boolean(raw?.isLegend),
         injuryDaysRemaining,
         alreadyRetired: Boolean(player.retired),
-      };
-    });
+      });
+      if ((i + 1) % 500 === 0) await yieldToUi();
+    }
     const retirements = selectSeasonRetirements(candidates, {
       seed: Number(current.calendarSeed ?? 1), season: current.season, retiredAt: dates.endDate,
     });
@@ -640,8 +673,11 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     flushWorldMoves(); syncUserLoanRoster();
     const statsAfterAge = usePlayersStore.getState().stats ?? {};
     const resetStats: Record<string, any> = {};
-    for (const [playerId, previous] of Object.entries(statsAfterAge)) {
+    const statsEntries = Object.entries(statsAfterAge);
+    for (let i = 0; i < statsEntries.length; i++) {
+      const [playerId, previous] = statsEntries[i];
       resetStats[playerId] = resetPlayerSeasonCounters(previous as any, defaultStats() as any, retroactiveRollover ? originalCurrentDate : dates.nextStartDate);
+      if ((i + 1) % 500 === 0) await yieldToUi();
     }
     usePlayersStore.setState({ stats: resetStats, currentDate: dates.nextStartDate } as any);
     invalidateSquadsCache();
@@ -652,8 +688,8 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const academyDate = dates.nextStartDate;
     const startedAcademyBatch = await beginAcademyAiFastForward(saveId, academyDate, current.myTeamId);
     try {
-      runAcademyAnnualIntakeForAllClubs(academyDate);
-      runAcademyPreseasonPromotions(academyDate);
+      await runAcademyAnnualIntakeForAllClubs(academyDate);
+      await runAcademyPreseasonPromotionsBatched(academyDate);
       const academyFlushOk = await flushAcademyAiPendingChanges(saveId);
       if (!academyFlushOk) throw new Error("No se pudieron guardar los cambios de la cantera durante la pretemporada.");
     } finally {
@@ -673,10 +709,14 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       allTeams.map((team) => [team.id, { ...getCurrentFinances(team.id) }] as const),
     );
     setActiveTeamLeagueOverrides(domestic.teamLeagueOverrides);
-    for (const player of getMarketIndex().byId.values()) {
-      if (!player.clubId || player.retired) continue;
-      const leagueId = resolveTeamLeague(player.clubId, { teamLeagueOverrides: domestic.teamLeagueOverrides });
-      if (leagueId && player.leagueId !== leagueId) reassignPlayerClub(player.id, player.clubId, leagueId, { force: true });
+    const competitionPlayers = Array.from(getMarketIndex().byId.values());
+    for (let i = 0; i < competitionPlayers.length; i++) {
+      const player = competitionPlayers[i];
+      if (player.clubId && !player.retired) {
+        const leagueId = resolveTeamLeague(player.clubId, { teamLeagueOverrides: domestic.teamLeagueOverrides });
+        if (leagueId && player.leagueId !== leagueId) reassignPlayerClub(player.id, player.clubId, leagueId, { force: true });
+      }
+      if ((i + 1) % 500 === 0) await yieldToUi();
     }
     await ensureValidAiSquads(allTeams.map((team) => team.id), domestic.teamLeagueOverrides, current.myTeamId, dates.nextStartDate);
     flushWorldMoves(); syncUserLoanRoster();
@@ -687,6 +727,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       setFinances,
       setUserClubBridge,
     } = await import("../transfers/BudgetManager");
+    const { settleSeasonEconomyForCampaign } = await import("./seasonEconomyCore");
     // Ensure the economy adapter always targets this career's user budget,
     // even when the market clock component is temporarily unmounted.
     setUserClubBridge({
@@ -718,9 +759,9 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       uecl: new Set<string>([...(current.uecl?.participants ?? []), ...(current.europeanQualification?.uecl ?? [])]),
     };
     const nextTeamIdsByCompetition = {
-      ucl: new Set<string>(european.europeanQualification.ucl),
-      uel: new Set<string>(european.europeanQualification.uel),
-      uecl: new Set<string>(european.europeanQualification.uecl),
+      ucl: new Set<string>(european.europeanQualification?.ucl ?? []),
+      uel: new Set<string>(european.europeanQualification?.uel ?? []),
+      uecl: new Set<string>(european.europeanQualification?.uecl ?? []),
     };
     const currentEuropeanFor = (teamId: string): "ucl" | "uel" | "uecl" | null =>
       teamIdsByCompetition.ucl.has(teamId) ? "ucl"
@@ -826,7 +867,9 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const { getClubPlayers: clubPlayersNow } = await import("../transfers/PlayerIndex");
     const nextLineups: Record<string, string[]> = {};
     const nextSubstitutes: Record<string, string[]> = {};
-    for (const team of getAllTeams({ teamLeagueOverrides: domestic.teamLeagueOverrides })) {
+    const nextSeasonTeams = getAllTeams({ teamLeagueOverrides: domestic.teamLeagueOverrides });
+    for (let i = 0; i < nextSeasonTeams.length; i++) {
+      const team = nextSeasonTeams[i];
       const squad = clubPlayersNow(team.id).filter((player: any) => !player.retired);
       const sorted = [...squad].sort((a: any, b: any) => b.ovr - a.ovr || a.id.localeCompare(b.id));
       const previousXI = current.lineups?.[team.id] ?? [];
@@ -837,6 +880,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       }
       nextLineups[team.id] = xi;
       nextSubstitutes[team.id] = sorted.map((player: any) => player.id).filter((id) => !xi.includes(id)).slice(0, 12);
+      if ((i + 1) % 20 === 0) await yieldToUi();
     }
 
     const movementNotifications = notifications;
@@ -911,6 +955,8 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const ps = usePlayersStore.getState();
     ps.syncWageStateFromMarket?.();
     invalidateSquadsCache();
+    const { markSeasonRolloverComplete } = await import("../transfers/MarketSimulation");
+    markSeasonRolloverComplete(dates.nextStartDate);
     if (!(await saveTransferSystem())) throw new Error("No se pudo guardar el estado del mercado de fichajes.");
     saveSave(nextSave);
     if (!persistCurrentSave(nextSave, { immediate: true })) throw new Error("No se pudo persistir el guardado de la nueva temporada.");
@@ -923,6 +969,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     emitProgress(options, "commit", 100, `Temporada ${dates.toSeason} preparada.`);
     return nextSave;
   } catch (error) {
+    lastRolloverError = error;
     console.error(`[season-rollover] FALLÓ en la fase "${lastRolloverStage}". Se revierte al punto de recuperación.`, error);
     try {
       if (backup) await rollbackFromBackup(backup);

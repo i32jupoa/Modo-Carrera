@@ -30,6 +30,7 @@ import {
   saveTransferSystem,
 } from "./Persistence";
 import type { MarketDayResult, MarketSimulationState } from "./types";
+import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "../season/seasonRolloverLock";
 
 export * from "./types";
 export * from "./constants";
@@ -133,9 +134,12 @@ export async function loadOrInitTransferSystem(date: string): Promise<{
  * escribirse en disco.
  */
 export function syncMarketWithGameDate(date: string): MarketDayResult | null {
+  if (isSeasonRolloverInProgress()) return null;
   const state = getSimulationState();
   if (state && state.lastSimulatedDate === date) return null;
   const result = simulateMarketForDate(date);
-  void saveTransferSystem();
+  void trackMarketBackgroundTask(saveTransferSystem()).catch((error) => {
+    console.error("[MarketClock] No se pudo guardar la simulación diaria del mercado:", error);
+  });
   return result;
 }

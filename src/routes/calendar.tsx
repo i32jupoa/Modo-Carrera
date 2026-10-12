@@ -64,6 +64,7 @@ import { getSeasonCalendarAnchors, getSeasonStartYear } from "@/lib/season/calen
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 
 import { usePlayersStore, clearCalendarJumpBackgroundErrors } from "@/store/playersStore";
+import { toast } from "sonner";
 
 import { snapshotTransferSystem, applyTransferSnapshot } from "@/lib/transfers/Persistence";
 
@@ -776,6 +777,7 @@ function CalendarPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[Calendar] Error al avanzar el día:', err instanceof Error ? (err.stack || err.message) : err);
+      toast.error("No se ha podido avanzar el calendario", { description: message });
       setSave(loadSave());
       setJumpMessage(`No se pudo avanzar el calendario: ${message}`);
     } finally {
@@ -1222,6 +1224,7 @@ function CalendarPage() {
         } catch (rolloverError) {
           const message = rolloverError instanceof Error ? rolloverError.message : String(rolloverError);
           console.error("[Calendar] No se pudo reparar/cerrar la temporada antes del salto:", rolloverError);
+          toast.error("No se ha podido cerrar la temporada", { description: message });
           setJumpMessage(`No se puede iniciar el salto hasta cerrar la temporada anterior: ${message}`);
           setIsAdvancing(false);
           return;
@@ -1584,6 +1587,9 @@ function CalendarPage() {
               try { return JSON.stringify(error); } catch { return String(error); }
             })();
       console.error("[Calendar] Error al saltar hasta la fecha seleccionada:\n" + errorDetails, error);
+      toast.error("No se ha podido completar el salto de calendario", {
+        description: error instanceof Error ? error.message : "Consulta la consola para ver la fase que ha fallado.",
+      });
       try {
         await usePlayersStore.getState().waitForCalendarBackgroundTasks();
       } catch (backgroundError) {

@@ -303,29 +303,34 @@ export function promoteBestAcademySolutionForNeed(clubId: string, date: string, 
  * their inaugural cohort and are not duplicated. This function is deterministic
  * for a given save, club and season and may safely be retried.
  */
-export function runAcademyAnnualIntakeForAllClubs(date: string): { generated: number; clubs: number } {
+export async function runAcademyAnnualIntakeForAllClubs(date: string): Promise<{ generated: number; clubs: number }> {
   const saveId = getCurrentSaveId();
   if (!saveId) return { generated: 0, clubs: 0 };
   const season = seasonForDate(date);
   let generated = 0;
   let clubs = 0;
-  for (const team of getAllTeams()) {
+  const teams = getAllTeams();
+  for (let i = 0; i < teams.length; i++) {
+    const team = teams[i];
     const current = getState(saveId, team.id, season, date);
-    if (Number(current.lastIntakeSeason ?? 0) >= season) continue;
-    const additions = generateAnnualIntake(saveId, {
-      ...current,
-      lastIntakeSeason: Math.min(Number(current.lastIntakeSeason ?? season - 1), season - 1),
-    }, season);
-    const updated: ClubAcademyState = {
-      ...current,
-      players: [...current.players, ...additions].slice(0, ACADEMY_LIMITS.maxPlayers),
-      lastIntakeSeason: season,
-      manualPromotionAvailable: true,
-      updatedAt: new Date().toISOString(),
-    };
-    cacheAcademyState(saveId, team.id, season, updated);
-    generated += additions.length;
-    clubs += additions.length > 0 ? 1 : 0;
+    if (Number(current.lastIntakeSeason ?? 0) < season) {
+      const additions = generateAnnualIntake(saveId, {
+        ...current,
+        lastIntakeSeason: Math.min(Number(current.lastIntakeSeason ?? season - 1), season - 1),
+      }, season);
+      const updated: ClubAcademyState = {
+        ...current,
+        players: [...current.players, ...additions].slice(0, ACADEMY_LIMITS.maxPlayers),
+        lastIntakeSeason: season,
+        manualPromotionAvailable: true,
+        updatedAt: new Date().toISOString(),
+      };
+      cacheAcademyState(saveId, team.id, season, updated);
+      generated += additions.length;
+      clubs += additions.length > 0 ? 1 : 0;
+    }
+    // Give React and the browser a chance to paint during a whole-world intake.
+    if ((i + 1) % 20 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   return { generated, clubs };
 }
@@ -338,6 +343,21 @@ export function runAcademyPreseasonPromotions(date: string): AcademyPromotionBat
     const result = promoteAcademyPlayersForClub(team.id, date, "preseason");
     aggregate.promoted.push(...result.promoted);
     Object.assign(aggregate.reasons, result.reasons);
+  }
+  return aggregate;
+}
+
+/** Async variant for the season transaction; batches clubs to keep the UI responsive. */
+export async function runAcademyPreseasonPromotionsBatched(date: string): Promise<AcademyPromotionBatchResult> {
+  const saveId = getCurrentSaveId();
+  if (!saveId) return { promoted: [], reasons: {} };
+  const aggregate: AcademyPromotionBatchResult = { promoted: [], reasons: {} };
+  const teams = getAllTeams();
+  for (let i = 0; i < teams.length; i++) {
+    const result = promoteAcademyPlayersForClub(teams[i].id, date, "preseason");
+    aggregate.promoted.push(...result.promoted);
+    Object.assign(aggregate.reasons, result.reasons);
+    if ((i + 1) % 20 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   return aggregate;
 }

@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import { usePlayersStore } from "@/store/playersStore";
+import { isSeasonRolloverInProgress, subscribeSeasonRollover, trackMarketBackgroundTask } from "@/lib/season/seasonRolloverLock";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { getCurrentSaveId } from "@/lib/savedGames";
 import {
@@ -81,11 +82,14 @@ export function useMarketClock(): void {
   const ready = usePlayersReady();
   const currentDate = usePlayersStore((s) => s.currentDate);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
+  const [rolloverInProgress, setRolloverInProgress] = useState(isSeasonRolloverInProgress);
   const bootedFor = useRef<string | null>(null);
   // `undefined` = todavía no se ha arrancado el motor en esta sesión de la
   // app. Se distingue de `null` (partida sin id, caso límite) para que la
   // primera carga siempre dispare la inicialización.
   const bootedForSave = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => subscribeSeasonRollover(setRolloverInProgress), []);
 
   // Presupuesto único: el motor opera directamente sobre el de la partida.
   useEffect(() => {
@@ -104,6 +108,9 @@ export function useMarketClock(): void {
   }, [myTeamId]);
 
   useEffect(() => {
+    // currentDate changes several times inside the transactional rollover. Do
+    // not let this effect start a competing market simulation for those dates.
+    if (rolloverInProgress || isSeasonRolloverInProgress()) return;
     if (typeof window === "undefined" || !ready || !currentDate) return;
 
     const saveId = getCurrentSaveId();
@@ -129,7 +136,7 @@ export function useMarketClock(): void {
       bootedForSave.current = saveId;
       bootedFor.current = currentDate;
 
-      (async () => {
+      void trackMarketBackgroundTask((async () => {
         // La IA decide promociones de forma síncrona durante el avance del
         // mercado. Hidrata primero sus academias persistidas para que una
         // recarga directa de /season no regenere estados vacíos antes de que
@@ -173,12 +180,20 @@ export function useMarketClock(): void {
               currentDate,
             );
           }
-          if (events.length > 0 || removedFinished) void saveTransferSystem();
+          if (events.length > 0 || removedFinished) {
+            void trackMarketBackgroundTask(saveTransferSystem()).catch((error) => {
+              console.error("[MarketClock] No se pudo guardar el mercado tras resolver negociaciones:", error);
+            });
+          }
         } catch (error) {
           console.error("[MarketClock] Error al resolver negociaciones restauradas.", error);
         }
-        void saveTransferSystem();
-      })();
+        void trackMarketBackgroundTask(saveTransferSystem()).catch((error) => {
+          console.error("[MarketClock] No se pudo guardar el mercado al inicializar el reloj:", error);
+        });
+      })()).catch((error) => {
+        console.error("[MarketClock] No se pudo inicializar el reloj del mercado:", error);
+      });
       return;
     }
 
@@ -205,7 +220,11 @@ export function useMarketClock(): void {
             currentDate,
           );
         }
-        if (events.length > 0 || removedFinished) void saveTransferSystem();
+        if (events.length > 0 || removedFinished) {
+          void trackMarketBackgroundTask(saveTransferSystem()).catch((error) => {
+            console.error("[MarketClock] No se pudo guardar el mercado tras resolver negociaciones:", error);
+          });
+        }
       } catch (error) {
         restoreUserDeals(dealsBeforeAdvance);
         console.error("[MarketClock] Error al resolver negociaciones; se conserva su estado anterior.", error);
@@ -220,7 +239,7 @@ export function useMarketClock(): void {
       console.error("[MarketClock] Error al sincronizar el mercado con la fecha.", error);
       if (error instanceof Error && error.stack) console.error(error.stack);
     }
-  }, [ready, currentDate]);
+  }, [ready, currentDate, rolloverInProgress]);
 }
 
 /** Componente sin UI que mantiene el mercado sincronizado con el calendario. */

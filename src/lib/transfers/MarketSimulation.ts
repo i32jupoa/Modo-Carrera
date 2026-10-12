@@ -52,6 +52,7 @@ import {
 } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import { runAcademyPreseasonPromotions, runAcademyWindowPromotions, runAcademyEmergencyPromotion } from "@/lib/academy/academyPromotionEngine";
+import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "../season/seasonRolloverLock";
 import { reconcileAcademyLoans } from "@/lib/academy/academyLoanBridge";
 import { POSITION_GROUPS } from "./types";
 import { getLongTermInjuredPlayerIds } from "./MarketPlayerSignals";
@@ -323,6 +324,19 @@ function openWindow(date: string): SimulationInternals {
 export function initializeSimulation(date: string): MarketSimulationState {
   internals = openWindow(date);
   return internals.state;
+}
+
+/**
+ * The rollover transaction already resolved contracts, end-of-season loans and
+ * preseason academy promotions. Persist that fact so the next market tick does
+ * not execute those season-boundary operations for the same season again.
+ */
+export function markSeasonRolloverComplete(date: string): void {
+  if (!internals) {
+    initializeSimulation(date);
+    return;
+  }
+  internals.lastSeasonRolled = Math.max(internals.lastSeasonRolled, seasonOf(date));
 }
 
 /** Estado actual, o null si aún no se ha inicializado. */
@@ -859,6 +873,19 @@ function runClubDay(
 
 /** Simula un único día de mercado. */
 export function simulateDay(date: string): MarketDayResult {
+  // A second engine must never mutate the market while the transactional
+  // season rollover is changing players, loans, contracts and academies.
+  if (isSeasonRolloverInProgress()) {
+    return {
+      date,
+      transfers: [],
+      rumors: [],
+      offersMade: 0,
+      negotiationsOpen: 0,
+      renewals: 0,
+      loans: 0,
+    };
+  }
   if (!internals) initializeSimulation(date);
   let sim = internals!;
 
@@ -881,7 +908,9 @@ export function simulateDay(date: string): MarketDayResult {
   } else {
     seasonLoanReturns = resolveLoansDue(date);
   }
-  void reconcileAcademyLoans(date);
+  void trackMarketBackgroundTask(reconcileAcademyLoans(date)).catch((error) => {
+    console.warn("[academy] fallo al reconciliar cesiones durante la simulación de mercado:", error);
+  });
 
   // Cambio de ventana: presupuestos nuevos e intensidad nueva.
   const key = windowKey(date);
@@ -985,6 +1014,7 @@ const HARD_SIMULATION_DAY_CAP = 2000;
  * antiguas), se avisa por consola en vez de recortar el rango en silencio.
  */
 export function simulateUntil(date: string, maxDays = HARD_SIMULATION_DAY_CAP): MarketDayResult[] {
+  if (isSeasonRolloverInProgress()) return [];
   const results: MarketDayResult[] = [];
   if (!internals) {
     results.push(simulateDay(date));
