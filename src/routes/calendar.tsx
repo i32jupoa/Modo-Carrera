@@ -64,7 +64,6 @@ import { getSeasonCalendarAnchors, getSeasonStartYear } from "@/lib/season/calen
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 
 import { usePlayersStore, clearCalendarJumpBackgroundErrors } from "@/store/playersStore";
-import { toast } from "sonner";
 
 import { snapshotTransferSystem, applyTransferSnapshot } from "@/lib/transfers/Persistence";
 
@@ -189,6 +188,7 @@ function CalendarPage() {
 
   const [isAdvancing, setIsAdvancing] = useState(false);
   const jumpInProgressRef = useRef(false);
+  const cancelJumpRequestedRef = useRef(false);
   const [jumpStartDate, setJumpStartDate] = useState<string | null>(null);
   const [selectedJumpDate, setSelectedJumpDate] = useState<string | null>(null);
   const [jumpMessage, setJumpMessage] = useState<string | null>(null);
@@ -777,7 +777,6 @@ function CalendarPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[Calendar] Error al avanzar el día:', err instanceof Error ? (err.stack || err.message) : err);
-      toast.error("No se ha podido avanzar el calendario", { description: message });
       setSave(loadSave());
       setJumpMessage(`No se pudo avanzar el calendario: ${message}`);
     } finally {
@@ -1224,7 +1223,6 @@ function CalendarPage() {
         } catch (rolloverError) {
           const message = rolloverError instanceof Error ? rolloverError.message : String(rolloverError);
           console.error("[Calendar] No se pudo reparar/cerrar la temporada antes del salto:", rolloverError);
-          toast.error("No se ha podido cerrar la temporada", { description: message });
           setJumpMessage(`No se puede iniciar el salto hasta cerrar la temporada anterior: ${message}`);
           setIsAdvancing(false);
           return;
@@ -1238,6 +1236,7 @@ function CalendarPage() {
       return;
     }
 
+    cancelJumpRequestedRef.current = false;
     const profileEnabled = startCalendarJumpProfile(initialDate, targetDate);
     let batchOpen = false;
     let outcome: "ok" | "error" = "error";
@@ -1434,7 +1433,7 @@ function CalendarPage() {
         return true;
       };
 
-      while (usePlayersStore.getState().currentDate < targetDate && iterations < 800) {
+      while (usePlayersStore.getState().currentDate < targetDate && iterations < 800 && !cancelJumpRequestedRef.current) {
         // This also handles a legacy save that entered the loop already at 30 June.
         const beforeBoundarySave = loadSave();
         if (beforeBoundarySave && isSeasonRolloverDue({
@@ -1538,7 +1537,8 @@ function CalendarPage() {
         lastRolledFromSeason && targetDate === getSeasonRolloverDates(lastRolledFromSeason).endDate &&
         finalLoopDate === addDaysToIso(targetDate, 1),
       );
-      if (finalLoopDate !== targetDate && !targetWasRolloverDay) {
+      const cancelledByUser = cancelJumpRequestedRef.current;
+      if (!cancelledByUser && finalLoopDate !== targetDate && !targetWasRolloverDay) {
         throw new Error(iterations >= 800
           ? "El salto supera el límite de seguridad de días procesables."
           : `El calendario se detuvo en ${finalLoopDate}, antes de la fecha solicitada ${targetDate}.`);
@@ -1576,7 +1576,9 @@ function CalendarPage() {
       const finalDate = usePlayersStore.getState().currentDate;
       setSave(loadSave());
       setSelectedJumpDate(null);
-      setJumpMessage(`Calendario avanzado hasta el ${parseDateOnly(finalDate).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}. Se han simulado los partidos y resuelto los sorteos hasta esa fecha, incluido el día destino.`);
+      setJumpMessage(cancelledByUser
+        ? `Salto cancelado. La carrera se ha guardado en el ${parseDateOnly(finalDate).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}.`
+        : `Calendario avanzado hasta el ${parseDateOnly(finalDate).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}. Se han simulado los partidos y resuelto los sorteos hasta esa fecha, incluido el día destino.`);
       outcome = "ok";
     } catch (error) {
       const errorDetails = error instanceof Error
@@ -1587,9 +1589,6 @@ function CalendarPage() {
               try { return JSON.stringify(error); } catch { return String(error); }
             })();
       console.error("[Calendar] Error al saltar hasta la fecha seleccionada:\n" + errorDetails, error);
-      toast.error("No se ha podido completar el salto de calendario", {
-        description: error instanceof Error ? error.message : "Consulta la consola para ver la fase que ha fallado.",
-      });
       try {
         await usePlayersStore.getState().waitForCalendarBackgroundTasks();
       } catch (backgroundError) {
@@ -1628,6 +1627,7 @@ function CalendarPage() {
       setCalendarJumpActive(false);
       setJumpStartDate(null);
       setIsAdvancing(false);
+      cancelJumpRequestedRef.current = false;
       if (profileEnabled) finishCalendarJumpProfile(finalDate, outcome);
     }
   };
@@ -1919,11 +1919,18 @@ function CalendarPage() {
             <div className="flex shrink-0 gap-2">
               <button
                 type="button"
-                disabled={isAdvancing}
-                onClick={() => setSelectedJumpDate(null)}
+                disabled={false}
+                onClick={() => {
+                  if (isAdvancing) {
+                    cancelJumpRequestedRef.current = true;
+                    setJumpMessage("Cancelando el salto al terminar el día en curso…");
+                  } else {
+                    setSelectedJumpDate(null);
+                  }
+                }}
                 className="rounded-lg border border-border px-3 py-2 text-xs font-bold hover:bg-muted disabled:opacity-50"
               >
-                Cancelar
+                {isAdvancing ? "Detener avance" : "Cancelar"}
               </button>
               <button
                 type="button"

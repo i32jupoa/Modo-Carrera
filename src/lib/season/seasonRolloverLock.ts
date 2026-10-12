@@ -1,49 +1,51 @@
-/** Shared guard for the season transaction and the market clock. */
-let seasonRolloverInProgress = false;
-const pendingMarketBackgroundTasks = new Set<Promise<unknown>>();
-const rolloverListeners = new Set<(inProgress: boolean) => void>();
+/** Shared synchronous guard between the season transaction and the market clock. */
+let rolloverDepth = 0;
+const listeners = new Set<(inProgress: boolean) => void>();
+const marketTasks = new Set<Promise<unknown>>();
 
-function notifyRolloverListeners(): void {
-  for (const listener of rolloverListeners) {
+function notifyListeners(): void {
+  for (const listener of listeners) {
     try {
-      listener(seasonRolloverInProgress);
+      listener(isSeasonRolloverInProgress());
     } catch (error) {
-      console.error("[season-rollover] Error notificando al reloj del mercado:", error);
+      console.error("[season-rollover] No se pudo notificar el estado del reloj de mercado:", error);
     }
   }
 }
 
+export function isSeasonRolloverInProgress(): boolean {
+  return rolloverDepth > 0;
+}
+
 export function subscribeSeasonRollover(listener: (inProgress: boolean) => void): () => void {
-  rolloverListeners.add(listener);
+  listeners.add(listener);
   return () => {
-    rolloverListeners.delete(listener);
+    listeners.delete(listener);
   };
 }
 
 export function beginSeasonRollover(): void {
-  seasonRolloverInProgress = true;
-  notifyRolloverListeners();
+  const wasActive = rolloverDepth > 0;
+  rolloverDepth += 1;
+  if (!wasActive) notifyListeners();
 }
 
 export function endSeasonRollover(): void {
-  seasonRolloverInProgress = false;
-  notifyRolloverListeners();
+  if (rolloverDepth === 0) return;
+  rolloverDepth -= 1;
+  if (rolloverDepth === 0) notifyListeners();
 }
 
-export function isSeasonRolloverInProgress(): boolean {
-  return seasonRolloverInProgress;
-}
-
-/** Register async market work so the rollover checkpoint can drain in-flight ticks. */
+/** Track async market work that could otherwise persist over a rollover checkpoint/rollback. */
 export function trackMarketBackgroundTask<T>(task: Promise<T>): Promise<T> {
   let tracked: Promise<T>;
-  tracked = task.finally(() => pendingMarketBackgroundTasks.delete(tracked));
-  pendingMarketBackgroundTasks.add(tracked);
+  tracked = task.finally(() => marketTasks.delete(tracked));
+  marketTasks.add(tracked);
   return tracked;
 }
 
 export async function waitForMarketBackgroundTasks(): Promise<void> {
-  while (pendingMarketBackgroundTasks.size > 0) {
-    await Promise.allSettled(Array.from(pendingMarketBackgroundTasks));
+  while (marketTasks.size > 0) {
+    await Promise.allSettled(Array.from(marketTasks));
   }
 }

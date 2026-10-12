@@ -52,10 +52,10 @@ import {
 } from "./MarketLocks";
 import { clamp, seededUnit } from "./random";
 import { runAcademyPreseasonPromotions, runAcademyWindowPromotions, runAcademyEmergencyPromotion } from "@/lib/academy/academyPromotionEngine";
-import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "../season/seasonRolloverLock";
 import { reconcileAcademyLoans } from "@/lib/academy/academyLoanBridge";
 import { POSITION_GROUPS } from "./types";
 import { getLongTermInjuredPlayerIds } from "./MarketPlayerSignals";
+import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "../season/seasonRolloverLock";
 import type { MarketDayResult, MarketSimulationState, MarketWindow } from "./types";
 
 // ============================================================================
@@ -327,16 +327,30 @@ export function initializeSimulation(date: string): MarketSimulationState {
 }
 
 /**
- * The rollover transaction already resolved contracts, end-of-season loans and
- * preseason academy promotions. Persist that fact so the next market tick does
- * not execute those season-boundary operations for the same season again.
+ * Called by the successful rollover before releasing the market clock. The
+ * rollover has already resolved year-end contracts, loans and academy intake;
+ * this only advances the market cursor so the next clock tick cannot repeat
+ * those actions or replay every day from the old campaign.
  */
 export function markSeasonRolloverComplete(date: string): void {
-  if (!internals) {
-    initializeSimulation(date);
-    return;
+  const season = seasonOf(date);
+  const previousSeason = internals?.lastSeasonRolled ?? season;
+  const key = windowKey(date);
+
+  if (!internals || internals.windowKey !== key) {
+    const next = openWindow(date);
+    next.lastSeasonRolled = Math.max(previousSeason, season);
+    internals = next;
+  } else {
+    internals.lastSeasonRolled = Math.max(internals.lastSeasonRolled, season);
+    internals.state.window = windowForDate(date);
+    internals.state.windowDay = 1;
+    internals.state.intensity = intensityFor(date);
+    internals.state.deadlineDay = isDeadlineDay(date);
   }
-  internals.lastSeasonRolled = Math.max(internals.lastSeasonRolled, seasonOf(date));
+
+  internals.state.lastSimulatedDate = date;
+  internals.lastSeasonRolled = Math.max(internals.lastSeasonRolled, season);
 }
 
 /** Estado actual, o null si aún no se ha inicializado. */
@@ -873,8 +887,9 @@ function runClubDay(
 
 /** Simula un único día de mercado. */
 export function simulateDay(date: string): MarketDayResult {
-  // A second engine must never mutate the market while the transactional
-  // season rollover is changing players, loans, contracts and academies.
+  // The rollover mutates the same player/loan/academy stores. Never run a
+  // market tick concurrently with that transaction, even if a caller bypasses
+  // the React clock subscription.
   if (isSeasonRolloverInProgress()) {
     return {
       date,

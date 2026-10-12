@@ -4,6 +4,7 @@ import { measureCalendarJumpPhase, recordCalendarJumpCounter, recordCalendarJump
 import { getSaveItem, setSaveItem, removeSaveItem, isSaveStorageFallback } from "./saveStorage";
 
 import { saveTransferSystem } from "./transfers/Persistence";
+import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "./season/seasonRolloverLock";
 import { getPlayer as getMarketPlayer } from "./transfers/PlayerIndex";
 import {
   LeagueId,
@@ -143,6 +144,14 @@ import {
 import { FIVE_DEFENDER_TEAMS, getTeamStyle, formationsForStyle } from "@/lib/teamProfile";
 import { getRivals } from "@/data/teamExtras";
 
+/** SaveGame persistence can normally checkpoint the market asynchronously, but
+ * a season rollover owns that snapshot and writes it after commit/rollback. */
+function persistMarketSnapshotFromSave(): void {
+  if (isSeasonRolloverInProgress()) return;
+  void trackMarketBackgroundTask(
+    measureCalendarJumpPhase("simulation.marketPersistence", () => saveTransferSystem()),
+  ).catch((error) => console.error("[save] No se pudo persistir el snapshot del mercado:", error));
+}
 
 /**
  * Parse season string (e.g., "2026-27") to season number (e.g., 1)
@@ -951,6 +960,9 @@ export type SaveGame = {
   /** Último partido cuyas alertas de lesión/expulsión ya se han leído en Central. */
   matchAlertsReadFixtureId?: string;
 
+  /** Fixture IDs whose player statistics have been committed; JSON-safe idempotency ledger. */
+  statsCommittedFixtureIds?: string[];
+
   season: string;
 
   /** Semilla persistida para calendarios/sorteos deterministas de esta carrera. */
@@ -1424,7 +1436,6 @@ function loadSaveImpl(): SaveGame | null {
     }
 
     const parsed = measureCalendarJumpPhase("loadSave.JSON.parse", () => JSON.parse(raw) as LegacySave);
-
     if (parsed.version !== 2) {
       setActiveTeamLeagueOverrides(undefined);
       return null;
@@ -1436,6 +1447,14 @@ function loadSaveImpl(): SaveGame | null {
     // JSON serialization instead of in the actual match simulation. Only
     // persist when this read really performed a migration.
     let needsMigrationSave = false;
+    // New idempotency ledger is optional in the public save format so older
+    // careers remain readable. Persist its empty initial value through the
+    // existing migration-save mechanism.
+    if (!Array.isArray((parsed as any).statsCommittedFixtureIds)) {
+      (parsed as any).statsCommittedFixtureIds = [];
+      needsMigrationSave = true;
+    }
+
 
     // Mutable divisions belong to the save, never to the shared Team registry.
     // Legacy saves simply start with no overrides and keep their existing tables.
@@ -2136,7 +2155,7 @@ function saveSaveImpl(s: SaveGame): boolean {
         authoritative: true,
       };
       pendingSaveForDisk = null;
-      void measureCalendarJumpPhase("simulation.marketPersistence", () => saveTransferSystem());
+      persistMarketSnapshotFromSave();
       return ok;
     } catch (e) {
       console.error("Error persisting current save:", e);
@@ -2178,7 +2197,7 @@ function scheduleSaveForDisk(): void {
       };
 
       // El mercado también queda fuera del camino del click.
-      void measureCalendarJumpPhase("simulation.marketPersistence", () => saveTransferSystem());
+      persistMarketSnapshotFromSave();
 
       if (pendingSaveRevision !== revisionAtStart && pendingSaveForDisk) {
         scheduleSaveForDisk();
@@ -2232,8 +2251,8 @@ export function isSaveBatchCheckpointDueNextDay(): boolean {
 /** Persiste y espera el almacenamiento separado del mercado durante un salto. */
 export async function persistCalendarJumpMarketState(): Promise<boolean> {
   // Las partidas heredadas sin id no tienen una clave de mercado separada.
-  // No bloqueamos su calendario por un sidecar que no puede existir en ese caso.
-  if (!getCurrentSaveId()) return true;
+  // During rollover, its commit/rollback exclusively owns the market snapshot.
+  if (!getCurrentSaveId() || isSeasonRolloverInProgress()) return true;
   return measureCalendarJumpPhase("simulation.marketPersistence", () => saveTransferSystem());
 }
 
@@ -2969,16 +2988,9 @@ export function getStartersWithFormation(
       save.formations[teamId] = formation;
     }
 
-    const players = autoIds
+    const players = buildAiMatchSquad(teamId, autoIds
       .map((id) => store.getSimPlayer(id))
-      .filter((p): p is Player => !!p)
-      .map((p) => {
-        // CPU players are fresh at kickoff. Their energy drains only inside
-        // this match and is never inherited from a previous fixture.
-        p.energy = 100;
-        return p;
-      })
-      .slice(0, 11);
+      .filter((p): p is Player => !!p), unavailable, squad);
 
     return {
       players,
@@ -2994,6 +3006,48 @@ export function getStartersWithFormation(
     players,
     formation: (save.formations[teamId] as FormationName) || "Táctica 4-4-2",
   };
+}
+
+/**
+ * Canonical AI match XI completion. Keeps the optimizer's choices, then fills
+ * any missing slots from the current roster. Healthy/eligible players always
+ * win over injured/suspended emergency cover; an emergency is only used when
+ * the roster cannot otherwise reach eleven. A goalkeeper is guaranteed when
+ * the roster contains one. This is deliberately deterministic for fast season sims.
+ */
+export function buildAiMatchSquad(
+  teamId: string,
+  preferred: Player[],
+  unavailable: Set<string> = new Set(),
+  roster?: Player[],
+): Player[] {
+  const store = usePlayersStore.getState();
+  const squad = roster ?? store.getSimSquad(teamId);
+  const selected: Player[] = [];
+  const seen = new Set<string>();
+  const add = (player: Player) => {
+    if (!player?.id || seen.has(player.id)) return;
+    seen.add(player.id);
+    selected.push(player);
+  };
+  // Preserve eligible preferred XI; defer unavailable picks until emergency fill.
+  preferred.filter((p) => !unavailable.has(p.id)).forEach(add);
+  const healthy = squad.filter((p) => !unavailable.has(p.id)).sort((a, b) => b.rating - a.rating);
+  const emergency = squad.filter((p) => unavailable.has(p.id)).sort((a, b) => b.rating - a.rating);
+  const keeper = [...selected, ...healthy, ...emergency].find((p) => p.positions?.includes("GK"));
+  if (keeper && !selected.some((p) => p.positions?.includes("GK"))) {
+    // Keep eleven distinct players and make sure a goalkeeper is in the XI.
+    if (selected.length >= 11) selected.pop();
+    add(keeper);
+  }
+  for (const player of [...healthy, ...emergency]) {
+    if (selected.length >= 11) break;
+    add(player);
+  }
+  if (selected.length < 11 && process.env.NODE_ENV !== "production") {
+    console.warn(`[buildAiMatchSquad] ${teamId} solo tiene ${selected.length}/11 jugadores en plantilla; no hay suficientes IDs únicos.`);
+  }
+  return selected.slice(0, 11);
 }
 
 export function getStarters(
@@ -3071,16 +3125,12 @@ export function getStarters(
       save.formations[teamId] = formation;
     }
 
-    return autoIds
-      .map((id) => store.getSimPlayer(id))
-      .filter((p): p is Player => !!p)
-      .map((p) => {
-        // CPU players are fresh at kickoff. Their energy drains only inside
-        // this match and is never inherited from a previous fixture.
-        p.energy = 100;
-        return p;
-      })
-      .slice(0, 11);
+    return buildAiMatchSquad(
+      teamId,
+      autoIds.map((id) => store.getSimPlayer(id)).filter((p): p is Player => !!p),
+      unavailable,
+      squad,
+    );
   }
 
   // El usuario sí conserva su alineación manual.
@@ -3121,10 +3171,10 @@ function getCupSimulationBench(
     .getSimSquad(teamId)
     .filter((p) => !xiIds.has(p.id) && !suspended.has(p.id) && !isPlayerInjuredAtDate(p, currentDate, md))
     .sort((a, b) => b.rating - a.rating);
-  const bench = eligible.slice(0, 12);
+  const bench = eligible.slice(0, 7);
   const keeper = eligible.find((p) => Array.isArray(p.positions) && p.positions.includes("GK"));
   if (keeper && !bench.some((p) => p.id === keeper.id)) {
-    if (bench.length >= 12) bench[bench.length - 1] = keeper;
+    if (bench.length >= 7) bench[bench.length - 1] = keeper;
     else bench.push(keeper);
   }
   return bench;
@@ -3169,13 +3219,13 @@ export function getBenchForTeam(
       .map((id) => squad.find((p) => p.id === id))
       .filter((p): p is Player => !!p)
       .filter((p) => !xiIds.has(p.id) && !unavailable.has(p.id))
-      .slice(0, 12);
+      .slice(0, 7);
   }
 
   // La IA conserva sus jugadores convocados válidos, pero también completa la
   // lista desde la plantilla para no quedarse sin cambios por una convocatoria
   // antigua/incompleta. Se reserva SIEMPRE un portero suplente si hay alguno
-  // disponible, incluso si su valoración no entra entre los doce mejores.
+  // disponible, incluso si su valoración no entra entre los siete mejores.
   const configuredPlayers = (Array.isArray(configured) ? configured : [])
     .map((id) => squad.find((p) => p.id === id))
     .filter((p): p is Player => !!p)
@@ -3190,10 +3240,10 @@ export function getBenchForTeam(
     seenBench.add(player.id);
     combined.push(player);
   }
-  let bench = combined.slice(0, 12);
+  let bench = combined.slice(0, 7);
   const reserveKeeper = eligible.find((p) => Array.isArray(p.positions) && p.positions.includes("GK"));
   if (reserveKeeper && !bench.some((p) => p.id === reserveKeeper.id)) {
-    if (bench.length >= 12) bench[bench.length - 1] = reserveKeeper;
+    if (bench.length >= 7) bench[bench.length - 1] = reserveKeeper;
     else bench.push(reserveKeeper);
   }
   return bench;
@@ -3292,6 +3342,23 @@ export function getCalendarMatchTeamData(
     }
   }
 
+  // La selección de la IA también puede quedarse corta cuando hay muchas bajas,
+  // una plantilla incompleta o datos heredados. Nunca simular un partido oficial
+  // con 2–5 jugadores: completar con futbolistas únicos del club como último recurso.
+  if (players.length < 11) {
+    const store = usePlayersStore.getState();
+    const used = new Set(players.map((player) => player.id));
+    const roster = store.getSimSquad(teamId)
+      .filter((player) => player.teamId === teamId && !used.has(player.id))
+      .sort((a, b) => Number(isGoalkeeper(b.positions)) - Number(isGoalkeeper(a.positions)) || b.rating - a.rating);
+    for (const player of roster) {
+      if (players.length >= 11) break;
+      if (used.has(player.id)) continue;
+      players.push(player);
+      used.add(player.id);
+    }
+  }
+
   return {
     players,
     formation: base.formation,
@@ -3346,7 +3413,7 @@ function applyMatchToStats(
   // A fixture can pass through more than one simulation/commit path during
   // long advances and live-match reconciliation. Once its match bookkeeping
   // is applied, never count the same player appearance/statistics twice.
-  if (r.matchStatsApplied) return save;
+  if (r.matchStatsApplied || (save.statsCommittedFixtureIds ?? []).includes(fixture.id)) return save;
 
 
   const statsCompetition = fixture.europeanCompetition ?? fixture.competition;
@@ -3390,6 +3457,12 @@ function applyMatchToStats(
       });
   const homeXI = homeData.players;
   const awayXI = awayData.players;
+  if (process.env.NODE_ENV !== "production" && (homeXI.length !== 11 || awayXI.length !== 11)) {
+    console.warn(`[match-stats] Fixture ${fixture.id} llegó con XI incompleto`, {
+      home: `${fixture.homeId}: ${homeXI.length}/11`,
+      away: `${fixture.awayId}: ${awayXI.length}/11`,
+    });
+  }
 
   // The current fixture now serves any suspension that was already pending.
   // Do this AFTER XI selection but BEFORE adding sanctions generated by this
@@ -3767,6 +3840,7 @@ function applyMatchToStats(
   }
 
   r.matchStatsApplied = true;
+  updatedSave.statsCommittedFixtureIds = [...new Set([...(updatedSave.statsCommittedFixtureIds ?? []), fixture.id])];
   return updatedSave;
 }
 
@@ -4822,6 +4896,8 @@ export async function simulateCupMatchdayLayered(
           next.currentMatchday[league],
           "cup",
           fixture.date,
+          fixture.id,
+          (next.statsCommittedFixtureIds ??= []),
         );
         next = consumeSuspensionsForFixture(
           next,
@@ -6011,74 +6087,10 @@ function generateFakeMatchResult(home: Team, away: Team): SimResult {
 
 // Ultra-fast fake stats generation - simplified for speed
 
-function generateFakeStatsForBackgroundLeagues(save: SaveGame, leagues: LeagueId[]) {
-  const store = usePlayersStore.getState();
-
-  // Limit stats generation to keep it fast
-
-  const MAX_PLAYERS_PER_LEAGUE = 50;
-
-  for (const lg of leagues) {
-    const matchday = save.currentMatchday[lg];
-
-    if (matchday <= 2) continue; // Skip early matchdays
-
-    const leagueTeamsList = teamsByLeague(lg, save);
-
-    let playersProcessed = 0;
-
-    for (const team of leagueTeamsList) {
-      if (playersProcessed >= MAX_PLAYERS_PER_LEAGUE) break;
-
-      const squad = store.getSimSquad(team.id);
-
-      if (squad.length === 0) continue;
-
-      const gamesPlayed = matchday - 1;
-
-      // Only process top players (faster)
-
-      const topPlayers = squad.slice(0, 5);
-
-      for (const player of topPlayers) {
-        if (playersProcessed >= MAX_PLAYERS_PER_LEAGUE) break;
-
-        if (player.positions.includes("GK")) {
-          store.recordAppearance(player.id);
-
-          playersProcessed++;
-
-          continue;
-        }
-
-        // Simple stat generation
-
-        const goalProb = isAttacking(player.positions)
-          ? 0.5
-          : isMidfield(player.positions)
-            ? 0.2
-            : 0.05;
-
-        const expectedGoals = Math.floor(gamesPlayed * goalProb * (player.rating / 80));
-
-        const goals = Math.min(expectedGoals, gamesPlayed);
-
-        const assists = Math.floor(goals * 0.6);
-
-        const appearances = Math.max(goals, Math.min(gamesPlayed, 5));
-
-        // Batch record (single calls)
-
-        if (appearances > 0) store.recordAppearance(player.id);
-
-        for (let g = 0; g < Math.min(goals, 3); g++) store.recordGoal(player.id);
-
-        for (let a = 0; a < Math.min(assists, 2); a++) store.recordAssist(player.id);
-
-        playersProcessed++;
-      }
-    }
-  }
+function generateFakeStatsForBackgroundLeagues(_save: SaveGame, _leagues: LeagueId[]) {
+  // Disabled intentionally: season statistics must be derived from official
+  // fixture results through the shared match-stat commit path. Synthetic goals
+  // and appearances were independent of scores and could inflate rankings.
 }
 
 // Big 5 European leagues for VIP deep simulation
@@ -6698,6 +6710,152 @@ export async function scheduleBackgroundCupsOnly(
   return next;
 }
 
+/**
+ * Rebuilds current-season scoring and appearance counters from official saved
+ * fixtures. This intentionally preserves non-statistical player state (injuries,
+ * morale, energy, ratings and discipline) and does not change fixture results.
+ *
+ * Missing scorer events are reconstructed deterministically from participants
+ * and position weights, so repaired team goal totals agree with official scores.
+ */
+export function repairCurrentSeasonPlayerStats(save: SaveGame): {
+  fixturesProcessed: number;
+  missingGoalEventsReconstructed: number;
+} {
+  const store = usePlayersStore.getState();
+  const allFixtures: Fixture[] = [
+    ...Object.values(save.fixtures ?? {}).flat(),
+    ...Object.values(save.cupFixtures ?? {}).flat(),
+    ...(save.uclFixtures ?? []),
+    ...(save.uelFixtures ?? []),
+    ...(save.ueclFixtures ?? []),
+    ...((save.ucl as any)?.fixtures ?? []),
+    ...((save.ucl as any)?.leagueFixtures ?? []),
+    ...((save.uel as any)?.fixtures ?? []),
+    ...((save.uel as any)?.leagueFixtures ?? []),
+    ...((save.uecl as any)?.fixtures ?? []),
+    ...((save.uecl as any)?.leagueFixtures ?? []),
+  ];
+  const fixtures = [...new Map(
+    allFixtures.filter((f) => f?.id && f.result).map((f) => [f.id, f]),
+  ).values()];
+  const zeroKeys = [
+    "goals", "assists", "appearances", "cupGoals", "cupAssists", "cupAppearances",
+    "uclGoals", "uclAssists", "uclAppearances", "uelGoals", "uelAssists", "uelAppearances",
+    "ueclGoals", "ueclAssists", "ueclAppearances",
+  ];
+  const nextStats: Record<string, any> = {};
+  for (const [id, existing] of Object.entries(store.stats ?? {})) {
+    const next: any = { ...existing };
+    for (const key of zeroKeys) next[key] = 0;
+    if (existing.dynamicStats) {
+      next.dynamicStats = {
+        ...existing.dynamicStats,
+        seasonGoals: 0,
+        seasonAssists: 0,
+        seasonAppearances: 0,
+        seasonMinutes: 0,
+      };
+    }
+    nextStats[id] = next;
+  }
+  store.setState({ stats: nextStats });
+
+  let missingGoalEventsReconstructed = 0;
+  const committed = new Set<string>();
+  const competitionOf = (fixture: Fixture): string =>
+    fixture.europeanCompetition ?? fixture.competition ?? "league";
+  const isScoringEvent = (event: any) =>
+    event && ["goal", "penalty_goal", "free_kick_goal"].includes(event.type) && event.scorerId;
+  const positionWeight = (player: Player) => {
+    const positions = player.positions ?? [];
+    if (positions.includes("GK")) return 0.01;
+    if (positions.some((p) => ["ST", "CF"].includes(p))) return 5;
+    if (positions.some((p) => ["LW", "RW", "CAM", "LF", "RF"].includes(p))) return 3.5;
+    if (positions.some((p) => ["CM", "LM", "RM", "CDM"].includes(p))) return 1.8;
+    return 0.65;
+  };
+
+  for (const fixture of fixtures) {
+    if (committed.has(fixture.id) || !fixture.result) continue;
+    committed.add(fixture.id);
+    const result = fixture.result;
+    const competition = competitionOf(fixture);
+    const unique = (players: Player[]) => [...new Map(players.filter(Boolean).map(p => [p.id, p])).values()];
+    const playerForId = (id: string) => store.getSimPlayer(id);
+    const homeIds = new Set<string>([
+      ...(result.homeLineup ?? []).map((p) => p.id),
+      ...(result.homeStartingLineup ?? []).map((p) => p.id),
+      ...(result.homeFinalLineup ?? []).map((p) => p.id),
+      ...(result.substitutions ?? []).filter((sub: any) => sub.team === "home")
+        .flatMap((sub: any) => [sub.playerInId, sub.playerOutId]),
+    ]);
+    const awayIds = new Set<string>([
+      ...(result.awayLineup ?? []).map((p) => p.id),
+      ...(result.awayStartingLineup ?? []).map((p) => p.id),
+      ...(result.awayFinalLineup ?? []).map((p) => p.id),
+      ...(result.substitutions ?? []).filter((sub: any) => sub.team === "away")
+        .flatMap((sub: any) => [sub.playerInId, sub.playerOutId]),
+    ]);
+    for (const rating of result.ratings ?? []) {
+      const player = playerForId(rating.playerId);
+      if (homeIds.has(rating.playerId) || player?.clubId === fixture.homeId) homeIds.add(rating.playerId);
+      else if (awayIds.has(rating.playerId) || player?.clubId === fixture.awayId) awayIds.add(rating.playerId);
+    }
+    let home = unique([...homeIds].map(playerForId).filter(Boolean) as Player[]);
+    let away = unique([...awayIds].map(playerForId).filter(Boolean) as Player[]);
+    if (home.length === 0) home = store.getSimSquad(fixture.homeId).slice(0, 11);
+    if (away.length === 0) away = store.getSimSquad(fixture.awayId).slice(0, 11);
+    const minutes = new Map<string, number>(
+      (result.ratings ?? []).map((r: any) => [r.playerId, Math.max(0, Number(r.minutes) || 0)]),
+    );
+    const participants = new Set<string>([
+      ...home.map(p => p.id), ...away.map(p => p.id),
+      ...(result.substitutions ?? []).map((sub: any) => sub.playerInId),
+    ]);
+    for (const id of participants) store.recordAppearance(id, competition, minutes.get(id) ?? 90);
+
+    const regularEvents = [...(result.events ?? []), ...(result.extraTime?.events ?? [])].filter(isScoringEvent);
+    const ownGoals = [...(result.events ?? []), ...(result.extraTime?.events ?? [])]
+      .filter((event: any) => event?.type === "own_goal");
+    const creditedByTeam = { home: 0, away: 0 };
+    for (const event of regularEvents) {
+      const scorer = String(event.scorerId);
+      const team = event.team === "home" ? "home" : "away";
+      creditedByTeam[team] += 1;
+      store.recordGoal(scorer, competition);
+      if (event.assistId) store.recordAssist(String(event.assistId), competition);
+    }
+    // Reconstruct only goals whose scorer event is absent. Own goals are
+    // included in the score but deliberately excluded from individual goals.
+    // MatchEvent.team is the team receiving the own-goal score.
+    const ownByTeam = {
+      home: ownGoals.filter((event: any) => event.team === "home").length,
+      away: ownGoals.filter((event: any) => event.team === "away").length,
+    };
+    const creditMissing = (team: "home" | "away", target: number, players: Player[]) => {
+      const count = Math.max(0, target - ownByTeam[team] - creditedByTeam[team]);
+      const candidates = players.filter(p => !p.positions?.includes("GK"));
+      if (!candidates.length) return;
+      const total = candidates.reduce((sum, p) => sum + positionWeight(p), 0);
+      for (let i = 0; i < count; i++) {
+        // Stable weighted selection: repair is reproducible for the same save.
+        let roll = ((i * 0.61803398875 + (Number.parseInt(fixture.id.replace(/\D/g, "").slice(-5) || "1", 10) % 97) / 97) % 1) * total;
+        let scorer = candidates[candidates.length - 1];
+        for (const candidate of candidates) {
+          roll -= positionWeight(candidate);
+          if (roll <= 0) { scorer = candidate; break; }
+        }
+        store.recordGoal(scorer.id, competition);
+        missingGoalEventsReconstructed += 1;
+      }
+    };
+    creditMissing("home", Number(result.homeGoals) || 0, home);
+    creditMissing("away", Number(result.awayGoals) || 0, away);
+  }
+  return { fixturesProcessed: fixtures.length, missingGoalEventsReconstructed };
+}
+
 // Shared helper: given a squad of players and a result, record goals/assists/cards/injuries
 
 function recordFakeMatchStats(
@@ -6708,7 +6866,12 @@ function recordFakeMatchStats(
   currentMatchday: number,
   competition: "league" | "cup" | "ucl" | "uel" | "uecl" = "league",
   matchDate?: string,
+  fixtureId?: string,
+  committedFixtureIds?: string[],
 ) {
+  // Fixture ID is the durable idempotency token; the result flag is retained
+  // for backwards compatibility with saves created before the ledger existed.
+  if (result.matchStatsApplied || (fixtureId && (committedFixtureIds ?? []).includes(fixtureId))) return;
   // Fast-simulated matches already contain the same authoritative events as
   // detailed matches. Never generate a second, random set of scorers/cards:
   // that could credit a player who had already been substituted.
@@ -6892,6 +7055,10 @@ function recordFakeMatchStats(
       ? result.ratings.reduce((best, cur) => (cur.rating > best.rating ? cur : best)).playerId
       : undefined);
   if (motmId) store.recordMotm(motmId, competition);
+  result.matchStatsApplied = true;
+  if (fixtureId && committedFixtureIds && !committedFixtureIds.includes(fixtureId)) {
+    committedFixtureIds.push(fixtureId);
+  }
 }
 
 // Shared helper: select 11 match players from a squad
@@ -7188,6 +7355,8 @@ function processScheduledBackgroundSimsImpl(
               next.currentMatchday[league],
               "cup",
               simulatedDate,
+              f.id,
+              (next.statsCommittedFixtureIds ??= []),
             );
             next = consumeSuspensionsForFixture(next, [f.homeId, f.awayId], f.competition);
             if (result.cards?.length) {
@@ -7227,59 +7396,9 @@ function processScheduledBackgroundSimsImpl(
         const fixtures = roundFixtures.filter((f) => !f.result);
         let entrySucceeded = true;
 
-        const allPlayersToRecord = new Map<string, Player[]>();
-
-        // First pass: collect players
-
-        for (const f of fixtures) {
-          const home = teamById(f.homeId);
-
-          const away = teamById(f.awayId);
-
-          if (!home || !away) {
-            entrySucceeded = false;
-            console.error("[processScheduledBackgroundSims] Liga pendiente: equipo no encontrado", {
-              league, matchday, fixtureId: f.id, homeId: f.homeId, awayId: f.awayId,
-            });
-            continue;
-          }
-
-          const homeSuspendedIds = getSuspendedPlayerIdsForCompetition(
-            next,
-            home.id,
-            f.competition,
-          );
-          const awaySuspendedIds = getSuspendedPlayerIdsForCompetition(
-            next,
-            away.id,
-            f.competition,
-          );
-          allPlayersToRecord.set(
-            home.id,
-            selectMatchPlayers(
-              store
-                .getSimSquad(home.id)
-                .filter(
-                  (p) =>
-                    !homeSuspendedIds.has(p.id) &&
-                    !isPlayerInjuredAtDate(p, f.date || entry.date || today, matchday),
-                ),
-            ),
-          );
-
-          allPlayersToRecord.set(
-            away.id,
-            selectMatchPlayers(
-              store
-                .getSimSquad(away.id)
-                .filter(
-                  (p) =>
-                    !awaySuspendedIds.has(p.id) &&
-                    !isPlayerInjuredAtDate(p, f.date || entry.date || today, matchday),
-                ),
-            ),
-          );
-        }
+        // Resolve the authoritative XI once per fixture in the simulation pass.
+        // The old preliminary pass selected a positional slice of an already
+        // filtered squad and could leave the match with fewer than eleven.
 
         // Third pass: simulate and assign all player stats in one place.
         // `recordFakeMatchStats` is responsible for appearances too, so they are
@@ -7295,21 +7414,37 @@ function processScheduledBackgroundSimsImpl(
             continue;
           }
 
-          const result = generateFakeMatchResult(home, away);
           const simulatedDate = f.date || entry.date || today;
-
-          // Las ligas simuladas en segundo plano también pueden generar lesiones.
-          // Antes este camino no registraba ninguna, por lo que los jugadores
-          // de muchas ligas nunca aparecían en el parte médico.
-          const homePlayers = allPlayersToRecord.get(f.homeId) || [];
-          const awayPlayers = allPlayersToRecord.get(f.awayId) || [];
-          const leagueTeamCount = teamsByLeague(league, next).length;
-          const backgroundInjuries = [
-            generateBackgroundInjury(homePlayers, "home", leagueTeamCount),
-            generateBackgroundInjury(awayPlayers, "away", leagueTeamCount),
-          ].filter((injury): injury is InjuryEvent => Boolean(injury));
-
-          result.injuries = [...(result.injuries ?? []), ...backgroundInjuries];
+          const homeData = getStartersWithFormation(next, f.homeId, {
+            fixture: {
+              fixtureId: f.id,
+              opponentId: f.awayId,
+              isHome: true,
+              competition: f.competition,
+              matchday: f.matchday,
+            },
+          });
+          const awayData = getStartersWithFormation(next, f.awayId, {
+            fixture: {
+              fixtureId: f.id,
+              opponentId: f.homeId,
+              isHome: false,
+              competition: f.competition,
+              matchday: f.matchday,
+            },
+          });
+          const homePlayers = homeData.players;
+          const awayPlayers = awayData.players;
+          const homeBench = getCupSimulationBench(next, f.homeId, homePlayers, f.competition);
+          const awayBench = getCupSimulationBench(next, f.awayId, awayPlayers, f.competition);
+          const result = simulateMatchFast(home, away, homePlayers, awayPlayers, {
+            homeBench,
+            awayBench,
+            homeTactics: loadTactics(f.homeId),
+            awayTactics: loadTactics(f.awayId),
+            homeFormation: homeData.formation,
+            awayFormation: awayData.formation,
+          });
 
           const idx = leagueFixtureIndex.get(league)?.get(f.id) ?? -1;
           if (idx < 0) entrySucceeded = false;
@@ -7330,6 +7465,8 @@ function processScheduledBackgroundSimsImpl(
               next.currentMatchday[league],
               "league",
               simulatedDate,
+              f.id,
+              (next.statsCommittedFixtureIds ??= []),
             );
             next = consumeSuspensionsForFixture(next, [f.homeId, f.awayId], f.competition);
             if (result.cards?.length) {
@@ -7579,6 +7716,8 @@ export async function advanceMatchdayLayered(
             next.currentMatchday[league],
             "league",
             fixture.date,
+            fixture.id,
+            (next.statsCommittedFixtureIds ??= []),
           );
           next = consumeSuspensionsForFixture(
             next,
@@ -9398,6 +9537,8 @@ function applyEuropeanFastResult(
     simmed.matchday,
     europeanCompetition,
     simmed.date,
+    simmed.id,
+    (next.statsCommittedFixtureIds ??= []),
   );
 
   next.currentMatchday = { ...next.currentMatchday };

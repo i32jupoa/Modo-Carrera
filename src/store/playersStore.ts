@@ -123,6 +123,7 @@ import {
   applyDailyMailboxMessages,
   commitCalendarScheduleResults,
   getCalendarMatchTeamData,
+  buildAiMatchSquad,
 } from "@/lib/store";
 import { loadTactics } from "@/lib/teamTactics";
 
@@ -738,12 +739,26 @@ function simulateCalendarLeagueFixture(
       return { sim, homeXI: home.players, awayXI: away.players };
     }
   }
-  const xiFor = (teamId: string) =>
-    state.getSimXI(teamId, calendarLineupIds(state.getSimSquad(teamId)), fixture.matchday);
+  const xiFor = (teamId: string) => {
+    const squad = state.getSimSquad(teamId);
+    const initial = state.getSimXI(teamId, calendarLineupIds(squad), fixture.matchday);
+    // Keep the no-save fallback on the same XI-completion path as every other
+    // AI fixture; legacy startup states must not produce empty/short lineups.
+    return buildAiMatchSquad(teamId, initial, new Set(), squad);
+  };
   const homeXI = xiFor(fixture.homeTeam);
   const awayXI = xiFor(fixture.awayTeam);
-  const sim = simulateScheduleFixtureFastDetailed(fixture, (teamId) =>
-    teamId === fixture.homeTeam ? homeXI : awayXI,
+  const homeSquad = state.getSimSquad(fixture.homeTeam);
+  const awaySquad = state.getSimSquad(fixture.awayTeam);
+  const sim = simulateScheduleFixtureFastDetailed(
+    fixture,
+    (teamId) => (teamId === fixture.homeTeam ? homeXI : awayXI),
+    {
+      homeBench: homeSquad.filter((p) => !homeXI.some((x) => x.id === p.id)).slice(0, 7),
+      awayBench: awaySquad.filter((p) => !awayXI.some((x) => x.id === p.id)).slice(0, 7),
+      homeTactics: loadTactics(fixture.homeTeam),
+      awayTactics: loadTactics(fixture.awayTeam),
+    },
   );
   return { sim, homeXI, awayXI };
 }
@@ -1162,7 +1177,14 @@ function fcToPlayer(
 
   teamIdOverride?: string,
 ): Player | undefined {
-  let teamId = teamIdOverride ?? TEAM_NAME_TO_ID[fc.Team];
+  // El agrupador de plantillas usa `findTeamStrict`, que reconoce los alias
+  // del dataset (p. ej. "PSG" -> Paris SG y "Olympique Lyon" -> OL).
+  // Resolver aquí solo por el nombre literal hacía que los jugadores originales
+  // de esos clubes devolvieran `undefined` y desaparecieran del XI simulado;
+  // los fichajes sí aparecían porque tenían `teamIdOverride` explícito.
+  // Un override vacío debe seguir significando jugador libre/retirado, por eso
+  // conservamos `teamIdOverride` en primera posición y con nullish coalescing.
+  let teamId = teamIdOverride ?? baseClubId(fc) ?? TEAM_NAME_TO_ID[fc.Team];
 
   // For dynamic teams not in TEAM_NAME_TO_ID, look up by normalized name
 
@@ -2766,8 +2788,8 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             for (const ev of [...(result.events ?? []), ...(result.extraTime?.events ?? [])]) {
               if (!["goal", "penalty_goal", "free_kick_goal"].includes(ev.type)) continue;
               try {
-                get().recordGoal(ev.scorerId);
-                if (ev.assistId) get().recordAssist(ev.assistId);
+                get().recordGoal(ev.scorerId, f.competition);
+                if (ev.assistId) get().recordAssist(ev.assistId, f.competition);
               } catch (err) {
                 console.warn('[advanceTime] goal stat update skipped:', err);
                 if (options?.mode === "jump") throw new Error(`No se pudieron actualizar las estadísticas de goles de ${f.id}.`, { cause: err });

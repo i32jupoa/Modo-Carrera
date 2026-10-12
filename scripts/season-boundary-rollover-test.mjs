@@ -23,18 +23,20 @@ assert.match(dayBar, /void ensureSeasonRollover\(\)/,
   'The global day bar must recover a stale save after app startup');
 assert.match(playerStore, /season\.rolloverBoundaryBlocked[\s\S]*return 0/,
   'The day clock must not cross the campaign cutoff without rollover');
-assert.match(rollover, /if \(currentDate > dates\.endDate\) return \{ ok: true \}/,
-  'A legacy save strictly beyond 30 June can be repaired retroactively');
+assert.match(rollover, /if \(currentDate >= dates\.endDate\) return \{ ok: true \}/,
+  'A save at or beyond 30 June must be eligible for rollover even if background fixtures are pending');
+assert.match(rollover, /season boundary must always be recoverable/,
+  'The rollover readiness check must document why background fixtures cannot deadlock the season');
 assert.match(rollover, /const seasonFixtures = all\.filter\(\(\{ fixture, kind \}\) =>/,
-  'Readiness must filter fixtures to the season being closed and its cutoff date');
+  'Readiness must still scope in-season diagnostics to fixtures dated before the cutoff');
 assert.match(rollover, /const pending = seasonFixtures\.filter\(\(\{ fixture \}\) => !hasResult\(fixture\)\)/,
   'Only unresolved fixtures scheduled on/before 30 June may block rollover');
 assert.match(rollover, /getCupFixtureDateIso\(fixture, seasonStartYear\)/,
   'National cup fixtures must use their canonical season date');
 assert.match(rollover, /getEuropeanFixtureDateIso\(fixture, kind, seasonStartYear\)/,
   'European fixtures must use their canonical season date');
-assert.match(rollover, /if \(liveState\.myTeamId === effectiveSave\.myTeamId && liveState\.pendingUserMatch\)/,
-  'A pending user match must block an unsafe rollover');
+assert.match(rollover, /simulateMatchForCalendarJump\(pendingMatchId\)/,
+  'A legacy pending user match must be reconciled if possible rather than deadlocking the season rollover');
 assert.match(rollover, /const broadcastKey = `\$\{getCurrentSaveId\(\) \?\? \"career\"\}:\$\{effectiveSave\.myTeamId\}:\$\{effectiveSave\.season\}->\$\{nextSave\.season\}`[\s\S]*broadcastRolloverKeys\.has\(broadcastKey\)[\s\S]*dispatchEvent\(new CustomEvent\(\"fcsim:save-updated\"/,
   'A committed automatic rollover must notify mounted route snapshots only once');
 assert.match(rollover, /retroactiveRollover = originalCurrentDate > dates\.endDate/,

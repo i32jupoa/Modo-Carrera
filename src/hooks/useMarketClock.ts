@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import { usePlayersStore } from "@/store/playersStore";
-import { isSeasonRolloverInProgress, subscribeSeasonRollover, trackMarketBackgroundTask } from "@/lib/season/seasonRolloverLock";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { getCurrentSaveId } from "@/lib/savedGames";
 import {
@@ -22,6 +21,11 @@ import {
   flushWorldMoves,
   hydrateWorld,
 } from "@/lib/transfers/WorldSync";
+import {
+  isSeasonRolloverInProgress,
+  subscribeSeasonRollover,
+  trackMarketBackgroundTask,
+} from "@/lib/season/seasonRolloverLock";
 
 /**
  * Refleja en el estado jugable una liquidación que el mercado ha ejecutado
@@ -71,6 +75,12 @@ function applyAutomaticSettlement(events: Array<{
   usePlayersStore.getState().syncWageStateFromMarket();
 }
 
+function saveMarketInBackground(context: string): void {
+  void trackMarketBackgroundTask(saveTransferSystem()).catch((error) => {
+    console.error(`[MarketClock] No se pudo guardar el mercado (${context}).`, error);
+  });
+}
+
 /**
  * Reloj del mercado: engancha la simulación al calendario del juego.
  *
@@ -82,12 +92,12 @@ export function useMarketClock(): void {
   const ready = usePlayersReady();
   const currentDate = usePlayersStore((s) => s.currentDate);
   const myTeamId = usePlayersStore((s) => s.myTeamId);
-  const [rolloverInProgress, setRolloverInProgress] = useState(isSeasonRolloverInProgress);
   const bootedFor = useRef<string | null>(null);
   // `undefined` = todavía no se ha arrancado el motor en esta sesión de la
   // app. Se distingue de `null` (partida sin id, caso límite) para que la
   // primera carga siempre dispare la inicialización.
   const bootedForSave = useRef<string | null | undefined>(undefined);
+  const [rolloverInProgress, setRolloverInProgress] = useState(isSeasonRolloverInProgress);
 
   useEffect(() => subscribeSeasonRollover(setRolloverInProgress), []);
 
@@ -108,8 +118,8 @@ export function useMarketClock(): void {
   }, [myTeamId]);
 
   useEffect(() => {
-    // currentDate changes several times inside the transactional rollover. Do
-    // not let this effect start a competing market simulation for those dates.
+    // Guard both here and at simulateDay(): React effects are asynchronous, so
+    // the module-level check is the final barrier against a date-change race.
     if (rolloverInProgress || isSeasonRolloverInProgress()) return;
     if (typeof window === "undefined" || !ready || !currentDate) return;
 
@@ -180,19 +190,13 @@ export function useMarketClock(): void {
               currentDate,
             );
           }
-          if (events.length > 0 || removedFinished) {
-            void trackMarketBackgroundTask(saveTransferSystem()).catch((error) => {
-              console.error("[MarketClock] No se pudo guardar el mercado tras resolver negociaciones:", error);
-            });
-          }
+          if (events.length > 0 || removedFinished) saveMarketInBackground("negociaciones iniciales");
         } catch (error) {
           console.error("[MarketClock] Error al resolver negociaciones restauradas.", error);
         }
-        void trackMarketBackgroundTask(saveTransferSystem()).catch((error) => {
-          console.error("[MarketClock] No se pudo guardar el mercado al inicializar el reloj:", error);
-        });
+        saveMarketInBackground("arranque del reloj");
       })()).catch((error) => {
-        console.error("[MarketClock] No se pudo inicializar el reloj del mercado:", error);
+        console.error("[MarketClock] Falló la inicialización del reloj de mercado.", error);
       });
       return;
     }
@@ -220,11 +224,7 @@ export function useMarketClock(): void {
             currentDate,
           );
         }
-        if (events.length > 0 || removedFinished) {
-          void trackMarketBackgroundTask(saveTransferSystem()).catch((error) => {
-            console.error("[MarketClock] No se pudo guardar el mercado tras resolver negociaciones:", error);
-          });
-        }
+        if (events.length > 0 || removedFinished) saveMarketInBackground("negociaciones diarias");
       } catch (error) {
         restoreUserDeals(dealsBeforeAdvance);
         console.error("[MarketClock] Error al resolver negociaciones; se conserva su estado anterior.", error);

@@ -245,6 +245,23 @@ export function getSeasonArchive(saveId: string, season: string): SeasonArchive 
   }
 }
 
+/**
+ * Read the lightweight history index from keys only. Rollover uses this to
+ * update SaveGame.seasonHistoryIndex without parsing every season archive (each
+ * archive can contain thousands of individual player-season records).
+ */
+export function getSeasonArchiveIndex(saveId: string): { count: number; latestSeason: string | null } {
+  const prefix = `fcsim:season-history:v1:${saveId}:`;
+  const seasons = listSaveKeys()
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => {
+      try { return decodeURIComponent(key.slice(prefix.length)); } catch { return null; }
+    })
+    .filter((season): season is string => Boolean(season))
+    .sort((a, b) => a.localeCompare(b));
+  return { count: seasons.length, latestSeason: seasons.at(-1) ?? null };
+}
+
 export function listSeasonArchives(saveId: string): SeasonArchive[] {
   const prefix = `fcsim:season-history:v1:${saveId}:`;
   return listSaveKeys()

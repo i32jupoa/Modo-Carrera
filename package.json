@@ -19,12 +19,15 @@
     "test:season-european": "node --experimental-strip-types scripts/season-european-qualification-test.mjs",
     "test:season-rollover": "node --experimental-strip-types scripts/season-rollover-test.mjs",
     "test:season-history": "node --experimental-strip-types scripts/season-history-test.mjs",
+    "test:season-archive-index": "node --experimental-strip-types scripts/season-archive-index-test.mjs",
     "test:season-economy": "node --experimental-strip-types scripts/season-economy-test.mjs",
     "test:season-lifetime": "node --experimental-strip-types scripts/season-lifetime-test.mjs",
     "test:startup-regression": "node scripts/players-store-startup-regression.mjs",
     "test:cup-calendar-runtime": "node scripts/cup-calendar-runtime-regression.mjs",
     "test:calendar-jump-competitions": "node scripts/calendar-jump-competition-regression.mjs",
-    "test:season-boundary-rollover": "node --experimental-strip-types scripts/season-boundary-rollover-test.mjs"
+    "test:season-boundary-rollover": "node --experimental-strip-types scripts/season-boundary-rollover-test.mjs",
+    "test:simulation-stats-repair": "node scripts/simulation-stats-repair-regression.mjs",
+    "test:player-club-resolution": "node scripts/player-club-resolution-regression.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -457,6 +457,8 @@ export type SimResult = {
   energyAtEnd?: Record<string, number>;
   /** Guard for the user-team post-match satisfaction/mailbox hook. */
   satisfactionApplied?: boolean;
+  /** Backward-compatible guard preventing duplicate stat commits for this result. */
+  matchStatsApplied?: boolean;
 };
 
 function pickScorer(xi: Player[]): Player {

@@ -6,10 +6,10 @@ import type { SaveGame } from "../store";
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 import { getSeasonCalendarAnchors, getSeasonStartYear } from "./calendarFactory";
 import { getSeasonRolloverDates, isSeasonRolloverDue, resetPlayerSeasonCounters, type RolloverProgress, type RolloverProgressStage } from "./seasonRolloverCore";
-import { beginSeasonRollover, endSeasonRollover, waitForMarketBackgroundTasks } from "./seasonRolloverLock";
 export { isSeasonRolloverDue };
 import { selectSeasonRetirements, type RetiredPlayerRecord } from "./retirements";
-import { buildSeasonArchive, getSeasonArchive, listSeasonArchives, persistSeasonArchive, type PlayerSeasonArchiveRecord, type SeasonArchive } from "./seasonHistory";
+import { beginSeasonRollover, endSeasonRollover, waitForMarketBackgroundTasks } from "./seasonRolloverLock";
+import { buildSeasonArchive, getSeasonArchive, persistSeasonArchive, type PlayerSeasonArchiveRecord, type SeasonArchive } from "./seasonHistory";
 
 const BACKUP_PREFIX = "fcsim:season-transition-backup:v1:";
 const JOURNAL_PREFIX = "fcsim:season-transition-journal:v1:";
@@ -30,11 +30,62 @@ type TransitionBackup = {
   saveId: string;
   fromSeason: string;
   toSeason: string;
-  savePayload: string;
-  market: any;
-  academy: any;
+  /** Legacy inline fields are still accepted when recovering older checkpoints. */
+  savePayload?: string;
+  market?: any;
+  academy?: any;
+  /** Large snapshots live in separate storage records to avoid a giant JSON.stringify peak. */
+  savePayloadKey?: string;
+  marketPayloadKey?: string;
+  academyPayloadKey?: string;
   hadArchive: boolean;
 };
+
+function transitionCheckpointKeys(saveId: string) {
+  const prefix = `${BACKUP_PREFIX}${saveId}`;
+  return {
+    backup: prefix,
+    savePayload: `${prefix}:save-payload`,
+    marketPayload: `${prefix}:market-payload`,
+    academyPayload: `${prefix}:academy-payload`,
+  };
+}
+
+function resolveTransitionBackup(
+  stored: TransitionBackup | null,
+  getSaveItem: (key: string) => string | null,
+): TransitionBackup | null {
+  if (!stored || stored.version !== JOURNAL_VERSION || !stored.saveId) return null;
+  const savePayload = stored.savePayload ?? (stored.savePayloadKey ? getSaveItem(stored.savePayloadKey) ?? undefined : undefined);
+  if (!savePayload) return null;
+
+  let market = stored.market;
+  if (market === undefined && stored.marketPayloadKey) {
+    const raw = getSaveItem(stored.marketPayloadKey);
+    if (!raw) return null;
+    market = safeJson(raw);
+    if (!market) return null;
+  }
+
+  let academy = stored.academy;
+  if (academy === undefined && stored.academyPayloadKey) {
+    const raw = getSaveItem(stored.academyPayloadKey);
+    if (raw === null) return null;
+    try { academy = JSON.parse(raw); } catch { return null; }
+  }
+
+  return { ...stored, savePayload, market, academy };
+}
+
+function removeTransitionCheckpointSidecars(
+  saveId: string,
+  removeSaveItem: (key: string) => void,
+) {
+  const keys = transitionCheckpointKeys(saveId);
+  removeSaveItem(keys.savePayload);
+  removeSaveItem(keys.marketPayload);
+  removeSaveItem(keys.academyPayload);
+}
 
 export type AdvanceSeasonOptions = {
   onProgress?: (progress: RolloverProgress) => void;
@@ -82,7 +133,17 @@ export async function advanceSeasonIfDue(
 
   if (!isSeasonRolloverDue(effectiveSave)) return null;
   if (liveState.myTeamId === effectiveSave.myTeamId && liveState.pendingUserMatch) {
-    throw new Error("Hay un partido pendiente de tu equipo. Resuélvelo desde Calendario antes de cerrar la temporada.");
+    const pendingMatchId = liveState.pendingUserMatch.id;
+    // At the hard season boundary, don't strand the career because the calendar
+    // jump left a legacy pending-user-match marker behind. Try to resolve it with
+    // the normal match/statistics pipeline; rollover remains recoverable if the
+    // cached fixture no longer exists in the current calendar.
+    const resolved = liveState.simulateMatchForCalendarJump(pendingMatchId);
+    if (!resolved) {
+      console.warn(
+        `[season-rollover] El partido pendiente ${pendingMatchId} no pudo reconciliarse automáticamente; se continúa con el cierre para no bloquear la carrera.`,
+      );
+    }
   }
   const readiness = canAdvanceToNextSeason(effectiveSave);
   if (!readiness.ok && !options.allowIncompleteCompetitions) {
@@ -103,17 +164,20 @@ export async function advanceSeasonIfDue(
 }
 
 /**
- * True when every instantiated fixture is resolved and all active European
- * competitions are complete. Reaching the date boundary makes the rollover due,
- * but must not silently discard a real pending match from the user's club.
+ * While the season is in progress, reports unresolved fixtures. At the 30 June
+ * boundary, the rollover must remain available: background leagues are not all
+ * simulated in real time, and stale fixture records must never deadlock a career.
  */
 export function canAdvanceToNextSeason(save: SaveGame): { ok: boolean; reason?: string } {
   const dates = getSeasonRolloverDates(save.season);
   const currentDate = String(save.currentDate ?? "");
-  // A save found strictly after the cutoff is a legacy/inconsistent career that
-  // needs retroactive repair (summer transfers must remain untouched).
-  if (currentDate > dates.endDate) return { ok: true };
-  const atCutoff = currentDate >= dates.endDate;
+  // The season boundary must always be recoverable. Background leagues are not
+  // all simulated day-by-day, so requiring every world fixture to have a result
+  // makes 30 June a permanent dead end. We still validate fixtures while the
+  // season is in progress, but at/after the cutoff the rollover owns recovery.
+  // A save strictly after the cutoff is a legacy/inconsistent career and must
+  // also be repaired retroactively without touching summer transfers.
+  if (currentDate >= dates.endDate) return { ok: true };
   const seasonStartYear = dates.seasonStartYear;
   const leagueStart = getSeasonCalendarAnchors(seasonStartYear).leagueKickoffSaturday;
 
@@ -160,16 +224,13 @@ export function canAdvanceToNextSeason(save: SaveGame): { ok: boolean; reason?: 
     }).join(", ");
     return {
       ok: false,
-      reason: atCutoff
-        ? `El avance se ha detenido en ${dates.endDate}: quedan ${pending.length} partidos de esta temporada sin resultado${examples ? `, por ejemplo: ${examples}` : ""}. Revisa esos encuentros desde Calendario.`
-        : `Quedan ${pending.length} partidos de esta temporada sin resultado. El cierre estará disponible cuando terminen o el ${dates.endDate}.`,
+      reason: `Quedan ${pending.length} partidos de esta temporada sin resultado${examples ? `, por ejemplo: ${examples}` : ""}. El cierre automático los tratará como pendientes de fondo.`,
     };
   }
   return { ok: true };
 }
 
 let lastRolloverStage = "init";
-let lastRolloverError: unknown = null;
 function emitProgress(options: AdvanceSeasonOptions, stage: RolloverProgressStage, progress: number, message: string) {
   lastRolloverStage = stage;
   console.info(`[season-rollover] ${progress}% · ${stage} · ${message}`);
@@ -239,36 +300,56 @@ async function rollbackFromBackup(backup: TransitionBackup): Promise<void> {
   const { removeSaveItem: remove } = await import("../saveStorage");
   remove(`${BACKUP_PREFIX}${backup.saveId}`);
   remove(`${JOURNAL_PREFIX}${backup.saveId}`);
+  removeTransitionCheckpointSidecars(backup.saveId, remove);
   await flushSaveStorage();
 }
 
 /** Recover an interrupted transaction at startup. Returns true if recovery ran. */
 export async function recoverInterruptedSeasonTransition(): Promise<boolean> {
   if (typeof window === "undefined") return false;
-  const { initSaveStorage, getSaveItem, removeSaveItem, flushSaveStorage } = await import("../saveStorage");
-  const { getCurrentSaveId } = await import("../savedGames");
-  await initSaveStorage();
-  const saveId = getCurrentSaveId();
-  if (!saveId) return false;
-  const journalKey = `${JOURNAL_PREFIX}${saveId}`;
-  const backupKey = `${BACKUP_PREFIX}${saveId}`;
-  const journal = safeJson<TransitionJournal>(getSaveItem(journalKey));
-  const backup = safeJson<TransitionBackup>(getSaveItem(backupKey));
-  if (!journal && !backup) return false;
-  if (journal?.stage === "committed") {
-    removeSaveItem(backupKey);
-    removeSaveItem(journalKey);
-    await flushSaveStorage();
+  beginSeasonRollover();
+  try {
+    const { initSaveStorage, getSaveItem, removeSaveItem, flushSaveStorage } = await import("../saveStorage");
+    const { getCurrentSaveId } = await import("../savedGames");
+    await initSaveStorage();
+    // Drain market work started before the recovery lock; do not restore over an in-flight write.
+    await waitForMarketBackgroundTasks();
+    const saveId = getCurrentSaveId();
+    if (!saveId) return false;
+    const journalKey = `${JOURNAL_PREFIX}${saveId}`;
+    const checkpointKeys = transitionCheckpointKeys(saveId);
+    const backupKey = checkpointKeys.backup;
+    const journal = safeJson<TransitionJournal>(getSaveItem(journalKey));
+    const backupRecord = safeJson<TransitionBackup>(getSaveItem(backupKey));
+    const backup = resolveTransitionBackup(backupRecord, getSaveItem);
+    if (!journal && !backupRecord) {
+      // A renderer may have stopped between writing checkpoint sidecars and
+      // publishing the small checkpoint index. Remove those orphaned copies.
+      removeTransitionCheckpointSidecars(saveId, removeSaveItem);
+      await flushSaveStorage();
+      return false;
+    }
+    if (journal?.stage === "committed") {
+      removeSaveItem(backupKey);
+      removeSaveItem(journalKey);
+      removeTransitionCheckpointSidecars(saveId, removeSaveItem);
+      await flushSaveStorage();
+      return true;
+    }
+    if (!backup || backup.saveId !== saveId) {
+      // A backup without a valid journal means no mutation should have started.
+      if (!journal) {
+        removeSaveItem(backupKey);
+        removeTransitionCheckpointSidecars(saveId, removeSaveItem);
+      }
+      await flushSaveStorage();
+      return false;
+    }
+    await rollbackFromBackup(backup);
     return true;
+  } finally {
+    endSeasonRollover();
   }
-  if (!backup || backup.version !== JOURNAL_VERSION || backup.saveId !== saveId) {
-    // A backup without a valid journal means no mutation should have started.
-    if (!journal) removeSaveItem(backupKey);
-    await flushSaveStorage();
-    return false;
-  }
-  await rollbackFromBackup(backup);
-  return true;
 }
 
 function awardsForArchive(snapshot: any): Record<string, string | null> {
@@ -300,8 +381,11 @@ function awardWinnersForArchive(snapshot: any) {
     .map(([category, player]) => ({ category, playerId: player.id == null ? null : String(player.id), playerName: String(player.name) }));
 }
 
-function topScorersFromStore(store: any): Array<{ playerId: string; playerName: string; clubId: string | null; goals: number }> {
-  return store.getRawPlayers()
+function topScorersFromStore(
+  store: any,
+  rawPlayers: any[] = store.getRawPlayers(),
+): Array<{ playerId: string; playerName: string; clubId: string | null; goals: number }> {
+  return rawPlayers
     .map((player: any) => {
       const id = String(player.ID);
       const stats = store.stats?.[id];
@@ -352,12 +436,11 @@ function notification(
 function ensureValidAiSquads(teamIds: string[], overrides: Record<string, string>, userTeamId: string, nextDate: string) {
   // Emergency free-agent fills are deliberately limited to clubs with a missing
   // XI or a missing core position; normal market strategy remains untouched.
-  return import("../transfers/PlayerIndex").then(async ({ getClubPlayers, getFreeAgents, reassignPlayerClub, updatePlayer }) => {
+  return import("../transfers/PlayerIndex").then(({ getClubPlayers, getFreeAgents, reassignPlayerClub, updatePlayer }) => {
     const { getTeamLeagueId, teamById } = requireTeams();
     let free = getFreeAgents();
     const needFor = (players: any[], group: string) => players.filter((p) => p.group === group).length;
-    for (let i = 0; i < teamIds.length; i++) {
-      const teamId = teamIds[i];
+    for (const teamId of teamIds) {
       if (teamId === userTeamId) continue;
       let roster = getClubPlayers(teamId);
       const leagueId = getTeamLeagueId(teamId, { teamLeagueOverrides: overrides }) ?? teamById(teamId).league;
@@ -393,7 +476,6 @@ function ensureValidAiSquads(teamIds: string[], overrides: Record<string, string
         roster = getClubPlayers(teamId);
         free = free.filter((candidate) => candidate.id !== player.id);
       }
-      if ((i + 1) % 20 === 0) await yieldToUi();
     }
   });
 }
@@ -418,31 +500,23 @@ export function advanceToNextSeason(save: SaveGame, options: AdvanceSeasonOption
     if (activeRollover.key === key) return activeRollover.promise;
     return Promise.reject(new Error("Ya hay una transición de temporada activa en otra carrera."));
   }
-  // Acquire synchronously, before runAdvanceToNextSeason can update currentDate.
-  // The MarketClock effect and simulateDay share this guard.
+
+  // This must be synchronous: runAdvanceToNextSeason changes currentDate after
+  // yielding to the UI, which would otherwise wake MarketClock mid-transaction.
   beginSeasonRollover();
-  lastRolloverStage = "init";
-  lastRolloverError = null;
-  const promise = runAdvanceToNextSeason(save, options);
+  let promise!: Promise<SaveGame>;
+  promise = runAdvanceToNextSeason(save, options).finally(() => {
+    // Keep the clock frozen through a possible rollback, and ALWAYS release it.
+    endSeasonRollover();
+    if (activeRollover?.promise === promise) activeRollover = null;
+  });
   activeRollover = { key, promise };
-  return promise
-    .catch((error) => {
-      if (lastRolloverError !== error) {
-        console.error(`[season-rollover] FALLÓ en la fase "${lastRolloverStage}".`, error);
-      }
-      throw error;
-    })
-    .finally(() => {
-      // This also runs after rollback, so no failed transition can leave market frozen.
-      endSeasonRollover();
-      if (activeRollover?.promise === promise) activeRollover = null;
-    });
+  return promise;
 }
 
 async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOptions = {}): Promise<SaveGame> {
+  lastRolloverStage = "initialization";
   if (typeof window === "undefined") throw new Error("El cambio de temporada solo puede ejecutarse en el navegador.");
-  // Drain market tasks that started before the lock, before taking the backup.
-  await waitForMarketBackgroundTasks();
   const { initSaveStorage, getSaveItem, setSaveItem, removeSaveItem, flushSaveStorage } = await import("../saveStorage");
   const { getCurrentSaveId, persistCurrentSave, restorePlayersStoreState } = await import("../savedGames");
   const { loadSave, saveSave, applySeasonEndProgressionToAllPlayers, recalculateUserSquadRoles, initializeEuropeanCompetition, initializeChampionsCompetition } = await import("../store");
@@ -460,11 +534,14 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
   const { loadAcademySave, saveAcademySave, clearAcademySave } = await import("../academy/academyPersistence");
   const { useAcademyStore } = await import("../academy/academyStore");
   const { beginAcademyAiFastForward, endAcademyAiFastForward, flushAcademyAiPendingChanges } = await import("../academy/academyAiMatchdayRunner");
-  const { runAcademyAnnualIntakeForAllClubs, runAcademyPreseasonPromotionsBatched } = await import("../academy/academyPromotionEngine");
+  const { runAcademyAnnualIntakeForAllClubs, runAcademyPreseasonPromotions } = await import("../academy/academyPromotionEngine");
   const { getAwardsSnapshot } = await import("../awards");
   const { listTransfers } = await import("../transfers/TransferHistory");
   const { getTeamLeagueId: resolveTeamLeague } = await import("@/data/teams");
 
+  // Wait for ticks/save operations that began before the lock was acquired.
+  // The lock prevents new ticks; draining old tasks makes backup/rollback coherent.
+  await waitForMarketBackgroundTasks();
   await initSaveStorage();
   const saveId = getCurrentSaveId();
   if (!saveId) throw new Error("No hay una partida activa; no se puede iniciar una transición de temporada.");
@@ -493,8 +570,10 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
   let worldAttached = false;
   let userFinanceSummary: NonNullable<SeasonArchive["financeSummary"]> | undefined;
   let nextSeasonEconomyLedger: string[] = [...(current.seasonEconomyLedger ?? [])];
+  let economySettlementFailed = false;
   let postSeasonTransferPlayerIds = new Set<string>();
 
+  lastRolloverStage = "init";
   try {
     emitProgress(options, "checkpoint", 2, "Preparando punto de recuperación…");
     // Ensure market runtime represents this save before taking its checkpoint.
@@ -517,11 +596,36 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     await flushSaveStorage();
     const savePayload = getSaveItem(saveKey);
     if (!savePayload) throw new Error("No se pudo leer el punto de recuperación recién guardado.");
-    const marketSnapshot = { ...snapshotTransferSystem(), players: snapshotAllPlayerDeltas() };
+    const checkpointKeys = transitionCheckpointKeys(saveId);
     const academySnapshot = await loadAcademySave(saveId);
     const hadArchive = Boolean(getSeasonArchive(saveId, current.season));
-    backup = { version: JOURNAL_VERSION, saveId, fromSeason: current.season, toSeason: dates.toSeason, savePayload, market: marketSnapshot, academy: academySnapshot, hadArchive };
-    if (!setSaveItem(backupKey, JSON.stringify(backup))) throw new Error("No se pudo guardar el checkpoint integral de la transición.");
+
+    // Do not serialize the save, full market snapshot, and academy snapshot into
+    // one enormous JSON string. This duplicated tens of megabytes at rollover
+    // and could make Chrome terminate the renderer with "out of memory". The
+    // save payload is already a string, so reusing that string in its own key
+    // avoids another stringify/copy; each other snapshot is serialized alone.
+    if (!setSaveItem(checkpointKeys.savePayload, savePayload)) {
+      throw new Error("No se pudo guardar la copia de recuperación de la partida.");
+    }
+    const marketSnapshotPayload = JSON.stringify({ ...snapshotTransferSystem(), players: snapshotAllPlayerDeltas() });
+    if (!setSaveItem(checkpointKeys.marketPayload, marketSnapshotPayload)) {
+      throw new Error("No se pudo guardar la copia de recuperación del mercado.");
+    }
+    if (!setSaveItem(checkpointKeys.academyPayload, JSON.stringify(academySnapshot))) {
+      throw new Error("No se pudo guardar la copia de recuperación de la cantera.");
+    }
+    backup = {
+      version: JOURNAL_VERSION,
+      saveId,
+      fromSeason: current.season,
+      toSeason: dates.toSeason,
+      savePayloadKey: checkpointKeys.savePayload,
+      marketPayloadKey: checkpointKeys.marketPayload,
+      academyPayloadKey: checkpointKeys.academyPayload,
+      hadArchive,
+    };
+    if (!setSaveItem(backupKey, JSON.stringify(backup))) throw new Error("No se pudo guardar el índice del checkpoint de la transición.");
     await flushSaveStorage();
     await persistJournal(journalKey, { version: JOURNAL_VERSION, saveId, fromSeason: current.season, toSeason: dates.toSeason, stage: "checkpoint", updatedAt: new Date().toISOString(), hadArchive });
     await yieldToUi();
@@ -530,8 +634,12 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const awardsSnapshot = getAwardsSnapshot(current);
     const awards = awardsForArchive(awardsSnapshot);
     const awardWinners = awardWinnersForArchive(awardsSnapshot);
-    const playerSeasonRecords = playerSeasonRecordsFromStore(usePlayersStore.getState());
-    const topScorers = topScorersFromStore(usePlayersStore.getState());
+    // One raw-player projection is enough for both archive views. Calling
+    // getRawPlayers twice rebuilt tens of thousands of player objects at once.
+    const storeForArchive = usePlayersStore.getState();
+    const rawPlayersForArchive = storeForArchive.getRawPlayers();
+    const playerSeasonRecords = playerSeasonRecordsFromStore(storeForArchive, rawPlayersForArchive);
+    const topScorers = topScorersFromStore(storeForArchive, rawPlayersForArchive);
     const seasonStartDate = `${dates.seasonStartYear}-07-01`;
     const featuredTransfers = listTransfers()
       .filter((record) => record.date >= seasonStartDate && record.date <= dates.endDate)
@@ -563,19 +671,16 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     // Keep the market's OVR/potential index in sync with the progression layer
     // before AI contract decisions and retirement checks run.
     const progressedRaw = usePlayersStore.getState().getRawPlayers();
-    for (let i = 0; i < progressedRaw.length; i++) {
-      const raw = progressedRaw[i] as any;
+    for (const raw of progressedRaw as any[]) {
       const playerId = String(raw.ID);
       const marketPlayer = getMarketIndex().byId.get(playerId);
-      if (marketPlayer) {
-        const rating = Number(raw.OVR);
-        const potential = Number(raw.potential);
-        const patch: Record<string, any> = {};
-        if (Number.isFinite(rating) && rating > 0 && rating !== marketPlayer.ovr) patch.ovr = rating;
-        if (Number.isFinite(potential) && potential > 0 && potential !== marketPlayer.potential) patch.potential = potential;
-        if (Object.keys(patch).length) updatePlayer(playerId, patch);
-      }
-      if ((i + 1) % 500 === 0) await yieldToUi();
+      if (!marketPlayer) continue;
+      const rating = Number(raw.OVR);
+      const potential = Number(raw.potential);
+      const patch: Record<string, any> = {};
+      if (Number.isFinite(rating) && rating > 0 && rating !== marketPlayer.ovr) patch.ovr = rating;
+      if (Number.isFinite(potential) && potential > 0 && potential !== marketPlayer.potential) patch.potential = potential;
+      if (Object.keys(patch).length) updatePlayer(playerId, patch);
     }
     await yieldToUi();
 
@@ -591,7 +696,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       const team = allTeams[i];
       if (team.id === current.myTeamId) continue;
       runClubContractCycle(team.id, { date: dates.endDate, maxRenewals: 2, reviewList: false, excludePlayerIds: postSeasonTransferPlayerIds });
-      if ((i + 1) % 20 === 0) await yieldToUi();
+      if (i % 20 === 0) await yieldToUi();
     }
     advanceContracts(dates.endDate, { excludePlayerIds: postSeasonTransferPlayerIds });
     const userExpiries: Array<{ playerId: string; playerName: string; fromClubId: string }> = [];
@@ -617,37 +722,27 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const rawAtNext = usePlayersStore.getState().getRawPlayers();
     const rawById = new Map(rawAtNext.map((player: any) => [String(player.ID), player]));
     const nextStatsWithAge = { ...statsNow } as Record<string, any>;
-    for (let i = 0; i < rawAtNext.length; i++) {
-      const raw = rawAtNext[i] as any;
+    for (const raw of rawAtNext as any[]) {
       const playerId = String(raw.ID);
       const previous = nextStatsWithAge[playerId] ?? defaultStats();
       if (!raw.birthdate && previous.ageOverrideSeason !== dates.toSeason) {
         nextStatsWithAge[playerId] = { ...previous, ageOverride: Math.max(0, Number(previous.ageOverride ?? raw.Age ?? 0) + 1), ageOverrideSeason: dates.toSeason };
       }
-      if ((i + 1) % 500 === 0) await yieldToUi();
     }
     usePlayersStore.setState({ stats: nextStatsWithAge, currentDate: dates.nextStartDate } as any);
     const rawAtNextUpdated = usePlayersStore.getState().getRawPlayers();
     const ageById = new Map<string, number>(rawAtNextUpdated.map((player: any) => [String(player.ID), Number(player.Age) || 0] as [string, number]));
-    const marketPlayers = Array.from(getMarketIndex().byId.values());
-    for (let i = 0; i < marketPlayers.length; i++) {
-      const player = marketPlayers[i];
+    for (const player of getMarketIndex().byId.values()) {
       const age = ageById.get(player.id);
       if (age !== undefined && age > 0 && age !== player.age) updatePlayer(player.id, { age });
-      if ((i + 1) % 500 === 0) await yieldToUi();
     }
-    const candidates: Array<{
-      id: string; name: string; age: number; ovr: number; clubId: string | null;
-      isGoalkeeper: boolean; isLegend: boolean; injuryDaysRemaining: number; alreadyRetired: boolean;
-    }> = [];
-    for (let i = 0; i < marketPlayers.length; i++) {
-      const player = marketPlayers[i] as any;
+    const candidates = Array.from(getMarketIndex().byId.values()).map((player: any) => {
       const stats = usePlayersStore.getState().stats?.[player.id];
       const raw = rawById.get(player.id) as any;
       const injuryDaysRemaining = stats?.injuredUntilDate
         ? Math.max(0, Math.ceil((Date.parse(`${stats.injuredUntilDate}T00:00:00Z`) - Date.parse(`${dates.nextStartDate}T00:00:00Z`)) / 86_400_000))
         : 0;
-      candidates.push({
+      return {
         id: player.id,
         name: player.name,
         age: player.age,
@@ -657,9 +752,8 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
         isLegend: player.ovr >= 90 || Boolean(raw?.isLegend),
         injuryDaysRemaining,
         alreadyRetired: Boolean(player.retired),
-      });
-      if ((i + 1) % 500 === 0) await yieldToUi();
-    }
+      };
+    });
     const retirements = selectSeasonRetirements(candidates, {
       seed: Number(current.calendarSeed ?? 1), season: current.season, retiredAt: dates.endDate,
     });
@@ -673,11 +767,8 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     flushWorldMoves(); syncUserLoanRoster();
     const statsAfterAge = usePlayersStore.getState().stats ?? {};
     const resetStats: Record<string, any> = {};
-    const statsEntries = Object.entries(statsAfterAge);
-    for (let i = 0; i < statsEntries.length; i++) {
-      const [playerId, previous] = statsEntries[i];
+    for (const [playerId, previous] of Object.entries(statsAfterAge)) {
       resetStats[playerId] = resetPlayerSeasonCounters(previous as any, defaultStats() as any, retroactiveRollover ? originalCurrentDate : dates.nextStartDate);
-      if ((i + 1) % 500 === 0) await yieldToUi();
     }
     usePlayersStore.setState({ stats: resetStats, currentDate: dates.nextStartDate } as any);
     invalidateSquadsCache();
@@ -688,8 +779,8 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const academyDate = dates.nextStartDate;
     const startedAcademyBatch = await beginAcademyAiFastForward(saveId, academyDate, current.myTeamId);
     try {
-      await runAcademyAnnualIntakeForAllClubs(academyDate);
-      await runAcademyPreseasonPromotionsBatched(academyDate);
+      runAcademyAnnualIntakeForAllClubs(academyDate);
+      runAcademyPreseasonPromotions(academyDate);
       const academyFlushOk = await flushAcademyAiPendingChanges(saveId);
       if (!academyFlushOk) throw new Error("No se pudieron guardar los cambios de la cantera durante la pretemporada.");
     } finally {
@@ -709,14 +800,10 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       allTeams.map((team) => [team.id, { ...getCurrentFinances(team.id) }] as const),
     );
     setActiveTeamLeagueOverrides(domestic.teamLeagueOverrides);
-    const competitionPlayers = Array.from(getMarketIndex().byId.values());
-    for (let i = 0; i < competitionPlayers.length; i++) {
-      const player = competitionPlayers[i];
-      if (player.clubId && !player.retired) {
-        const leagueId = resolveTeamLeague(player.clubId, { teamLeagueOverrides: domestic.teamLeagueOverrides });
-        if (leagueId && player.leagueId !== leagueId) reassignPlayerClub(player.id, player.clubId, leagueId, { force: true });
-      }
-      if ((i + 1) % 500 === 0) await yieldToUi();
+    for (const player of getMarketIndex().byId.values()) {
+      if (!player.clubId || player.retired) continue;
+      const leagueId = resolveTeamLeague(player.clubId, { teamLeagueOverrides: domestic.teamLeagueOverrides });
+      if (leagueId && player.leagueId !== leagueId) reassignPlayerClub(player.id, player.clubId, leagueId, { force: true });
     }
     await ensureValidAiSquads(allTeams.map((team) => team.id), domestic.teamLeagueOverrides, current.myTeamId, dates.nextStartDate);
     flushWorldMoves(); syncUserLoanRoster();
@@ -727,123 +814,152 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       setFinances,
       setUserClubBridge,
     } = await import("../transfers/BudgetManager");
-    const { settleSeasonEconomyForCampaign } = await import("./seasonEconomyCore");
     // Ensure the economy adapter always targets this career's user budget,
     // even when the market clock component is temporarily unmounted.
-    setUserClubBridge({
-      clubId: current.myTeamId,
-      getBudget: () => usePlayersStore.getState().budget,
-      setBudget: (value) => usePlayersStore.setState({ budget: Math.max(0, Math.round(value)) }),
-      getWageBudget: () => usePlayersStore.getState().wageBudget,
-      setWageBudget: (value) => usePlayersStore.setState({ wageBudget: Math.max(0, Math.round(value)) }),
-    });
+    const userFinanceBeforeEconomy = {
+      budget: usePlayersStore.getState().budget,
+      wageBudget: usePlayersStore.getState().wageBudget,
+      wageBill: usePlayersStore.getState().wageBill,
+    };
+    try {
+      setUserClubBridge({
+        clubId: current.myTeamId,
+        getBudget: () => usePlayersStore.getState().budget,
+        setBudget: (value) => usePlayersStore.setState({ budget: Math.max(0, Math.round(value)) }),
+        getWageBudget: () => usePlayersStore.getState().wageBudget,
+        setWageBudget: (value) => usePlayersStore.setState({ wageBudget: Math.max(0, Math.round(value)) }),
+      });
 
-    const rankedByLeague = new Map<string, Array<{ teamId: string }>>();
-    for (const [leagueId, rows] of Object.entries(current.standings ?? {})) {
-      const ranked = [...(rows ?? [])].sort((a: any, b: any) =>
-        Number(b.points ?? 0) - Number(a.points ?? 0) ||
-        Number(b.gd ?? 0) - Number(a.gd ?? 0) ||
-        Number(b.gf ?? 0) - Number(a.gf ?? 0) ||
-        Number(b.won ?? 0) - Number(a.won ?? 0) ||
-        String(a.teamId).localeCompare(String(b.teamId)),
-      );
-      rankedByLeague.set(leagueId, ranked.map((row: any) => ({ teamId: String(row.teamId) })));
-    }
-    const positionByTeam = new Map<string, { leagueId: string; position: number; size: number }>();
-    for (const [leagueId, rows] of rankedByLeague) {
-      rows.forEach((row, index) => positionByTeam.set(row.teamId, { leagueId, position: index + 1, size: rows.length }));
-    }
-    const teamIdsByCompetition = {
-      ucl: new Set<string>([...(current.ucl?.participants ?? []), ...(current.europeanQualification?.ucl ?? [])]),
-      uel: new Set<string>([...(current.uel?.participants ?? []), ...(current.europeanQualification?.uel ?? [])]),
-      uecl: new Set<string>([...(current.uecl?.participants ?? []), ...(current.europeanQualification?.uecl ?? [])]),
-    };
-    const nextTeamIdsByCompetition = {
-      ucl: new Set<string>(european.europeanQualification?.ucl ?? []),
-      uel: new Set<string>(european.europeanQualification?.uel ?? []),
-      uecl: new Set<string>(european.europeanQualification?.uecl ?? []),
-    };
-    const currentEuropeanFor = (teamId: string): "ucl" | "uel" | "uecl" | null =>
-      teamIdsByCompetition.ucl.has(teamId) ? "ucl"
-        : teamIdsByCompetition.uel.has(teamId) ? "uel"
-          : teamIdsByCompetition.uecl.has(teamId) ? "uecl" : null;
-    const nextEuropeanFor = (teamId: string): "ucl" | "uel" | "uecl" | null =>
-      nextTeamIdsByCompetition.ucl.has(teamId) ? "ucl"
-        : nextTeamIdsByCompetition.uel.has(teamId) ? "uel"
-          : nextTeamIdsByCompetition.uecl.has(teamId) ? "uecl" : null;
-    const currentCupWinners = new Set(Object.values(current.cupChampion ?? {}).filter((id): id is string => typeof id === "string" && id.length > 0));
-    const movementsByTeam = new Map(movement.movements.map((entry) => [entry.teamId, entry] as const));
-    const financeInputs = allTeams.map((team) => {
-      const finance = currentFinancialsBeforeLeagueChanges.get(team.id) ?? getFinances(team.id);
-      const liveFinance = getFinances(team.id);
-      const previousLeagueId = String(getTeamLeagueId(team.id, { teamLeagueOverrides: current.teamLeagueOverrides }) ?? team.league);
-      const nextLeagueId = String(resolveTeamLeague(team.id, { teamLeagueOverrides: domestic.teamLeagueOverrides }) ?? team.league);
-      const finalPosition = positionByTeam.get(team.id);
-      const movementForTeam = movementsByTeam.get(team.id);
-      const euroChampion = current.uclChampion === team.id ? "ucl"
-        : current.uelChampion === team.id ? "uel"
-          : current.ueclChampion === team.id ? "uecl" : null;
-      return {
-        clubId: team.id,
-        mode: team.id === current.myTeamId ? "user" as const : "ai" as const,
-        currentBudget: finance.budget,
-        initialBudget: finance.initialBudget,
-        wageBudget: finance.wageBudget,
-        wageBill: liveFinance.wageBill,
-        spent: finance.spent,
-        earned: finance.earned,
-        previousLeagueId,
-        nextLeagueId,
-        finalPosition: finalPosition?.position ?? null,
-        leagueSize: finalPosition?.size ?? 20,
-        promoted: Boolean(movementForTeam && String(movementForTeam.reason).includes("promotion")),
-        relegated: Boolean(movementForTeam && String(movementForTeam.reason).includes("relegation")),
-        wonDomesticCup: currentCupWinners.has(team.id),
-        currentEuropeanCompetition: currentEuropeanFor(team.id),
-        nextEuropeanCompetition: nextEuropeanFor(team.id),
-        europeanChampion: euroChampion,
-        userUclPrizeLedgerAlreadyPaid: (current.uclPrizesAwarded ?? []).includes("participation"),
+      const rankedByLeague = new Map<string, Array<{ teamId: string }>>();
+      for (const [leagueId, rows] of Object.entries(current.standings ?? {})) {
+        const ranked = [...(rows ?? [])].sort((a: any, b: any) =>
+          Number(b.points ?? 0) - Number(a.points ?? 0) ||
+          Number(b.gd ?? 0) - Number(a.gd ?? 0) ||
+          Number(b.gf ?? 0) - Number(a.gf ?? 0) ||
+          Number(b.won ?? 0) - Number(a.won ?? 0) ||
+          String(a.teamId).localeCompare(String(b.teamId)),
+        );
+        rankedByLeague.set(leagueId, ranked.map((row: any) => ({ teamId: String(row.teamId) })));
+      }
+      const positionByTeam = new Map<string, { leagueId: string; position: number; size: number }>();
+      for (const [leagueId, rows] of rankedByLeague) {
+        rows.forEach((row, index) => positionByTeam.set(row.teamId, { leagueId, position: index + 1, size: rows.length }));
+      }
+      const teamIdsByCompetition = {
+        ucl: new Set<string>([...(current.ucl?.participants ?? []), ...(current.europeanQualification?.ucl ?? [])]),
+        uel: new Set<string>([...(current.uel?.participants ?? []), ...(current.europeanQualification?.uel ?? [])]),
+        uecl: new Set<string>([...(current.uecl?.participants ?? []), ...(current.europeanQualification?.uecl ?? [])]),
       };
-    });
-    const economyResult = settleSeasonEconomyForCampaign(
-      current.season,
-      financeInputs,
-      current.seasonEconomyLedger ?? [],
-    );
-    nextSeasonEconomyLedger = economyResult.ledger;
-    if (!economyResult.skipped) {
-      for (const update of economyResult.updates) {
-        if (update.mode === "user") {
-          usePlayersStore.setState({
+      const nextTeamIdsByCompetition = {
+        ucl: new Set<string>(european.europeanQualification.ucl),
+        uel: new Set<string>(european.europeanQualification.uel),
+        uecl: new Set<string>(european.europeanQualification.uecl),
+      };
+      const currentEuropeanFor = (teamId: string): "ucl" | "uel" | "uecl" | null =>
+        teamIdsByCompetition.ucl.has(teamId) ? "ucl"
+          : teamIdsByCompetition.uel.has(teamId) ? "uel"
+            : teamIdsByCompetition.uecl.has(teamId) ? "uecl" : null;
+      const nextEuropeanFor = (teamId: string): "ucl" | "uel" | "uecl" | null =>
+        nextTeamIdsByCompetition.ucl.has(teamId) ? "ucl"
+          : nextTeamIdsByCompetition.uel.has(teamId) ? "uel"
+            : nextTeamIdsByCompetition.uecl.has(teamId) ? "uecl" : null;
+      const currentCupWinners = new Set(Object.values(current.cupChampion ?? {}).filter((id): id is string => typeof id === "string" && id.length > 0));
+      const movementsByTeam = new Map(movement.movements.map((entry) => [entry.teamId, entry] as const));
+      const financeInputs = allTeams.map((team) => {
+        const finance = currentFinancialsBeforeLeagueChanges.get(team.id) ?? getFinances(team.id);
+        const liveFinance = getFinances(team.id);
+        const previousLeagueId = String(getTeamLeagueId(team.id, { teamLeagueOverrides: current.teamLeagueOverrides }) ?? team.league);
+        const nextLeagueId = String(resolveTeamLeague(team.id, { teamLeagueOverrides: domestic.teamLeagueOverrides }) ?? team.league);
+        const finalPosition = positionByTeam.get(team.id);
+        const movementForTeam = movementsByTeam.get(team.id);
+        const euroChampion = current.uclChampion === team.id ? "ucl"
+          : current.uelChampion === team.id ? "uel"
+            : current.ueclChampion === team.id ? "uecl" : null;
+        return {
+          clubId: team.id,
+          mode: team.id === current.myTeamId ? "user" as const : "ai" as const,
+          currentBudget: finance.budget,
+          initialBudget: finance.initialBudget,
+          wageBudget: finance.wageBudget,
+          wageBill: liveFinance.wageBill,
+          spent: finance.spent,
+          earned: finance.earned,
+          previousLeagueId,
+          nextLeagueId,
+          finalPosition: finalPosition?.position ?? null,
+          leagueSize: finalPosition?.size ?? 20,
+          promoted: Boolean(movementForTeam && String(movementForTeam.reason).includes("promotion")),
+          relegated: Boolean(movementForTeam && String(movementForTeam.reason).includes("relegation")),
+          wonDomesticCup: currentCupWinners.has(team.id),
+          currentEuropeanCompetition: currentEuropeanFor(team.id),
+          nextEuropeanCompetition: nextEuropeanFor(team.id),
+          europeanChampion: euroChampion,
+          userUclPrizeLedgerAlreadyPaid: (current.uclPrizesAwarded ?? []).includes("participation"),
+        };
+      });
+      lastRolloverStage = "economy:calculate";
+      const economyResult = settleSeasonEconomyForCampaign(
+        current.season,
+        financeInputs,
+        current.seasonEconomyLedger ?? [],
+      );
+      nextSeasonEconomyLedger = economyResult.ledger;
+      if (!economyResult.skipped) {
+        for (const update of economyResult.updates) {
+          if (update.mode === "user") {
+            usePlayersStore.setState({
+              budget: update.budget,
+              wageBudget: update.wageBudget,
+              wageBill: update.wageBill,
+            } as any);
+            userFinanceSummary = {
+              teamId: update.clubId,
+              fromLeague: String(getTeamLeagueId(update.clubId, { teamLeagueOverrides: current.teamLeagueOverrides }) ?? ""),
+              toLeague: String(getTeamLeagueId(update.clubId, { teamLeagueOverrides: domestic.teamLeagueOverrides }) ?? ""),
+              previousBudget: update.previousBudget,
+              nextBudget: update.budget,
+              annualRevenue: update.appliedRevenue,
+              promoted: Boolean(movementsByTeam.get(update.clubId) && String(movementsByTeam.get(update.clubId)?.reason).includes("promotion")),
+              relegated: Boolean(movementsByTeam.get(update.clubId) && String(movementsByTeam.get(update.clubId)?.reason).includes("relegation")),
+            };
+          }
+          setFinances({
+            clubId: update.clubId,
             budget: update.budget,
+            initialBudget: update.initialBudget,
+            totalBudget: update.totalBudget,
             wageBudget: update.wageBudget,
             wageBill: update.wageBill,
-          } as any);
-          userFinanceSummary = {
-            teamId: update.clubId,
-            fromLeague: String(getTeamLeagueId(update.clubId, { teamLeagueOverrides: current.teamLeagueOverrides }) ?? ""),
-            toLeague: String(getTeamLeagueId(update.clubId, { teamLeagueOverrides: domestic.teamLeagueOverrides }) ?? ""),
-            previousBudget: update.previousBudget,
-            nextBudget: update.budget,
-            annualRevenue: update.appliedRevenue,
-            promoted: Boolean(movementsByTeam.get(update.clubId) && String(movementsByTeam.get(update.clubId)?.reason).includes("promotion")),
-            relegated: Boolean(movementsByTeam.get(update.clubId) && String(movementsByTeam.get(update.clubId)?.reason).includes("relegation")),
-          };
+            spent: update.spent,
+            earned: update.earned,
+          });
         }
-        setFinances({
-          clubId: update.clubId,
-          budget: update.budget,
-          initialBudget: update.initialBudget,
-          totalBudget: update.totalBudget,
-          wageBudget: update.wageBudget,
-          wageBill: update.wageBill,
-          spent: update.spent,
-          earned: update.earned,
+      }
+    } catch (economyError) {
+      // Annual income is non-critical to committing a playable new season. If a
+      // migrated/corrupt club record breaks settlement, restore the exact
+      // pre-economy budgets, leave the ledger unpaid, report it, and continue.
+      console.error("[season-rollover] La liquidación económica falló; se conservan los presupuestos previos y continúa el cambio de temporada.", economyError);
+      for (const finance of currentFinancialsBeforeLeagueChanges.values()) {
+        setFinances({ ...finance });
+      }
+      usePlayersStore.setState(userFinanceBeforeEconomy as any);
+      nextSeasonEconomyLedger = [...(current.seasonEconomyLedger ?? [])];
+      economySettlementFailed = true;
+      userFinanceSummary = undefined;
+      try {
+        const { toast } = await import("sonner");
+        toast.warning("La liquidación económica no se ha aplicado", {
+          description: "Se han conservado los presupuestos anteriores para no bloquear el inicio de la nueva temporada.",
         });
+      } catch {
+        // A missing toast host must never prevent the season transition.
       }
     }
+
     await yieldToUi();
 
+    lastRolloverStage = "next-save:assemble";
     const notifications: NonNullable<SaveGame["seasonNotifications"]> = [];
     for (const expiry of userExpiries) notifications.push(notification("contract_expired", dates.toSeason, dates.nextStartDate, `${expiry.playerName} ha terminado contrato y queda libre.`, { playerId: expiry.playerId, playerName: expiry.playerName, teamId: expiry.fromClubId }));
     for (const retirement of retirements.filter((entry) => entry.lastClubId === current.myTeamId)) {
@@ -867,9 +983,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const { getClubPlayers: clubPlayersNow } = await import("../transfers/PlayerIndex");
     const nextLineups: Record<string, string[]> = {};
     const nextSubstitutes: Record<string, string[]> = {};
-    const nextSeasonTeams = getAllTeams({ teamLeagueOverrides: domestic.teamLeagueOverrides });
-    for (let i = 0; i < nextSeasonTeams.length; i++) {
-      const team = nextSeasonTeams[i];
+    for (const team of getAllTeams({ teamLeagueOverrides: domestic.teamLeagueOverrides })) {
       const squad = clubPlayersNow(team.id).filter((player: any) => !player.retired);
       const sorted = [...squad].sort((a: any, b: any) => b.ovr - a.ovr || a.id.localeCompare(b.id));
       const previousXI = current.lineups?.[team.id] ?? [];
@@ -880,7 +994,6 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       }
       nextLineups[team.id] = xi;
       nextSubstitutes[team.id] = sorted.map((player: any) => player.id).filter((id) => !xi.includes(id)).slice(0, 12);
-      if ((i + 1) % 20 === 0) await yieldToUi();
     }
 
     const movementNotifications = notifications;
@@ -906,22 +1019,44 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       cupDrawPending: null,
       seasonRolloverLedger: [...new Set([...(current.seasonRolloverLedger ?? []), current.season])].slice(-80),
       seasonEconomyVersion: 1,
-      seasonEconomyLedger: nextSeasonEconomyLedger.includes(current.season) ? nextSeasonEconomyLedger : [...nextSeasonEconomyLedger, current.season].slice(-80),
+      seasonEconomyLedger: economySettlementFailed
+        ? nextSeasonEconomyLedger.slice(-80)
+        : nextSeasonEconomyLedger.includes(current.season)
+          ? nextSeasonEconomyLedger
+          : [...nextSeasonEconomyLedger, current.season].slice(-80),
       retiredPlayers: [...(current.retiredPlayers ?? []), ...retirements].slice(-5000),
       seasonNotifications: [...(current.seasonNotifications ?? []), ...movementNotifications].slice(-250),
       pendingUserContractRenewals: pendingRenewals,
       squadRoleRecalculationKey: undefined,
       academyEvents: current.academyEvents ?? [],
     };
+    lastRolloverStage = "competitions:initialize-next-season";
     nextSave = initializeChampionsCompetition(nextSave);
     nextSave = initializeEuropeanCompetition(nextSave, "uel");
     nextSave = initializeEuropeanCompetition(nextSave, "uecl");
     nextSave = recalculateUserSquadRoles(nextSave, true, true);
     const archive = { ...archiveBase, retirements, ...(userFinanceSummary ? { financeSummary: userFinanceSummary } : {}) };
-    await persistSeasonArchive(archive);
-    archiveSaved = true;
-    const allArchives = listSeasonArchives(saveId);
-    nextSave.seasonHistoryIndex = { count: allArchives.length, latestSeason: allArchives.at(-1)?.season ?? current.season, updatedAt: new Date().toISOString() };
+    lastRolloverStage = "archive:persist-final";
+    try {
+      await persistSeasonArchive(archive);
+      archiveSaved = true;
+    } catch (archiveError) {
+      console.error("[season-rollover] No se pudo guardar el historial de la temporada; se continúa sin el archivo histórico.", archiveError);
+      try {
+        const { toast } = await import("sonner");
+        toast.warning("La temporada se cerrará sin guardar el resumen histórico", {
+          description: "El archivo de temporada no se ha podido persistir, pero no se bloqueará el inicio de la siguiente campaña.",
+        });
+      } catch {
+        // Optional UI feedback must not block the transition.
+      }
+    }
+    // The index only needs the archive keys, not deserialized archives. Loading
+    // every year's full player-season records here caused another large memory
+    // spike on top of the rollover checkpoint and the active save.
+    const { getSeasonArchiveIndex } = await import("./seasonHistory");
+    const archiveIndex = getSeasonArchiveIndex(saveId);
+    nextSave.seasonHistoryIndex = { count: archiveIndex.count, latestSeason: archiveIndex.latestSeason ?? current.season, updatedAt: new Date().toISOString() };
 
     // Publish the new SaveGame into the authoritative cache first, then rebuild
     // Zustand's user-facing league schedule from the new season. The official
@@ -952,29 +1087,46 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       };
     }
     usePlayersStore.setState({ currentDate: nextSave.currentDate } as any);
+    // Mark this season boundary as already handled before unlocking MarketClock.
+    // This prevents duplicate advanceSeason / end-of-season loans / preseason academy.
+    lastRolloverStage = "market:mark-season-committed";
+    const { markSeasonRolloverComplete } = await import("../transfers/MarketSimulation");
+    markSeasonRolloverComplete(nextSave.currentDate);
     const ps = usePlayersStore.getState();
     ps.syncWageStateFromMarket?.();
     invalidateSquadsCache();
-    const { markSeasonRolloverComplete } = await import("../transfers/MarketSimulation");
-    markSeasonRolloverComplete(dates.nextStartDate);
+    emitProgress(options, "commit", 92, "Guardando el mercado y preparando la confirmación final…");
+    lastRolloverStage = "commit:save-market";
     if (!(await saveTransferSystem())) throw new Error("No se pudo guardar el estado del mercado de fichajes.");
+    lastRolloverStage = "commit:publish-save";
     saveSave(nextSave);
     if (!persistCurrentSave(nextSave, { immediate: true })) throw new Error("No se pudo persistir el guardado de la nueva temporada.");
+    lastRolloverStage = "commit:flush-save";
     await flushSaveStorage();
     emitProgress(options, "commit", 96, "Confirmando el guardado de la nueva temporada…");
     await persistJournal(journalKey, { version: JOURNAL_VERSION, saveId, fromSeason: current.season, toSeason: dates.toSeason, stage: "committed", updatedAt: new Date().toISOString(), hadArchive });
     removeSaveItem(backupKey);
     removeSaveItem(journalKey);
+    removeTransitionCheckpointSidecars(saveId, removeSaveItem);
     await flushSaveStorage();
     emitProgress(options, "commit", 100, `Temporada ${dates.toSeason} preparada.`);
     return nextSave;
   } catch (error) {
-    lastRolloverError = error;
-    console.error(`[season-rollover] FALLÓ en la fase "${lastRolloverStage}". Se revierte al punto de recuperación.`, error);
+    const errorDetails = error instanceof Error
+      ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ""}`
+      : String(error);
+    console.error(`[season-rollover] FALLÓ en la fase "${lastRolloverStage}". Se revierte al punto de recuperación.\n${errorDetails}`, error);
     try {
-      if (backup) await rollbackFromBackup(backup);
-      else {
-        removeSaveItem(backupKey); removeSaveItem(journalKey); await flushSaveStorage();
+      if (backup) {
+        // Resolve large payloads only on rollback, never during the normal close.
+        const rollbackBackup = resolveTransitionBackup(backup, getSaveItem);
+        if (!rollbackBackup) throw new Error("No se pudo leer el checkpoint de recuperación de la temporada.");
+        await rollbackFromBackup(rollbackBackup);
+      } else {
+        removeSaveItem(backupKey);
+        removeSaveItem(journalKey);
+        removeTransitionCheckpointSidecars(saveId, removeSaveItem);
+        await flushSaveStorage();
       }
     } catch (rollbackError) {
       console.error("Error recuperando el checkpoint del cambio de temporada:", rollbackError);

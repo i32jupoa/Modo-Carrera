@@ -868,11 +868,47 @@ function SeasonSummaryModal({
             { title: "Ascensos", rows: archive.promotions.map((move) => `${teamLabel(move.teamId)} · ${move.fromLeague} → ${move.toLeague}`) },
             { title: "Descensos", rows: archive.relegations.map((move) => `${teamLabel(move.teamId)} · ${move.fromLeague} → ${move.toLeague}`) },
           ].map((section) => <div key={section.title} className="rounded-xl border border-border/50 p-3"><h4 className="text-sm font-black">{section.title} <span className="text-muted-foreground">({section.rows.length})</span></h4><div className="mt-2 space-y-1">{section.rows.slice(0, 8).map((row) => <p key={row} className="text-xs text-muted-foreground">{row}</p>)}{section.rows.length > 8 && <p className="text-xs font-bold text-primary">y {section.rows.length - 8} más…</p>}{section.rows.length === 0 && <p className="text-xs text-muted-foreground">Ninguno registrado.</p>}</div></div>)}</section>}
-          <div className="rounded-xl border border-border/50 p-3"><h3 className="font-black">Clasificaciones finales de todas las ligas</h3><div className="mt-2 flex flex-wrap gap-2">{archive.leagues.map((league) => <details key={league.leagueId} className="w-full rounded-lg bg-secondary/20 p-2"><summary className="cursor-pointer text-sm font-bold">{LEAGUES[league.leagueId as LeagueId]?.name ?? league.leagueId} · {league.table.length} equipos</summary><div className="mt-2 space-y-1">{league.table.map((row) => <div key={row.teamId} className={`grid grid-cols-[26px_minmax(0,1fr)_auto] gap-2 rounded px-2 py-1 text-xs ${row.teamId === archive.myTeamId ? "bg-primary/10 font-black" : ""}`}><span>{row.position}.</span><span className="truncate">{teamLabel(row.teamId)}</span><span className="tabular-nums">{row.points} pts · DG {row.gd > 0 ? `+${row.gd}` : row.gd}</span></div>)}</div></details>)}</div></div>
+          <div className="rounded-xl border border-border/50 p-3"><h3 className="font-black">Clasificaciones finales de todas las ligas</h3><p className="mt-1 text-xs text-muted-foreground">Abre una liga para cargar sus filas y estadísticas.</p><div className="mt-2 flex flex-wrap gap-2">{archive.leagues.map((league) => <LazyLeagueStandingsDetails key={league.leagueId} league={league} myTeamId={archive.myTeamId} leagueTitle={LEAGUES[league.leagueId as LeagueId]?.name ?? league.leagueId} teamLabel={teamLabel} />)}</div></div>
         </div>
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 bg-card/70 p-4 md:px-6"><Link to="/history" onClick={onClose} className="inline-flex items-center gap-2 rounded-xl border border-border/60 px-3 py-2 text-xs font-black hover:bg-secondary/60"><HistoryIcon className="h-4 w-4" /> Abrir Historia y palmarés</Link><button type="button" onClick={onContinue} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-foreground hover:bg-primary/90">Continuar a {nextSeason}</button></footer>
       </div>
     </div>
+  );
+}
+
+function LazyLeagueStandingsDetails({
+  league,
+  myTeamId,
+  leagueTitle,
+  teamLabel,
+}: {
+  league: SeasonArchive["leagues"][number];
+  myTeamId?: string;
+  leagueTitle: string;
+  teamLabel: (id: string | null) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="w-full rounded-lg bg-secondary/20 p-2"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="cursor-pointer text-sm font-bold">{leagueTitle} · {league.table.length} equipos</summary>
+      {open && (
+        <div className="mt-2 space-y-1">
+          {league.table.map((row) => (
+            <div
+              key={row.teamId}
+              className={`grid grid-cols-[26px_minmax(0,1fr)_auto] gap-2 rounded px-2 py-1 text-xs ${row.teamId === myTeamId ? "bg-primary/10 font-black" : ""}`}
+            >
+              <span>{row.position}.</span>
+              <span className="truncate">{teamLabel(row.teamId)}</span>
+              <span className="tabular-nums">{row.points} pts · DG {row.gd > 0 ? `+${row.gd}` : row.gd}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </details>
   );
 }
 
