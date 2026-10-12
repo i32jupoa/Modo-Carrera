@@ -329,7 +329,7 @@ function idsToPlayers(index: MarketIndex, ids: Iterable<string>): MarketPlayer[]
 export function getClubPlayers(clubId: string): MarketPlayer[] {
   const index = getMarketIndex();
   return idsToPlayers(index, index.byClub.get(clubId) ?? [])
-    .filter((player) => !["academy", "loaned", "listed"].includes(player.academyStatus ?? ""));
+    .filter((player) => !player.retired && !["academy", "loaned", "listed"].includes(player.academyStatus ?? ""));
 }
 
 
@@ -345,13 +345,13 @@ export function getClubWageBill(clubId: string): number {
 /** Jugadores de una liga. */
 export function getLeaguePlayers(leagueId: string): MarketPlayer[] {
   const index = getMarketIndex();
-  return idsToPlayers(index, index.byLeague.get(leagueId) ?? []);
+  return idsToPlayers(index, index.byLeague.get(leagueId) ?? []).filter((player) => !player.retired);
 }
 
 /** Agentes libres. */
 export function getFreeAgents(): MarketPlayer[] {
   const index = getMarketIndex();
-  return idsToPlayers(index, index.freeAgents);
+  return idsToPlayers(index, index.freeAgents).filter((player) => !player.retired);
 }
 
 /** Filtro de búsqueda de candidatos. */
@@ -390,7 +390,7 @@ export function findCandidates(query: CandidateQuery): MarketPlayer[] {
     for (const id of ids) {
       if (!groupIds.has(id)) continue;
       const player = index.byId.get(id);
-      if (!player) continue;
+      if (!player || player.retired) continue;
       if (player.ovr < minOvr || player.ovr > maxOvr) continue;
       if (query.minAge !== undefined && player.age < query.minAge) continue;
       if (query.maxAge !== undefined && player.age > query.maxAge) continue;
@@ -530,6 +530,8 @@ export interface PlayerDelta {
   loanOwnerClubId: string | null;
   loanEndDate: string | null;
   minutesShare: number;
+  age?: number;
+  retired?: boolean;
 }
 
 function deltaOf(player: MarketPlayer): PlayerDelta {
@@ -545,6 +547,9 @@ function deltaOf(player: MarketPlayer): PlayerDelta {
     loanOwnerClubId: player.loanOwnerClubId,
     loanEndDate: player.loanEndDate,
     minutesShare: player.minutesShare,
+    // Age and retirement are career-scoped mutable fields, not static FC data.
+    ...(player.age !== undefined ? { age: player.age } : {}),
+    ...(player.retired !== undefined ? { retired: player.retired } : {}),
   };
 }
 
@@ -562,6 +567,12 @@ export function snapshotPlayerDeltas(): PlayerDelta[] {
     if (player) out.push(deltaOf(player));
   }
   return out;
+}
+
+/** Instantánea completa utilizable como checkpoint temporal de una transición. */
+export function snapshotAllPlayerDeltas(): PlayerDelta[] {
+  const index = getMarketIndex();
+  return Array.from(index.byId.values(), (player) => deltaOf(player));
 }
 
 /** Reaplica los cambios guardados sobre el índice recién construido. */
@@ -590,6 +601,8 @@ export function restorePlayerDeltas(deltas: readonly PlayerDelta[]): void {
       loanOwnerClubId: delta.loanOwnerClubId ?? (legacyLoan ? delta.clubId : null),
       loanEndDate: delta.loanEndDate ?? null,
       minutesShare: delta.minutesShare,
+      ...(delta.age !== undefined ? { age: delta.age } : {}),
+      ...(delta.retired !== undefined ? { retired: delta.retired } : {}),
     });
   }
 }

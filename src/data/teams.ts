@@ -2,6 +2,36 @@ import playersData from "./playersData";
 
 export type LeagueId = "laliga" | "premier" | "seriea" | "bundesliga" | "ligue1" | string;
 
+export type TeamLeagueContext = {
+  /** Per-career club divisions; absent entries use the static Team.league. */
+  teamLeagueOverrides?: Readonly<Record<string, string>> | null;
+};
+
+/**
+ * Read-only adapter for legacy consumers that do not yet receive SaveGame explicitly.
+ * The active career's overrides are registered by lib/store.ts on load/save; the
+ * authoritative persisted source remains SaveGame.teamLeagueOverrides. This registry
+ * never mutates TEAMS and can always be bypassed by passing an explicit context.
+ */
+let activeTeamLeagueOverrides: Readonly<Record<string, string>> | undefined;
+
+export function setActiveTeamLeagueOverrides(
+  overrides: Readonly<Record<string, string>> | null | undefined,
+): void {
+  activeTeamLeagueOverrides = overrides && Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+function resolveTeamLeagueContext(context?: TeamLeagueContext): TeamLeagueContext | undefined {
+  if (context !== undefined) return context;
+  return activeTeamLeagueOverrides ? { teamLeagueOverrides: activeTeamLeagueOverrides } : undefined;
+}
+
+function withEffectiveLeague(team: Team, context?: TeamLeagueContext): Team {
+  const overrides = resolveTeamLeagueContext(context)?.teamLeagueOverrides;
+  const effectiveLeague = overrides?.[team.id];
+  return effectiveLeague && effectiveLeague !== team.league ? { ...team, league: effectiveLeague } : team;
+}
+
 export type Team = {
   id: string;
   name: string;
@@ -34,15 +64,21 @@ const LEAGUE_TO_COUNTRY: Record<string, { country: string; flag: string }> = {
   // === FRENCH LEAGUES ===
   "Ligue 1 McDonald's": { country: "Francia", flag: "🇫🇷" },
   "Ligue 2 BKT": { country: "Francia", flag: "🇫🇷" },
+  "2. BUNDESLIGA": { country: "Alemania", flag: "🇩🇪" },
   "Liga Portugal": { country: "Portugal", flag: "🇵🇹" },
+  "Primeira Liga": { country: "Portugal", flag: "🇵🇹" },
+  "PRIMEIRA LIGA": { country: "Portugal", flag: "🇵🇹" },
   Eredivisie: { country: "Países Bajos", flag: "🇳🇱" },
   "Trendyol Süper Lig": { country: "Turquía", flag: "🇹🇷" },
   MLS: { country: "EE.UU.", flag: "🇺🇸" },
   LPF: { country: "Argentina", flag: "🇦🇷" },
   SUPERLIGA: { country: "Rumanía", flag: "🇷🇴" },
   "Scottish Prem": { country: "Escocia", flag: "🏴󠁧󠁢󠁳󠁣󠁴󠁿" },
+  "Scottish Premiership": { country: "Escocia", flag: "🏴󠁧󠁢󠁳󠁣󠁴󠁿" },
   "1A Pro League": { country: "Bélgica", flag: "🇧🇪" },
+  "BELGIAN PRO LEAGUE": { country: "Bélgica", flag: "🇧🇪" },
   "PKO BP Ekstraklasa": { country: "Polonia", flag: "🇵🇱" },
+  "Ekstraklasa": { country: "Polonia", flag: "🇵🇱" },
   "Brack Super League": { country: "Suiza", flag: "🇨🇭" },
   "3F Superliga": { country: "Dinamarca", flag: "🇩🇰" },
   Allsvenskan: { country: "Suecia", flag: "🇸🇪" },
@@ -59,6 +95,15 @@ const LEAGUE_NAME_TO_ID: Record<string, string> = {
   Bundesliga: "bundesliga",
   "Ligue 1 McDonald's": "ligue1",
   "LALIGA HYPERMOTION": "laliga2",
+  "Trendyol Süper Lig": "trendyolsperlig",
+  "Scottish Premiership": "scottish",
+  "Ekstraklasa": "ekstraklasa",
+  "PKO BP Ekstraklasa": "ekstraklasa",
+  "3F Superliga": "3fsuperliga",
+  "BELGIAN PRO LEAGUE": "1aproleague",
+  "Primeira Liga": "ligaportugal",
+  "PRIMEIRA LIGA": "ligaportugal",
+  "2. BUNDESLIGA": "bundesliga2",
   "EFL Championship": "championship",
   "EFL League One": "leagueone",
   "EFL League Two": "leaguetwo",
@@ -72,6 +117,17 @@ const LEAGUE_NAME_TO_ID: Record<string, string> = {
   // === AUSTRIAN LEAGUE (strictly separate from German Bundesliga) ===
   "Ö. Bundesliga": "austrianbundesliga",
 };
+
+function normalizeLeagueLabel(value: string): string {
+  return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+const NORMALIZED_LEAGUE_NAME_TO_ID: Record<string, string> = Object.fromEntries(
+  Object.entries(LEAGUE_NAME_TO_ID).map(([name, id]) => [normalizeLeagueLabel(name), id]),
+);
+const NORMALIZED_LEAGUE_TO_COUNTRY: Record<string, { country: string; flag: string }> = Object.fromEntries(
+  Object.entries(LEAGUE_TO_COUNTRY).map(([name, mapping]) => [normalizeLeagueLabel(name), mapping]),
+);
 
 // Excluded leagues (not loaded into the game)
 export const EXCLUDED_LEAGUES = new Set<string>([
@@ -95,7 +151,7 @@ export const EXCLUDED_LEAGUES = new Set<string>([
 ]);
 
 export function leagueIdFromName(leagueName: string): string {
-  return LEAGUE_NAME_TO_ID[leagueName] ?? leagueName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return LEAGUE_NAME_TO_ID[leagueName] ?? NORMALIZED_LEAGUE_NAME_TO_ID[normalizeLeagueLabel(leagueName)] ?? leagueName.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function extractLeaguesFromJSON(): Record<
@@ -117,8 +173,10 @@ function extractLeaguesFromJSON(): Record<
     if (EXCLUDED_LEAGUES.has(id)) return;
 
     // Only include leagues that are properly mapped in LEAGUE_TO_COUNTRY
-    const mapping = LEAGUE_TO_COUNTRY[leagueName];
+    const mapping = LEAGUE_TO_COUNTRY[leagueName] ?? NORMALIZED_LEAGUE_TO_COUNTRY[normalizeLeagueLabel(leagueName)];
     if (!mapping) return; // Skip unmapped leagues
+    // Labels with different casing/legacy names can map to the same canonical league.
+    if (leagues[id]) return;
 
     leagues[id] = { id, name: leagueName, country: mapping.country, flag: mapping.flag };
   });
@@ -1711,8 +1769,11 @@ function getDynamicTeams(): Team[] {
 }
 
 let _allTeamsMap: Map<string, Team> | null = null;
-export function getAllTeams(): Team[] {
-  return [...TEAMS, ...getDynamicTeams()];
+export function getAllTeams(context?: TeamLeagueContext): Team[] {
+  const teams = [...TEAMS, ...getDynamicTeams()];
+  const overrides = resolveTeamLeagueContext(context)?.teamLeagueOverrides;
+  if (!overrides || Object.keys(overrides).length === 0) return teams;
+  return teams.map((team) => withEffectiveLeague(team, { teamLeagueOverrides: overrides }));
 }
 
 function getTeamsMap(): Map<string, Team> {
@@ -1725,9 +1786,10 @@ function getTeamsMap(): Map<string, Team> {
 }
 
 /** Lookup exacto por ID; a diferencia de teamById, no usa un equipo de respaldo. */
-export function findTeamById(id: string): Team | null {
+export function findTeamById(id: string, context?: TeamLeagueContext): Team | null {
   const normalized = String(id ?? "").toLowerCase().trim();
-  return normalized ? getTeamsMap().get(normalized) ?? null : null;
+  const team = normalized ? getTeamsMap().get(normalized) ?? null : null;
+  return team ? withEffectiveLeague(team, context) : null;
 }
 
 export function normalizeTeamLookup(value: string): string {
@@ -1787,7 +1849,7 @@ let _teamLookupMap: Map<string, Team> | null = null;
 function getTeamLookupMap(): Map<string, Team> {
   if (!_teamLookupMap) {
     _teamLookupMap = new Map();
-    for (const team of getAllTeams()) {
+    for (const team of getAllTeams({ teamLeagueOverrides: {} })) {
       _teamLookupMap.set(normalizeTeamLookup(team.id), team);
       _teamLookupMap.set(normalizeTeamLookup(team.name), team);
     }
@@ -1795,21 +1857,21 @@ function getTeamLookupMap(): Map<string, Team> {
   return _teamLookupMap;
 }
 
-export function findTeamByName(name: string): Team | null {
+export function findTeamByName(name: string, context?: TeamLeagueContext): Team | null {
   const normalized = normalizeTeamLookup(name);
   if (!normalized) return null;
 
   const lookup = getTeamLookupMap();
   const direct = lookup.get(normalized);
-  if (direct) return direct;
+  if (direct) return withEffectiveLeague(direct, context);
 
   const aliasTarget = TEAM_NAME_ALIASES[normalized];
   if (aliasTarget) {
     const aliased = lookup.get(normalizeTeamLookup(aliasTarget));
-    if (aliased) return aliased;
+    if (aliased) return withEffectiveLeague(aliased, context);
   }
 
-  const all = getAllTeams();
+  const all = getAllTeams(context);
   return (
     all.find((team) => {
       const teamName = normalizeTeamLookup(team.name);
@@ -1840,43 +1902,46 @@ export function teamKeyFromName(name: string): string {
  * Además, si se conoce la liga del jugador en el dataset, esta debe coincidir
  * con la liga del equipo del juego.
  */
-export function findTeamStrict(name: string, leagueName?: string): Team | null {
+export function findTeamStrict(name: string, leagueName?: string, context?: TeamLeagueContext): Team | null {
   const normalized = normalizeTeamLookup(name);
   if (!normalized) return null;
 
   const lookup = getTeamLookupMap();
-  let team = lookup.get(normalized) ?? null;
+  let baseTeam = lookup.get(normalized) ?? null;
 
-  if (!team) {
+  if (!baseTeam) {
     const aliasTarget = TEAM_NAME_ALIASES[normalized];
-    if (aliasTarget) team = lookup.get(normalizeTeamLookup(aliasTarget)) ?? null;
+    if (aliasTarget) baseTeam = lookup.get(normalizeTeamLookup(aliasTarget)) ?? null;
   }
 
-  if (!team) return null;
+  if (!baseTeam) return null;
 
-  // La liga solo se usa para desempatar: si el nombre coincide con un equipo
-  // de otra liga, se acepta igualmente salvo que exista otro equipo del juego
-  // con ese mismo nombre en la liga correcta (homónimos entre competiciones).
+  // Disambiguate against the static source-data league before applying career
+  // overrides. The players catalogue describes the original club identity; a
+  // promotion/relegation must not make an identically named foreign club win
+  // the lookup merely because the active career moved the first club.
   if (leagueName) {
-    const leagueId = leagueIdFromName(leagueName);
-    if (leagueId && team.league !== leagueId) {
-      const sameNameInLeague = getAllTeams().find(
-        (t) =>
-          t.league === leagueId &&
-          (normalizeTeamLookup(t.name) === normalized || normalizeTeamLookup(t.id) === normalized),
+    const sourceLeagueId = leagueIdFromName(leagueName);
+    if (sourceLeagueId && baseTeam.league !== sourceLeagueId) {
+      const sameNameInSourceLeague = getAllTeams({ teamLeagueOverrides: {} }).find(
+        (candidate) => candidate.league === sourceLeagueId
+          && (normalizeTeamLookup(candidate.name) === normalized || normalizeTeamLookup(candidate.id) === normalized),
       );
-      if (sameNameInLeague) return sameNameInLeague;
+      if (sameNameInSourceLeague) baseTeam = sameNameInSourceLeague;
     }
   }
 
-  return team;
+  return withEffectiveLeague(baseTeam, context);
 }
 
 // 3. SÚPER RED DE SEGURIDAD: Esta función JAMÁS lanzará un "Team not found"
-export function teamById(id: string): Team {
+export function teamById(id: string, context?: TeamLeagueContext): Team {
+  const resolvedContext = resolveTeamLeagueContext(context);
   if (!id) {
-    const all = getAllTeams();
-    return all.find((t) => t.id === "liv") || all[0];
+    const all = getAllTeams(resolvedContext);
+    const fallback = all.find((t) => t.id === "liv") || all[0];
+    if (!fallback) throw new Error("No hay equipos registrados en el juego");
+    return fallback;
   }
 
   const query = id.toLowerCase().trim();
@@ -1884,23 +1949,44 @@ export function teamById(id: string): Team {
 
   // O(1) lookup by id
   let found = map.get(query);
-  if (found) return found;
+  if (found) return withEffectiveLeague(found, resolvedContext);
 
   // Fallback: search by partial match
-  const all = getAllTeams();
+  const all = getAllTeams(resolvedContext);
   found = all.find((t) => query.includes(t.id.toLowerCase()) || t.id.toLowerCase().includes(query));
-  if (found) return found;
+  if (found) return withEffectiveLeague(found, resolvedContext);
 
   // Fallback: search by normalized name
   const cleanQuery = query.replace(/[^a-z0-9]/g, "");
   found = all.find((t) => t.name.toLowerCase().replace(/[^a-z0-9]/g, "") === cleanQuery);
-  if (found) return found;
+  if (found) return withEffectiveLeague(found, resolvedContext);
 
-  return all.find((t) => t.id === "liv") || all[0];
+  const fallback = all.find((t) => t.id === "liv") || all[0];
+  if (!fallback) throw new Error("No hay equipos registrados en el juego");
+  return withEffectiveLeague(fallback, resolvedContext);
 }
 
-export function teamsByLeague(league: LeagueId): Team[] {
-  return getAllTeams().filter((t) => t.league === league);
+/** League assigned to a club in this career, without mutating the global Team registry. */
+export function getTeamLeagueId(teamOrId: Team | string | null | undefined, context?: TeamLeagueContext): LeagueId | null {
+  if (!teamOrId) return null;
+  const resolvedContext = resolveTeamLeagueContext(context);
+  const teamId = typeof teamOrId === "string" ? teamOrId : teamOrId.id;
+  // Resolve the base assignment from the static registry first. A Team object
+  // may have been rendered under another career's active context; it must not
+  // leak that career's category when an explicit SaveGame is supplied here.
+  const baseTeam = findTeamById(teamId, { teamLeagueOverrides: {} });
+  if (!baseTeam) return null;
+  return resolvedContext?.teamLeagueOverrides?.[baseTeam.id] ?? baseTeam.league;
+}
+
+/** Returns clubs in the requested league using the career-specific assignments. */
+export function teamsByLeague(league: LeagueId, context?: TeamLeagueContext): Team[] {
+  const resolvedContext = resolveTeamLeagueContext(context);
+  const overrides = resolvedContext?.teamLeagueOverrides;
+  if (!overrides || Object.keys(overrides).length === 0) {
+    return getAllTeams(resolvedContext).filter((t) => t.league === league);
+  }
+  return getAllTeams(resolvedContext).filter((team) => team.league === league);
 }
 
 export function overall(t: Team): number {
@@ -1931,8 +2017,16 @@ const LEAGUE_TIER: Record<string, number> = {
   ligue2: 2,
 };
 
-/** Nivel (1 = máxima categoría) de una liga dentro de su país. Por defecto, 1 (sin hándicap). */
-export function getLeagueTier(leagueId: string): number {
+/**
+ * Nivel (1 = máxima categoría) de una liga dentro de su país. Acepta tanto
+ * una clave de liga como un ID de club; en el segundo caso resuelve primero
+ * la categoría efectiva de la carrera activa (o el contexto explícito).
+ */
+export function getLeagueTier(leagueIdOrTeamId: string, context?: TeamLeagueContext): number {
+  let leagueId = leagueIdOrTeamId;
+  if (LEAGUE_TIER[leagueId] === undefined) {
+    leagueId = getTeamLeagueId(leagueIdOrTeamId, context) ?? leagueIdOrTeamId;
+  }
   return LEAGUE_TIER[leagueId] ?? 1;
 }
 

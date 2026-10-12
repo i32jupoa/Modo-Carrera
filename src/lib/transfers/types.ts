@@ -62,6 +62,8 @@ export interface MarketPlayer {
   id: string;
   name: string;
   age: number;
+  /** Retirado en la carrera activa; se conserva para el historial, no para fichajes. */
+  retired?: boolean;
   /** Media actual. */
   ovr: number;
   /** Potencial real procedente de players.json. */

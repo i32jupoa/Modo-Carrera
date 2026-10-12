@@ -246,7 +246,7 @@ function Index() {
         <div className="animate-slide-in">
           <MainMenuWizard
             onPickTeam={(id) => {
-              const team = teamById(id);
+              const team = teamById(id, { teamLeagueOverrides: {} });
               setSelectedTeamColor(team?.color || null);
               setSelectedClub(id);
               setModalOpen(true);

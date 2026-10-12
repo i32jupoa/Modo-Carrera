@@ -6,6 +6,8 @@ import { TeamLogo } from "@/components/TeamLogo";
 import { PlayerClubCrest } from "@/components/PlayerClubCrest";
 import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 import { LeagueLogo } from "@/components/LeagueLogo";
+import { gameStartDateForSeason } from "@/lib/transferWindows";
+import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 import { CountryFlag } from "@/components/CountryFlag";
 import {
   Select,
@@ -115,7 +117,7 @@ function ScorersPage() {
   const [competition, setCompetition] = useState<"all" | "league" | "cup" | "ucl" | "uel" | "uecl">("all");
   const [league, setLeague] = useState<LeagueId | "all" | "big5">("all");
   const [cupCountry, setCupCountry] = useState<string>("all");
-  const currentDate = usePlayersStore((state) => state.currentDate) || save?.currentDate || "2026-07-01";
+  const currentDate = usePlayersStore((state) => state.currentDate) || save?.currentDate || gameStartDateForSeason(getSeasonStartYear(save?.season));
 
   const isCardTab = tab === "yellows" || tab === "reds";
 

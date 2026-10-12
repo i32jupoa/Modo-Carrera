@@ -3,6 +3,7 @@ import { ALL_LEAGUES, loadSave, type SaveGame } from "@/lib/store";
 import { LEAGUES, teamById } from "@/data/teams";
 import { assignFixtureDates } from "@/lib/fixtureScheduler";
 import { generateLeagueFixtures, type Fixture } from "@/lib/season";
+import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 import { usePlayersStore, type PlayerStats } from "@/store/playersStore";
 import type { Player } from "@/data/players";
 import type { DynamicPlayerStats, MonthlyStats } from "@/types/playerStats";
@@ -993,17 +994,7 @@ function currentMonthKey(): { year: number; month: number } {
 }
 
 function seasonStartYear(save: SaveGame): number {
-  const parsed = Number(String(save.season ?? "").slice(0, 4));
-  return Number.isFinite(parsed) && parsed >= 2000 ? parsed : 2026;
-}
-
-function shiftFixtureDateToSeason(isoDate: string, save: SaveGame): string {
-  const targetYear = seasonStartYear(save);
-  const baseSeasonYear = 2026;
-  const date = new Date(`${isoDate}T12:00:00Z`);
-  if (Number.isNaN(date.getTime())) return isoDate;
-  date.setUTCFullYear(date.getUTCFullYear() + (targetYear - baseSeasonYear));
-  return date.toISOString().slice(0, 10);
+  return getSeasonStartYear(save.season);
 }
 
 function monthlyEntriesForPlayer(p: AwardPlayer, year: number, month: number): MonthlyStats | null {
@@ -1032,13 +1023,14 @@ function deriveLeagueMonthlyStats(save: SaveGame, leagueId: LeagueId, year: numb
   const result = new Map<string, MonthlyStats>();
   const rawFixtures = save.fixtures?.[leagueId] ?? [];
   if (!rawFixtures.length) return result;
-  const dateMap = assignFixtureDates(generateLeagueFixtures(leagueId));
+  const calendarOptions = { seasonStartYear: getSeasonStartYear(save.season), seed: save.calendarSeed };
+  const dateMap = assignFixtureDates(generateLeagueFixtures(leagueId, calendarOptions), undefined, calendarOptions);
 
   for (const fixture of rawFixtures) {
     if (!fixture.result) continue;
     const iso = dateMap.get(fixture.id);
     if (!iso) continue;
-    const date = new Date(`${shiftFixtureDateToSeason(iso, save)}T12:00:00Z`);
+    const date = new Date(`${iso}T12:00:00Z`);
     if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month) continue;
 
     const r = fixture.result;
@@ -1197,7 +1189,8 @@ export function getMonthlyPeriods(leagueId?: LeagueId, players = getPlayers(), s
       if (leagueId && currentLeagueId !== leagueId) continue;
       const rawFixtures = save.fixtures?.[currentLeagueId] ?? [];
       if (!rawFixtures.length) continue;
-      const dates = assignFixtureDates(generateLeagueFixtures(currentLeagueId));
+      const calendarOptions = { seasonStartYear: getSeasonStartYear(save.season), seed: save.calendarSeed };
+      const dates = assignFixtureDates(generateLeagueFixtures(currentLeagueId, calendarOptions), undefined, calendarOptions);
       for (const fixture of rawFixtures) {
         if (!fixture.result) continue;
         // Prefer the actual date stored on the played fixture. Older saves may
@@ -1206,7 +1199,7 @@ export function getMonthlyPeriods(leagueId?: LeagueId, players = getPlayers(), s
         const actualDate = typeof fixture.date === "string" && fixture.date.trim() ? fixture.date : null;
         const iso = actualDate ?? dates.get(fixture.id);
         if (!iso) continue;
-        const normalizedIso = actualDate ? actualDate : shiftFixtureDateToSeason(iso, save);
+        const normalizedIso = actualDate ?? iso;
         const date = new Date(`${normalizedIso}T12:00:00Z`);
         if (Number.isNaN(date.getTime())) continue;
         addPeriod(date.getUTCFullYear(), date.getUTCMonth());

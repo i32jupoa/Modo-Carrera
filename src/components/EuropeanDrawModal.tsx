@@ -63,7 +63,10 @@ interface EuropeanDrawModalProps {
 
 export function EuropeanDrawModal({ type, competition, save, onClose, onComplete }: EuropeanDrawModalProps) {
   const config = EUROPEAN_CONFIGS[competition];
-  const participantIds = config.participants;
+  const activeState = competition === "uel" ? save.uel : save.uecl;
+  const participantIds = activeState?.participants?.length === 36
+    ? activeState.participants
+    : getEuropeanParticipantsForSave(save, competition);
   const fixtureKey = competition === "uel" ? "uelFixtures" : "ueclFixtures";
   const [step, setStep] = useState<"intro" | "revealing" | "done">("intro");
   const [result, setResult] = useState<SaveGame | null>(null);

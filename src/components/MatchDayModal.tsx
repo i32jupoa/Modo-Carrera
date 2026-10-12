@@ -20,6 +20,7 @@ import {
 import { Zap } from "lucide-react";
 import { loadSave, type SaveGame } from "@/lib/store";
 import { getEuropeanFixtureDateIso, getCupFixtureDateIso } from "@/lib/fixtureDates";
+import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 import { themeForScheduleFixture } from "@/lib/seasonExtras";
 import { useCalendarJumpState } from "@/lib/calendarJumpState";
 
@@ -89,7 +90,7 @@ export function MatchDayModal() {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
 
-          const cupMatchDateIso = getCupFixtureDateIso(f);
+          const cupMatchDateIso = getCupFixtureDateIso(f, getSeasonStartYear(save.season));
 
           if (cupMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
@@ -117,7 +118,7 @@ export function MatchDayModal() {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
 
-          const uclMatchDateIso = getEuropeanFixtureDateIso(f, "ucl");
+          const uclMatchDateIso = getEuropeanFixtureDateIso(f, "ucl", getSeasonStartYear(save.season));
 
           if (uclMatchDateIso === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
@@ -149,7 +150,7 @@ export function MatchDayModal() {
         for (const f of europeanFixtures) {
           if (f.result) continue;
           if (f.homeId !== myTeamId && f.awayId !== myTeamId) continue;
-          const matchDate = getEuropeanFixtureDateIso(f, competition);
+          const matchDate = getEuropeanFixtureDateIso(f, competition, getSeasonStartYear(save.season));
           if (matchDate === currentDate && !dismissedMatchIds.includes(f.id)) {
             usePlayersStore.setState({
               pendingUserMatch: {

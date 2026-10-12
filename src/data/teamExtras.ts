@@ -1,4 +1,4 @@
-import { Team, getAllTeams, teamById } from "./teams";
+import { Team, getAllTeams, teamById, type TeamLeagueContext } from "./teams";
 import { getClubExtra } from "./clubExtras";
 import { realRecentTrophies } from "./leagueWinners";
 
@@ -47,8 +47,8 @@ function norm(s: string): string {
     .trim();
 }
 
-export function getRivals(team: Team): Team[] {
-  const all = getAllTeams();
+export function getRivals(team: Team, context?: TeamLeagueContext): Team[] {
+  const all = getAllTeams(context);
   // 1) Try enriched data (rival1/rival2)
   const extra = getClubExtra(team.name);
   if (extra && (extra.rival1 || extra.rival2)) {

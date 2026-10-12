@@ -411,9 +411,10 @@ function executeLoanObligation(
  * Resuelve las cesiones cuya fecha contractual ya ha vencido.
  * Las cesiones creadas a partir de esta versión siempre tienen una fecha exacta.
  */
-export function resolveLoansDue(date: string): LoanReturn[] {
+export function resolveLoansDue(date: string, options: { excludePlayerIds?: ReadonlySet<string> } = {}): LoanReturn[] {
   const returns: LoanReturn[] = [];
   for (const player of getMarketIndex().byId.values()) {
+    if (options.excludePlayerIds?.has(player.id)) continue;
     if (!player.loanClubId || !player.clubId || !player.loanEndDate) continue;
     if (player.loanEndDate > date) continue;
 
@@ -470,10 +471,11 @@ export function resolveLoansDue(date: string): LoanReturn[] {
  * Compatibilidad con partidas antiguas: cualquier cesión sin fecha exacta se
  * resuelve al detectar un cambio de temporada.
  */
-export function resolveLoansEndOfSeason(date: string): LoanReturn[] {
-  const returns = resolveLoansDue(date);
+export function resolveLoansEndOfSeason(date: string, options: { excludePlayerIds?: ReadonlySet<string> } = {}): LoanReturn[] {
+  const returns = resolveLoansDue(date, options);
 
   for (const player of getMarketIndex().byId.values()) {
+    if (options.excludePlayerIds?.has(player.id)) continue;
     if (!player.loanClubId || !player.clubId || player.loanEndDate) continue;
 
     const borrowerClubId = player.loanClubId;

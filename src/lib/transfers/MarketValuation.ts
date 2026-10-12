@@ -335,7 +335,7 @@ export function isAvailable(
   buyerContext?: KeyPlayerBuyerContext,
 ): boolean {
   const player = getPlayer(playerId);
-  if (!player) return false;
+  if (!player || player.retired) return false;
   // Recién fichado en esta misma ventana: acaba de firmar contrato y no se
   // vuelve a mover hasta el siguiente mercado.
   if (isPlayerSettled(playerId)) return false;

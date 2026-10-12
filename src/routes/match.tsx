@@ -29,7 +29,7 @@ import {
   commitLiveFixtureResult,
 } from "@/lib/store";
 import { uclDayOffset, isUCLLeaguePhaseFixture } from "@/data/ucl";
-import { EUROPEAN_START } from "@/data/europeanCompetitions";
+import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 import { applyResult, Fixture } from "@/lib/season";
 import { FORMATION_COORDINATES, type FormationName } from "@/lib/formations";
 import { teamById, LEAGUES, getPrimaryLeagueForCountry, type LeagueId } from "@/data/teams";
@@ -925,7 +925,7 @@ function MatchPage() {
         );
       } else if (matchType === "UCL") {
         next = simulateUserPhaseUCLDay(latestSave, fixture.matchday, latestSave.myTeamId);
-        next = processUCLKnockoutProgress(next, uclDayOffset(usePlayersStore.getState().currentDate));
+        next = processUCLKnockoutProgress(next, uclDayOffset(usePlayersStore.getState().currentDate, getSeasonStartYear(loadSave()?.season)));
       } else {
         // LEAGUE: Execute the league matchday simulation
         console.log("Post-match: Simulating LEAGUE matches");

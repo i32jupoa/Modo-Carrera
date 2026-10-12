@@ -1,6 +1,10 @@
 import type { Fixture } from "@/lib/season";
 import type { ScheduleFixture } from "@/lib/leagueSchedule";
 import { addDaysToIso, parseDateOnly } from "@/lib/transferWindows";
+import {
+  getSeasonCalendarAnchors,
+  type SeasonCalendarOptions,
+} from "@/lib/season/calendarFactory";
 
 /** Minimum calendar days between two matches for the same team (72h). */
 export const MIN_REST_DAYS = 3;
@@ -17,8 +21,9 @@ function daysBetween(fromIso: string, toIso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-function matchdayFriday(matchday: number): string {
-  return addDaysToIso(LEAGUE_MD1_FRIDAY, (matchday - 1) * 7);
+function matchdayFriday(matchday: number, seasonStartYear = 2026): string {
+  const anchor = getSeasonCalendarAnchors(seasonStartYear).leagueMatchday1Friday;
+  return addDaysToIso(anchor, (matchday - 1) * 7);
 }
 
 function teamCanPlay(teamId: string, dateIso: string, lastPlayed: Map<string, string>): boolean {
@@ -131,6 +136,7 @@ export function rescheduleLeagueAroundSpecialFixtures(
 export function assignFixtureDates(
   raw: Pick<Fixture, "id" | "matchday" | "homeId" | "awayId">[],
   protectedDates?: Map<string, Set<string>>,
+  options: SeasonCalendarOptions = {},
 ): Map<string, string> {
   const byMatchday = new Map<number, typeof raw>();
   for (const f of raw) {
@@ -145,7 +151,7 @@ export function assignFixtureDates(
 
   for (const md of matchdays) {
     const matches = byMatchday.get(md)!;
-    const friday = matchdayFriday(md);
+    const friday = matchdayFriday(md, options.seasonStartYear);
     const offsets = slotOffsetsForCount(matches.length);
     // A league matchday gets a fixed calendar window. We may choose a different
     // weekday inside this window to protect a European/cup fixture, but we never
@@ -184,10 +190,14 @@ export function assignFixtureDates(
   return dates;
 }
 
-export function rawToSchedule(raw: Fixture[], dates: Map<string, string>): ScheduleFixture[] {
+export function rawToSchedule(
+  raw: Fixture[],
+  dates: Map<string, string>,
+  options: SeasonCalendarOptions = {},
+): ScheduleFixture[] {
   return raw.map((f) => ({
     id: f.id,
-    date: dates.get(f.id) ?? matchdayFriday(f.matchday),
+    date: dates.get(f.id) ?? matchdayFriday(f.matchday, options.seasonStartYear),
     homeTeam: f.homeId,
     awayTeam: f.awayId,
     isPlayed: false,
@@ -202,6 +212,7 @@ export function rawToSchedule(raw: Fixture[], dates: Map<string, string>): Sched
 export function rescheduleUnplayedFixtures(
   fixtures: ScheduleFixture[],
   raw: Fixture[],
+  options: SeasonCalendarOptions = {},
 ): ScheduleFixture[] {
   const unplayedIds = new Set(fixtures.filter((f) => !f.isPlayed).map((f) => f.id));
   const rawUnplayed = raw.filter((f) => unplayedIds.has(f.id));
@@ -227,7 +238,7 @@ export function rescheduleUnplayedFixtures(
   const newDates = new Map<string, string>();
   for (const md of [...byMd.keys()].sort((a, b) => a - b)) {
     const matches = byMd.get(md)!;
-    const friday = matchdayFriday(md);
+    const friday = matchdayFriday(md, options.seasonStartYear);
     const offsets = slotOffsetsForCount(matches.length);
     for (let i = 0; i < matches.length; i++) {
       const f = matches[i];

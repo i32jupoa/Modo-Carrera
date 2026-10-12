@@ -4,7 +4,8 @@ import { assignUCLPots } from "@/data/ucl";
 
 import { Fixture } from "@/lib/season";
 
-import { UCL_CALENDAR, UCL_START, UCLBracketSlot, UCLPhase } from "@/data/ucl";
+import { uclCalendarForSeason, uclStartForSeason, UCLBracketSlot, UCLPhase } from "@/data/ucl";
+import { addIsoDays } from "@/lib/season/calendarFactory";
 
 // ============================================================
 
@@ -201,6 +202,7 @@ export function assignmentsToFixtures(
   assignments: Map<string, Opponent[]>,
   participants: string[],
   startDayOffset: number,
+  seasonStartYear = 2026,
 ): Fixture[] {
   // Build 8 perfect matchings (1-factors) from the 8-regular graph
   // Each round must have exactly 18 matches (36 teams / 2)
@@ -340,8 +342,12 @@ export function assignmentsToFixtures(
 
   // Step 3: Emit fixtures
   const fixtures: Fixture[] = [];
+  const calendar = uclCalendarForSeason(seasonStartYear);
+  // `startDayOffset` is retained for legacy call compatibility. In a properly
+  // parameterized season it must match the first date of the generated calendar.
+  const firstOffset = Number.isFinite(startDayOffset) ? startDayOffset : calendar.leagueDay[0];
   for (let round = 0; round < 8; round++) {
-    const dayOffset = UCL_CALENDAR.leagueDay[round];
+    const dayOffset = round === 0 ? firstOffset : calendar.leagueDay[round];
     for (const { homeId, awayId } of rounds[round]) {
       fixtures.push({
         id: `ucl-sw-md${round + 1}-${homeId}-${awayId}`,
@@ -349,6 +355,7 @@ export function assignmentsToFixtures(
         league: teamById(homeId).league,
         matchday: dayOffset,
         round: `Jornada ${round + 1}`,
+        date: addIsoDays(uclStartForSeason(seasonStartYear), dayOffset),
         homeId,
         awayId,
       });
@@ -1063,7 +1070,9 @@ export function buildFullUCLBracket(
 
     final: number;
   },
+  seasonStartYear = 2026,
 ): FullBracket {
+  const fixtureDate = (offset: number) => addIsoDays(uclStartForSeason(seasonStartYear), offset);
   const top8 = rankedTeams.slice(0, 8);
 
   const playoffSeeds = rankedTeams.slice(8, 16); // 9-16
@@ -1143,6 +1152,7 @@ export function buildFullUCLBracket(
       league: teamById(pair.unseeded).league,
 
       matchday: dayOffsets.playoffLeg1,
+      date: fixtureDate(dayOffsets.playoffLeg1),
 
       round: "Playoff-Leg1",
 
@@ -1159,6 +1169,7 @@ export function buildFullUCLBracket(
       league: teamById(pair.seeded).league,
 
       matchday: dayOffsets.playoffLeg2,
+      date: fixtureDate(dayOffsets.playoffLeg2),
 
       round: "Playoff-Leg2",
 
@@ -1239,6 +1250,7 @@ export function buildFullUCLBracket(
       league: teamById(seedTeam).league,
 
       matchday: dayOffsets.r16Leg1,
+      date: fixtureDate(dayOffsets.r16Leg1),
 
       round: "R16-Leg1",
 
@@ -1255,6 +1267,7 @@ export function buildFullUCLBracket(
       league: teamById(seedTeam).league,
 
       matchday: dayOffsets.r16Leg2,
+      date: fixtureDate(dayOffsets.r16Leg2),
 
       round: "R16-Leg2",
 
@@ -1317,6 +1330,7 @@ export function buildFullUCLBracket(
       league: "premier",
 
       matchday: dayOffsets.qfLeg1,
+      date: fixtureDate(dayOffsets.qfLeg1),
 
       round: "QF-Leg1",
 
@@ -1333,6 +1347,7 @@ export function buildFullUCLBracket(
       league: "premier",
 
       matchday: dayOffsets.qfLeg2,
+      date: fixtureDate(dayOffsets.qfLeg2),
 
       round: "QF-Leg2",
 
@@ -1387,6 +1402,7 @@ export function buildFullUCLBracket(
       league: "premier",
 
       matchday: dayOffsets.sfLeg1,
+      date: fixtureDate(dayOffsets.sfLeg1),
 
       round: "SF-Leg1",
 
@@ -1403,6 +1419,7 @@ export function buildFullUCLBracket(
       league: "premier",
 
       matchday: dayOffsets.sfLeg2,
+      date: fixtureDate(dayOffsets.sfLeg2),
 
       round: "SF-Leg2",
 
@@ -1439,6 +1456,7 @@ export function buildFullUCLBracket(
       league: "premier",
 
       matchday: dayOffsets.final,
+      date: fixtureDate(dayOffsets.final),
 
       round: "Final",
 

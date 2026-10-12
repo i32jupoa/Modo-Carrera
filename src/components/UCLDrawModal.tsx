@@ -70,15 +70,16 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
   const [showMatrixModal, setShowMatrixModal] = useState(false);
   // How many fixtures revealed so far (manual button)
   const [visibleCount, setVisibleCount] = useState(0);
+  const participants = save.ucl?.participants?.length === 36 ? save.ucl.participants : UCL_SEASON1_IDS;
 
   // Transform matrix data to team-with-opponents format
   const getTeamOpponents = () => {
     if (!drawMatrix || !drawTeamIndex) return [];
 
-    const introPots = assignUCLPots(UCL_SEASON1_IDS);
+    const introPots = assignUCLPots(participants);
 
     // Re-run draw to get assignments with correct home/away info
-    const { assignments } = runSwissDraw(UCL_SEASON1_IDS);
+    const { assignments } = runSwissDraw(participants);
 
     return introPots.map((pot, potIndex) => {
       return pot.map((teamId) => {
@@ -100,14 +101,14 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
 
   // Always use canonical IDs regardless of stale save
   function ensureUcl(s: SaveGame): SaveGame {
-    const participants = UCL_SEASON1_IDS;
+    const participantsForSave = s.ucl?.participants?.length === 36 ? s.ucl.participants : participants;
     return {
       ...s,
       ucl: {
         phase: s.ucl?.phase ?? ("league" as const),
         seasonNumber: s.ucl?.seasonNumber ?? 1,
-        participants,
-        table: s.ucl?.table?.length === 36 ? s.ucl.table : participants.map(emptyTableEntry),
+        participants: participantsForSave,
+        table: s.ucl?.table?.length === 36 ? s.ucl.table : participantsForSave.map(emptyTableEntry),
         drawState: s.ucl?.drawState ?? {
           leagueDone: false,
           playoffDone: false,
@@ -144,14 +145,14 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
 
       if (type === "league") {
         // Capture matrix from runSwissDraw before applying
-        const drawResult = runSwissDraw(UCL_SEASON1_IDS);
+        const drawResult = runSwissDraw(participants);
         console.log("drawResult.matrix:", drawResult.matrix);
         console.log("drawResult.teamIndex:", drawResult.teamIndex);
         setDrawMatrix(drawResult.matrix);
         setDrawTeamIndex(drawResult.teamIndex);
 
         updated = applyUCLLeagueDraw(currentSave, drawResult);
-        const pots = assignUCLPots(UCL_SEASON1_IDS);
+        const pots = assignUCLPots(participants);
         setDrawPots(pots);
         const potOf = new Map<string, number>();
         pots.forEach((pot, i) => pot.forEach((id) => potOf.set(id, i)));
@@ -203,7 +204,7 @@ export function UCLDrawModal({ type, save, onClose, onComplete }: UCLDrawModalPr
   }
 
   // Pot panel shared between intro and reveal
-  const introPots = assignUCLPots(UCL_SEASON1_IDS);
+  const introPots = assignUCLPots(participants);
   const potsToShow = drawPots.length === 4 ? drawPots : introPots;
 
   const titles = {

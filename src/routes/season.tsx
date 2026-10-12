@@ -34,10 +34,14 @@ import {
   type Team,
   LEAGUES_BY_COUNTRY,
 } from "@/data/teams";
-import { UCL_START, UCL_CALENDAR } from "@/data/ucl";
 import { europeanCalendar } from "@/data/europeanCompetitions";
 
 import { type Fixture } from "@/lib/season";
+import { getSeasonCalendarAnchors, getSeasonStartYear } from "@/lib/season/calendarFactory";
+import { advanceToNextSeason, canAdvanceToNextSeason } from "@/lib/season/seasonRollover";
+import { getSeasonArchive, getSeasonArchiveAwards, type SeasonArchive } from "@/lib/season/seasonHistory";
+import { getCurrentSaveId } from "@/lib/savedGames";
+import { getSeasonRolloverDates, type RolloverProgress } from "@/lib/season/seasonRolloverCore";
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 
 import { usePlayersStore, ensureStatsForLeague, useCurrentDate } from "@/store/playersStore";
@@ -56,6 +60,8 @@ import {
   ChevronDown,
   ArrowUp,
   ArrowDown,
+  ArrowUpRight,
+  Award,
   AlertTriangle,
   Bell,
   Newspaper,
@@ -63,6 +69,11 @@ import {
   Building2,
   Cloud,
   Flag,
+  X,
+  Trophy,
+  Crown,
+  Medal,
+  History as HistoryIcon,
 } from "lucide-react";
 import {
   themeForFixture,
@@ -84,6 +95,25 @@ function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
 
+function formatArchiveTransferFee(fee: number, type: string) {
+  if (type === "free" || fee <= 0) return "Libre";
+  if (fee >= 1_000_000) return `${(fee / 1_000_000).toFixed(1).replace(/\.0$/, "")} M€`;
+  if (fee >= 1_000) return `${Math.round(fee / 1_000)} mil €`;
+  return `${Math.round(fee)} €`;
+}
+
+function archiveTransferTypeLabel(type: string) {
+  if (type === "loan") return "Cesión";
+  if (type === "loan-option") return "Cesión con opción";
+  if (type === "loan-obligation") return "Cesión con obligación";
+  if (type === "free") return "Agente libre";
+  return "Traspaso";
+}
+
+function archiveSeasonLabel(startYear: number) {
+  return `${startYear}/${String((startYear + 1) % 100).padStart(2, "0")}`;
+}
+
 export const Route = createFileRoute("/season")({ component: SeasonPage });
 
 function SeasonPage() {
@@ -94,6 +124,10 @@ function SeasonPage() {
   const [viewLeague, setViewLeague] = useState<LeagueId>("laliga");
 
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isRollingOver, setIsRollingOver] = useState(false);
+  const [rolloverProgress, setRolloverProgress] = useState<RolloverProgress | null>(null);
+  const [seasonSummary, setSeasonSummary] = useState<SeasonArchive | null>(null);
+  const [showSeasonSummary, setShowSeasonSummary] = useState(false);
 
   const [simProgress, setSimProgress] = useState({ done: 0, total: 0 });
 
@@ -119,6 +153,24 @@ function SeasonPage() {
   // de retraso. Así la central nunca se queda mostrando el partido que
   // acabamos de jugar como si siguiera pendiente.
   useEffect(() => {
+    const onAutomaticRollover = (event: Event) => {
+      const detail = (event as CustomEvent<{ reason?: string; fromSeason?: string }>).detail;
+      const latest = loadSave();
+      if (latest) setSave(latest);
+      if (detail?.reason !== "season-rollover" || !detail.fromSeason) return;
+      const saveId = getCurrentSaveId();
+      if (!saveId) return;
+      const archive = getSeasonArchive(saveId, detail.fromSeason);
+      if (archive) {
+        setSeasonSummary(archive);
+        setShowSeasonSummary(true);
+      }
+    };
+    window.addEventListener("fcsim:save-updated", onAutomaticRollover);
+    return () => window.removeEventListener("fcsim:save-updated", onAutomaticRollover);
+  }, []);
+
+  useEffect(() => {
     function refresh() {
       if (document.visibilityState !== "visible") return;
       const s = loadSave();
@@ -126,9 +178,11 @@ function SeasonPage() {
     }
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("pageshow", refresh);
+    window.addEventListener("fcsim:save-updated", refresh);
     return () => {
       document.removeEventListener("visibilitychange", refresh);
       window.removeEventListener("pageshow", refresh);
+      window.removeEventListener("fcsim:save-updated", refresh);
     };
   }, []);
 
@@ -146,8 +200,32 @@ function SeasonPage() {
 
   const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
 
+  async function handleAdvanceSeason() {
+    if (!save || isRollingOver) return;
+    const completedSeason = save.season;
+    const careerId = getCurrentSaveId();
+    setIsRollingOver(true);
+    setRolloverProgress({ stage: "checkpoint", progress: 0, message: "Preparando la transición…" });
+    try {
+      const nextSave = await advanceToNextSeason(save, {
+        onProgress: (progress) => setRolloverProgress(progress),
+      });
+      setSave(nextSave);
+      setViewLeague(nextSave.myLeague);
+      const archive = careerId ? getSeasonArchive(careerId, completedSeason) : null;
+      setSeasonSummary(archive);
+      setShowSeasonSummary(Boolean(archive));
+      toast.success(`Temporada ${nextSave.season} preparada`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo cerrar la temporada.");
+    } finally {
+      setIsRollingOver(false);
+    }
+  }
+
   if (!save) return null;
 
+  const rolloverReadiness = canAdvanceToNextSeason(save);
   const myTeam = teamById(save.myTeamId);
 
   const nextFixture = getMyNextFixtureAny(save);
@@ -602,6 +680,36 @@ function SeasonPage() {
               </div>
             ) : null}
 
+            {!rolloverReadiness.ok && save.currentDate >= getSeasonRolloverDates(save.season).endDate && (
+              <section className="panel border border-amber-500/40 bg-amber-500/5 p-5" role="alert" aria-live="polite">
+                <p className="text-[0.62rem] font-black uppercase tracking-[0.16em] text-amber-500">Temporada bloqueada</p>
+                <h3 className="mt-1 text-lg font-black">No se puede iniciar la siguiente temporada todavía</h3>
+                <p className="mt-2 text-sm text-muted-foreground">{rolloverReadiness.reason}</p>
+                <Link to="/calendar" className="mt-3 inline-flex rounded-xl border border-amber-500/40 px-4 py-2 text-sm font-bold hover:bg-amber-500/10">Ir al calendario para resolver pendientes</Link>
+              </section>
+            )}
+
+            {rolloverReadiness.ok && !(save.seasonRolloverLedger ?? []).includes(save.season) && (
+              <section className="panel border border-primary/30 bg-primary/5 p-5" aria-live="polite">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[0.62rem] font-black uppercase tracking-[0.16em] text-primary">Cierre de temporada</p>
+                    <h3 className="mt-1 text-lg font-black">Preparar {save.season.split(/[/-]/)[0] ? `${Number(save.season.split(/[/-]/)[0]) + 1}/${String((Number(save.season.split(/[/-]/)[0]) + 2) % 100).padStart(2, "0")}` : "la próxima temporada"}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">Se archivarán los resultados y se actualizarán contratos, cesiones, plantillas y competiciones.</p>
+                  </div>
+                  <button type="button" onClick={() => void handleAdvanceSeason()} disabled={isRollingOver} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground disabled:cursor-wait disabled:opacity-60">
+                    {isRollingOver ? "Procesando…" : "Cerrar temporada y ver resumen"}
+                  </button>
+                </div>
+                {isRollingOver && rolloverProgress && (
+                  <div className="mt-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3 text-xs"><span className="text-foreground/90">{rolloverProgress.message}</span><span className="scoreline font-bold">{rolloverProgress.progress}%</span></div>
+                    <div className="h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${rolloverProgress.progress}%` }} /></div>
+                  </div>
+                )}
+              </section>
+            )}
+
             {!seasonComplete && null}
 
             <div className="panel p-5">
@@ -682,7 +790,89 @@ function SeasonPage() {
       </div>
 
       <MatchStatsModal fixture={selectedFixture} onClose={() => setSelectedFixture(null)} />
+      {showSeasonSummary && seasonSummary && (
+        <SeasonSummaryModal
+          archive={seasonSummary}
+          nextSeason={save?.season ?? ""}
+          onContinue={() => setShowSeasonSummary(false)}
+          onClose={() => setShowSeasonSummary(false)}
+        />
+      )}
     </>
+  );
+}
+
+function SeasonSummaryModal({
+  archive,
+  nextSeason,
+  onContinue,
+  onClose,
+}: {
+  archive: SeasonArchive;
+  nextSeason: string;
+  onContinue: () => void;
+  onClose: () => void;
+}) {
+  const myLeague = archive.leagues.find((league) => league.leagueId === archive.myLeague);
+  const myPosition = archive.myFinalPosition ?? myLeague?.table.find((row) => row.teamId === archive.myTeamId)?.position ?? null;
+  const archiveAwards = getSeasonArchiveAwards(archive);
+  const trophies = [
+    ...(archive.europeanChampions.ucl ? [{ key: "ucl", title: "Champions League", teamId: archive.europeanChampions.ucl, Icon: Crown }] : []),
+    ...(archive.europeanChampions.uel ? [{ key: "uel", title: "Europa League", teamId: archive.europeanChampions.uel, Icon: Medal }] : []),
+    ...(archive.europeanChampions.uecl ? [{ key: "uecl", title: "Conference League", teamId: archive.europeanChampions.uecl, Icon: Trophy }] : []),
+    ...archive.domesticCupChampions.map((cup) => ({ key: `cup-${cup.leagueId}`, title: `Copa · ${LEAGUES[cup.leagueId as LeagueId]?.name ?? cup.leagueId}`, teamId: cup.teamId, Icon: Trophy })),
+  ];
+  const teamLabel = (id: string | null) => {
+    if (!id) return "Sin determinar";
+    const team = teamById(id);
+    return team.id === id ? team.name : id;
+  };
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-3 backdrop-blur-sm sm:p-6" role="dialog" aria-modal="true" aria-labelledby="season-summary-heading">
+      <div className="relative flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-border/70 bg-background shadow-2xl">
+        <header className="relative overflow-hidden border-b border-border/60 bg-gradient-to-br from-card via-card to-primary/10 p-5 md:p-7">
+          <div className="pointer-events-none absolute -right-8 -top-12 h-44 w-44 rounded-full bg-primary/10 blur-3xl" />
+          <button type="button" onClick={onClose} className="absolute right-4 top-4 rounded-lg border border-border/60 bg-background/70 p-2 text-muted-foreground transition hover:text-foreground" aria-label="Cerrar resumen"><X className="h-4 w-4" /></button>
+          <div className="relative flex flex-wrap items-start justify-between gap-4 pr-8">
+            <div><p className="flex items-center gap-2 text-[0.65rem] font-black uppercase tracking-[0.2em] text-primary"><Trophy className="h-4 w-4" /> Campaña archivada</p><h2 id="season-summary-heading" className="mt-2 text-3xl font-black tracking-tight">Resumen de {archive.season}</h2><p className="mt-2 text-sm text-muted-foreground">Resultados, campeones, premios y movimientos guardados en la historia de tu carrera.</p></div>
+            <div className="rounded-2xl border border-primary/20 bg-background/70 px-4 py-3"><div className="text-[0.6rem] font-black uppercase tracking-wider text-muted-foreground">Tu resultado</div><div className="mt-1 text-xl font-black">{myPosition ? `${myPosition}.º puesto` : "Sin clasificación"}</div><div className="mt-1 text-xs text-muted-foreground">{archive.myLeague ? (LEAGUES[archive.myLeague as LeagueId]?.name ?? archive.myLeague) : "Liga"}</div></div>
+          </div>
+        </header>
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 md:p-6">
+          <section>
+            <div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="text-lg font-black">Campeones de liga</h3><p className="text-xs text-muted-foreground">Todos los campeones domésticos archivados.</p></div><span className="text-xs text-muted-foreground">{archive.leagues.filter((league) => league.championId).length} ligas</span></div>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{archive.leagues.filter((league) => league.championId).map((league) => {
+              const team = teamById(league.championId!);
+              const known = team.id === league.championId;
+              const leagueName = LEAGUES[league.leagueId as LeagueId]?.name ?? league.leagueId;
+              return <div key={league.leagueId} className="flex items-center gap-3 rounded-xl border border-border/50 bg-card/60 p-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Trophy className="h-4 w-4" /></div>{known && <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />}<div className="min-w-0"><div className="truncate text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">{leagueName}</div><div className="truncate text-sm font-black">{known ? team.name : league.championId}</div></div></div>;
+            })}</div>
+          </section>
+          <section>
+            <div className="mb-3"><h3 className="text-lg font-black">Copas y Europa</h3><p className="text-xs text-muted-foreground">Campeones de competiciones eliminatorias y continentales.</p></div>
+            {trophies.length ? <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{trophies.map(({ key, title, teamId, Icon }) => {
+              const team = teamById(teamId); const known = team.id === teamId;
+              return <div key={key} className="flex items-center gap-3 rounded-xl border border-border/50 bg-card/60 p-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-primary/20 bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span>{known && <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={28} />}<div className="min-w-0"><div className="truncate text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">{title}</div><div className="truncate text-sm font-black">{teamLabel(teamId)}</div></div></div>;
+            })}</div> : <p className="rounded-xl bg-secondary/20 p-4 text-sm text-muted-foreground">No se registraron campeones de copa o Europa en esta temporada.</p>}
+          </section>
+          <section className="grid gap-4 xl:grid-cols-2">
+            <div className="rounded-2xl border border-border/50 p-4"><h3 className="font-black">Premios individuales</h3><div className="mt-3 space-y-2">{archiveAwards.length ? archiveAwards.map((winner) => <div key={`${winner.category}-${winner.playerId ?? winner.playerName}`} className="flex items-center justify-between gap-2 rounded-lg bg-secondary/25 px-3 py-2"><div className="min-w-0"><div className="truncate text-sm font-bold">{winner.playerName}</div><div className="text-[0.65rem] text-muted-foreground">{winner.category}</div></div><Award className="h-4 w-4 shrink-0 text-primary" /></div>) : <p className="text-xs text-muted-foreground">No hay premios individuales archivados.</p>}</div></div>
+            <div className="rounded-2xl border border-border/50 p-4"><h3 className="font-black">Máximos goleadores</h3><div className="mt-3 space-y-2">{archive.topScorers.slice(0, 5).length ? archive.topScorers.slice(0, 5).map((player, index) => <div key={player.playerId} className="flex items-center gap-3 rounded-lg bg-secondary/25 px-3 py-2"><span className="w-5 text-center text-xs font-black text-muted-foreground">{index + 1}</span><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold">{player.playerName}</div><div className="text-[0.65rem] text-muted-foreground">{player.clubId ? teamLabel(player.clubId) : "Sin club registrado"}</div></div><span className="text-lg font-black tabular-nums">{player.goals}</span></div>) : <p className="text-xs text-muted-foreground">No hay goleadores registrados.</p>}</div></div>
+          </section>
+          <section className="grid gap-4 xl:grid-cols-2">
+            <div className="rounded-2xl border border-border/50 p-4"><h3 className="flex items-center gap-2 font-black"><ArrowUpRight className="h-4 w-4 text-primary" />Fichajes destacados</h3><div className="mt-3 space-y-2">{(archive.featuredTransfers ?? []).length ? (archive.featuredTransfers ?? []).slice(0, 6).map((transfer) => <div key={transfer.id} className="rounded-lg bg-secondary/25 px-3 py-2"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="truncate text-sm font-bold">{transfer.playerName}</div><div className="text-[0.62rem] text-muted-foreground">{transfer.date} · {archiveTransferTypeLabel(transfer.type)}</div></div><span className="shrink-0 text-xs font-black text-primary">{formatArchiveTransferFee(transfer.fee, transfer.type)}</span></div><div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-xs"><span className="truncate">{transfer.fromClubId ? teamLabel(transfer.fromClubId) : "Agente libre"}</span><ArrowUpRight className="h-3 w-3 text-muted-foreground" /><span className="truncate text-right">{teamLabel(transfer.toClubId)}</span></div></div>) : <p className="text-xs text-muted-foreground">No hay fichajes archivados para esta campaña.</p>}</div></div>
+            <div className="rounded-2xl border border-border/50 p-4"><h3 className="flex items-center gap-2 font-black"><Trophy className="h-4 w-4 text-primary" />Clasificación europea siguiente</h3><p className="mt-1 text-xs text-muted-foreground">{archive.nextSeasonEuropeanQualification ? archiveSeasonLabel(archive.nextSeasonEuropeanQualification.seasonStartYear) : "Temporada siguiente"}</p><div className="mt-3 space-y-2">{archive.nextSeasonEuropeanQualification ? ([ ["ucl", "Champions League"], ["uel", "Europa League"], ["uecl", "Conference League"] ] as const).map(([key, label]) => { const participants = archive.nextSeasonEuropeanQualification?.[key] ?? []; return <details key={key} className="rounded-lg bg-secondary/25 px-3 py-2"><summary className="cursor-pointer text-sm font-bold">{label} · {participants.length} clubes</summary><div className="mt-2 grid gap-1 sm:grid-cols-2">{participants.map((teamId, index) => <div key={`${key}-${teamId}`} className="flex min-w-0 items-center gap-2 text-xs"><span className="w-5 shrink-0 text-right text-muted-foreground">{index + 1}.</span><span className="truncate">{teamLabel(teamId)}</span></div>)}</div></details>; }) : <p className="text-xs text-muted-foreground">Este archivo no contiene las plazas de la campaña siguiente.</p>}</div></div>
+          </section>
+          {(archive.retirements.length > 0 || archive.promotions.length > 0 || archive.relegations.length > 0) && <section className="grid gap-3 sm:grid-cols-3">{[
+            { title: "Retiradas", rows: archive.retirements.map((player) => `${player.playerName} · ${player.age} años`) },
+            { title: "Ascensos", rows: archive.promotions.map((move) => `${teamLabel(move.teamId)} · ${move.fromLeague} → ${move.toLeague}`) },
+            { title: "Descensos", rows: archive.relegations.map((move) => `${teamLabel(move.teamId)} · ${move.fromLeague} → ${move.toLeague}`) },
+          ].map((section) => <div key={section.title} className="rounded-xl border border-border/50 p-3"><h4 className="text-sm font-black">{section.title} <span className="text-muted-foreground">({section.rows.length})</span></h4><div className="mt-2 space-y-1">{section.rows.slice(0, 8).map((row) => <p key={row} className="text-xs text-muted-foreground">{row}</p>)}{section.rows.length > 8 && <p className="text-xs font-bold text-primary">y {section.rows.length - 8} más…</p>}{section.rows.length === 0 && <p className="text-xs text-muted-foreground">Ninguno registrado.</p>}</div></div>)}</section>}
+          <div className="rounded-xl border border-border/50 p-3"><h3 className="font-black">Clasificaciones finales de todas las ligas</h3><div className="mt-2 flex flex-wrap gap-2">{archive.leagues.map((league) => <details key={league.leagueId} className="w-full rounded-lg bg-secondary/20 p-2"><summary className="cursor-pointer text-sm font-bold">{LEAGUES[league.leagueId as LeagueId]?.name ?? league.leagueId} · {league.table.length} equipos</summary><div className="mt-2 space-y-1">{league.table.map((row) => <div key={row.teamId} className={`grid grid-cols-[26px_minmax(0,1fr)_auto] gap-2 rounded px-2 py-1 text-xs ${row.teamId === archive.myTeamId ? "bg-primary/10 font-black" : ""}`}><span>{row.position}.</span><span className="truncate">{teamLabel(row.teamId)}</span><span className="tabular-nums">{row.points} pts · DG {row.gd > 0 ? `+${row.gd}` : row.gd}</span></div>)}</div></details>)}</div></div>
+        </div>
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 bg-card/70 p-4 md:px-6"><Link to="/history" onClick={onClose} className="inline-flex items-center gap-2 rounded-xl border border-border/60 px-3 py-2 text-xs font-black hover:bg-secondary/60"><HistoryIcon className="h-4 w-4" /> Abrir Historia y palmarés</Link><button type="button" onClick={onContinue} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-foreground hover:bg-primary/90">Continuar a {nextSeason}</button></footer>
+      </div>
+    </div>
   );
 }
 
@@ -749,8 +939,10 @@ function NextMatchCard({
   const isLineupComplete = activeStartersCount === 11;
 
   // Calculate match date based on competition type
-  const seasonStart = new Date("2026-08-15T12:00:00Z");
-  const cupStart = new Date("2026-07-07T00:00:00Z");
+  const seasonStartYear = getSeasonStartYear(save.season);
+  const seasonAnchors = getSeasonCalendarAnchors(seasonStartYear);
+  const seasonStart = new Date(`${seasonAnchors.leagueKickoffSaturday}T12:00:00Z`);
+  const cupStart = new Date(`${seasonAnchors.nationalCupStart}T00:00:00Z`);
 
   let matchDateIso: string;
   let matchDate: Date;
@@ -762,7 +954,7 @@ function NextMatchCard({
     matchDateIso = fixture.date || currentDate;
     matchDate = new Date(matchDateIso + "T12:00:00Z");
   } else if (fixture.competition === "cup") {
-    matchDateIso = getCupFixtureDateIso(fixture) || currentDate;
+    matchDateIso = getCupFixtureDateIso(fixture, seasonStartYear) || currentDate;
     matchDate = new Date(`${matchDateIso}T12:00:00Z`);
   } else {
     const competition = fixture.europeanCompetition === "uecl"
@@ -770,7 +962,7 @@ function NextMatchCard({
       : fixture.europeanCompetition === "uel"
         ? "uel"
         : "ucl";
-    matchDateIso = getEuropeanFixtureDateIso(fixture, competition) || currentDate;
+    matchDateIso = getEuropeanFixtureDateIso(fixture, competition, seasonStartYear) || currentDate;
     matchDate = new Date(`${matchDateIso}T12:00:00Z`);
   }
 

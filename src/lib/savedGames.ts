@@ -1,4 +1,4 @@
-import { teamById } from "@/data/teams";
+import { teamById, getTeamLeagueId } from "@/data/teams";
 import { DYNAMIC_BY_ID, getDynamicMarketPlayers, getAcademyPromotionEvents, hydrateAcademyPromotionEvents, hydrateDynamicMarketPlayers } from "@/lib/academy/academyRuntime";
 import { getInternalContractNegotiationsSnapshot, hydrateInternalContractNegotiations } from "@/lib/transfers/InternalContractNegotiation";
 import { SaveGame } from "./store";
@@ -154,7 +154,7 @@ export function saveMultipleSaves(saves: SavedGameMeta[]) {
 
 export function addSaveToMultiple(save: SaveGame) {
   if (typeof window === "undefined") return;
-  const team = teamById(save.myTeamId);
+  const team = teamById(save.myTeamId, save);
   if (!team) {
     console.error("No se encontró el equipo con id:", save.myTeamId);
     return;
@@ -168,7 +168,7 @@ export function addSaveToMultiple(save: SaveGame) {
     teamId: save.myTeamId,
     teamName: team.name,
     teamColor: team.color,
-    league: team.league,
+    league: getTeamLeagueId(team, save) ?? team.league,
     season: save.season,
     createdAt: now,
     lastPlayed: now,

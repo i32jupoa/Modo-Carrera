@@ -12,7 +12,8 @@ import { TeamForm } from "@/components/TeamForm";
 import { getTeamFormsForCompetition } from "@/lib/teamForm";
 import { MatchStatsModal } from "@/components/MatchStatsModal";
 import { KnockoutTieList } from "@/components/competition/KnockoutTieList";
-import { sortUCLTable, UCLTableEntry, UCLBracketSlot, UCL_START } from "@/data/ucl";
+import { sortUCLTable, UCLTableEntry, UCLBracketSlot, uclStartForSeason } from "@/data/ucl";
+import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 import type { Fixture } from "@/lib/season";
 
 export const Route = createFileRoute("/ucl")({ component: UCLPage });
@@ -31,8 +32,8 @@ function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
 
-function uclFixtureDate(matchday: number): string {
-  const start = new Date(UCL_START + "T00:00:00Z");
+function uclFixtureDate(matchday: number, seasonStartYear = 2026): string {
+  const start = new Date(uclStartForSeason(seasonStartYear) + "T00:00:00Z");
   const d = new Date(start.getTime() + matchday * 86400000);
   return d.toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: "UTC" });
 }
@@ -1520,7 +1521,7 @@ function ResultsListView({
   const formatDate = (matchday: number, fixture?: Fixture): string => {
     const actual = fixture?.date && /^\d{4}-\d{2}-\d{2}/.test(fixture.date)
       ? new Date(`${fixture.date.slice(0, 10)}T12:00:00Z`)
-      : (() => { const d = new Date(UCL_START + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + matchday); return d; })();
+      : (() => { const d = new Date(uclStartForSeason(seasonStartYear) + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + matchday); return d; })();
     return actual.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).toUpperCase();
   };
 
@@ -1768,6 +1769,7 @@ function UCLPage() {
   const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
 
   const currentDate = usePlayersStore((s) => s.currentDate);
+  const seasonStartYear = getSeasonStartYear(save?.season);
 
   useEffect(() => {
     const raw = loadSave();
@@ -1782,7 +1784,7 @@ function UCLPage() {
       setSave(raw);
       return;
     }
-    const offset = uclDayOffset(currentDate);
+    const offset = uclDayOffset(currentDate, getSeasonStartYear(raw.season));
     const synced = simulatePendingUCLThroughDay(raw, offset, raw.myTeamId);
     saveSave(synced);
     setSave(synced);
@@ -1984,7 +1986,7 @@ function UCLPage() {
                                   >
                                     {r}
                                     <span className="ml-1 text-[0.6rem] opacity-70">
-                                      {uclFixtureDate(md)}
+                                      {uclFixtureDate(md, seasonStartYear)}
                                     </span>
                                     {hasUser && (
                                       <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-400" />
@@ -2008,7 +2010,7 @@ function UCLPage() {
                                         {activeRound}
                                       </span>
                                       <span className="ml-2 text-xs text-blue-400">
-                                        {uclFixtureDate(matchday)}
+                                        {uclFixtureDate(matchday, seasonStartYear)}
                                       </span>
                                     </div>
                                     <span className="text-xs text-blue-400">

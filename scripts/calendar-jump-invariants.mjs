@@ -21,6 +21,8 @@ function section(source, start, end) {
   return source.slice(startAt, endAt);
 }
 
+const intermediateResolver = section(calendar, 'async function resolveIntermediateDate(date: string): Promise<boolean> {', 'const handleJumpToDate = async () => {');
+const pendingDrawResolver = section(calendar, 'function resolvePendingDrawsForJump(date: string): boolean {', 'function persistScheduledLeagueResults(date: string): any | null {');
 const jumpHandler = section(calendar, 'const handleJumpToDate = async () => {', 'const handleCupDrawComplete =');
 const loadSaveImpl = section(store, 'function loadSaveImpl(): SaveGame | null {', 'export function saveSave(');
 const saveSaveImpl = section(store, 'function saveSaveImpl(s: SaveGame): boolean {', 'function scheduleSaveForDisk(): void {');
@@ -31,10 +33,12 @@ const backgroundSim = section(store, 'function processScheduledBackgroundSimsImp
 
 assert.match(jumpHandler, /advanceTime\(1,\s*\{\s*simulateAllLeagues:\s*true,\s*mode:\s*"jump",\s*targetDate\s*\}\)/s,
   'El salto debe reutilizar advanceTime en modo jump día por día.');
-assert.match(jumpHandler, /after < targetDate[\s\S]*resolveIntermediateDate\(after\)/,
-  'Solo se deben resolver eventos para fechas anteriores al destino.');
+assert.match(jumpHandler, /resolveIntermediateDate\(after\)/,
+  'Cada fecha alcanzada debe resolver los eventos del calendario, incluida la fecha destino.');
+assert.doesNotMatch(jumpHandler, /if \(after < targetDate\)[\s\S]*resolveIntermediateDate\(after\)/,
+  'No se debe dejar sin resolver la fecha destino tras confirmar un salto.');
 assert.doesNotMatch(jumpHandler, /persistScheduledLeagueResults\(targetDate\)/,
-  'El día destino no debe simularse por la ruta de persistencia de partidos.');
+  'La fecha destino debe usar el mismo resolvedor diario de competiciones, no una persistencia parcial.');
 assert.match(jumpHandler, /beginSaveBatch\(\{\s*checkpointEveryDays:\s*7\s*\}\)/,
   'El salto debe guardar checkpoints periódicos.');
 assert.match(jumpHandler, /await[\s\S]*waitForCalendarBackgroundTasks\(\)[\s\S]*endSaveBatch\(\)/,
@@ -65,6 +69,14 @@ assert.doesNotMatch(matchForJump, /calendarLineupIds/,
   'El salto no debe volver al XI genérico por rating, que ignora posiciones y formación.');
 assert.match(advanceTime, /simulateCalendarLeagueFixture\(f, get\(\)\)/,
   'El avance diario debe simular la liga con alineaciones reales.');
+assert.match(intermediateResolver, /simulateNationalCupsThroughDate\(currentSave, date, true\)/,
+  'La fecha destino debe cerrar también partidos de copas nacionales del equipo y de otros países.');
+assert.match(intermediateResolver, /setSave\(currentSave\);[\s\S]*return handled;/,
+  'Los resultados de copa/Europa se deben publicar en el estado visible durante el salto.');
+assert.match(intermediateResolver, /\(fixture: any\) => !fixture\.result\)[\s\S]*getEuropeanFixtureDateIso\(fixture, "ucl", seasonStartYear\) === date/,
+  'La Champions debe completar todos los fixtures de la fecha, aunque no sean el del equipo controlado.');
+assert.match(pendingDrawResolver, /pendingDrawQueue: \[\], pendingCupDraw: false, pendingUclDraw: null/,
+  'Los sorteos automáticos deben limpiar la cola y no disparar modales al salir del salto.');
 {
   const modal = fs.readFileSync(path.join(root, 'src/components/MatchDayModal.tsx'), 'utf8');
   assert.match(modal, /useCalendarJumpState/, 'El aviso de día de partido debe respetar el salto de calendario.');

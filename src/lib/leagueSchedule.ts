@@ -1,14 +1,25 @@
 import { teamById, type LeagueId } from "@/data/teams";
 import { generateLeagueFixtures } from "@/lib/season";
 import {
+  getSeasonCalendarAnchors,
+  INITIAL_SEASON_START_YEAR,
+  type SeasonCalendarOptions,
+} from "@/lib/season/calendarFactory";
+import {
   assignFixtureDates,
   LEAGUE_MD1_FRIDAY,
   rawToSchedule,
   scheduleNeedsRealisticDates,
 } from "@/lib/fixtureScheduler";
 
-/** First league matchday anchor (Saturday display reference). */
+/** Legacy constants retained for consumers that still need 2026/27 anchors. */
 export const LEAGUE_SEASON_KICKOFF = "2026-08-15";
+export function leagueSeasonKickoff(seasonStartYear = INITIAL_SEASON_START_YEAR): string {
+  return getSeasonCalendarAnchors(seasonStartYear).leagueKickoffSaturday;
+}
+export function leagueMatchday1Friday(seasonStartYear = INITIAL_SEASON_START_YEAR): string {
+  return getSeasonCalendarAnchors(seasonStartYear).leagueMatchday1Friday;
+}
 export { LEAGUE_MD1_FRIDAY, scheduleNeedsRealisticDates };
 
 export type ScheduleFixture = {
@@ -29,18 +40,20 @@ export type ScheduleFixture = {
 export function buildFullLeagueSchedule(
   league: LeagueId,
   protectedDates?: Map<string, Set<string>>,
+  options: SeasonCalendarOptions = {},
 ): ScheduleFixture[] {
-  const raw = generateLeagueFixtures(league);
-  const dates = assignFixtureDates(raw, protectedDates);
-  return rawToSchedule(raw, dates);
+  const raw = generateLeagueFixtures(league, options);
+  const dates = assignFixtureDates(raw, protectedDates, options);
+  return rawToSchedule(raw, dates, options);
 }
 
 export function buildUserLeagueSchedule(
   myTeamId: string,
   league: LeagueId,
   protectedDates?: Map<string, Set<string>>,
+  options: SeasonCalendarOptions = {},
 ): ScheduleFixture[] {
-  return buildFullLeagueSchedule(league, protectedDates).filter(
+  return buildFullLeagueSchedule(league, protectedDates, options).filter(
     (f) => f.homeTeam === myTeamId || f.awayTeam === myTeamId,
   );
 }

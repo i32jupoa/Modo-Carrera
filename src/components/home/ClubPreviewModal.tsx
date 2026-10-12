@@ -32,7 +32,7 @@ export default function ClubPreviewModal({
   onOpenChange: (v: boolean) => void;
   onStart: (id: string) => void;
 }) {
-  const team = teamId ? getAllTeams().find((t) => t.id === teamId) || null : null;
+  const team = teamId ? getAllTeams({ teamLeagueOverrides: {} }).find((t) => t.id === teamId) || null : null;
 
   // Build full squad from players JSON, deterministic order by OVR
   const squad = React.useMemo(() => {
@@ -59,7 +59,7 @@ export default function ClubPreviewModal({
       0,
     ) / 1_000_000,
   );
-  const rivals = getRivals(team);
+  const rivals = getRivals(team, { teamLeagueOverrides: {} });
   const recentTrophies = realRecentTrophies(team.name, team.league);
   const topPlayers = squad.slice(0, 5);
   const leagueTier = getLeagueTier(team.league);

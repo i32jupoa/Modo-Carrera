@@ -103,7 +103,7 @@ function norm(s: string) {
 }
 
 function poolForDifficulty(d: Difficulty) {
-  const all = getAllTeams();
+  const all = getAllTeams({ teamLeagueOverrides: {} });
   switch (d) {
     case "easy":
       return all.filter((t) => overall(t) >= 85);

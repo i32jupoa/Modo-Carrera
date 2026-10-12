@@ -11,7 +11,7 @@ import type { PositionGroup, SquadNeed } from "@/lib/transfers/types";
 import { DYNAMIC_BY_ID, recordAcademyPromotionEvent } from "./academyRuntime";
 import { academyContract, academyMarketValue, academyPlayerToFcPlayer, academyPlayerToStats } from "./academyAdapters";
 import { ACADEMY_LIMITS, ACADEMY_PROMOTION_LIMITS, ACADEMY_SCORE_WEIGHTS } from "./academyConstants";
-import { generateAcademyState } from "./academyGenerator";
+import { generateAcademyState, generateAnnualIntake } from "./academyGenerator";
 import { advanceAcademyToDate, simulateAcademyLeagueMatchOnDate } from "./academyProgression";
 import type { AcademyPlayer, ClubAcademyState } from "./academyTypes";
 
@@ -294,6 +294,40 @@ export function promoteBestAcademySolutionForNeed(clubId: string, date: string, 
   cacheAcademyState(saveId, clubId, season, state);
   refreshTeamRating(clubId);
   return true;
+}
+
+
+/**
+ * Generates one fresh annual intake for each AI academy that survived from a
+ * prior season. Academies created directly for the new season already contain
+ * their inaugural cohort and are not duplicated. This function is deterministic
+ * for a given save, club and season and may safely be retried.
+ */
+export function runAcademyAnnualIntakeForAllClubs(date: string): { generated: number; clubs: number } {
+  const saveId = getCurrentSaveId();
+  if (!saveId) return { generated: 0, clubs: 0 };
+  const season = seasonForDate(date);
+  let generated = 0;
+  let clubs = 0;
+  for (const team of getAllTeams()) {
+    const current = getState(saveId, team.id, season, date);
+    if (Number(current.lastIntakeSeason ?? 0) >= season) continue;
+    const additions = generateAnnualIntake(saveId, {
+      ...current,
+      lastIntakeSeason: Math.min(Number(current.lastIntakeSeason ?? season - 1), season - 1),
+    }, season);
+    const updated: ClubAcademyState = {
+      ...current,
+      players: [...current.players, ...additions].slice(0, ACADEMY_LIMITS.maxPlayers),
+      lastIntakeSeason: season,
+      manualPromotionAvailable: true,
+      updatedAt: new Date().toISOString(),
+    };
+    cacheAcademyState(saveId, team.id, season, updated);
+    generated += additions.length;
+    clubs += additions.length > 0 ? 1 : 0;
+  }
+  return { generated, clubs };
 }
 
 export function runAcademyPreseasonPromotions(date: string): AcademyPromotionBatchResult {

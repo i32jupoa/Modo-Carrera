@@ -371,7 +371,7 @@ export interface ContractCycleResult {
  */
 export function runClubContractCycle(
   clubId: string,
-  options: { date: string; maxRenewals?: number; reviewList?: boolean },
+  options: { date: string; maxRenewals?: number; reviewList?: boolean; excludePlayerIds?: ReadonlySet<string> },
 ): ContractCycleResult {
   const cacheKey = options.date;
   setRenewalLogDate(options.date);
@@ -379,7 +379,7 @@ export function runClubContractCycle(
   const result: ContractCycleResult = { clubId, renewals: [], listed: [] };
 
   const expiring = getClubPlayers(clubId)
-    .filter((player) => player.contract.yearsLeft <= 1 && !player.loanClubId)
+    .filter((player) => player.contract.yearsLeft <= 1 && !player.loanClubId && !options.excludePlayerIds?.has(player.id))
     .sort((a, b) => b.ovr - a.ovr);
 
   for (const player of expiring) {
@@ -425,7 +425,7 @@ export interface ContractExpiry {
  * Cierra la temporada en lo que a contratos respecta: descuenta un año a
  * todos, deja libres a los que se acaban y limpia las listas.
  */
-export function advanceSeason(date: string): ContractExpiry[] {
+export function advanceSeason(date: string, options: { excludePlayerIds?: ReadonlySet<string> } = {}): ContractExpiry[] {
   const expiries: ContractExpiry[] = [];
 
   const userClubId = getUserClubId();
@@ -434,6 +434,9 @@ export function advanceSeason(date: string): ContractExpiry[] {
     // su plantilla sin que él lo decida.
     if (userClubId && team === userClubId) continue;
     for (const player of getClubPlayers(team)) {
+      // Retroactive repairs must not decrement the new contract of a player
+      // who was already transferred during the summer window.
+      if (options.excludePlayerIds?.has(player.id)) continue;
       const yearsLeft = player.contract.yearsLeft - 1;
       if (yearsLeft >= CONTRACT_RULES.minYears) {
         updatePlayer(player.id, { contract: { ...player.contract, yearsLeft } });

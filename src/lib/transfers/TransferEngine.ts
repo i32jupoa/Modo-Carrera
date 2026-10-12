@@ -1609,7 +1609,7 @@ export function signEmergencyMarketCandidate(
 
   const pool = Array.from(getMarketIndex().byId.values())
     .filter((player) => {
-      if (!player.clubId || player.clubId === clubId) return false;
+      if (player.retired || !player.clubId || player.clubId === clubId) return false;
       if (userClubId && player.clubId === userClubId) return false;
       if (player.age >= 35 && player.ovr < report.startingRating - 4) return false;
       if (wageDemand(player.id, clubId) > wageCeiling) return false;

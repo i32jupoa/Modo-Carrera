@@ -1,4 +1,6 @@
-import { LeagueId, LEAGUES, teamsByLeague, getAllTeams, teamById } from "@/data/teams";
+import { type LeagueId } from "@/data/teams";
+import { getInitialEuropeanParticipants, selectEuropeanParticipants } from "@/lib/season/europeanQualification";
+import { addIsoDays, getDateOffset, shiftReferenceDateToSeason } from "@/lib/season/calendarFactory";
 
 // ============================================================
 //  UCL SWISS FORMAT — 36 teams, 8 matchdays, single table
@@ -49,54 +51,12 @@ export function isUCLLeaguePhaseFixture(round: string | undefined): boolean {
 }
 
 // ============================================================
-//  HARDCODED SEASON 1 PARTICIPANTS (36 teams)
-//  Ordered by approximate OVR for pot assignment
+//  PARTICIPANTES BASE DE LA PRIMERA TEMPORADA
+//  Se derivan de la fuerza y distribución de los clubes registrados; las
+//  temporadas posteriores usan la clasificación por méritos de cada carrera.
+//  Se conserva el nombre exportado para compatibilidad con rutas/guardados.
 // ============================================================
-
-// Maps display name → team id used in the game
-// These must match the ids in PLAYERS_BY_TEAM / getAllTeams()
-export const UCL_SEASON1_IDS: string[] = [
-  // ── Bombo 1 — top 9 por media (att+mid+def) ──────────────
-  "mci", // Manchester City        271
-  "rma", // Real Madrid            270
-  "bay", // FC Bayern München      266
-  "psg", // Paris SG               265
-  "liv", // Liverpool              264
-  "int", // Lombardia FC           263
-  "ars", // Arsenal                263
-  "bar", // FC Barcelona           262
-  "lev2", // Leverkusen             258
-  // ── Bombo 2 — siguientes 9 ───────────────────────────────
-  "nap", // SSC Napoli             257
-  "atm", // Atlético de Madrid     256
-  "juv", // Juventus               255
-  "che", // Chelsea                252
-  "rbl", // RB Leipzig             251
-  "bvb", // Borussia Dortmund      251
-  "mil", // Milano FC              250
-  "fcporto", // FC Porto     (dynamic)
-  "sportingcp", // Sporting CP  (dynamic)
-  // ── Bombo 3 ──────────────────────────────────────────────
-  "mon", // AS Monaco              243
-  "mar", // OM                     243
-  "ath", // Athletic Club          240
-  "feyenoord", // Feyenoord    (dynamic)
-  "psv", // PSV          (dynamic)
-  "galatasaray", // Galatasaray  (dynamic)
-  "clubbrugge", // Club Brugge  (dynamic)
-  "fenerbahe", // Fenerbahçe   (dynamic)
-  "fcmidtjylland", // FC Midtjylland (dynamic)
-  // ── Bombo 4 — equipos más modestos ───────────────────────
-  "celtic", // Celtic       (dynamic)
-  "rangers", // Rangers      (dynamic)
-  "bscyoungboys", // BSC Young Boys (dynamic)
-  "fkbodglimt", // FK Bodø/Glimt (dynamic)
-  "rbsalzburg", // RB Salzburg  (dynamic)
-  "malmff", // Malmö FF     (dynamic)
-  "legiawarszawa", // Legia Warszawa (dynamic)
-  "fcsb", // FCSB         (dynamic)
-  "runionstg", // R. Union St.-G. (dynamic)
-];
+export const UCL_SEASON1_IDS: string[] = getInitialEuropeanParticipants("ucl");
 
 // ============================================================
 //  POT ASSIGNMENT — divide 36 teams into 4 pots of 9 by OVR
@@ -115,72 +75,18 @@ export function assignUCLPots(teamIds: string[]): string[][] {
 }
 
 // ============================================================
-//  MERIT-BASED SELECTION (Season 2+)
-//  Uses previous season standings (passed in as parameter)
+//  CLASIFICACIÓN POR MÉRITOS (compatibilidad con consumidores antiguos)
 // ============================================================
 export type LeagueSlots = { leagueId: LeagueId; slots: number };
 
-export const UCL_LEAGUE_SLOTS: LeagueSlots[] = [
-  { leagueId: "premier", slots: 4 },
-  { leagueId: "laliga", slots: 4 },
-  { leagueId: "seriea", slots: 4 },
-  { leagueId: "bundesliga", slots: 4 },
-  { leagueId: "ligue1", slots: 3 },
-  { leagueId: "ligaportugal", slots: 2 },
-  { leagueId: "trendyolsuperlig", slots: 2 },
-  { leagueId: "eredivisie", slots: 2 },
-  { leagueId: "1aproleague", slots: 2 },
-  { leagueId: "scottish", slots: 2 },
-  // 1 champion each
-  { leagueId: "superleague", slots: 1 }, // Switzerland
-  { leagueId: "eliteserien", slots: 1 }, // Norway
-  { leagueId: "allsvenskan", slots: 1 }, // Sweden
-  { leagueId: "superliga", slots: 1 }, // Romania
-  { leagueId: "3fSuperliga", slots: 1 }, // Denmark
-  { leagueId: "ekstraklasa", slots: 1 }, // Poland
-  { leagueId: "austrianbundesliga", slots: 1 },
-];
-
 /**
- * Select UCL participants based on previous season standings.
- * standings: Record<LeagueId, { teamId: string; points: number }[]> (sorted best first)
+ * Selector heredado. La asignación real ya vive en europeanQualification.ts,
+ * que aplica coeficientes de asociaciones, campeones, copas y cascada de plazas.
  */
 export function selectUCLParticipants(
-  standings: Record<string, { teamId: string; points: number }[]>,
+  standings: Record<string, { teamId: string; points: number; gd?: number; gf?: number; won?: number; played?: number }[]>,
 ): string[] {
-  const selected: string[] = [];
-  const used = new Set<string>();
-
-  for (const { leagueId, slots } of UCL_LEAGUE_SLOTS) {
-    const leagueTable = standings[leagueId] ?? [];
-    let added = 0;
-    for (const entry of leagueTable) {
-      if (added >= slots) break;
-      if (!used.has(entry.teamId)) {
-        selected.push(entry.teamId);
-        used.add(entry.teamId);
-        added++;
-      }
-    }
-  }
-
-  // Pad to 36 if needed (fill with best OVR teams not already selected)
-  if (selected.length < 36) {
-    const allTeams = getAllTeams().sort((a, b) => {
-      const ovrA = a.att + a.mid + a.def;
-      const ovrB = b.att + b.mid + b.def;
-      return ovrB - ovrA;
-    });
-    for (const t of allTeams) {
-      if (selected.length >= 36) break;
-      if (!used.has(t.id)) {
-        selected.push(t.id);
-        used.add(t.id);
-      }
-    }
-  }
-
-  return selected.slice(0, 36);
+  return selectEuropeanParticipants({ season: "2027/28", standings }).ucl;
 }
 
 // ============================================================
@@ -220,38 +126,80 @@ export const UCL_CALENDAR = {
   final: 329, // Wed May 26 2027 – single-leg final
 };
 
-export function uclDayOffset(isoDate: string): number {
-  const start = new Date(UCL_START + "T00:00:00Z").getTime();
+export function uclStartForSeason(seasonStartYear = 2026): string {
+  return `${seasonStartYear}-07-01`;
+}
+
+/**
+ * Rebuild the UEFA calendar for any season. The reference dates are moved by
+ * civil date and snapped to their original weekday, so Tue/Wed UCL fixtures
+ * stay on Tue/Wed even when the next season has a different weekday layout.
+ * The existing UCL_CALENDAR remains the exact 2026/27 compatibility baseline.
+ */
+export function uclCalendarForSeason(seasonStartYear = 2026) {
+  if (seasonStartYear === 2026) return UCL_CALENDAR;
+  const start = uclStartForSeason(seasonStartYear);
+  const offset = (referenceOffset: number) => {
+    const referenceIso = addIsoDays(UCL_START, referenceOffset);
+    const shiftedIso = shiftReferenceDateToSeason(referenceIso, seasonStartYear, true);
+    return getDateOffset(start, shiftedIso);
+  };
+  return {
+    leagueDraw: offset(UCL_CALENDAR.leagueDraw),
+    leagueDay: UCL_CALENDAR.leagueDay.map(offset),
+    playoffDraw: offset(UCL_CALENDAR.playoffDraw),
+    playoffLeg1: offset(UCL_CALENDAR.playoffLeg1),
+    playoffLeg2: offset(UCL_CALENDAR.playoffLeg2),
+    knockoutDraw: offset(UCL_CALENDAR.knockoutDraw),
+    r16Leg1: offset(UCL_CALENDAR.r16Leg1),
+    r16Leg2: offset(UCL_CALENDAR.r16Leg2),
+    qfLeg1: offset(UCL_CALENDAR.qfLeg1),
+    qfLeg2: offset(UCL_CALENDAR.qfLeg2),
+    sfLeg1: offset(UCL_CALENDAR.sfLeg1),
+    sfLeg2: offset(UCL_CALENDAR.sfLeg2),
+    final: offset(UCL_CALENDAR.final),
+  };
+}
+
+export function uclDayOffset(isoDate: string, seasonStartYear = 2026): number {
+  const start = new Date(uclStartForSeason(seasonStartYear) + "T00:00:00Z").getTime();
   const d = new Date(isoDate + "T00:00:00Z").getTime();
   return Math.floor((d - start) / 86400000);
 }
 
-/** UCL matchdays in chronological order (for background simulation catch-up). */
-export const UCL_SIMULATION_DAYS: number[] = [
-  ...UCL_CALENDAR.leagueDay,
-  UCL_CALENDAR.playoffLeg1,
-  UCL_CALENDAR.playoffLeg2,
-  UCL_CALENDAR.r16Leg1,
-  UCL_CALENDAR.r16Leg2,
-  UCL_CALENDAR.qfLeg1,
-  UCL_CALENDAR.qfLeg2,
-  UCL_CALENDAR.sfLeg1,
-  UCL_CALENDAR.sfLeg2,
-  UCL_CALENDAR.final,
-];
+/** UCL matchdays in chronological order for a specific career season. */
+export function uclSimulationDaysForSeason(seasonStartYear = 2026): number[] {
+  const calendar = uclCalendarForSeason(seasonStartYear);
+  return [
+    ...calendar.leagueDay,
+    calendar.playoffLeg1,
+    calendar.playoffLeg2,
+    calendar.r16Leg1,
+    calendar.r16Leg2,
+    calendar.qfLeg1,
+    calendar.qfLeg2,
+    calendar.sfLeg1,
+    calendar.sfLeg2,
+    calendar.final,
+  ];
+}
 
-export function uclRoundForOffset(offset: number): string | null {
-  const li = UCL_CALENDAR.leagueDay.indexOf(offset);
+/** Legacy 2026/27 offsets retained for compatibility with older consumers. */
+export const UCL_SIMULATION_DAYS: number[] = uclSimulationDaysForSeason(2026);
+
+export function uclRoundForOffset(offset: number, seasonStartYear = 2026): string | null {
+  const calendar = uclCalendarForSeason(seasonStartYear);
+  const li = calendar.leagueDay.indexOf(offset);
   if (li >= 0) return `Jornada ${li + 1}`;
-  if (offset === UCL_CALENDAR.playoffLeg1) return "Playoff-Leg1";
-  if (offset === UCL_CALENDAR.playoffLeg2) return "Playoff-Leg2";
-  if (offset === UCL_CALENDAR.r16Leg1) return "R16-Leg1";
-  if (offset === UCL_CALENDAR.r16Leg2) return "R16-Leg2";
-  if (offset === UCL_CALENDAR.qfLeg1) return "QF-Leg1";
-  if (offset === UCL_CALENDAR.qfLeg2) return "QF-Leg2";
-  if (offset === UCL_CALENDAR.sfLeg1) return "SF-Leg1";
-  if (offset === UCL_CALENDAR.sfLeg2) return "SF-Leg2";
-  if (offset === UCL_CALENDAR.final) return "Final";
+  if (offset === calendar.playoffLeg1) return "Playoff-Leg1";
+  if (offset === calendar.playoffLeg2) return "Playoff-Leg2";
+  if (offset === calendar.r16Leg1) return "R16-Leg1";
+  if (offset === calendar.r16Leg2) return "R16-Leg2";
+  if (offset === calendar.qfLeg1) return "QF-Leg1";
+  if (offset === calendar.qfLeg2) return "QF-Leg2";
+  if (offset === calendar.sfLeg1) return "SF-Leg1";
+  if (offset === calendar.sfLeg2) return "SF-Leg2";
+  if (offset === calendar.final) return "Final";
   return null;
 }
 

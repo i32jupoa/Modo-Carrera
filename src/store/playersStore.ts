@@ -77,7 +77,7 @@ import {
   recordMarketInjury,
   resetMarketPlayerSignals,
 } from "@/lib/transfers/MarketPlayerSignals";
-import { NATIONAL_CUP_START } from "@/lib/calendarRules";
+import { nationalCupDateForSeason, nationalCupStartForSeason } from "@/lib/calendarRules";
 import { recoverStamina, STAMINA_START } from "@/lib/liveMatch";
 
 import {
@@ -85,6 +85,7 @@ import {
   mergeScheduleWithPlayed,
   type ScheduleFixture,
 } from "@/lib/leagueSchedule";
+import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 import type { Fixture } from "@/lib/season";
@@ -128,9 +129,8 @@ import { loadTactics } from "@/lib/teamTactics";
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 
 import {
-  UCL_CALENDAR,
-  UCL_START,
-  UCL_SEASON1_IDS,
+  uclCalendarForSeason,
+  uclStartForSeason,
   uclDayOffset,
   emptyTableEntry,
   assignUCLPots,
@@ -138,7 +138,8 @@ import {
 } from "@/data/ucl";
 
 import { runSwissDraw, assignmentsToFixtures } from "@/lib/uclDraw";
-import { EUROPEAN_CONFIGS, europeanCalendar, EUROPEAN_START, isEuropeanCompetition } from "@/data/europeanCompetitions";
+import { europeanCalendar } from "@/data/europeanCompetitions";
+import { getEuropeanParticipantsForSave } from "@/lib/season/europeanQualification";
 
 import { LEAGUES, getPrimaryLeagueForCountry } from "@/data/teams";
 import { getClubProfile, estimateFinancialPower } from "@/lib/transfers/ClubStrategy";
@@ -393,6 +394,9 @@ export type TransferResult = { ok: true } | { ok: false; reason: string };
 export type StatCompetition = "league" | "cup" | "ucl" | "uel" | "uecl";
 
 export type PlayerStats = {
+  /** Edad de carrera persistida cuando el registro base no incluye fecha de nacimiento. */
+  ageOverride?: number;
+  ageOverrideSeason?: string;
   goals: number;
 
   assists: number;
@@ -961,13 +965,28 @@ export function mapEaPosition(pos: string): Position {
 // ventas, cesiones, carga de partida, nueva partida).
 // ============================================================================
 
+/**
+ * Edad efectiva de un jugador. Los registros con fecha de nacimiento se
+ * calculan por calendario; los registros antiguos sin fecha pueden mantener
+ * la edad incrementada en el save. `stats` es opcional deliberadamente:
+ * recomputeAllTeamRatings se ejecuta durante la inicialización del módulo,
+ * antes de que el store de Zustand esté disponible.
+ */
+function effectivePlayerAge(fc: FcPlayer, stats?: PlayerStats): number {
+  if (fc.birthdate) return fc.Age;
+  const override = stats?.ageOverride;
+  if (override === undefined || override === null || !Number.isFinite(Number(override))) return fc.Age;
+  return Math.max(0, Math.round(Number(override)));
+}
+
 function recomputeTeamRating(teamId: string): void {
   if (!teamId) return;
   const squad = squadForTeam(teamId);
   const rated: RatedSquadMember[] = squad.map((fc) => ({
     rating: fc.OVR || 70,
     position: mapEaPosition(fc.Position),
-    age: fc.Age,
+    // No leer el store aquí: esta función se invoca antes de inicializarlo.
+    age: effectivePlayerAge(fc),
   }));
   const raw = computeTeamRatingFromSquad(rated);
   const tier = getLeagueTier(teamById(teamId).league);
@@ -1113,6 +1132,7 @@ function dynamicFcPlayerView(fc: FcPlayer, stats?: PlayerStats): FcPlayer {
   const attrs = dynamicAttributesFor(fc, stats);
   return {
     ...fc,
+    Age: effectivePlayerAge(fc, stats),
     OVR: Number.isFinite(Number(dynamic?.currentOVR)) ? Math.round(Number(dynamic?.currentOVR)) : Math.round(fc.OVR),
     potential: Number.isFinite(Number(dynamic?.potentialOVR))
       ? Math.round(Number(dynamic?.potentialOVR))
@@ -1179,11 +1199,11 @@ function fcToPlayer(
 
     potential: currentPotential,
 
-    age: fc.Age,
+    age: effectivePlayerAge(fc, stats),
 
     teamId,
 
-    marketValue: marketValueMillions(currentOVR, fc.Age, fc.Position, "", "", false, 75, currentPotential),
+    marketValue: marketValueMillions(currentOVR, effectivePlayerAge(fc, stats), fc.Position, "", "", false, 75, currentPotential),
 
     isReal: true,
 
@@ -1565,6 +1585,9 @@ function buildProtectedCompetitionDates(
   league: LeagueId,
 ): Map<string, Set<string>> {
   const protectedDates = new Map<string, Set<string>>();
+  const seasonStartYear = getSeasonStartYear(save?.season);
+  const uclCalendar = uclCalendarForSeason(seasonStartYear);
+  const uclStart = uclStartForSeason(seasonStartYear);
   const add = (teamId: string, dateIso: string) => {
     const team = teamById(teamId);
     if (!team || team.league !== league) return;
@@ -1585,10 +1608,10 @@ function buildProtectedCompetitionDates(
     const primaryLeague = getPrimaryLeagueForCountry(country) as LeagueId | undefined;
     const structure =
       (primaryLeague && (save?.cupFixtures as any)?.[`${primaryLeague}_structure`]) ||
-      getCupStructureForCountry(country);
+      getCupStructureForCountry(country, seasonStartYear);
     for (const step of structure?.schedule ?? []) {
       if (typeof step?.matchday !== "number") continue;
-      addAllLeagueTeams(addDaysToIso(NATIONAL_CUP_START, step.matchday));
+      addAllLeagueTeams(nationalCupDateForSeason(step.matchday, seasonStartYear));
     }
   }
 
@@ -1598,13 +1621,13 @@ function buildProtectedCompetitionDates(
   for (const [leagueKey, list] of Object.entries(save?.cupFixtures ?? {})) {
     if (!Array.isArray(list)) continue;
     const fixtureCountry = LEAGUES[leagueKey as LeagueId]?.country;
-    const fixtureStructure = fixtureCountry ? getCupStructureForCountry(fixtureCountry) : null;
+    const fixtureStructure = fixtureCountry ? getCupStructureForCountry(fixtureCountry, seasonStartYear) : null;
     for (const fixture of list as any[]) {
       if (fixture.result || fixture.homeId == null || fixture.awayId == null) continue;
       const canonicalStep = fixtureStructure?.schedule?.find((step: any) => step.round === fixture.round);
       const dateIso = canonicalStep?.matchday != null
-        ? addDaysToIso(NATIONAL_CUP_START, canonicalStep.matchday)
-        : getCupFixtureDateIso(fixture);
+        ? nationalCupDateForSeason(canonicalStep.matchday, seasonStartYear)
+        : getCupFixtureDateIso(fixture, seasonStartYear);
       if (!dateIso) continue;
       add(fixture.homeId, dateIso);
       add(fixture.awayId, dateIso);
@@ -1612,18 +1635,18 @@ function buildProtectedCompetitionDates(
   }
 
   const uclCalendarData = [
-    ...UCL_CALENDAR.leagueDay,
-    UCL_CALENDAR.playoffLeg1,
-    UCL_CALENDAR.playoffLeg2,
-    UCL_CALENDAR.r16Leg1,
-    UCL_CALENDAR.r16Leg2,
-    UCL_CALENDAR.qfLeg1,
-    UCL_CALENDAR.qfLeg2,
-    UCL_CALENDAR.sfLeg1,
-    UCL_CALENDAR.sfLeg2,
-    UCL_CALENDAR.final,
+    ...uclCalendar.leagueDay,
+    uclCalendar.playoffLeg1,
+    uclCalendar.playoffLeg2,
+    uclCalendar.r16Leg1,
+    uclCalendar.r16Leg2,
+    uclCalendar.qfLeg1,
+    uclCalendar.qfLeg2,
+    uclCalendar.sfLeg1,
+    uclCalendar.sfLeg2,
+    uclCalendar.final,
   ];
-  const europeanCalendarData = europeanCalendar();
+  const europeanCalendarData = europeanCalendar(seasonStartYear);
   const europeanOffsets = [
     ...europeanCalendarData.leagueDay,
     europeanCalendarData.playoffLeg1,
@@ -1643,18 +1666,18 @@ function buildProtectedCompetitionDates(
   // moving an already-created league fixture later in the season.
   const uclParticipants = Array.isArray((save as any)?.ucl?.participants) && (save as any).ucl.participants.length
     ? (save as any).ucl.participants as string[]
-    : UCL_SEASON1_IDS;
+    : getEuropeanParticipantsForSave((save ?? {}) as any, "ucl");
   for (const offset of uclCalendarData) {
-    const dateIso = addDaysToIso(UCL_START, offset);
+    const dateIso = addDaysToIso(uclStart, offset);
     for (const teamId of uclParticipants) add(teamId, dateIso);
   }
 
   for (const comp of ["uel", "uecl"] as const) {
     const participants = Array.isArray((save as any)?.[comp]?.participants) && (save as any)[comp].participants.length
       ? (save as any)[comp].participants as string[]
-      : EUROPEAN_CONFIGS[comp].participants;
+      : getEuropeanParticipantsForSave((save ?? {}) as any, comp);
     for (const offset of europeanOffsets) {
-      const dateIso = addDaysToIso(EUROPEAN_START, offset);
+      const dateIso = addDaysToIso(uclStart, offset);
       for (const teamId of participants) add(teamId, dateIso);
     }
   }
@@ -1666,7 +1689,7 @@ function buildProtectedCompetitionDates(
     if (!Array.isArray(list)) return;
     for (const fixture of list) {
       if (fixture.result || fixture.homeId == null || fixture.awayId == null) continue;
-      const dateIso = getEuropeanFixtureDateIso(fixture, competition);
+      const dateIso = getEuropeanFixtureDateIso(fixture, competition, seasonStartYear);
       if (!dateIso) continue;
       add(fixture.homeId, dateIso);
       add(fixture.awayId, dateIso);
@@ -1842,7 +1865,10 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         const save = loadSave();
         const protectedDates = buildProtectedCompetitionDates(save, league);
         set({
-          fixtures: buildFullLeagueSchedule(league, protectedDates),
+          fixtures: buildFullLeagueSchedule(league, protectedDates, {
+            seasonStartYear: getSeasonStartYear(save?.season),
+            seed: save?.calendarSeed,
+          }),
           leagueScheduleVersion: 3,
           pendingUserMatch: null,
           lastUserMatchResult: null,
@@ -1863,7 +1889,10 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
         const save = loadSave();
         const protectedDates = buildProtectedCompetitionDates(save, league);
-        const full = buildFullLeagueSchedule(league, protectedDates);
+        const full = buildFullLeagueSchedule(league, protectedDates, {
+          seasonStartYear: getSeasonStartYear(save?.season),
+          seed: save?.calendarSeed,
+        });
 
         if (fixtures.length === 0) {
           set({ fixtures: full, leagueScheduleVersion: 3 });
@@ -2119,6 +2148,30 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           return days;
         }
 
+        // The clock is not allowed to cross a campaign boundary on its own.
+        // GameDayBar / Calendar orchestrate the async, checkpointed rollover;
+        // returning 0 here forces every caller through that single path.
+        try {
+          const activeSave = loadSave();
+          if (activeSave && activeSave.myTeamId === state.myTeamId && activeSave.season) {
+            const seasonEndDate = `${getSeasonStartYear(activeSave.season) + 1}-06-30`;
+            const savedDate = String(activeSave.currentDate ?? state.currentDate);
+            const effectiveDate = savedDate > state.currentDate ? savedDate : state.currentDate;
+            const attemptedDate = addDaysToIso(effectiveDate, 1);
+            if (effectiveDate >= seasonEndDate || attemptedDate > seasonEndDate) {
+              recordCalendarJumpCounter("season.rolloverBoundaryBlocked");
+              return 0;
+            }
+          }
+        } catch (boundaryError) {
+          // Do not risk crossing the boundary if its save metadata cannot be read.
+          if (options?.mode === "jump") {
+            throw new Error("No se pudo verificar el cierre de temporada antes de avanzar.", { cause: boundaryError });
+          }
+          console.error("[advanceTime] no se pudo verificar el límite de temporada; avance bloqueado:", boundaryError);
+          return 0;
+        }
+
         try {
           state.init();
         } catch (err) {
@@ -2219,7 +2272,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                   for (const fixture of list) {
                     if (fixture.result) continue;
                     if (fixture.homeId === currentSave.myTeamId || fixture.awayId === currentSave.myTeamId) continue;
-                    const fixtureDate = getCupFixtureDateIso(fixture);
+                    const fixtureDate = getCupFixtureDateIso(fixture, getSeasonStartYear(currentSave.season));
                     if (fixtureDate !== nextDate) continue;
                     dueDates.add(fixtureDate);
                   }
@@ -2227,7 +2280,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                     const matchdays = new Set(
                       list
                         .filter((fixture) => !fixture.result)
-                        .filter((fixture) => getCupFixtureDateIso(fixture) === date)
+                        .filter((fixture) => getCupFixtureDateIso(fixture, getSeasonStartYear(currentSave.season)) === date)
                         .map((fixture) => Number(fixture.matchday)),
                     );
                     for (const matchday of matchdays) {
@@ -2306,7 +2359,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
               const cupKey = (primaryLeague || currentSave.myLeague) as LeagueId;
 
-              const CUP_START = new Date("2026-07-07T00:00:00Z");
+              const CUP_START = new Date(`${nationalCupStartForSeason(getSeasonStartYear(currentSave.season))}T00:00:00Z`);
 
               const todayOffset = Math.floor(
                 (new Date(nextDate).getTime() - CUP_START.getTime()) / 86400000,
@@ -2314,14 +2367,14 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
               const cupStructure =
                 (currentSave.cupFixtures as any)[`${cupKey}_structure`] ||
-                getCupStructureForCountry(userCountry || "");
+                getCupStructureForCountry(userCountry || "", getSeasonStartYear(currentSave.season));
 
               const cupSchedule = cupStructure.schedule;
 
               const isInPreliminary = (() => {
                 try {
                   return (
-                    initCup(userCountry || "").preliminaryParticipants?.includes(
+                    initCup(userCountry || "", getSeasonStartYear(currentSave.season)).preliminaryParticipants?.includes(
                       currentSave.myTeamId,
                     ) || false
                   );
@@ -2384,7 +2437,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                 for (const f of cupFixtures) {
                   if (f.result) continue;
                   if (f.homeId !== currentSave.myTeamId && f.awayId !== currentSave.myTeamId) continue;
-                  if (getCupFixtureDateIso(f) === nextDate) {
+                  if (getCupFixtureDateIso(f, getSeasonStartYear(currentSave.season)) === nextDate) {
                     dueUserCupMatchdays.add(Number(f.matchday));
                   }
                 }
@@ -2434,17 +2487,19 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           const rawSave = loadSave();
 
           if (rawSave) {
-            const offset = uclDayOffset(nextDate);
+            const seasonStartYear = getSeasonStartYear(rawSave.season);
+            const uclCalendar = uclCalendarForSeason(seasonStartYear);
+            const offset = uclDayOffset(nextDate, seasonStartYear);
 
-            if (!rawSave.ucl && offset >= UCL_CALENDAR.leagueDraw) {
+            if (!rawSave.ucl && offset >= uclCalendar.leagueDraw) {
               rawSave.ucl = {
                 phase: "league" as const,
 
                 seasonNumber: 1,
 
-                participants: UCL_SEASON1_IDS,
+                participants: getEuropeanParticipantsForSave(rawSave, "ucl"),
 
-                table: UCL_SEASON1_IDS.map(emptyTableEntry),
+                table: getEuropeanParticipantsForSave(rawSave, "ucl").map(emptyTableEntry),
 
                 drawState: { leagueDone: false, playoffDone: false, knockoutDone: false },
 
@@ -2461,7 +2516,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
               // League draw day
 
-              if (offset >= UCL_CALENDAR.leagueDraw && !ucl.drawState.leagueDone) {
+              if (offset >= uclCalendar.leagueDraw && !ucl.drawState.leagueDone) {
                 saveSave(rawSave);
                 drawQueue.push("league");
               }
@@ -2469,7 +2524,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               // Playoff draw day - ALWAYS show modal regardless of team position
 
               if (
-                offset >= UCL_CALENDAR.playoffDraw &&
+                offset >= uclCalendar.playoffDraw &&
                 ucl.drawState.leagueDone &&
                 !ucl.drawState.playoffDone
               ) {
@@ -2481,12 +2536,12 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               // Octavos draw day: queue the notification so it cannot be lost when
               // another competition has a draw on the same date. The modal itself
               // performs the idempotent draw/mark-done operation.
-              if (offset >= UCL_CALENDAR.knockoutDraw && !ucl.drawState.knockoutDone) {
+              if (offset >= uclCalendar.knockoutDraw && !ucl.drawState.knockoutDone) {
                 drawQueue.push("knockout");
               }
 
               // Catch up all UCL AI fixtures through this date (play-offs, knockouts, etc.)
-              if (!isJumpTargetDate && ucl.drawState.leagueDone && offset >= UCL_CALENDAR.leagueDay[0]) {
+              if (!isJumpTargetDate && ucl.drawState.leagueDone && offset >= uclCalendar.leagueDay[0]) {
                 const synced = measureCalendarJumpPhase("simulation.champions", () =>
                   simulatePendingUCLThroughDay(rawSave, offset, rawSave.myTeamId),
                 );
@@ -2508,9 +2563,10 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         try {
           const rawSave = loadSave();
           if (rawSave) {
-            const start = new Date(`${EUROPEAN_START}T00:00:00Z`);
+            const seasonStartYear = getSeasonStartYear(rawSave.season);
+            const start = new Date(`${uclStartForSeason(seasonStartYear)}T00:00:00Z`);
             const offset = Math.floor((new Date(`${nextDate}T00:00:00Z`).getTime() - start.getTime()) / 86400000);
-            const calendar = europeanCalendar();
+            const calendar = europeanCalendar(seasonStartYear);
 
             for (const comp of ["uel", "uecl"] as const) {
               if (!rawSave[comp] && offset >= calendar.leagueDraw) {
@@ -2620,9 +2676,9 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         }
 
         if (isJumpTargetDate) {
-          // Llegamos al día solicitado sin simular sus partidos. Todos los días
-          // anteriores ya pasaron por el pipeline completo; en la fecha objetivo
-          // solo se aplican efectos de calendario que ocurren al entrar en el día.
+          // En un salto solo mueve el reloj y aplica efectos de fecha. La pantalla
+          // Calendario resuelve inmediatamente después los partidos y sorteos de
+          // esta fecha, también los del equipo controlado, sin abrir modales.
           const previousDay = new Date(`${state.currentDate}T00:00:00Z`);
           const targetDay = new Date(`${nextDate}T00:00:00Z`);
           if (
@@ -2643,10 +2699,9 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           }
           syncPlayerAgesForDate(nextDate);
           set({ currentDate: nextDate, pendingUserMatch: null });
-          // La fecha objetivo se deja íntegra: no se ejecutan tampoco partidos
-          // juveniles de esa fecha ni su sincronización asíncrona. Se pondrán al
-          // día cuando el jugador continúe normalmente desde el calendario.
-          recordCalendarJumpCounter("calendar.targetDayLeftUnsimulated");
+          // Las tareas específicas de partido de la fecha objetivo se delegan al
+          // resolvedor del salto, que confirma sus resultados antes de terminar.
+          recordCalendarJumpCounter("calendar.targetDayReadyForResolution");
           return 1;
         }
 
@@ -3365,8 +3420,14 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         // seguía saliendo con el escudo de su equipo anterior en alineaciones
         // y clasificaciones individuales.
         const overriddenClub = clubOfPlayer(playerId);
-        const teamIdOverride =
-          myTeamId && rosterIds.includes(playerId) ? myTeamId : (overriddenClub ?? undefined);
+        const explicitClubOverride = Object.prototype.hasOwnProperty.call(getClubOverrides(), String(playerId));
+        // An explicit empty override means released/free/retired. It must not
+        // fall through to the club the player had in the static JSON database.
+        const teamIdOverride = myTeamId && rosterIds.includes(playerId)
+          ? myTeamId
+          : explicitClubOverride
+            ? (overriddenClub ?? "")
+            : undefined;
 
         // La energía física persistente es exclusiva de los jugadores que
         // pertenecen a la plantilla del usuario. No inferimos esto solo por

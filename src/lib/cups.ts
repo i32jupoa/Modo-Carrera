@@ -8,12 +8,12 @@ import {
   LEAGUES_BY_COUNTRY,
   getAllTeams,
   type Team,
+  type TeamLeagueContext,
 } from "@/data/teams";
 import { Fixture } from "@/lib/season";
-import {
-  findSafeNationalCupDateOnOrBefore,
-  NATIONAL_CUP_START,
-} from "@/lib/calendarRules";
+import { uclCalendarForSeason, uclStartForSeason } from "@/data/ucl";
+import { findSafeNationalCupDateOnOrBefore, nationalCupStartForSeason } from "@/lib/calendarRules";
+import { INITIAL_SEASON_START_YEAR } from "@/lib/season/calendarFactory";
 import { addDaysToIso } from "@/lib/transferWindows";
 
 /* ============================================================
@@ -149,11 +149,11 @@ function getRoundNameForSize(size: number): string {
 }
 
 // Calculate total teams in a country (sum of all teams from all leagues)
-export function getTotalTeamsInCountry(country: string): number {
+export function getTotalTeamsInCountry(country: string, context?: TeamLeagueContext): number {
   const countryLeagues = Object.values(LEAGUES).filter((lg) => lg.country === country);
   let total = 0;
   for (const league of countryLeagues) {
-    total += teamsByLeague(league.id as LeagueId).length;
+    total += teamsByLeague(league.id as LeagueId, context).length;
   }
   return total;
 }
@@ -175,7 +175,7 @@ const ROUND_CALENDAR = [
 // on or before this target date. Round slots are at least 42 days apart: the
 // draw is 14 days before the match and there is a 28-day buffer before the
 // next planned draw, so background simulation has room to be spread safely.
-const GLOBAL_CUP_FINAL_TARGET_MATCHDAY = 318; // 2027-05-21 relative to 2026-07-07; shifted to the last safe Tue/Wed/Thu.
+const GLOBAL_CUP_FINAL_TARGET_MONTH_DAY = "05-21"; // Fecha civil objetivo; se recalcula para cada año de temporada.
 const GLOBAL_CUP_ROUND_GAP = 42;
 const GLOBAL_CUP_DRAW_GAP = 14;
 
@@ -190,8 +190,8 @@ type CupScheduleStep = {
 const GLOBAL_CUP_SCHEDULE_CACHE = new Map<string, CupScheduleStep[]>();
 let GLOBAL_CUP_ROUND_COUNT_CACHE: number | null = null;
 
-function getMainBracketSizeForCountry(country: string): number {
-  const totalTeams = getTotalTeamsInCountry(country);
+function getMainBracketSizeForCountry(country: string, context?: TeamLeagueContext): number {
+  const totalTeams = getTotalTeamsInCountry(country, context);
 
   if (totalTeams >= 64) return 64;
   if (totalTeams >= 32) return 32;
@@ -201,16 +201,16 @@ function getMainBracketSizeForCountry(country: string): number {
   return 2;
 }
 
-function getPreliminaryTeamsCountForCountry(country: string): number {
-  const totalTeams = getTotalTeamsInCountry(country);
-  const mainBracketSize = getMainBracketSizeForCountry(country);
+function getPreliminaryTeamsCountForCountry(country: string, context?: TeamLeagueContext): number {
+  const totalTeams = getTotalTeamsInCountry(country, context);
+  const mainBracketSize = getMainBracketSizeForCountry(country, context);
   const teamsToEliminate = Math.max(0, totalTeams - mainBracketSize);
   return teamsToEliminate > 0 ? teamsToEliminate * 2 : 0;
 }
 
-function getLocalCupRoundDefinitions(country: string) {
-  const mainBracketSize = getMainBracketSizeForCountry(country);
-  const preliminaryTeams = getPreliminaryTeamsCountForCountry(country);
+function getLocalCupRoundDefinitions(country: string, context?: TeamLeagueContext) {
+  const mainBracketSize = getMainBracketSizeForCountry(country, context);
+  const preliminaryTeams = getPreliminaryTeamsCountForCountry(country, context);
   const rounds: { name: string; size: number }[] = [];
 
   if (preliminaryTeams > 0) rounds.push({ name: "Preliminar", size: preliminaryTeams });
@@ -225,19 +225,19 @@ function getLocalCupRoundDefinitions(country: string) {
   return { rounds, mainBracketSize, preliminaryTeams };
 }
 
-function getAllCupCountries(): string[] {
+function getAllCupCountries(context?: TeamLeagueContext): string[] {
   return Object.keys(LEAGUES_BY_COUNTRY).filter((country) => {
     const primaryLeague = LEAGUES_BY_COUNTRY[country]?.[0]?.id;
-    return !!primaryLeague && getTotalTeamsInCountry(country) >= 2;
+    return !!primaryLeague && getTotalTeamsInCountry(country, context) >= 2;
   });
 }
 
-function getGlobalCupRoundCount(): number {
+function getGlobalCupRoundCount(context?: TeamLeagueContext): number {
   if (GLOBAL_CUP_ROUND_COUNT_CACHE !== null) return GLOBAL_CUP_ROUND_COUNT_CACHE;
 
   let maxRounds = 0;
-  for (const country of getAllCupCountries()) {
-    maxRounds = Math.max(maxRounds, getLocalCupRoundDefinitions(country).rounds.length);
+  for (const country of getAllCupCountries(context)) {
+    maxRounds = Math.max(maxRounds, getLocalCupRoundDefinitions(country, context).rounds.length);
   }
 
   GLOBAL_CUP_ROUND_COUNT_CACHE = Math.max(1, maxRounds);
@@ -258,26 +258,29 @@ function getGlobalCupRoundCount(): number {
  * The next draw is still gated by the completion of every country in the
  * previous global round.
  */
-export function getGlobalCupScheduleForCountry(country: string): CupScheduleStep[] {
-  const cached = GLOBAL_CUP_SCHEDULE_CACHE.get(country);
+export function getGlobalCupScheduleForCountry(
+  country: string,
+  seasonStartYear = INITIAL_SEASON_START_YEAR,
+  context?: TeamLeagueContext,
+): CupScheduleStep[] {
+  const cacheKey = `${seasonStartYear}|${country}`;
+  const cached = GLOBAL_CUP_SCHEDULE_CACHE.get(cacheKey);
   if (cached) return cached;
 
-  const local = getLocalCupRoundDefinitions(country);
-  const maxRounds = getGlobalCupRoundCount();
+  const local = getLocalCupRoundDefinitions(country, context);
+  const maxRounds = getGlobalCupRoundCount(context);
   const startSlot = Math.max(0, maxRounds - local.rounds.length);
 
+  const cupStart = nationalCupStartForSeason(seasonStartYear);
   const globalMatchdays = new Array<number>(maxRounds);
   // Search backwards from the late-season final target until each slot lands on
-  // a safe Tue/Wed/Thu in a non-European week. The target offset is fixed, while
-  // the actual weekday is chosen by calendarRules.
-  const targetFinalIso = new Date(
-    `${NATIONAL_CUP_START}T00:00:00Z`,
-  );
-  targetFinalIso.setUTCDate(targetFinalIso.getUTCDate() + GLOBAL_CUP_FINAL_TARGET_MATCHDAY);
-  let currentIso = findSafeNationalCupDateOnOrBefore(targetFinalIso.toISOString().slice(0, 10));
+  // a safe Tue/Wed/Thu in a non-European week. The target remains May 21
+  // in the calendar year that ends this season, including leap years.
+  const targetFinalIso = `${seasonStartYear + 1}-${GLOBAL_CUP_FINAL_TARGET_MONTH_DAY}`;
+  let currentIso = findSafeNationalCupDateOnOrBefore(targetFinalIso, seasonStartYear);
   globalMatchdays[maxRounds - 1] = Math.round(
     (new Date(`${currentIso}T00:00:00Z`).getTime() -
-      new Date(`${NATIONAL_CUP_START}T00:00:00Z`).getTime()) /
+      new Date(`${cupStart}T00:00:00Z`).getTime()) /
       86400000,
   );
 
@@ -285,10 +288,10 @@ export function getGlobalCupScheduleForCountry(country: string): CupScheduleStep
     let candidate = new Date(`${currentIso}T00:00:00Z`);
     candidate.setUTCDate(candidate.getUTCDate() - GLOBAL_CUP_ROUND_GAP);
     let candidateIso = candidate.toISOString().slice(0, 10);
-    candidateIso = findSafeNationalCupDateOnOrBefore(candidateIso);
+    candidateIso = findSafeNationalCupDateOnOrBefore(candidateIso, seasonStartYear);
     globalMatchdays[slot] = Math.round(
       (new Date(`${candidateIso}T00:00:00Z`).getTime() -
-        new Date(`${NATIONAL_CUP_START}T00:00:00Z`).getTime()) /
+        new Date(`${cupStart}T00:00:00Z`).getTime()) /
         86400000,
     );
     currentIso = candidateIso;
@@ -308,7 +311,7 @@ export function getGlobalCupScheduleForCountry(country: string): CupScheduleStep
     };
   });
 
-  GLOBAL_CUP_SCHEDULE_CACHE.set(country, schedule);
+  GLOBAL_CUP_SCHEDULE_CACHE.set(cacheKey, schedule);
   return schedule;
 }
 
@@ -319,13 +322,17 @@ export function getGlobalCupRoundCountForTesting(): number {
 // Generate dynamic cup schedule based on the total number of teams in a country.
 // The round count is still country-specific, but its dates are aligned to the
 // shared global calendar so every country's final is played on the same day.
-export function getCupStructureForCountry(country: string): {
+export function getCupStructureForCountry(
+  country: string,
+  seasonStartYear = INITIAL_SEASON_START_YEAR,
+  context?: TeamLeagueContext,
+): {
   schedule: CupScheduleStep[];
   preliminaryTeams: number;
   mainBracketSize: number;
 } {
-  const local = getLocalCupRoundDefinitions(country);
-  const schedule = getGlobalCupScheduleForCountry(country);
+  const local = getLocalCupRoundDefinitions(country, context);
+  const schedule = getGlobalCupScheduleForCountry(country, seasonStartYear, context);
 
   return {
     schedule,
@@ -347,14 +354,18 @@ export function getCupScheduleForSize(
   return rounds;
 }
 
-export function initCup(country: string): {
+export function initCup(
+  country: string,
+  seasonStartYear = INITIAL_SEASON_START_YEAR,
+  context?: TeamLeagueContext,
+): {
   fixtures: Fixture[];
   participants: string[];
   preliminaryParticipants: string[];
   structure: ReturnType<typeof getCupStructureForCountry>;
 } {
   // Get all teams for this country
-  const allTeams = getAllTeams().filter((t) => {
+  const allTeams = getAllTeams(context).filter((t) => {
     const league = LEAGUES[t.league as LeagueId];
     return league?.country === country;
   });
@@ -364,7 +375,7 @@ export function initCup(country: string): {
   const bracket = calculateCupBracket(allTeams);
 
   // Get cup structure for this country
-  const structure = getCupStructureForCountry(country);
+  const structure = getCupStructureForCountry(country, seasonStartYear, context);
 
   // Extract team IDs from bracket calculation
   const preliminaryParticipants = bracket.preliminaryTeams.map((t) => t.id);
@@ -400,8 +411,9 @@ export function buildNextRound(
   winners: string[],
   nextStep: { matchday: number; round: string },
   _roundIdx?: number,
+  seasonStartYear = INITIAL_SEASON_START_YEAR,
 ): Fixture[] {
-  return buildNextKORound(comp, league, winners, nextStep);
+  return buildNextKORound(comp, league, winners, nextStep, seasonStartYear);
 }
 
 export type UCLGroup = {
@@ -642,6 +654,7 @@ export function buildNextKORound(
   league: LeagueId | null,
   winners: string[],
   scheduleStep: { matchday: number; round: string },
+  seasonStartYear = INITIAL_SEASON_START_YEAR,
 ): Fixture[] {
   // Fisher-Yates shuffle for 100% random draw (no pots, no seeding)
   const shuffled = [...winners];
@@ -662,7 +675,21 @@ export function buildNextKORound(
       league: comp === "cup" ? (league as LeagueId) : teamById(shuffled[i]).league,
       matchday: scheduleStep.matchday,
       round: scheduleStep.round,
-      date: comp === "cup" ? addDaysToIso(NATIONAL_CUP_START, scheduleStep.matchday) : undefined,
+      // `scheduleStep.matchday` in this legacy grouped UCL bracket is a league
+      // matchday threshold (18/22/28/34), not a day offset from July 1. Keep
+      // the progression value for old saves but store the actual UEFA date.
+      date: comp === "cup"
+        ? addDaysToIso(nationalCupStartForSeason(seasonStartYear), scheduleStep.matchday)
+        : addDaysToIso(
+            uclStartForSeason(seasonStartYear),
+            scheduleStep.round === "R16"
+              ? uclCalendarForSeason(seasonStartYear).r16Leg1
+              : scheduleStep.round === "QF"
+                ? uclCalendarForSeason(seasonStartYear).qfLeg1
+                : scheduleStep.round === "SF"
+                  ? uclCalendarForSeason(seasonStartYear).sfLeg1
+                  : uclCalendarForSeason(seasonStartYear).final,
+          ),
       homeId: shuffled[i],
       awayId: shuffled[i + 1],
     });

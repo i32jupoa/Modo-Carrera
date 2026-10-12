@@ -165,7 +165,15 @@ function AppShell() {
   // la inicialización. Esto evita quedar atrapado indefinidamente en
   // "Cargando tu partida…" por una base de datos bloqueada o corrupta.
   useEffect(() => {
-    void initSaveStorage().then(() => {
+    void initSaveStorage().then(async () => {
+      // If a season transition was interrupted by a reload/closed tab, restore
+      // the full checkpoint before orphan cleanup or market hydration runs.
+      try {
+        const { recoverInterruptedSeasonTransition } = await import("@/lib/season/seasonRollover");
+        await recoverInterruptedSeasonTransition();
+      } catch (error) {
+        console.error("No se pudo recuperar la transición de temporada pendiente:", error);
+      }
       cleanupOrphanedSaveSlots();
     });
   }, []);

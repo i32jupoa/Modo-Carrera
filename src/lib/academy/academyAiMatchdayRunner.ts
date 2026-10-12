@@ -1,6 +1,7 @@
 import { getAllTeams, teamById, type LeagueId } from "@/data/teams";
 import { measureCalendarJumpPhase, recordCalendarJumpCounter } from "@/lib/calendarJumpProfiler";
 import { buildFullLeagueSchedule, type ScheduleFixture } from "@/lib/leagueSchedule";
+import { deriveCareerCalendarSeed } from "@/lib/season/calendarFactory";
 import { getCurrentSaveId } from "@/lib/savedGames";
 import { clearAcademyAiCacheForSave, hydrateAcademyAiCache, setAcademyAiStateChangeHandler, simulateAcademyLeagueMatchForAiClub } from "./academyPromotionEngine";
 import { clearAcademyAiSave, loadAcademyAiSave, saveAcademyAiClubStates } from "./academyAiPersistence";
@@ -144,9 +145,12 @@ async function buildCalendar(
             addFixtureToCalendar(calendar, fixture.date, fixture.homeTeam, fixture.awayTeam);
           }
         } else {
-          const schedule = buildFullLeagueSchedule(leagueId as LeagueId);
+          const schedule = buildFullLeagueSchedule(leagueId as LeagueId, undefined, {
+            seasonStartYear: season,
+            seed: deriveCareerCalendarSeed(saveId, season),
+          });
           for (const fixture of schedule) {
-            addFixtureToCalendar(calendar, shiftAcademyFixtureDateToSeason(fixture.date, season), fixture.homeTeam, fixture.awayTeam);
+            addFixtureToCalendar(calendar, fixture.date, fixture.homeTeam, fixture.awayTeam);
           }
         }
       } catch (error) {

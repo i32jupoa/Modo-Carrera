@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { Trophy } from "lucide-react";
 import { loadSave, saveSave, SaveGame, simulatePendingEuropeanThroughDay, initializeEuropeanCompetition } from "@/lib/store";
 import { uclDayOffset } from "@/data/ucl";
-import { EUROPEAN_CONFIGS, EUROPEAN_START } from "@/data/europeanCompetitions";
+import { EUROPEAN_CONFIGS } from "@/data/europeanCompetitions";
+import { uclStartForSeason } from "@/data/ucl";
+import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 import { getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 import { usePlayersStore } from "@/store/playersStore";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
@@ -33,21 +35,22 @@ function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
 }
 
-function europeanFixtureDate(matchday: number): string {
+function europeanFixtureDate(matchday: number, seasonStartYear = 2026): string {
   const iso = getEuropeanFixtureDateIso(
     { matchday, competition: "ucl", round: undefined, europeanCompetition: "uecl" } as any,
     "uecl",
+    seasonStartYear,
   );
   if (iso) return new Date(`${iso}T00:00:00Z`).toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: "UTC" });
   return "";
 }
-function europeanFixtureDateFromFixture(fixture: any, competition: "uel" | "uecl"): string {
-  const iso = getEuropeanFixtureDateIso(fixture, competition);
+function europeanFixtureDateFromFixture(fixture: any, competition: "uel" | "uecl", seasonStartYear = 2026): string {
+  const iso = getEuropeanFixtureDateIso(fixture, competition, seasonStartYear);
   if (iso) {
     const date = new Date(`${iso}T00:00:00Z`);
     return date.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
   }
-  return europeanFixtureDate(Number(fixture.matchday ?? 0));
+  return europeanFixtureDate(Number(fixture.matchday ?? 0), seasonStartYear);
 }
 
 
@@ -1592,7 +1595,7 @@ function ResultsListView({
   const formatDate = (matchday: number, fixture?: Fixture): string => {
     const actual = fixture?.date && /^\d{4}-\d{2}-\d{2}/.test(fixture.date)
       ? new Date(`${fixture.date.slice(0, 10)}T12:00:00Z`)
-      : (() => { const d = new Date(EUROPEAN_START + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + matchday); return d; })();
+      : (() => { const d = new Date(uclStartForSeason(seasonStartYear) + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + matchday); return d; })();
     return actual.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).toUpperCase();
   };
 
@@ -1842,6 +1845,7 @@ function EuropeanCompetitionPage() {
   const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
 
   const currentDate = usePlayersStore((s) => s.currentDate);
+  const seasonStartYear = getSeasonStartYear(save?.season);
 
   useEffect(() => {
     let raw = loadSave();
@@ -1863,7 +1867,7 @@ function EuropeanCompetitionPage() {
       setSave(raw);
       return;
     }
-    const offset = uclDayOffset(currentDate);
+    const offset = uclDayOffset(currentDate, getSeasonStartYear(raw.season));
     const synced = simulatePendingEuropeanThroughDay(raw, competition, offset, raw.myTeamId);
     saveSave(synced);
     setSave(synced);
@@ -2065,7 +2069,7 @@ function EuropeanCompetitionPage() {
                                   >
                                     {r}
                                     <span className="ml-1 text-[0.6rem] opacity-70">
-                                      {europeanFixtureDate(md)}
+                                      {europeanFixtureDate(md, seasonStartYear)}
                                     </span>
                                     {hasUser && (
                                       <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-green-400" />
@@ -2089,7 +2093,7 @@ function EuropeanCompetitionPage() {
                                         {activeRound}
                                       </span>
                                       <span className="ml-2 text-xs text-green-400">
-                                        {europeanFixtureDate(matchday)}
+                                        {europeanFixtureDate(matchday, seasonStartYear)}
                                       </span>
                                     </div>
                                     <span className="text-xs text-green-400">

@@ -41,7 +41,7 @@ export default function MainMenuWizard({
   const teams = useMemo(
     () =>
       league
-        ? teamsByLeague(league)
+        ? teamsByLeague(league, { teamLeagueOverrides: {} })
             .slice()
             .sort((a, b) => overall(b) - overall(a))
         : [],
@@ -146,7 +146,7 @@ export default function MainMenuWizard({
             />
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {leagues.map((lg) => {
-                const lgTeams = teamsByLeague(lg.id as LeagueId);
+                const lgTeams = teamsByLeague(lg.id as LeagueId, { teamLeagueOverrides: {} });
                 const isSel = league === lg.id;
                 return (
                   <button

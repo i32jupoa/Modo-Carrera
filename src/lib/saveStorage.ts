@@ -25,7 +25,7 @@
  * comportamiento tolerante de antes: nada de esto lanza excepciones nunca.
  */
 
-import { safeSetItem, safeRemoveItem } from "./safeStorage";
+import { safeSetItem, safeRemoveItem } from "./safeStorage.ts";
 
 const DB_NAME = "fcsim-saves";
 const DB_VERSION = 1;

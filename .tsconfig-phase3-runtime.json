@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "CommonJS", "moduleResolution": "Node",
+    "resolveJsonModule": true, "esModuleInterop": true, "skipLibCheck": true,
+    "strict": true, "outDir": "/tmp/mc-europe-runtime", "rootDir": "src",
+    "types": []
+  },
+  "files": [
+    "src/data/teams.ts", "src/data/playersData.ts",
+    "src/lib/season/calendarFactory.ts",
+    "src/lib/season/europeanQualificationCore.ts",
+    "src/lib/season/europeanQualification.ts"
+  ]
+}

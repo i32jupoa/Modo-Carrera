@@ -1,5 +1,7 @@
 import { findTeamByName, getAllTeams, type Team } from "@/data/teams";
-import { UCL_CALENDAR, UCL_START, type UCLState } from "@/data/ucl";
+import { UCL_START, uclCalendarForSeason, uclStartForSeason, type UCLState } from "@/data/ucl";
+import { inferSeasonStartYearFromDate, INITIAL_SEASON_START_YEAR } from "@/lib/season/calendarFactory";
+import { getInitialEuropeanParticipants, getEuropeanParticipantsForSave, type EuropeanQualificationSave } from "@/lib/season/europeanQualification";
 
 type EuropeanCompetitionId = "uel" | "uecl";
 
@@ -15,24 +17,6 @@ export type EuropeanCompetitionConfig = {
   flag: string;
   participants: string[];
 };
-
-const EUROPA_NAMES = [
-  "Newcastle Utd", "Spurs", "Man Utd", "Atalanta", "AS Roma", "Lazio",
-  "Stuttgart", "Eintracht Frankfurt", "Freiburg", "Lille", "Lyon", "Nice",
-  "Real Sociedad", "Villarreal", "Real Betis", "Benfica", "Braga", "Estoril",
-  "Trabzonspor", "Beşiktaş", "Çorum FK", "Ajax", "AZ Alkmaar", "N.E.C. Nimega",
-  "Slavia Praha", "Sparta Praha", "Viktoria Plzeň", "Genk", "Anderlecht", "Standard Lieja",
-  "Widzew Łódź", "Jagiellonia", "Górnik Zabrze", "F.C. København", "LASK", "Universitatea Craiova",
-];
-
-const CONFERENCE_NAMES = [
-  "Aston Villa", "Brighton", "Crystal Palace", "Bologna", "Fiorentina", "Torino",
-  "Rennes", "RC Lens", "Strasbourg", "Mainz", "Hoffenheim", "Werder Bremen",
-  "Sevilla", "Celta", "Valencia", "FC Twente", "FC Utrecht", "sc Heerenveen",
-  "Başakşehir", "Göztepe", "Konyaspor", "Arouca", "Casa Pia", "Nacional",
-  "Lech Poznań", "Raków", "GKS Katowice", "Hearts", "Hibernian", "Sturm Graz",
-  "SK Rapid", "Hammarby", "Djurgården", "Viking FK", "Universitatea Cluj", "KAA Gent",
-];
 
 // A few clubs are represented in the in-game database under a localized/legacy name.
 const NAME_ALIASES: Record<string, string[]> = {
@@ -138,7 +122,7 @@ export const EUROPEAN_CONFIGS: Record<EuropeanCompetitionId, EuropeanCompetition
     accent: "orange",
     softAccent: "rgba(249,115,22,.16)",
     flag: "🟠",
-    participants: buildParticipantIds(EUROPA_NAMES),
+    participants: getInitialEuropeanParticipants("uel"),
   },
   uecl: {
     id: "uecl",
@@ -150,15 +134,14 @@ export const EUROPEAN_CONFIGS: Record<EuropeanCompetitionId, EuropeanCompetition
     accent: "green",
     softAccent: "rgba(34,197,94,.16)",
     flag: "🟢",
-    participants: buildParticipantIds(CONFERENCE_NAMES),
+    participants: getInitialEuropeanParticipants("uecl"),
   },
 };
 
-export const EUROPEAN_START = UCL_START;
+export const EUROPEAN_START = UCL_START; // Legacy 2026/27 alias; use uclStartForSeason(year) for dynamic dates.
 
-// Exact Champions calendar, shifted one day for both competitions.
-function nextThursdayOffset(offset: number): number {
-  const start = new Date(`${UCL_START}T00:00:00Z`);
+function nextThursdayOffset(offset: number, seasonStartYear = INITIAL_SEASON_START_YEAR): number {
+  const start = new Date(`${uclStartForSeason(seasonStartYear)}T00:00:00Z`);
   const date = new Date(start.getTime() + offset * 86400000);
   const day = date.getUTCDay();
   const delta = (4 - day + 7) % 7;
@@ -166,31 +149,29 @@ function nextThursdayOffset(offset: number): number {
 }
 
 // Champions stays on Tuesday/Wednesday. Europa League and Conference League
-// always use the Thursday of the same UEFA match week.
-export function europeanCalendar() {
-  const leagueDays = UCL_CALENDAR.leagueDay.map(nextThursdayOffset);
-  const playoffLeg1 = nextThursdayOffset(UCL_CALENDAR.playoffLeg1);
-  const playoffLeg2 = nextThursdayOffset(UCL_CALENDAR.playoffLeg2);
+// always use the Thursday of the same UEFA match week. 2026/27 stays byte-for-
+// byte compatible; subsequent seasons derive weekdays from their real year.
+export function europeanCalendar(seasonStartYear = INITIAL_SEASON_START_YEAR) {
+  const champions = uclCalendarForSeason(seasonStartYear);
+  const leagueDays = champions.leagueDay.map((offset) => nextThursdayOffset(offset, seasonStartYear));
+  const playoffLeg1 = nextThursdayOffset(champions.playoffLeg1, seasonStartYear);
+  const playoffLeg2 = nextThursdayOffset(champions.playoffLeg2, seasonStartYear);
 
   return {
-    // Initial Swiss draw stays aligned with the Champions draw. The later
-    // draws are deliberately derived from the last match of the previous
-    // round: +2 days when possible and never closer than 14 days to the next
-    // European match.
-    leagueDraw: UCL_CALENDAR.leagueDraw + 1,
+    leagueDraw: nextThursdayOffset(champions.leagueDraw, seasonStartYear),
     leagueDay: leagueDays,
     playoffDraw: leagueDays[leagueDays.length - 1] + 2,
     playoffLeg1,
     playoffLeg2,
     knockoutDraw: playoffLeg2 + 2,
-    r16Leg1: nextThursdayOffset(UCL_CALENDAR.r16Leg1),
-    r16Leg2: nextThursdayOffset(UCL_CALENDAR.r16Leg2),
-    qfLeg1: nextThursdayOffset(UCL_CALENDAR.qfLeg1),
-    qfLeg2: nextThursdayOffset(UCL_CALENDAR.qfLeg2),
-    sfLeg1: nextThursdayOffset(UCL_CALENDAR.sfLeg1),
-    sfLeg2: nextThursdayOffset(UCL_CALENDAR.sfLeg2),
-    final: nextThursdayOffset(UCL_CALENDAR.final),
-  } as const;
+    r16Leg1: nextThursdayOffset(champions.r16Leg1, seasonStartYear),
+    r16Leg2: nextThursdayOffset(champions.r16Leg2, seasonStartYear),
+    qfLeg1: nextThursdayOffset(champions.qfLeg1, seasonStartYear),
+    qfLeg2: nextThursdayOffset(champions.qfLeg2, seasonStartYear),
+    sfLeg1: nextThursdayOffset(champions.sfLeg1, seasonStartYear),
+    sfLeg2: nextThursdayOffset(champions.sfLeg2, seasonStartYear),
+    final: nextThursdayOffset(champions.final, seasonStartYear),
+  };
 }
 
 export type EuropeanStateKey = "uel" | "uecl";
@@ -200,11 +181,18 @@ export function isEuropeanCompetition(value: unknown): value is EuropeanCompetit
   return value === "uel" || value === "uecl";
 }
 
-export function europeanCalendarDate(offset: number): string {
-  const start = new Date(`${EUROPEAN_START}T00:00:00Z`);
+export function europeanCalendarDate(offset: number, seasonStartYear = INITIAL_SEASON_START_YEAR): string {
+  const start = new Date(`${uclStartForSeason(seasonStartYear)}T00:00:00Z`);
   return new Date(start.getTime() + offset * 86400000).toISOString().slice(0, 10);
 }
 
-export function teamIsInEuropeanCompetition(competition: EuropeanCompetitionId, teamId: string): boolean {
-  return EUROPEAN_CONFIGS[competition].participants.includes(teamId);
+export function teamIsInEuropeanCompetition(
+  competition: EuropeanCompetitionId,
+  teamId: string,
+  save?: EuropeanQualificationSave,
+): boolean {
+  const participants = save
+    ? getEuropeanParticipantsForSave(save, competition)
+    : EUROPEAN_CONFIGS[competition].participants;
+  return participants.includes(teamId);
 }

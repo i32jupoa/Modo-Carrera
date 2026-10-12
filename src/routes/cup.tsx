@@ -24,7 +24,8 @@ import { LeagueLogo } from "@/components/LeagueLogo";
 import { MatchStatsModal } from "@/components/MatchStatsModal";
 
 import { getCupStructureForCountry } from "@/lib/cups";
-import { NATIONAL_CUP_START } from "@/lib/calendarRules";
+import { nationalCupStartForSeason } from "@/lib/calendarRules";
+import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 import type { Fixture } from "@/lib/season";
 
 // Helper to get league name from league ID
@@ -257,7 +258,7 @@ function CupPage() {
   // Get the dynamic cup structure for the selected country (use saved structure if available)
 
   const cupStructure =
-    (save.cupFixtures as any)[`${primaryLeague}_structure`] || getCupStructureForCountry(country);
+    (save.cupFixtures as any)[`${primaryLeague}_structure`] || getCupStructureForCountry(country, getSeasonStartYear(save.season));
 
   const cupSchedule = cupStructure.schedule;
 
@@ -353,6 +354,7 @@ function CupPage() {
               label={ROUND_LABEL[step.round] || step.round}
               matchday={step.matchday}
               dateLabel={dateLabel}
+              seasonStartYear={getSeasonStartYear(save.season)}
             >
               {rf.length === 0 ? (
                 <p className="px-4 py-4 text-xs text-muted-foreground">Pendiente de sortear.</p>
@@ -372,8 +374,8 @@ function CupPage() {
   );
 }
 
-function formatCupMatchDate(matchday: number): string {
-  const start = new Date(`${NATIONAL_CUP_START}T00:00:00Z`);
+function formatCupMatchDate(matchday: number, seasonStartYear = 2026): string {
+  const start = new Date(`${nationalCupStartForSeason(seasonStartYear)}T00:00:00Z`);
   start.setUTCDate(start.getUTCDate() + matchday);
 
   return new Intl.DateTimeFormat("es-ES", {
@@ -384,10 +386,10 @@ function formatCupMatchDate(matchday: number): string {
   }).format(start);
 }
 
-function formatCupDateLabel(dateIso: string | undefined, fallbackMatchday: number): string {
-  if (!dateIso) return formatCupMatchDate(fallbackMatchday);
+function formatCupDateLabel(dateIso: string | undefined, fallbackMatchday: number, seasonStartYear = 2026): string {
+  if (!dateIso) return formatCupMatchDate(fallbackMatchday, seasonStartYear);
   const date = new Date(`${String(dateIso).slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return formatCupMatchDate(fallbackMatchday);
+  if (Number.isNaN(date.getTime())) return formatCupMatchDate(fallbackMatchday, seasonStartYear);
   return new Intl.DateTimeFormat("es-ES", {
     day: "numeric",
     month: "long",
@@ -400,11 +402,13 @@ function RoundBlock({
   label,
   matchday,
   dateLabel,
+  seasonStartYear,
   children,
 }: {
   label: string;
   matchday: number;
   dateLabel?: string;
+  seasonStartYear: number;
   children: React.ReactNode;
 }) {
   return (
@@ -412,7 +416,7 @@ function RoundBlock({
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-bold uppercase tracking-wider">{label}</h2>
 
-        <span className="text-xs text-muted-foreground">{formatCupDateLabel(dateLabel, matchday)}</span>
+        <span className="text-xs text-muted-foreground">{formatCupDateLabel(dateLabel, matchday, seasonStartYear)}</span>
       </div>
 
       <div className="panel">{children}</div>

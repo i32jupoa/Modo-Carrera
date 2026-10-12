@@ -17,6 +17,7 @@ import {
   Swords,
   MessageCircle,
   GraduationCap,
+  History,
 } from "lucide-react";
 import {
   Sidebar,
@@ -70,6 +71,7 @@ const MUNDO: Item[] = [
   { title: "Centro de Clubes", url: "/teams", icon: Globe },
   { title: "Rankings", url: "/scorers", icon: Award },
   { title: "Premios", url: "/awards", icon: Trophy },
+  { title: "Historia y palmarés", url: "/history", icon: History },
   { title: "Mercado", url: "/transfers", icon: Repeat },
 ];
 

@@ -1,28 +1,35 @@
 import { Fixture } from "@/lib/season";
+import { getSeasonCalendarAnchors, INITIAL_SEASON_START_YEAR } from "@/lib/season/calendarFactory";
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 
-/** Season starts Saturday August 15, 2026. */
+/** Legacy 2026/27 kickoff date. Use seasonStartDate(year) for other campaigns. */
 export const SEASON_START = new Date("2026-08-15T12:00:00Z");
 
+export function seasonStartDate(seasonStartYear = INITIAL_SEASON_START_YEAR): Date {
+  return new Date(`${getSeasonCalendarAnchors(seasonStartYear).leagueKickoffSaturday}T12:00:00Z`);
+}
+
 /** League matchdays = weekly Saturdays. Cup midweek (Wed = -3d), UCL group/KO midweek (Tue = -4d). */
-export function fixtureDate(f: Fixture): Date {
+export function fixtureDate(f: Fixture, seasonStartYear = INITIAL_SEASON_START_YEAR): Date {
   // Persisted fixture dates are canonical for league matches; UEFA/cup dates
   // are resolved through their fixed competition calendars so legacy +/-1 day
   // values cannot leak into any generic calendar consumer.
   if (f.competition === "cup") {
-    const iso = getCupFixtureDateIso(f);
+    const iso = getCupFixtureDateIso(f, seasonStartYear);
     if (iso) return new Date(`${iso}T12:00:00Z`);
   }
   if (f.competition === "ucl") {
     const competition = f.europeanCompetition ?? "ucl";
-    const iso = getEuropeanFixtureDateIso(f, competition);
+    const iso = getEuropeanFixtureDateIso(f, competition, seasonStartYear);
     if (iso) return new Date(`${iso}T12:00:00Z`);
   }
   if (f.date) return new Date(`${String(f.date).slice(0, 10)}T12:00:00Z`);
 
+  const kickoff = getSeasonCalendarAnchors(seasonStartYear).leagueKickoffSaturday;
+  const start = new Date(`${kickoff}T12:00:00Z`);
   const weekOffset = (f.matchday - 1) * 7;
-  const t = SEASON_START.getTime() + weekOffset * 86400000;
-  return new Date(t);
+  start.setUTCDate(start.getUTCDate() + weekOffset);
+  return start;
 }
 
 export function fmtDate(d: Date): string {

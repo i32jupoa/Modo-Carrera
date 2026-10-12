@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, CheckCheck, GraduationCap, MessageCircle, Search, Send } from "lucide-react";
+import { ArrowDownRight, ArrowLeft, ArrowUpRight, Bell, Check, CheckCheck, GraduationCap, History, MessageCircle, Search, Send, Trophy, UserRoundX } from "lucide-react";
 import { loadSave, saveSaveWithRetry } from "@/lib/store";
 import { TEAMS } from "@/data/teams";
 import { usePlayersStore } from "@/store/playersStore";
@@ -67,6 +67,11 @@ function MailboxPage() {
   }, [conversations, playerMap, query]);
   const unreadConversationCount = conversations.filter((conversation) => (conversation.unreadCount ?? 0) > 0).length;
   const unreadMessageCount = conversations.reduce((total, conversation) => total + Math.max(0, conversation.unreadCount ?? 0), 0);
+  const seasonNotifications = useMemo(
+    () => [...(save?.seasonNotifications ?? [])].sort((a, b) => Number(Boolean(a.read)) - Number(Boolean(b.read)) || b.date.localeCompare(a.date)).slice(0, 12),
+    [save?.seasonNotifications],
+  );
+  const unreadSeasonNotifications = seasonNotifications.filter((notification) => !notification.read).length;
 
   const selectedConversation = selectedPlayerId
     ? conversations.find((conversation) => conversation.playerId === selectedPlayerId) ?? null
@@ -118,6 +123,16 @@ function MailboxPage() {
     ? getMailboxResponseOptions(lastMessage, selectedPlayer, nextFixture, teamNames, currentDate)
     : [];
 
+  const markSeasonNotificationsRead = () => {
+    if (!save || unreadSeasonNotifications === 0) return;
+    const nextSave = {
+      ...save,
+      seasonNotifications: (save.seasonNotifications ?? []).map((notification) => ({ ...notification, read: true })),
+    };
+    if (!saveSaveWithRetry(nextSave)) return;
+    setSave(nextSave);
+  };
+
   const sendResponse = (response: MailboxResponse) => {
     if (!selectedPlayer || !selectedConversation || !save.mailbox || !canRespond || !lastMessage) return;
     const next = answerMailboxMessage(save.mailbox, selectedPlayer, lastMessage, response, currentDate, response === "promise" ? nextFixture : undefined, teamNames);
@@ -148,6 +163,27 @@ function MailboxPage() {
           <div className={`rounded-xl border px-3 py-2 ${unreadConversationCount > 0 ? "border-amber-400/30 bg-amber-500/10" : "border-border/50 bg-background/55"}`}><p className="text-[0.55rem] font-bold uppercase tracking-wider text-muted-foreground">Sin leer</p><p className={`mt-1 scoreline text-lg font-black ${unreadConversationCount > 0 ? "text-amber-300" : "text-foreground"}`}>{unreadMessageCount}</p><p className="text-[0.55rem] text-muted-foreground">{unreadConversationCount} conversaciones</p></div>
         </div>
       </header>
+
+      {seasonNotifications.length > 0 && (
+        <section className="mb-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/5 to-card/70 p-4 md:p-5" aria-label="Noticias de cierre e inicio de temporada">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2"><div className="grid h-9 w-9 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary"><Bell className="h-4 w-4" /></div><div><h2 className="text-sm font-black">Noticias de temporada</h2><p className="text-[0.65rem] text-muted-foreground">Cierre de campaña, cambios de categoría, contratos y retiradas.</p></div></div>
+            {unreadSeasonNotifications > 0 && <button type="button" onClick={markSeasonNotificationsRead} className="rounded-lg border border-primary/25 px-3 py-2 text-[0.65rem] font-black text-primary transition hover:bg-primary/10">Marcar como leídas ({unreadSeasonNotifications})</button>}
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {seasonNotifications.map((notification) => {
+              const Icon = notification.type === "promoted" ? ArrowUpRight
+                : notification.type === "relegated" ? ArrowDownRight
+                  : notification.type === "player_retired" ? UserRoundX
+                    : notification.type === "season_started" ? Trophy
+                      : History;
+              return <article key={notification.id} className={`rounded-xl border p-3 ${notification.read ? "border-border/50 bg-background/40" : "border-primary/25 bg-primary/5"}`}>
+                <div className="flex items-start gap-2"><Icon className={`mt-0.5 h-4 w-4 shrink-0 ${notification.type === "promoted" ? "text-emerald-400" : notification.type === "relegated" ? "text-destructive" : "text-primary"}`} /><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="text-[0.58rem] font-black uppercase tracking-wider text-muted-foreground">{notification.season} · {notification.type === "season_started" ? "Nueva temporada" : notification.type === "player_retired" ? "Retirada" : notification.type === "contract_expired" ? "Contrato" : notification.type === "promoted" ? "Ascenso" : "Descenso"}</span>{!notification.read && <span className="h-2 w-2 shrink-0 rounded-full bg-yellow-400" aria-label="Sin leer" />}</div><p className="mt-1 text-xs leading-relaxed text-foreground/90">{notification.message}</p><p className="mt-2 text-[0.58rem] text-muted-foreground">{notification.date}</p></div></div>
+              </article>;
+            })}
+          </div>
+        </section>
+      )}
 
       {(academyClub?.players.some((player) => (player.loanReports?.length ?? 0) > 0) ?? false) && (
         <section className="mb-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">

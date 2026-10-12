@@ -432,7 +432,10 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     const saveId = state.saveId ?? getCurrentSaveId();
     if (!saveId) return { ok: false, reason: "No hay una partida activa." };
     const numericSeason = Number(String(season).slice(0, 4));
-    if (club.manualPromotionAvailable === false) return { ok: false, reason: `La promoción juvenil de ${numericSeason} ya está generada.` };
+    // Idempotency is scoped to season, not to the previous season's UI flag.
+    // Otherwise `manualPromotionAvailable=false` after the 2026 intake would
+    // permanently prevent a fresh intake in 2027, 2028, ...
+    if (Number(club.lastIntakeSeason ?? 0) >= numericSeason) return { ok: false, reason: `La promoción juvenil de ${numericSeason} ya está generada.` };
     if (club.players.length >= ACADEMY_LIMITS.maxPlayers) return { ok: false, reason: "La cantera está llena. Libera o promociona jugadores antes de generar otra promoción." };
     const additions = generateAnnualIntake(saveId, { ...club, lastIntakeSeason: Math.min(club.lastIntakeSeason, numericSeason - 1) }, numericSeason);
     if (!additions.length) return { ok: false, reason: "No hay hueco suficiente para una nueva promoción juvenil." };

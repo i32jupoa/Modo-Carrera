@@ -1,6 +1,13 @@
-import { LeagueId, Team, TEAMS, teamById, teamsByLeague } from "@/data/teams";
-import { Player } from "@/data/players";
-import { simulateMatch, SimResult } from "@/lib/simulation";
+import { type LeagueId, teamById, teamsByLeague } from "@/data/teams";
+import type { Player } from "@/data/players";
+import { simulateMatch, type SimResult } from "@/lib/simulation";
+import {
+  INITIAL_SEASON_START_YEAR,
+  createSeasonTeamOrder,
+  scopedCalendarSeed,
+  createSeededRandom,
+  type SeasonCalendarOptions,
+} from "@/lib/season/calendarFactory";
 
 export type Competition = "league" | "cup" | "ucl";
 
@@ -33,46 +40,73 @@ export type Standing = {
   points: number;
 };
 
-export function generateLeagueFixtures(league: LeagueId): Fixture[] {
-  const teams = teamsByLeague(league);
-  const ids = teams.map((t) => t.id);
-  const n = ids.length;
+export function generateLeagueFixtures(
+  league: LeagueId,
+  options: SeasonCalendarOptions = {},
+): Fixture[] {
+  const seasonStartYear = options.seasonStartYear ?? INITIAL_SEASON_START_YEAR;
+  const legacyInitialSeason = seasonStartYear === INITIAL_SEASON_START_YEAR;
+  const teamContext = options.teamLeagueOverrides === undefined
+    ? undefined
+    : { teamLeagueOverrides: options.teamLeagueOverrides };
+  const teams = teamsByLeague(league, teamContext);
+  let ids = teams.map((t) => t.id);
 
-  // Handle odd number of teams by adding a bye
-  if (n % 2 !== 0) {
-    ids.push("__BYE__");
+  // Preserve the original 2026/27 fixture IDs and order for existing saves.
+  // Later seasons use a stable, season-scoped shuffle so the order changes
+  // between campaigns without making saves depend on runtime randomness.
+  const scheduleScope = `league-fixtures:${league}`;
+  const scheduleSeed = scopedCalendarSeed(options.seed, seasonStartYear, scheduleScope);
+  const random = createSeededRandom(scheduleSeed);
+  if (!legacyInitialSeason) {
+    ids = createSeasonTeamOrder(ids, seasonStartYear, options.seed, scheduleScope);
   }
+
+  // Handle odd number of teams by adding a bye.
+  if (ids.length % 2 !== 0) ids.push("__BYE__");
 
   const numTeams = ids.length;
   const rounds = numTeams - 1;
   const matchesPerRound = numTeams / 2;
-
   const fixtures: Fixture[] = [];
-
-  // Create a copy of the team array for rotation
   let teamArray = ids.slice();
+  const lastHomeAway = new Map<string, { side: "home" | "away"; streak: number }>();
 
-  // Generate first half of the season (rounds 1 to N-1)
-  for (let round = 0; round < rounds; round++) {
-    const roundFixtures: Fixture[] = [];
+  for (let round = 0; round < rounds; round += 1) {
+    const pairings: Array<{ team1: string; team2: string }> = [];
+    for (let index = 0; index < matchesPerRound; index += 1) {
+      const team1 = teamArray[index];
+      const team2 = teamArray[numTeams - 1 - index];
+      if (team1 === "__BYE__" || team2 === "__BYE__") continue;
+      pairings.push({ team1, team2 });
+    }
 
-    // Pair teams for this round using circle method
-    for (let i = 0; i < matchesPerRound; i++) {
-      const team1 = teamArray[i];
-      const team2 = teamArray[numTeams - 1 - i];
+    // In the first season retain the exact historic home/away algorithm. In
+    // future seasons choose the round orientation that minimises repeated
+    // home/away runs; a seeded tie-break keeps the result reproducible.
+    let invertRound = round % 2 !== 0;
+    if (!legacyInitialSeason) {
+      const orientationCost = (invert: boolean): number => {
+        let cost = 0;
+        for (const pair of pairings) {
+          const home = invert ? pair.team2 : pair.team1;
+          const away = invert ? pair.team1 : pair.team2;
+          for (const [teamId, side] of [[home, "home"], [away, "away"]] as const) {
+            const previous = lastHomeAway.get(teamId);
+            if (previous?.side === side) cost += previous.streak >= 2 ? 6 : 2;
+          }
+        }
+        return cost;
+      };
+      const normalCost = orientationCost(false);
+      const invertedCost = orientationCost(true);
+      invertRound = invertedCost < normalCost || (invertedCost === normalCost && random() < 0.5);
+    }
 
-      // Skip bye teams
-      if (team1 === "__BYE__" || team2 === "__BYE__") {
-        continue;
-      }
-
-      // Alternate home/away to ensure better distribution
-      // For even rounds, invert the home/away assignment
-      const isEvenRound = round % 2 === 0;
-      const home = isEvenRound ? team1 : team2;
-      const away = isEvenRound ? team2 : team1;
-
-      roundFixtures.push({
+    for (const pair of pairings) {
+      const home = invertRound ? pair.team2 : pair.team1;
+      const away = invertRound ? pair.team1 : pair.team2;
+      fixtures.push({
         id: `${league}-r${round + 1}-${home}-${away}`,
         competition: "league",
         league,
@@ -80,34 +114,40 @@ export function generateLeagueFixtures(league: LeagueId): Fixture[] {
         homeId: home,
         awayId: away,
       });
+      if (!legacyInitialSeason) {
+        for (const [teamId, side] of [[home, "home"], [away, "away"]] as const) {
+          const previous = lastHomeAway.get(teamId);
+          lastHomeAway.set(teamId, {
+            side,
+            streak: previous?.side === side ? previous.streak + 1 : 1,
+          });
+        }
+      }
     }
 
-    fixtures.push(...roundFixtures);
-
-    // Rotate the array for the next round (keep first team fixed, rotate others)
-    // Standard circle method: first element stays, rest rotate
+    // Circle method: keep the first item fixed and rotate the remainder.
     teamArray = [teamArray[0], teamArray[numTeams - 1], ...teamArray.slice(1, numTeams - 1)];
   }
 
-  // Generate second half of the season as perfect mirror of first half
-  // Each fixture from the first half is duplicated with inverted home/away
+  // Second half mirrors the first half with inverted venues, preserving a
+  // complete double round-robin for every even or odd league size.
   const firstHalfFixtures = fixtures.slice();
-  for (const f of firstHalfFixtures) {
+  for (const fixture of firstHalfFixtures) {
     fixtures.push({
-      id: `${f.league}-r${f.matchday + rounds}-${f.awayId}-${f.homeId}`,
+      id: `${fixture.league}-r${fixture.matchday + rounds}-${fixture.awayId}-${fixture.homeId}`,
       competition: "league",
-      league: f.league,
-      matchday: f.matchday + rounds,
-      homeId: f.awayId, // Inverted: away becomes home
-      awayId: f.homeId, // Inverted: home becomes away
+      league: fixture.league,
+      matchday: fixture.matchday + rounds,
+      homeId: fixture.awayId,
+      awayId: fixture.homeId,
     });
   }
 
   return fixtures;
 }
 
-export function emptyStandings(league: LeagueId): Standing[] {
-  return teamsByLeague(league).map((t) => ({
+export function emptyStandings(league: LeagueId, context?: { teamLeagueOverrides?: Readonly<Record<string, string>> }): Standing[] {
+  return teamsByLeague(league, context).map((t) => ({
     teamId: t.id,
     played: 0,
     won: 0,

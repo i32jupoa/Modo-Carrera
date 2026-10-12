@@ -1,13 +1,10 @@
-import { UCL_CALENDAR, UCL_START } from "@/data/ucl";
-import {
-  EUROPEAN_START,
-  europeanCalendar,
-} from "@/data/europeanCompetitions";
-import { NATIONAL_CUP_START } from "@/lib/calendarRules";
+import { uclCalendarForSeason, uclStartForSeason } from "@/data/ucl";
+import { europeanCalendar } from "@/data/europeanCompetitions";
 import { getCupStructureForCountry } from "@/lib/cups";
 import type { Fixture } from "@/lib/season";
 import { LEAGUES } from "@/data/teams";
 import { addDaysToIso } from "@/lib/transferWindows";
+import { getSeasonCalendarAnchors, inferSeasonStartYearFromDate, INITIAL_SEASON_START_YEAR } from "@/lib/season/calendarFactory";
 
 function validIso(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -24,6 +21,7 @@ function offsetToIso(start: string, offset: number): string {
 export function getEuropeanFixtureDateIso(
   fixture: Pick<Fixture, "date" | "matchday" | "round" | "europeanCompetition" | "competition">,
   competitionHint?: "ucl" | "uel" | "uecl",
+  seasonStartYear?: number,
 ): string | null {
   // UEFA dates are part of the fixed competition calendar. Prefer the
   // canonical round date over any persisted `fixture.date`, because older
@@ -33,8 +31,9 @@ export function getEuropeanFixtureDateIso(
   const comp = competitionHint ?? fixture.europeanCompetition ?? (fixture.competition === "ucl" ? "ucl" : undefined);
   if (!comp) return stored;
 
-  const start = comp === "ucl" ? UCL_START : EUROPEAN_START;
-  const calendar = comp === "ucl" ? UCL_CALENDAR : europeanCalendar();
+  const resolvedSeasonYear = seasonStartYear ?? (stored ? inferSeasonStartYearFromDate(stored) : INITIAL_SEASON_START_YEAR);
+  const start = comp === "ucl" ? uclStartForSeason(resolvedSeasonYear) : `${resolvedSeasonYear}-07-01`;
+  const calendar = comp === "ucl" ? uclCalendarForSeason(resolvedSeasonYear) : europeanCalendar(resolvedSeasonYear);
   const round = String(fixture.round ?? "");
   const jornada = round.match(/^Jornada\s+(\d+)$/i);
 
@@ -53,6 +52,10 @@ export function getEuropeanFixtureDateIso(
     "QF-Leg2": calendar.qfLeg2,
     "SF-Leg1": calendar.sfLeg1,
     "SF-Leg2": calendar.sfLeg2,
+    // Older grouped UCL saves store a single fixture per knockout round.
+    R16: calendar.r16Leg1,
+    QF: calendar.qfLeg1,
+    SF: calendar.sfLeg1,
     Final: calendar.final,
   };
   const offset = knockoutOffsets[round];
@@ -80,20 +83,23 @@ export function getEuropeanFixtureDateIso(
 
 export function getCupFixtureDateIso(
   fixture: Pick<Fixture, "date" | "matchday" | "round" | "league">,
+  seasonStartYear?: number,
 ): string | null {
   const stored = validIso(fixture.date);
 
-  // National-cup dates are also fixed. Prefer the round's canonical schedule
-  // over a legacy persisted date so old saves cannot silently move a cup tie.
+  // Prefer canonical round dates for the fixture's own season. Older saved
+  // fixtures keep 2026/27 semantics, while dated future fixtures infer year.
+  const resolvedSeasonYear = seasonStartYear ?? (stored ? inferSeasonStartYearFromDate(stored) : INITIAL_SEASON_START_YEAR);
+  const cupStart = getSeasonCalendarAnchors(resolvedSeasonYear).nationalCupStart;
   if (fixture.round && fixture.league) {
     try {
       const countryName = LEAGUES[fixture.league]?.country;
       if (countryName) {
-        const step = getCupStructureForCountry(countryName).schedule.find(
+        const step = getCupStructureForCountry(countryName, resolvedSeasonYear).schedule.find(
           (item: any) => item.round === fixture.round,
         );
         if (step?.matchday != null) {
-          return offsetToIso(NATIONAL_CUP_START, Number(step.matchday));
+          return offsetToIso(cupStart, Number(step.matchday));
         }
       }
     } catch {
@@ -103,5 +109,5 @@ export function getCupFixtureDateIso(
 
   if (stored) return stored;
   const offset = Number(fixture.matchday);
-  return Number.isFinite(offset) ? offsetToIso(NATIONAL_CUP_START, offset) : null;
+  return Number.isFinite(offset) ? offsetToIso(cupStart, offset) : null;
 }

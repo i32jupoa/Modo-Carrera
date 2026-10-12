@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -17,6 +17,7 @@ import {
   applyCupDraw,
   autoDrawForeignCups,
   simulateRemainingCupMatches,
+  simulateNationalCupsThroughDate,
   getCurrentCupRound,
   getRoundNameByTeamCount,
   getSurvivingCupTeams,
@@ -55,6 +56,10 @@ import {
   measureCalendarJumpPhase,
 } from "@/lib/calendarJumpProfiler";
 import { setCalendarJumpActive } from "@/lib/calendarJumpState";
+import { advanceSeasonIfDue, canAdvanceToNextSeason, isSeasonRolloverDue } from "@/lib/season/seasonRollover";
+import { getSeasonRolloverDates } from "@/lib/season/seasonRolloverCore";
+
+import { getSeasonCalendarAnchors, getSeasonStartYear } from "@/lib/season/calendarFactory";
 
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 
@@ -76,9 +81,10 @@ import { UCLDrawModal } from "@/components/UCLDrawModal";
 import { EuropeanDrawModal } from "@/components/EuropeanDrawModal";
 import { Trophy } from "lucide-react";
 
-import { UCL_START, UCL_CALENDAR, UCL_SEASON1_IDS, uclDayOffset } from "@/data/ucl";
+import { uclStartForSeason, uclCalendarForSeason, UCL_SEASON1_IDS, uclDayOffset } from "@/data/ucl";
+import { getEuropeanParticipantsForSave } from "@/lib/season/europeanQualification";
 import { runSwissDraw } from "@/lib/uclDraw";
-import { EUROPEAN_CONFIGS, europeanCalendar, EUROPEAN_START } from "@/data/europeanCompetitions";
+import { EUROPEAN_CONFIGS, europeanCalendar } from "@/data/europeanCompetitions";
 
 import { teamById, LEAGUES, getPrimaryLeagueForCountry, type LeagueId } from "@/data/teams";
 
@@ -173,6 +179,10 @@ function CalendarPage() {
   const { isMarketOpen } = useTransferMarket();
 
   const [save, setSave] = useState(loadSave());
+  const seasonStartYear = getSeasonStartYear(save?.season);
+  const calendarAnchors = getSeasonCalendarAnchors(seasonStartYear);
+  const uclStart = uclStartForSeason(seasonStartYear);
+  const uclCalendar = useMemo(() => uclCalendarForSeason(seasonStartYear), [seasonStartYear]);
 
   const [showCupDrawModal, setShowCupDrawModal] = useState(false);
 
@@ -239,6 +249,15 @@ function CalendarPage() {
     }
   }, [navigate, ensureLeagueSchedule]);
 
+  useEffect(() => {
+    const refreshSaveAfterTransaction = () => {
+      const latest = loadSave();
+      if (latest) setSave(latest);
+    };
+    window.addEventListener("fcsim:save-updated", refreshSaveAfterTransaction);
+    return () => window.removeEventListener("fcsim:save-updated", refreshSaveAfterTransaction);
+  }, []);
+
   // Check for cup draw pending after save changes
 
   useEffect(() => {
@@ -257,7 +276,7 @@ function CalendarPage() {
 
       const cupStructure =
         (save.cupFixtures as any)[`${cupKey}_structure`] ||
-        getCupStructureForCountry(userCountry || "");
+        getCupStructureForCountry(userCountry || "", seasonStartYear);
 
       const cupSchedule = cupStructure.schedule;
 
@@ -270,7 +289,7 @@ function CalendarPage() {
       let preliminaryTeams: string[] = [];
 
       try {
-        const cupData = initCup(userCountry || "");
+        const cupData = initCup(userCountry || "", seasonStartYear);
 
         isInPreliminary = cupData.preliminaryParticipants?.includes(myTeamId) || false;
 
@@ -293,7 +312,7 @@ function CalendarPage() {
 
       // drawMatchday = days offset from July 7th (0=Jul7, 1=Jul8, etc.)
 
-      const cupStart = new Date("2026-07-07T00:00:00Z");
+      const cupStart = new Date(`${calendarAnchors.nationalCupStart}T00:00:00Z`);
 
       const today = currentDateIso; // already an ISO string like "2026-07-07"
 
@@ -313,7 +332,7 @@ function CalendarPage() {
 
       const currentDrawRound = relevantSchedule.find((s) => {
         const drawDate = new Date(
-          new Date("2026-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
+          new Date(`${calendarAnchors.nationalCupStart}T00:00:00Z`).getTime() + s.drawMatchday * 86400000,
         );
 
         return toDateOnly(drawDate) === today;
@@ -355,7 +374,7 @@ function CalendarPage() {
       // planned draw date.
       const drawReadyRound = relevantSchedule.find((s) => {
         const drawDate = new Date(
-          new Date("2026-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
+          new Date(`${calendarAnchors.nationalCupStart}T00:00:00Z`).getTime() + s.drawMatchday * 86400000,
         );
         const drawDue = toDateOnly(drawDate) <= today;
         if (!drawDue) return false;
@@ -376,7 +395,7 @@ function CalendarPage() {
       // previous round is complete. This can therefore fire a few days late
       // only if a background cup simulation had to finish its final batch.
       if (drawReadyRound && !hasCurrentRoundFixtures && !save.cupDrawPending) {
-        const cupData = initCup(userCountry || "");
+        const cupData = initCup(userCountry || "", seasonStartYear);
 
         const preliminaryTeams = cupData.preliminaryParticipants || [];
 
@@ -384,7 +403,7 @@ function CalendarPage() {
 
         const currentRound = drawReadyRound || relevantSchedule.find((s) => {
           const drawDate = new Date(
-            new Date("2026-07-07T00:00:00Z").getTime() + s.drawMatchday * 86400000,
+            new Date(`${calendarAnchors.nationalCupStart}T00:00:00Z`).getTime() + s.drawMatchday * 86400000,
           );
 
           return toDateOnly(drawDate) === today;
@@ -518,12 +537,12 @@ function CalendarPage() {
   const cupFixturesByDate = useMemo(() => {
     const map = new Map<string, typeof myCupFixtures>();
 
-    // Cup starts July 7, 2026. matchday field = day offset from July 7th (0=Jul7, 1=Jul8...)
+    // Cup matchday is an offset from the current season cup-start anchor.
 
-    const cupStart = new Date("2026-07-07T00:00:00Z");
+    const cupStart = new Date(`${calendarAnchors.nationalCupStart}T00:00:00Z`);
 
     for (const f of myCupFixtures) {
-      const dateIso = getCupFixtureDateIso(f);
+      const dateIso = getCupFixtureDateIso(f, seasonStartYear);
       if (!dateIso) continue;
 
       const list = map.get(dateIso) ?? [];
@@ -580,11 +599,11 @@ function CalendarPage() {
 
     const drawDays = new Set<string>();
 
-    // Cup starts July 7, 2026 - alternating: draw, match, draw, match...
+    // Cup schedule uses the current season start; draw/match days are offsets from that anchor.
 
-    // drawMatchday = days offset from July 7th (0=Jul7, 2=Jul9, 4=Jul11...)
+    // drawMatchday is measured from the current season cup-start anchor.
 
-    const cupStart = new Date("2026-07-07T12:00:00Z");
+    const cupStart = new Date(`${calendarAnchors.nationalCupStart}T12:00:00Z`);
 
     const userCountry = LEAGUES[save.myLeague]?.country;
 
@@ -596,7 +615,7 @@ function CalendarPage() {
 
     try {
       const cupStructure =
-        (save.cupFixtures as any)[`${cupKey}_structure`] || getCupStructureForCountry(userCountry);
+        (save.cupFixtures as any)[`${cupKey}_structure`] || getCupStructureForCountry(userCountry, seasonStartYear);
 
       const cupSchedule = cupStructure.schedule || [];
 
@@ -605,7 +624,7 @@ function CalendarPage() {
       let isInPreliminary = false;
 
       try {
-        const cupData = initCup(userCountry);
+        const cupData = initCup(userCountry, seasonStartYear);
 
         isInPreliminary = cupData.preliminaryParticipants?.includes(myTeamId) || false;
       } catch {}
@@ -626,23 +645,23 @@ function CalendarPage() {
     }
 
     return drawDays;
-  }, [save?.myLeague, save?.myTeamId, save?.cupFixtures]);
+  }, [save?.myLeague, save?.myTeamId, save?.cupFixtures, save?.season, seasonStartYear]);
 
   // UCL draw days (3 sorteos: liga, playoff, knockout)
 
   const uclDrawDays = useMemo(() => {
     const days = new Set<string>();
 
-    const start = new Date(UCL_START + "T00:00:00Z");
+    const start = new Date(uclStart + "T00:00:00Z");
 
-    days.add(toDateOnly(new Date(start.getTime() + UCL_CALENDAR.leagueDraw * 86400000)));
+    days.add(toDateOnly(new Date(start.getTime() + uclCalendar.leagueDraw * 86400000)));
 
-    days.add(toDateOnly(new Date(start.getTime() + UCL_CALENDAR.playoffDraw * 86400000)));
+    days.add(toDateOnly(new Date(start.getTime() + uclCalendar.playoffDraw * 86400000)));
 
-    days.add(toDateOnly(new Date(start.getTime() + UCL_CALENDAR.knockoutDraw * 86400000)));
+    days.add(toDateOnly(new Date(start.getTime() + uclCalendar.knockoutDraw * 86400000)));
 
     return days;
-  }, []);
+  }, [uclStart, uclCalendar, seasonStartYear]);
 
   // UCL match days for the user's team
 
@@ -658,7 +677,7 @@ function CalendarPage() {
     const map = new Map<string, typeof uclMyFixtures>();
 
     for (const f of uclMyFixtures) {
-      const iso = getEuropeanFixtureDateIso(f, "ucl");
+      const iso = getEuropeanFixtureDateIso(f, "ucl", seasonStartYear);
       if (!iso) continue;
       const list = map.get(iso) ?? [];
       list.push(f);
@@ -666,9 +685,9 @@ function CalendarPage() {
     }
 
     return map;
-  }, [uclMyFixtures]);
+  }, [uclMyFixtures, seasonStartYear]);
 
-  const europeanCalendars = europeanCalendar();
+  const europeanCalendars = useMemo(() => europeanCalendar(seasonStartYear), [seasonStartYear]);
   const uelMyFixtures = useMemo(() =>
     (save?.uelFixtures ?? []).filter((f) => f.homeId === save!.myTeamId || f.awayId === save!.myTeamId),
     [save?.uelFixtures, save?.myTeamId],
@@ -681,7 +700,7 @@ function CalendarPage() {
     const map = new Map<string, typeof uelMyFixtures>();
     for (const f of list) {
       const competition = f.europeanCompetition === "uecl" ? "uecl" : "uel";
-      const iso = getEuropeanFixtureDateIso(f, competition);
+      const iso = getEuropeanFixtureDateIso(f, competition, seasonStartYear);
       if (!iso) continue;
       const group = map.get(iso) ?? [];
       group.push(f);
@@ -689,11 +708,11 @@ function CalendarPage() {
     }
     return map;
   };
-  const uelMatchDays = useMemo(() => makeEuropeanMatchDays(uelMyFixtures), [uelMyFixtures]);
-  const ueclMatchDays = useMemo(() => makeEuropeanMatchDays(ueclMyFixtures), [ueclMyFixtures]);
+  const uelMatchDays = useMemo(() => makeEuropeanMatchDays(uelMyFixtures), [uelMyFixtures, seasonStartYear]);
+  const ueclMatchDays = useMemo(() => makeEuropeanMatchDays(ueclMyFixtures), [ueclMyFixtures, seasonStartYear]);
   const europeanDrawDays = useMemo(() => {
     const days = new Map<string, string[]>();
-    const start = new Date(EUROPEAN_START + "T00:00:00Z");
+    const start = new Date(uclStart + "T00:00:00Z");
     for (const [comp, cfg] of Object.entries(EUROPEAN_CONFIGS)) {
       for (const key of ["leagueDraw", "playoffDraw", "knockoutDraw"] as const) {
         const iso = toDateOnly(new Date(start.getTime() + europeanCalendars[key] * 86400000));
@@ -703,7 +722,7 @@ function CalendarPage() {
       }
     }
     return days;
-  }, [europeanCalendars]);
+  }, [europeanCalendars, seasonStartYear]);
 
   function prevMonth() {
     if (viewMonth === 0) {
@@ -726,22 +745,39 @@ function CalendarPage() {
   }
 
   const handleAdvanceDay = async () => {
-    if (!save || isAdvancing) return;
+    if (!save || isAdvancing || jumpInProgressRef.current) return;
 
     setIsAdvancing(true);
-
     try {
-      // La tienda es la única autoridad que avanza el calendario. Antes esta
-      // pantalla programaba ligas/copas y después volvía a llamar a advanceTime,
-      // dejando dos pipelines compitiendo por el mismo save.
-      // `advanceTime` puede pausar voluntariamente para mostrar un partido o un
-      // sorteo pendiente. En ese caso el propio store ya ha actualizado el estado.
-      advanceTime(1);
+      const currentSave = loadSave();
+      const clockDate = usePlayersStore.getState().currentDate;
+      if (currentSave && isSeasonRolloverDue({
+        ...currentSave,
+        currentDate: clockDate > String(currentSave.currentDate ?? "") ? clockDate : String(currentSave.currentDate ?? ""),
+      })) {
+        const nextSave = await advanceSeasonIfDue(currentSave);
+        if (nextSave) setSave(nextSave);
+        return;
+      }
 
+      // The store owns day simulation. It cannot cross 30 June; when it lands
+      // on the cutoff this handler immediately performs the transactional
+      // rollover rather than leaving the career stuck on the boundary.
+      advanceTime(1);
+      await waitForCalendarEffects();
+      const afterSave = loadSave();
+      const afterDate = usePlayersStore.getState().currentDate;
+      if (afterSave && isSeasonRolloverDue({ ...afterSave, currentDate: afterDate })) {
+        const nextSave = await advanceSeasonIfDue({ ...afterSave, currentDate: afterDate });
+        if (nextSave) setSave(nextSave);
+      } else if (afterSave) {
+        setSave(afterSave);
+      }
     } catch (err) {
-      console.error('[Calendar] Error al avanzar el día:',
-        err instanceof Error ? (err.stack || err.message) : err,
-      );
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[Calendar] Error al avanzar el día:', err instanceof Error ? (err.stack || err.message) : err);
+      setSave(loadSave());
+      setJumpMessage(`No se pudo avanzar el calendario: ${message}`);
     } finally {
       setIsAdvancing(false);
     }
@@ -774,30 +810,55 @@ function CalendarPage() {
   function resolveNationalCupDraw(currentSave: ReturnType<typeof loadSave>, date: string) {
     if (!currentSave?.myTeamId) return null;
     const country = LEAGUES[currentSave.myLeague]?.country;
-    if (!country) return null;
+    if (!country) return currentSave;
     const cupLeague = (getPrimaryLeagueForCountry(country) || currentSave.myLeague) as LeagueId;
-    const storedPending = currentSave.cupDrawPending;
-    if (storedPending && storedPending.league === cupLeague && Array.isArray(storedPending.teams) && storedPending.teams.length >= 2) {
-      return applyCupDraw(currentSave, cupLeague, storedPending.round, shuffledMatchups(storedPending.teams));
+
+    // El salto no debe abrir modales. Primero cerramos cualquier partido de copa
+    // anterior que haya quedado pendiente en un guardado antiguo; así el sorteo
+    // global no se bloquea por un resultado omitido de otra asociación.
+    let workingSave = simulateNationalCupsThroughDate(currentSave, date, true);
+    const storedPending = workingSave.cupDrawPending;
+    if (
+      storedPending &&
+      storedPending.league === cupLeague &&
+      Array.isArray(storedPending.teams) &&
+      storedPending.teams.length >= 2
+    ) {
+      return applyCupDraw(workingSave, cupLeague, storedPending.round, shuffledMatchups(storedPending.teams));
     }
-    const cupData = initCup(country);
+    if (storedPending) {
+      // El campo pudo quedarse obsoleto en un guardado anterior; jamás debe
+      // resucitar el modal después de haber confirmado un salto automático.
+      workingSave = { ...workingSave, cupDrawPending: null };
+    }
+
+    const cupData = initCup(country, getSeasonStartYear(workingSave.season));
     const fullSchedule =
-      ((currentSave.cupFixtures as any)?.[`${cupLeague}_structure`]?.schedule ??
-        getCupStructureForCountry(country).schedule) as any[];
-    const isInPreliminary = !!cupData.preliminaryParticipants?.includes(currentSave.myTeamId);
+      ((workingSave.cupFixtures as any)?.[`${cupLeague}_structure`]?.schedule ??
+        getCupStructureForCountry(country, getSeasonStartYear(workingSave.season)).schedule) as any[];
+    const isInPreliminary = !!cupData.preliminaryParticipants?.includes(workingSave.myTeamId);
     const relevantSchedule = fullSchedule.filter((step) => step.round !== "Preliminar" || isInPreliminary);
-    const cupFixtures = Array.isArray(currentSave.cupFixtures?.[cupLeague])
-      ? currentSave.cupFixtures[cupLeague]
+    const cupFixtures = Array.isArray(workingSave.cupFixtures?.[cupLeague])
+      ? workingSave.cupFixtures[cupLeague]
       : [];
-    const cupStart = parseDateOnly("2026-07-07");
+    const cupStart = parseDateOnly(calendarAnchors.nationalCupStart);
+
+    // Si hay una ronda vencida que ya se sorteó, no volvemos a sortearla. Si la
+    // ronda anterior aún no está completa, devolvemos el estado actualizado sin
+    // bloquear el reloj: advanceTime volverá a encolar el sorteo al día siguiente.
     const dueStep = relevantSchedule.find((step) => {
       const drawDate = new Date(cupStart.getTime() + Number(step.drawMatchday) * 86400000);
       const drawIso = toDateOnly(drawDate);
       if (drawIso > date || cupFixtures.some((fixture: any) => fixture.round === step.round)) return false;
       const previousStep = fullSchedule.find((candidate) => candidate.globalSlot === step.globalSlot - 1);
-      return !previousStep || isGlobalNationalCupRoundComplete(currentSave, previousStep.globalSlot);
+      return !previousStep || isGlobalNationalCupRoundComplete(workingSave, previousStep.globalSlot);
     });
-    if (!dueStep) return null;
+    if (!dueStep) {
+      // El evento pudo quedar en cola aunque la ronda ya se hubiera sorteado o
+      // todavía no se pueda sortear por una ronda global pendiente. Limpiamos el
+      // indicador de modal y dejamos que advanceTime vuelva a comprobarlo mañana.
+      return workingSave.cupDrawPending ? { ...workingSave, cupDrawPending: null } : workingSave;
+    }
 
     let drawTeams: string[];
     const firstFullStep = fullSchedule[0];
@@ -805,49 +866,106 @@ function CalendarPage() {
     if (dueStep.round === "Preliminar") {
       drawTeams = [...(cupData.preliminaryParticipants ?? [])];
     } else if (firstFullStep?.round === "Preliminar" && dueStep.round === firstMainRound?.round) {
-      const preliminaryWinners = getSurvivingCupTeams(currentSave, cupLeague);
+      const preliminaryWinners = getSurvivingCupTeams(workingSave, cupLeague);
       const mainBracketTeams = cupData.participants.filter((id) => !cupData.preliminaryParticipants?.includes(id));
       drawTeams = [...preliminaryWinners, ...mainBracketTeams];
     } else {
-      const survivingTeams = getSurvivingCupTeams(currentSave, cupLeague);
+      const survivingTeams = getSurvivingCupTeams(workingSave, cupLeague);
       drawTeams = survivingTeams.length > 0 ? survivingTeams : [...cupData.participants];
     }
-    if (drawTeams.length < 2) return null;
-    const next = applyCupDraw(currentSave, cupLeague, dueStep.round, shuffledMatchups(drawTeams));
-    saveSave(next);
-    return next;
+    if (drawTeams.length < 2) {
+      console.warn(`[Calendar] Sorteo de copa pospuesto para ${date}: no hay suficientes equipos elegibles.`);
+      return workingSave.cupDrawPending ? { ...workingSave, cupDrawPending: null } : workingSave;
+    }
+    return applyCupDraw(workingSave, cupLeague, dueStep.round, shuffledMatchups(drawTeams));
+  }
+
+  /**
+   * A selected destination date takes a lightweight path through advanceTime, so
+   * the store intentionally does not enqueue that day's draw modal. Resolve the
+   * user's domestic-cup draw from its persisted schedule instead; this also
+   * repairs late draws whose previous worldwide round only finished a day later.
+   */
+  function resolveDueNationalCupDrawForJump(date: string): boolean {
+    const currentSave = loadSave();
+    if (!currentSave?.myTeamId) return false;
+
+    const country = LEAGUES[currentSave.myLeague]?.country;
+    if (!country) return false;
+    const cupLeague = (getPrimaryLeagueForCountry(country) || currentSave.myLeague) as LeagueId;
+    const seasonStartYear = getSeasonStartYear(currentSave.season);
+    const cupData = initCup(country, seasonStartYear);
+    const fullSchedule = (
+      (currentSave.cupFixtures as any)?.[`${cupLeague}_structure`]?.schedule ??
+      getCupStructureForCountry(country, seasonStartYear).schedule
+    ) as any[];
+    const relevantSchedule = fullSchedule.filter(
+      (step) => step.round !== "Preliminar" || cupData.preliminaryParticipants?.includes(currentSave.myTeamId),
+    );
+    const cupFixtures = Array.isArray(currentSave.cupFixtures?.[cupLeague])
+      ? currentSave.cupFixtures[cupLeague]
+      : [];
+    const cupStart = parseDateOnly(getSeasonCalendarAnchors(seasonStartYear).nationalCupStart);
+    const hasDueUndrawnRound = relevantSchedule.some((step) => {
+      const drawDate = toDateOnly(new Date(cupStart.getTime() + Number(step.drawMatchday) * 86400000));
+      return drawDate <= date && !cupFixtures.some((fixture: any) => fixture.round === step.round);
+    });
+
+    // Don't scan/simulate the entire cup system on ordinary calendar days.
+    if (!hasDueUndrawnRound && !currentSave.cupDrawPending) return false;
+
+    const updatedSave = resolveNationalCupDraw(currentSave, date);
+    if (!updatedSave) {
+      throw new Error(`No se pudo resolver automáticamente el sorteo de copa del ${date}.`);
+    }
+
+    const state = usePlayersStore.getState();
+    const pendingQueue = (state.pendingDrawQueue ?? []).filter((draw: any) => draw !== "cup");
+    usePlayersStore.setState({ pendingDrawQueue: pendingQueue, pendingCupDraw: false });
+
+    if (updatedSave !== currentSave) {
+      saveSave(updatedSave);
+      setSave(updatedSave);
+      return true;
+    }
+    return false;
   }
 
   function resolvePendingDrawsForJump(date: string): boolean {
-    // La mayoría de los días no tienen sorteos. Consultar el estado primero evita
-    // parsear el guardado completo en cada día de un salto largo.
+    // En modo salto los sorteos son automáticos y nunca deben dejar una cola
+    // pendiente que bloquee el siguiente tick del calendario.
     const store = usePlayersStore.getState();
     let queue = [...(store.pendingDrawQueue ?? [])];
+    let currentSave = loadSave();
+    if (!currentSave) return false;
     if (queue.length === 0) {
-      if (store.pendingCupDraw) queue.push("cup");
+      if (store.pendingCupDraw || currentSave.cupDrawPending) queue.push("cup");
       if (store.pendingUclDraw) queue.push(store.pendingUclDraw as any);
     }
     if (queue.length === 0) return false;
-    let currentSave = loadSave();
-    if (!currentSave) return false;
 
     for (const draw of queue) {
       try {
         if (draw === "cup") {
           const resolvedCupDraw = resolveNationalCupDraw(currentSave, date);
-          if (!resolvedCupDraw) return false;
+          if (!resolvedCupDraw) {
+            throw new Error(`No se pudo preparar automáticamente el sorteo de copa del ${date}.`);
+          }
           currentSave = resolvedCupDraw;
         } else if (draw === "league") {
           if (!currentSave.ucl?.drawState?.leagueDone) {
-            currentSave = applyUCLLeagueDraw(currentSave, runSwissDraw(UCL_SEASON1_IDS));
+            currentSave = applyUCLLeagueDraw(
+              currentSave,
+              runSwissDraw(currentSave.ucl?.participants?.length === 36 ? currentSave.ucl.participants : UCL_SEASON1_IDS),
+            );
           }
-          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date), currentSave.myTeamId);
+          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date, seasonStartYear), currentSave.myTeamId);
         } else if (draw === "playoff") {
           if (currentSave.ucl && !currentSave.ucl.drawState.playoffDone) currentSave = applyUCLPlayoffDraw(currentSave);
-          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date), currentSave.myTeamId);
+          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date, seasonStartYear), currentSave.myTeamId);
         } else if (draw === "knockout") {
           if (currentSave.ucl && !currentSave.ucl.drawState.knockoutDone) currentSave = applyUCLKnockoutDraw(currentSave);
-          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date), currentSave.myTeamId);
+          currentSave = simulatePendingUCLThroughDay(currentSave, uclDayOffset(date, seasonStartYear), currentSave.myTeamId);
         } else {
           const [competition, phase] = draw.split("-") as ["uel" | "uecl", "league" | "playoff" | "knockout"];
           currentSave = initializeEuropeanCompetition(currentSave, competition);
@@ -856,7 +974,11 @@ function CalendarPage() {
             currentSave = applyEuropeanLeagueDraw(
               currentSave,
               competition,
-              runSwissDraw(EUROPEAN_CONFIGS[competition].participants),
+              runSwissDraw(
+                Array.isArray(europeanState?.participants) && europeanState.participants.length === 36
+                  ? europeanState.participants
+                  : getEuropeanParticipantsForSave(currentSave, competition),
+              ),
             );
           } else if (phase === "playoff" && !europeanState?.drawState?.playoffDone) {
             currentSave = applyEuropeanPlayoffDraw(currentSave, competition);
@@ -866,7 +988,7 @@ function CalendarPage() {
           currentSave = simulatePendingEuropeanThroughDay(
             currentSave,
             competition,
-            Math.floor((parseDateOnly(date).getTime() - parseDateOnly(EUROPEAN_START).getTime()) / 86400000),
+            Math.floor((parseDateOnly(date).getTime() - parseDateOnly(uclStart).getTime()) / 86400000),
             currentSave.myTeamId,
           );
         }
@@ -877,10 +999,9 @@ function CalendarPage() {
         return false;
       }
     }
-    // SORTEO_VISIBLE_EN_SALTO: un sorteo es un evento raro (unas pocas veces por
-    // temporada), así que publicamos el save ya sorteado también durante el salto.
-    // Así los partidos nuevos de tu equipo aparecen en el calendario al momento y
-    // no solo al llegar a la fecha final.
+    // Publicar los cruces ya sorteados para que el calendario se actualice en
+    // cuanto avanza esa fecha, pero mantener los avisos visuales silenciados.
+    usePlayersStore.setState({ pendingDrawQueue: [], pendingCupDraw: false, pendingUclDraw: null });
     setSave(currentSave);
     return true;
   }
@@ -939,6 +1060,7 @@ function CalendarPage() {
       handled = true;
     }
     if (measureCalendarJumpPhase("simulation.drawResolution", () => resolvePendingDrawsForJump(date))) handled = true;
+    if (measureCalendarJumpPhase("simulation.dueNationalCupDraw", () => resolveDueNationalCupDrawForJump(date))) handled = true;
 
     // En días normales advanceTime ya resuelve los partidos de IA. Si un sorteo
     // bloqueó ese tick, aquí recuperamos también cualquier partido de liga que
@@ -969,7 +1091,7 @@ function CalendarPage() {
         const cupMatchdays = new Set<number>(
           countryCup
             .filter((fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId))
-            .filter((fixture: any) => getCupFixtureDateIso(fixture) === date)
+            .filter((fixture: any) => getCupFixtureDateIso(fixture, seasonStartYear) === date)
             .map((fixture: any) => Number(fixture.matchday)),
         );
         for (const matchday of cupMatchdays) {
@@ -977,18 +1099,28 @@ function CalendarPage() {
           saveSave(currentSave);
           handled = true;
         }
-        const unresolvedCupMatches = (currentSave?.cupFixtures?.[cupLeague] ?? []).filter(
-          (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getCupFixtureDateIso(fixture) === date,
+        let unresolvedCupMatches = (currentSave?.cupFixtures?.[cupLeague] ?? []).filter(
+          (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getCupFixtureDateIso(fixture, seasonStartYear) === date,
         );
         if (unresolvedCupMatches.length > 0) {
-          throw new Error(`No se han podido completar todos los partidos de copa del ${date}. El salto se ha detenido para no perder resultados.`);
+          // Recuperación para partidas antiguas: el planificador general de copas
+          // resuelve también fechas atrasadas y la copa del equipo controlado.
+          currentSave = simulateNationalCupsThroughDate(currentSave, date, true);
+          saveSave(currentSave);
+          unresolvedCupMatches = (currentSave?.cupFixtures?.[cupLeague] ?? []).filter(
+            (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getCupFixtureDateIso(fixture, seasonStartYear) === date,
+          );
+          if (unresolvedCupMatches.length > 0) {
+            throw new Error(`No se han podido completar todos los partidos de copa del ${date}. El salto se ha detenido para no perder resultados.`);
+          }
+          handled = true;
         }
       }
 
       const uclMatchdays = new Set<number>(
         (currentSave.uclFixtures ?? [])
-          .filter((fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId))
-          .filter((fixture: any) => getEuropeanFixtureDateIso(fixture, "ucl") === date)
+          .filter((fixture: any) => !fixture.result)
+          .filter((fixture: any) => getEuropeanFixtureDateIso(fixture, "ucl", seasonStartYear) === date)
           .map((fixture: any) => Number(fixture.matchday)),
       );
       for (const matchday of uclMatchdays) {
@@ -997,12 +1129,12 @@ function CalendarPage() {
         currentSave = isLeaguePhase
           ? simulateUCLMatchday(currentSave, matchday)
           : simulateUCLKnockoutMatchday(currentSave, matchday);
-        currentSave = processUCLKnockoutProgress(currentSave, uclDayOffset(date));
+        currentSave = processUCLKnockoutProgress(currentSave, uclDayOffset(date, seasonStartYear));
         saveSave(currentSave);
         handled = true;
       }
       const unresolvedUclMatches = (currentSave.uclFixtures ?? []).filter(
-        (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getEuropeanFixtureDateIso(fixture, "ucl") === date,
+        (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getEuropeanFixtureDateIso(fixture, "ucl", seasonStartYear) === date,
       );
       if (unresolvedUclMatches.length > 0) {
         throw new Error(`No se han podido completar todos los partidos de Champions del ${date}. El salto se ha detenido para no perder resultados.`);
@@ -1012,8 +1144,8 @@ function CalendarPage() {
         const fixtureKey = competition === "uel" ? "uelFixtures" : "ueclFixtures";
         const europeanMatchdays = new Set<number>(
           (((currentSave as any)[fixtureKey] ?? []) as any[])
-            .filter((fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId))
-            .filter((fixture: any) => getEuropeanFixtureDateIso(fixture, competition) === date)
+            .filter((fixture: any) => !fixture.result)
+            .filter((fixture: any) => getEuropeanFixtureDateIso(fixture, competition, seasonStartYear) === date)
             .map((fixture: any) => Number(fixture.matchday)),
         );
         for (const matchday of europeanMatchdays) {
@@ -1023,7 +1155,7 @@ function CalendarPage() {
             ? simulateEuropeanLeagueMatchday(currentSave, competition, matchday)
             : simulateEuropeanKnockoutMatchday(currentSave, competition, matchday);
           const europeanOffset = Math.floor(
-            (parseDateOnly(date).getTime() - parseDateOnly(EUROPEAN_START).getTime()) / 86400000,
+            (parseDateOnly(date).getTime() - parseDateOnly(uclStart).getTime()) / 86400000,
           );
           currentSave = processEuropeanKnockoutProgress(currentSave, competition, europeanOffset);
           saveSave(currentSave);
@@ -1031,13 +1163,25 @@ function CalendarPage() {
         }
         const finalList = (((currentSave as any)[fixtureKey] ?? []) as any[]);
         const unresolvedEuropeanMatches = finalList.filter(
-          (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getEuropeanFixtureDateIso(fixture, competition) === date,
+          (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getEuropeanFixtureDateIso(fixture, competition, seasonStartYear) === date,
         );
         if (unresolvedEuropeanMatches.length > 0) {
           const label = competition === "uel" ? "Europa League" : "Conference League";
           throw new Error(`No se han podido completar todos los partidos de ${label} del ${date}. El salto se ha detenido para no perder resultados.`);
         }
       }
+    }
+
+    // advanceTime deja el día destino sin partidos para que el store no abra
+    // interacciones manuales. En el salto se completa también esa fecha: se
+    // resuelven las copas nacionales de todos los países antes de confirmar.
+    if (currentSave && date === selectedJumpDate) {
+      const beforeCupCount = Object.values(currentSave.cupFixtures ?? {})
+        .flatMap((list: any) => Array.isArray(list) ? list : [])
+        .filter((fixture: any) => !fixture.result && getCupFixtureDateIso(fixture, seasonStartYear) === date).length;
+      currentSave = simulateNationalCupsThroughDate(currentSave, date, true);
+      if (beforeCupCount > 0) handled = true;
+      saveSave(currentSave);
     }
 
     // Suprimir los avisos de partido que correspondían a eventos ya resueltos.
@@ -1048,14 +1192,48 @@ function CalendarPage() {
       handled = true;
     }
 
-    if (handled && currentSave && !jumpInProgressRef.current) setSave(currentSave);
+    if (handled && currentSave) {
+      // Los resultados europeos y de copa se reflejan en la UI tras cada fecha
+      // procesada; los efectos de modal ya están bloqueados por isAdvancing/jumpActive.
+      setSave(currentSave);
+    }
     return handled;
   }
 
   const handleJumpToDate = async () => {
     const targetDate = selectedJumpDate;
-    const initialDate = usePlayersStore.getState().currentDate;
+    let initialDate = usePlayersStore.getState().currentDate;
     if (!targetDate || targetDate <= initialDate || jumpInProgressRef.current) return;
+
+    // Recover legacy saves whose date crossed 30 June while season stayed old.
+    // Do this before opening a calendar batch so the rollover transaction can
+    // checkpoint all storage domains without racing the jump's seven-day batch.
+    const saveBeforeJump = loadSave();
+    if (saveBeforeJump) {
+      const effectiveDate = initialDate > String(saveBeforeJump.currentDate ?? "")
+        ? initialDate
+        : String(saveBeforeJump.currentDate ?? "");
+      if (isSeasonRolloverDue({ ...saveBeforeJump, currentDate: effectiveDate })) {
+        try {
+          setIsAdvancing(true);
+          const rolled = await advanceSeasonIfDue({ ...saveBeforeJump, currentDate: effectiveDate });
+          if (rolled) setSave(rolled);
+          initialDate = usePlayersStore.getState().currentDate;
+        } catch (rolloverError) {
+          const message = rolloverError instanceof Error ? rolloverError.message : String(rolloverError);
+          console.error("[Calendar] No se pudo reparar/cerrar la temporada antes del salto:", rolloverError);
+          setJumpMessage(`No se puede iniciar el salto hasta cerrar la temporada anterior: ${message}`);
+          setIsAdvancing(false);
+          return;
+        } finally {
+          setIsAdvancing(false);
+        }
+      }
+    }
+    if (targetDate <= initialDate) {
+      setJumpMessage(`La carrera ya está en ${initialDate} después del cierre automático de temporada.`);
+      return;
+    }
 
     const profileEnabled = startCalendarJumpProfile(initialDate, targetDate);
     let batchOpen = false;
@@ -1140,6 +1318,8 @@ function CalendarPage() {
     jumpInProgressRef.current = true;
     setCalendarJumpActive(true);
     setIsAdvancing(true);
+    setShowCupDrawModal(false);
+    setShowUclDrawModal(false);
     setJumpStartDate(initialDate);
     setJumpMessage(null);
     clearCalendarJumpBackgroundErrors();
@@ -1183,17 +1363,95 @@ function CalendarPage() {
     batchOpen = true;
 
     let iterations = 0;
+    let lastRolledFromSeason: string | null = null;
     try {
       await usePlayersStore.getState().beginCalendarJumpAcademyAiBatch();
       lastCheckpointState = captureRollbackState();
 
+      const performBoundaryRollover = async (): Promise<boolean> => {
+        const storeState = usePlayersStore.getState();
+        const stored = loadSave();
+        if (!stored) throw new Error("No hay una partida activa para cerrar la temporada.");
+        const effectiveDate = storeState.currentDate > String(stored.currentDate ?? "")
+          ? storeState.currentDate
+          : String(stored.currentDate ?? "");
+        const effectiveSave = effectiveDate === stored.currentDate ? stored : { ...stored, currentDate: effectiveDate };
+        if (!isSeasonRolloverDue(effectiveSave)) return false;
+        // Keep the existing checkpoint cadence, but split the storage batch at
+        // the season boundary. Rollover itself writes a transaction checkpoint.
+        await measureCalendarJumpPhase("calendar.rollover.awaitBackgroundTasks", () =>
+          usePlayersStore.getState().waitForCalendarBackgroundTasks(),
+        );
+        await measureCalendarJumpPhase("calendar.rollover.flushAcademyAi", () =>
+          usePlayersStore.getState().flushCalendarJumpAcademyAiChanges(),
+        );
+        const marketPersisted = await persistCalendarJumpMarketState();
+        if (!marketPersisted) throw new Error("No se pudo guardar el mercado antes del cierre de temporada.");
+        lastCheckpointMarketState = snapshotTransferSystem();
+        saveSave(effectiveSave);
+        if (batchOpen) {
+          if (!endSaveBatch()) throw new Error("No se pudo confirmar el checkpoint del 30 de junio.");
+          batchOpen = false;
+        }
+        await usePlayersStore.getState().finishCalendarJumpAcademyAiBatch();
+
+        const readiness = canAdvanceToNextSeason(effectiveSave);
+        if (!readiness.ok) {
+          // Keep the user at the persisted season boundary instead of rolling
+          // back up to the previous seven-day checkpoint. The warning tells them
+          // exactly why the rollover is blocked.
+          setSave(effectiveSave);
+          lastCheckpointState = captureRollbackState();
+          lastCheckpointMarketState = snapshotTransferSystem();
+          throw new Error(readiness.reason ?? `No se puede cerrar ${effectiveSave.season}: hay competiciones pendientes.`);
+        }
+
+        const closedSeason = effectiveSave.season;
+        const nextSave = await measureCalendarJumpPhase("calendar.seasonRollover", () =>
+          advanceSeasonIfDue(effectiveSave, { onProgress: (progress) => setJumpMessage(progress.message) }),
+        );
+        if (!nextSave || nextSave.season === closedSeason) {
+          throw new Error(`El cierre de ${closedSeason} no generó la temporada siguiente.`);
+        }
+        lastRolledFromSeason = closedSeason;
+        setSave(nextSave);
+        setJumpMessage(`Temporada ${closedSeason} cerrada; continuando con ${nextSave.season}…`);
+
+        // The new season is now a valid rollback point. Open a fresh seven-day
+        // batch instead of carrying the old season's pending writes across.
+        lastCheckpointState = captureRollbackState();
+        lastCheckpointMarketState = snapshotTransferSystem();
+        if (!beginSaveBatch({ checkpointEveryDays: 7 })) {
+          throw new Error(`La temporada ${nextSave.season} se cerró, pero no se pudo reanudar el guardado por lotes.`);
+        }
+        batchOpen = true;
+        await usePlayersStore.getState().beginCalendarJumpAcademyAiBatch();
+        lastCheckpointState = captureRollbackState();
+        lastCheckpointMarketState = snapshotTransferSystem();
+        return true;
+      };
+
       while (usePlayersStore.getState().currentDate < targetDate && iterations < 800) {
+        // This also handles a legacy save that entered the loop already at 30 June.
+        const beforeBoundarySave = loadSave();
+        if (beforeBoundarySave && isSeasonRolloverDue({
+          ...beforeBoundarySave,
+          currentDate: usePlayersStore.getState().currentDate > String(beforeBoundarySave.currentDate ?? "")
+            ? usePlayersStore.getState().currentDate
+            : String(beforeBoundarySave.currentDate ?? ""),
+        })) {
+          const rolled = await performBoundaryRollover();
+          if (rolled) continue;
+          throw new Error(`La temporada ${beforeBoundarySave.season} llegó a su fecha de cierre, pero no se pudo ejecutar la transición.`);
+        }
+
         iterations += 1;
         recordCalendarJumpCounter("calendar.loopIterations");
         const before = usePlayersStore.getState().currentDate;
 
-        // Modo jump usa los mismos subsistemas que el avance normal, pero evita
-        // simular el día destino y no persiste cada mutación intermedia en disco.
+        // Modo jump avanza día a día. advanceTime actualiza el reloj y sus tareas
+        // base; resolveIntermediateDate cierra todos los partidos/sorteos de la
+        // fecha recién alcanzada, también la fecha destino.
         const advanced = measureCalendarJumpPhase("calendar.advanceTime", () =>
           advanceTime(1, { simulateAllLeagues: true, mode: "jump", targetDate }),
         );
@@ -1237,11 +1495,10 @@ function CalendarPage() {
           continue;
         }
 
-        // Días intermedios: cerrar competiciones del día que acaba de abrirse.
-        // La fecha final se deja intacta para que aparezcan sus eventos habituales.
-        if (after < targetDate) {
-          await measureCalendarJumpPhase("calendar.resolveIntermediateDate", () => resolveIntermediateDate(after));
-        }
+        // Cerrar los partidos/sorteos de la fecha que acaba de abrirse,
+        // incluida la fecha destino. En un salto confirmado no debe quedar un
+        // partido de copa/Europa convertido en un modal manual al terminar.
+        await measureCalendarJumpPhase("calendar.resolveIntermediateDate", () => resolveIntermediateDate(after));
 
         recordCalendarJumpCounter("calendar.daysAdvanced");
         await measureCalendarJumpPhase("calendar.yieldToBrowser", waitForCalendarEffects);
@@ -1265,10 +1522,23 @@ function CalendarPage() {
         }
       }
 
-      if (usePlayersStore.getState().currentDate !== targetDate) {
+      // If the selected target itself is 30 June, the loop exits on that day;
+      // close the season before reporting success (the visible clock becomes 1 July).
+      const saveAfterLoop = loadSave();
+      const dateAfterLoop = usePlayersStore.getState().currentDate;
+      if (saveAfterLoop && isSeasonRolloverDue({ ...saveAfterLoop, currentDate: dateAfterLoop })) {
+        await performBoundaryRollover();
+      }
+
+      const finalLoopDate = usePlayersStore.getState().currentDate;
+      const targetWasRolloverDay = Boolean(
+        lastRolledFromSeason && targetDate === getSeasonRolloverDates(lastRolledFromSeason).endDate &&
+        finalLoopDate === addDaysToIso(targetDate, 1),
+      );
+      if (finalLoopDate !== targetDate && !targetWasRolloverDay) {
         throw new Error(iterations >= 800
           ? "El salto supera el límite de seguridad de días procesables."
-          : `El calendario se detuvo en ${usePlayersStore.getState().currentDate}, antes de la fecha solicitada ${targetDate}.`);
+          : `El calendario se detuvo en ${finalLoopDate}, antes de la fecha solicitada ${targetDate}.`);
       }
 
       await measureCalendarJumpPhase("calendar.awaitBackgroundTasks", () =>
@@ -1303,10 +1573,17 @@ function CalendarPage() {
       const finalDate = usePlayersStore.getState().currentDate;
       setSave(loadSave());
       setSelectedJumpDate(null);
-      setJumpMessage(`Calendario avanzado hasta el ${parseDateOnly(finalDate).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}. Se han procesado los eventos de los días anteriores; los del día destino siguen pendientes.`);
+      setJumpMessage(`Calendario avanzado hasta el ${parseDateOnly(finalDate).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}. Se han simulado los partidos y resuelto los sorteos hasta esa fecha, incluido el día destino.`);
       outcome = "ok";
     } catch (error) {
-      console.error("[Calendar] Error al saltar hasta la fecha seleccionada:", error);
+      const errorDetails = error instanceof Error
+        ? `${error.name}: ${error.message || "(sin mensaje)"}${error.stack ? `\n${error.stack}` : ""}`
+        : typeof error === "string"
+          ? error
+          : (() => {
+              try { return JSON.stringify(error); } catch { return String(error); }
+            })();
+      console.error("[Calendar] Error al saltar hasta la fecha seleccionada:\n" + errorDetails, error);
       try {
         await usePlayersStore.getState().waitForCalendarBackgroundTasks();
       } catch (backgroundError) {
@@ -1334,7 +1611,11 @@ function CalendarPage() {
         else setSave(loadSave());
       }
       await restoreCheckpointMarketState();
-      setJumpMessage(error instanceof Error ? error.message : "No se ha podido completar el salto de calendario.");
+      setJumpMessage(error instanceof Error && error.message
+        ? error.message
+        : typeof error === "string" && error
+          ? error
+          : "No se ha podido completar el salto de calendario. Consulta la consola para ver el error exacto.");
     } finally {
       const finalDate = usePlayersStore.getState().currentDate;
       jumpInProgressRef.current = false;
@@ -1652,7 +1933,12 @@ function CalendarPage() {
 
         {jumpMessage && (
           <div className="mt-3 rounded-lg border border-border bg-card/70 px-4 py-3 text-xs text-muted-foreground">
-            {jumpMessage}
+            <p>{jumpMessage}</p>
+            {/temporada|competiciones pendientes|partidos pendientes|cierre/i.test(jumpMessage) && (
+              <Link to="/season" className="mt-2 inline-flex font-bold text-primary underline underline-offset-2">
+                Abrir gestión y cierre de temporada
+              </Link>
+            )}
           </div>
         )}
 
@@ -1709,7 +1995,7 @@ function CalendarPage() {
             }}
             onComplete={(updated) => {
               const comp = activePendingDraw.startsWith("uel-") ? "uel" : "uecl";
-              const offset = uclDayOffset(usePlayersStore.getState().currentDate);
+              const offset = uclDayOffset(usePlayersStore.getState().currentDate, seasonStartYear);
               const synced = simulatePendingEuropeanThroughDay(updated, comp, offset, updated.myTeamId);
               saveSave(synced);
               setSave(loadSave());
@@ -1724,7 +2010,7 @@ function CalendarPage() {
             save={save!}
             onClose={() => { setShowUclDrawModal(false); setSave(loadSave()); }}
             onComplete={(updated) => {
-              const offset = uclDayOffset(usePlayersStore.getState().currentDate);
+              const offset = uclDayOffset(usePlayersStore.getState().currentDate, seasonStartYear);
               const synced = simulatePendingUCLThroughDay(updated, offset, updated.myTeamId);
               saveSave(synced);
               setSave(loadSave());
