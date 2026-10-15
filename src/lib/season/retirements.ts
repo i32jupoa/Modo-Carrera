@@ -11,6 +11,8 @@ export type RetirementCandidate = {
   isGoalkeeper?: boolean;
   isLegend?: boolean;
   injuryDaysRemaining?: number;
+  /** Años restantes de contrato; refuerza ligeramente la opción de retiro al final de ciclo. */
+  contractYearsLeft?: number;
   alreadyRetired?: boolean;
 };
 
@@ -46,6 +48,7 @@ export function retirementProbability(candidate: RetirementCandidate): number {
 
   if (candidate.ovr < 62) probability += 0.12;
   else if (candidate.ovr < 68) probability += 0.06;
+  if (candidate.contractYearsLeft !== undefined && candidate.contractYearsLeft <= 1) probability += 0.08;
   if (!candidate.clubId) probability += 0.08;
   if ((candidate.injuryDaysRemaining ?? 0) >= 90) probability += 0.10;
   return Math.max(0, Math.min(1, probability));

@@ -310,23 +310,36 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
   // Limpia el estado persistido del playersStore para evitar fugas entre partidas
   localStorage.removeItem(PLAYERS_PERSIST_KEY);
 
+  const retiredIds = new Set((save.retiredPlayers ?? []).map((record) => String(record.playerId)));
   const snap = save.playersStoreState;
   if (!snap) {
-    // Partidas antiguas sin snapshot: dejar el estado limpio con sólo el equipo
+    // Partidas antiguas sin snapshot: dejar el estado limpio con sólo el equipo,
+    // pero conservar los overrides vacíos de los retirados del ledger.
     hydrateInternalContractNegotiations(undefined);
     usePlayersStore.getState().hydrateDynamicPlayers({});
+    setClubOverrides(Object.fromEntries(Array.from(retiredIds, (id) => [id, ""])));
     usePlayersStore.setState({
       loaded: false,
       myTeamId: save.myTeamId ?? null,
+      rosterIds: [],
+      squad: [],
+      loanedPlayers: {},
+      clubOverrides: Object.fromEntries(Array.from(retiredIds, (id) => [id, ""])),
     } as any);
     return;
   }
 
-  const clubOverrides = snap.clubOverrides ?? {};
-  const loanedPlayers = snap.loanedPlayers ?? {};
+  const clubOverrides: Record<string, string> = { ...(snap.clubOverrides ?? {}) };
+  // El ledger del SaveGame es la segunda fuente de verdad de una retirada.
+  // Así no vuelve a una plantilla si el snapshot de mercado está ausente.
+  for (const playerId of retiredIds) clubOverrides[playerId] = "";
+  const loanedPlayers = Object.fromEntries(
+    Object.entries(snap.loanedPlayers ?? {}).filter(([playerId]) => !retiredIds.has(String(playerId))),
+  ) as Record<string, { fromClubId: string; endDate: string }>;
   const dynamicPlayers = snap.dynamicPlayers ?? {};
   const myTeamId = snap.myTeamId ?? save.myTeamId ?? null;
   const validRosterIds = (snap.rosterIds ?? []).filter((playerId: string) => {
+    if (retiredIds.has(String(playerId))) return false;
     if (!myTeamId) return true;
     if (loanedPlayers[playerId]) return true;
     const override = clubOverrides[playerId];

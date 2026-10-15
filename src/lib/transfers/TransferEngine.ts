@@ -1287,7 +1287,8 @@ function contractYearsFor(age: number): number {
  */
 export function completeTransfer(offer: TransferOffer, date: string): TransferRecord | null {
   const player = getPlayer(offer.playerId);
-  if (!player) return null;
+  // Última barrera: una oferta antigua no puede fichar ni reactivar a un retirado.
+  if (!player || player.retired) return null;
 
   const buyerId = offer.buyerClubId;
   // El vendedor SIEMPRE se toma del club actual del jugador en el índice,
@@ -1338,6 +1339,7 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
   if (sellerId) {
     for (const swapId of offer.clauses.playerSwapIds) {
       const swap = getPlayer(swapId);
+      if (swap?.retired) return null;
       if (swap && swap.clubId === buyerId && !canPlayerMoveAgain(swapId, date)) return null;
     }
   }

@@ -217,6 +217,7 @@ export function rumorRenewal(
   playerId: string,
   agreed: boolean,
   date: string,
+  reason?: string,
 ): Rumor | null {
   const player = getPlayer(playerId);
   if (!player) return null;
@@ -229,7 +230,7 @@ export function rumorRenewal(
     targetClubId: clubId,
     text: agreed
       ? `${player.name} renueva con el ${clubName(clubId)}.`
-      : `El ${clubName(clubId)} negocia la renovación de ${player.name}, sin acuerdo por ahora.`,
+      : reason?.trim() || `El ${clubName(clubId)} negocia la renovación de ${player.name}, sin acuerdo por ahora.`,
     reliability: agreed ? 1 : 0.6,
   });
 }

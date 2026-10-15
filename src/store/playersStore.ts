@@ -38,6 +38,7 @@ import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import playersData from "@/data/playersData";
+import { getPlayer as getMarketPlayer } from "@/lib/transfers/PlayerIndex";
 import { DYNAMIC_BY_ID, DYNAMIC_MARKET_BY_ID, clearAcademyRuntime, getCalledUpPlayers, getCalledUpRuntimeVersion } from "@/lib/academy/academyRuntime";
 import { buildPositions } from "@/lib/positions";
 import type { Position } from "@/data/players";
@@ -3347,6 +3348,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         for (const raw of RAW_PLAYERS) {
           const id = String(raw.ID);
           if (inRoster.has(id)) continue;
+          if (getMarketPlayer(id)?.retired) continue;
           if (position !== "all" && mapEaPosition(raw.Position) !== position) continue;
           if (q && !raw.Name.toLowerCase().includes(q)) continue;
           out.push(dynamicFcPlayerView(raw, get().stats[id]));

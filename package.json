@@ -18,6 +18,7 @@
     "test:team-league-overrides": "node scripts/team-league-overrides-test.mjs",
     "test:season-european": "node --experimental-strip-types scripts/season-european-qualification-test.mjs",
     "test:season-rollover": "node --experimental-strip-types scripts/season-rollover-test.mjs",
+    "test:retirement-persistence": "node --experimental-strip-types scripts/retirement-persistence-regression.mjs",
     "test:season-history": "node --experimental-strip-types scripts/season-history-test.mjs",
     "test:season-archive-index": "node --experimental-strip-types scripts/season-archive-index-test.mjs",
     "test:season-economy": "node --experimental-strip-types scripts/season-economy-test.mjs",
@@ -27,7 +28,11 @@
     "test:calendar-jump-competitions": "node scripts/calendar-jump-competition-regression.mjs",
     "test:season-boundary-rollover": "node --experimental-strip-types scripts/season-boundary-rollover-test.mjs",
     "test:simulation-stats-repair": "node scripts/simulation-stats-repair-regression.mjs",
-    "test:player-club-resolution": "node scripts/player-club-resolution-regression.mjs"
+    "test:player-club-resolution": "node scripts/player-club-resolution-regression.mjs",
+    "test:ai-contract-renewal": "node --experimental-strip-types scripts/ai-contract-renewal-test.mjs",
+    "test:league-realism": "node scripts/league-realism-test.mjs --seasons=20",
+    "test:scorer-ranking-scope": "node scripts/scorer-ranking-scope-test.mjs",
+    "test:news-expansion": "node --experimental-strip-types scripts/news-expansion-test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

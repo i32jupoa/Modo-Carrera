@@ -115,7 +115,7 @@ function ScorersPage() {
   const [save, setSave] = useState<SaveGame | null>(null);
   const [tab, setTab] = useState<Tab>("scorers");
   const [competition, setCompetition] = useState<"all" | "league" | "cup" | "ucl" | "uel" | "uecl">("all");
-  const [league, setLeague] = useState<LeagueId | "all" | "big5">("all");
+  const [league, setLeague] = useState<LeagueId | "all" | "big5">("big5");
   const [cupCountry, setCupCountry] = useState<string>("all");
   const currentDate = usePlayersStore((state) => state.currentDate) || save?.currentDate || gameStartDateForSeason(getSeasonStartYear(save?.season));
 
@@ -141,8 +141,10 @@ function ScorersPage() {
     ];
   }, []);
 
+  // El ranking global evita mezclar ligas de 20 jornadas con las grandes ligas por defecto.
+  // El usuario puede cambiar a «Todas las ligas» o elegir una liga concreta.
   const leagueArg =
-    competition === "league" && league !== "all" ? (league as LeagueId | "big5") : undefined;
+    competition !== "cup" && league !== "all" ? (league as LeagueId | "big5") : undefined;
   const cupCountryArg = competition === "cup" && cupCountry !== "all" ? cupCountry : undefined;
 
   const scorers = useMemo(
@@ -215,7 +217,6 @@ function ScorersPage() {
             value={competition}
             onValueChange={(v) => {
               setCompetition(v as "all" | "league" | "cup" | "ucl" | "uel" | "uecl");
-              setLeague("all");
               setCupCountry("all");
             }}
           >
@@ -233,8 +234,8 @@ function ScorersPage() {
           </Select>
         )}
 
-        {/* League filter — for league competition or card tabs */}
-        {(competition === "league" || (isCardTab && competition === "all")) && (
+        {/* League filter — available for every ranking except national-cup views, which use country */}
+        {competition !== "cup" && (
           <Select value={league} onValueChange={(v) => setLeague(v as LeagueId | "all" | "big5")}>
             <SelectTrigger className="w-[210px]">
               <SelectValue placeholder="Todas las ligas" />

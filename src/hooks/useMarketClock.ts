@@ -3,6 +3,7 @@ import { useNotificationsStore } from "@/store/notificationsStore";
 import { usePlayersStore } from "@/store/playersStore";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { getCurrentSaveId } from "@/lib/savedGames";
+import { loadSave } from "@/lib/store";
 import {
   loadOrInitTransferSystem,
   resetTransferSystem,
@@ -14,6 +15,7 @@ import {
   clearFinishedUserDeals,
   snapshotUserDeals,
   restoreUserDeals,
+  ensurePlayersRetired,
 } from "@/lib/transfers";
 import {
   attachWorldBridge,
@@ -166,6 +168,11 @@ export function useMarketClock(): void {
         // El mercado arranca desde el mundo real de la partida, no desde el JSON.
         attachWorldBridge();
         hydrateWorld();
+        // El ledger del SaveGame permite reconstruir retiradas incluso cuando
+        // el snapshot del mercado no existe o todavía usa una versión antigua.
+        const activeSave = loadSave();
+        ensurePlayersRetired((activeSave?.retiredPlayers ?? []).map((player) => player.playerId));
+        flushWorldMoves();
         // Tras restaurar los contratos del mercado, la masa salarial de la partida
         // debe reflejar exactamente esas fichas.
         usePlayersStore.getState().syncWageStateFromMarket();

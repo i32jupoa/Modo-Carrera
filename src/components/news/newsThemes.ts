@@ -131,4 +131,15 @@ export const NEWS_THEMES: Record<NewsTheme, NewsThemeStyle> = {
     card: "border-pink-400/30 hover:border-pink-300/60 bg-gradient-to-r from-pink-500/10 to-transparent",
     bar: "bg-pink-400",
   },
+  retirada: {
+    label: "Retirada",
+    emoji: "👋",
+    window: "border-slate-400/40 bg-gradient-to-br from-slate-950 via-background to-background shadow-[0_0_60px_-15px_rgba(148,163,184,0.35)]",
+    header: "bg-gradient-to-r from-slate-400/25 via-slate-500/10 to-transparent",
+    chip: "bg-slate-500/15 text-slate-200 border-slate-400/40",
+    accent: "text-slate-300",
+    block: "border-slate-400/20 bg-slate-500/5",
+    card: "border-slate-400/30 hover:border-slate-300/60 bg-gradient-to-r from-slate-500/10 to-transparent",
+    bar: "bg-slate-400",
+  },
 };

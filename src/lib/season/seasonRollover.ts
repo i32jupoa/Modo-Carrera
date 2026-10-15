@@ -398,9 +398,9 @@ function topScorersFromStore(
     .slice(0, 100);
 }
 
-function playerSeasonRecordsFromStore(store: any): PlayerSeasonArchiveRecord[] {
+function playerSeasonRecordsFromStore(store: any, rawPlayers: any[] = store.getRawPlayers()): PlayerSeasonArchiveRecord[] {
   const records: PlayerSeasonArchiveRecord[] = [];
-  for (const player of store.getRawPlayers()) {
+  for (const player of rawPlayers) {
     const id = String(player.ID);
     if (!id) continue;
     const stats = store.stats?.[id];
@@ -417,6 +417,8 @@ function playerSeasonRecordsFromStore(store: any): PlayerSeasonArchiveRecord[] {
       goals,
       assists,
       appearances,
+      positions: Array.isArray(sim?.positions) ? sim.positions.map(String) : [String(player.Position ?? "")].filter(Boolean),
+      ovr: Math.max(0, Number(sim?.rating ?? player.OVR) || 0),
       trophies: [],
     });
   }
@@ -641,11 +643,26 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     const playerSeasonRecords = playerSeasonRecordsFromStore(storeForArchive, rawPlayersForArchive);
     const topScorers = topScorersFromStore(storeForArchive, rawPlayersForArchive);
     const seasonStartDate = `${dates.seasonStartYear}-07-01`;
-    const featuredTransfers = listTransfers()
+    const seasonTransfers = listTransfers()
       .filter((record) => record.date >= seasonStartDate && record.date <= dates.endDate)
+      .map((record) => ({
+        id: record.id,
+        date: record.date,
+        playerId: record.playerId,
+        playerName: record.playerName,
+        fromClubId: record.fromClubId,
+        toClubId: record.toClubId,
+        fromLeague: record.fromClubId
+          ? (getTeamLeagueId(record.fromClubId, { teamLeagueOverrides: current.teamLeagueOverrides }) ?? teamById(record.fromClubId).league)
+          : null,
+        toLeague: getTeamLeagueId(record.toClubId, { teamLeagueOverrides: current.teamLeagueOverrides }) ?? teamById(record.toClubId).league,
+        fee: record.fee,
+        type: record.type,
+      }));
+    const featuredTransfers = [...seasonTransfers]
       .sort((a, b) => (Number(b.fee) || 0) - (Number(a.fee) || 0) || Number(a.type !== "permanent") - Number(b.type !== "permanent") || b.date.localeCompare(a.date))
       .slice(0, 12)
-      .map((record) => ({ id: record.id, date: record.date, playerId: record.playerId, playerName: record.playerName, fromClubId: record.fromClubId, toClubId: record.toClubId, fee: record.fee, type: record.type }));
+      .map(({ id, date, playerId, playerName, fromClubId, toClubId, fee, type }) => ({ id, date, playerId, playerName, fromClubId, toClubId, fee, type }));
     const movement = calculateSavePromotionRelegation(current);
     const domestic = prepareNextSeasonDomesticState(current, movement);
     const european = prepareEuropeanQualificationForNextSeason(current);
@@ -658,6 +675,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       awardWinners,
       playerSeasonRecords,
       featuredTransfers,
+      seasonTransfers,
       nextSeasonEuropeanQualification: european.europeanQualification,
       topScorers,
       retirements: [],
@@ -690,31 +708,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     flushWorldMoves();
     await yieldToUi();
 
-    emitProgress(options, "contracts", 38, "Procesando renovaciones y vencimientos de contrato…");
-    const allTeams = getAllTeams({ teamLeagueOverrides: current.teamLeagueOverrides });
-    for (let i = 0; i < allTeams.length; i++) {
-      const team = allTeams[i];
-      if (team.id === current.myTeamId) continue;
-      runClubContractCycle(team.id, { date: dates.endDate, maxRenewals: 2, reviewList: false, excludePlayerIds: postSeasonTransferPlayerIds });
-      if (i % 20 === 0) await yieldToUi();
-    }
-    advanceContracts(dates.endDate, { excludePlayerIds: postSeasonTransferPlayerIds });
-    const userExpiries: Array<{ playerId: string; playerName: string; fromClubId: string }> = [];
-    for (const player of getClubPlayers(current.myTeamId)) {
-      if (postSeasonTransferPlayerIds.has(player.id)) continue;
-      const contract = player.contract;
-      if (contract.yearsLeft <= 1) {
-        userExpiries.push({ playerId: player.id, playerName: player.name, fromClubId: current.myTeamId });
-        reassignPlayerClub(player.id, null, "free", { force: true });
-        updatePlayer(player.id, { contract: { ...contract, yearsLeft: 0 }, minutesShare: 0, transferListed: false, listReason: null });
-      } else {
-        updatePlayer(player.id, { contract: { ...contract, yearsLeft: contract.yearsLeft - 1 } });
-      }
-    }
-    flushWorldMoves(); syncUserLoanRoster();
-    await yieldToUi();
-
-    emitProgress(options, "retirements", 50, "Evaluando retiradas y actualizando edades…");
+    emitProgress(options, "retirements", 38, "Evaluando retiradas y actualizando edades…");
     const statsNow = usePlayersStore.getState().stats ?? {};
     // Derive date-based ages from the real birthdates and increment only legacy
     // players without a birthdate; that avoids a double +1 for birthday players.
@@ -751,19 +745,15 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
         isGoalkeeper: player.group === "GK",
         isLegend: player.ovr >= 90 || Boolean(raw?.isLegend),
         injuryDaysRemaining,
+        contractYearsLeft: player.contract.yearsLeft,
         alreadyRetired: Boolean(player.retired),
       };
     });
     const retirements = selectSeasonRetirements(candidates, {
       seed: Number(current.calendarSeed ?? 1), season: current.season, retiredAt: dates.endDate,
     });
-    for (const retirement of retirements) {
-      reassignPlayerClub(retirement.playerId, null, "free", { force: true });
-      updatePlayer(retirement.playerId, {
-        retired: true, loanClubId: null, loanOwnerClubId: null, loanEndDate: null,
-        loanListed: false, transferListed: false, listReason: null, minutesShare: 0,
-      });
-    }
+    const { ensurePlayersRetired } = await import("../transfers/PlayerIndex");
+    ensurePlayersRetired(retirements.map((retirement) => retirement.playerId));
     flushWorldMoves(); syncUserLoanRoster();
     const statsAfterAge = usePlayersStore.getState().stats ?? {};
     const resetStats: Record<string, any> = {};
@@ -772,6 +762,33 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     }
     usePlayersStore.setState({ stats: resetStats, currentDate: dates.nextStartDate } as any);
     invalidateSquadsCache();
+    await yieldToUi();
+
+    // Las retiradas se deciden y se separan de las plantillas ANTES de que
+    // expiren los contratos. Así un futbolista retirado no pasa fugazmente por
+    // agentes libres ni recibe una renovación de la IA en este mismo cierre.
+    emitProgress(options, "contracts", 50, "Procesando renovaciones y vencimientos de contrato…");
+    const allTeams = getAllTeams({ teamLeagueOverrides: current.teamLeagueOverrides });
+    for (let i = 0; i < allTeams.length; i++) {
+      const team = allTeams[i];
+      if (team.id === current.myTeamId) continue;
+      runClubContractCycle(team.id, { date: dates.endDate, phase: "late-season", reviewList: false, excludePlayerIds: postSeasonTransferPlayerIds });
+      if (i % 20 === 0) await yieldToUi();
+    }
+    advanceContracts(dates.endDate, { excludePlayerIds: postSeasonTransferPlayerIds });
+    const userExpiries: Array<{ playerId: string; playerName: string; fromClubId: string }> = [];
+    for (const player of getClubPlayers(current.myTeamId)) {
+      if (postSeasonTransferPlayerIds.has(player.id) || player.retired) continue;
+      const contract = player.contract;
+      if (contract.yearsLeft <= 1) {
+        userExpiries.push({ playerId: player.id, playerName: player.name, fromClubId: current.myTeamId });
+        reassignPlayerClub(player.id, null, "free", { force: true });
+        updatePlayer(player.id, { contract: { ...contract, yearsLeft: 0 }, minutesShare: 0, transferListed: false, listReason: null });
+      } else {
+        updatePlayer(player.id, { contract: { ...contract, yearsLeft: contract.yearsLeft - 1 } });
+      }
+    }
+    flushWorldMoves(); syncUserLoanRoster();
     await yieldToUi();
 
     emitProgress(options, "academy", 63, "Generando y promoviendo nuevos talentos…");

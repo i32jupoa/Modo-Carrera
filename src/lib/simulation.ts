@@ -265,22 +265,21 @@ export function expectedGoals(
   const homeTacticalStrength = homeStrength * ((hMod.attack + hMod.defense) / 2);
   const awayTacticalStrength = awayStrength * ((aMod.attack + aMod.defense) / 2);
 
-  // La jerarquía de calidad debe notarse de verdad a lo largo de una temporada.
-  // Un grande con una plantilla claramente superior tiene que generar bastante
-  // más ocasiones que un rival modesto, pero el rival debe conservar suficiente
-  // amenaza para marcar y dar la sorpresa. La curva es deliberadamente más
-  // fuerte que en V5, aunque limitada para evitar partidos convertidos en
-  // goleadas automáticas.
+  // Curva calibrada con temporadas sintéticas de las cinco grandes ligas.
+  // Responde algo más a diferencias pequeñas entre equipos parejos, pero se
+  // satura antes para que una brecha enorme de OVR no convierta al favorito en
+  // ganador casi automático: el rival conserva opciones reales de sorpresa.
   const possessionDiff = (hMod.possession - aMod.possession) * 14;
   const qualityDiff = Math.max(-30, Math.min(30, homeTacticalStrength - awayTacticalStrength + possessionDiff));
   const HOME_MATCH_ADVANTAGE = 2.0;
   const effectiveDiff = qualityDiff + HOME_MATCH_ADVANTAGE;
 
-  // La diferencia de calidad pesa claramente, pero la ventaja de campo y la
-  // varianza por partido permiten que la jerarquía cambie a corto plazo. El
-  // reparto está limitado al 24/76 para que incluso los favoritos grandes
-  // concedan ocasiones reales sin regalar al débil un partido equilibrado.
-  const rawShare = 0.5 + 0.26 * Math.tanh(effectiveDiff / 10.5);
+  // Curva calibrada con temporadas sintéticas de las cinco grandes ligas.
+  // Responde algo más a diferencias pequeñas entre equipos parejos, pero se
+  // satura antes para que una brecha enorme de OVR no convierta al favorito en
+  // ganador casi automático. El rival conserva opciones reales de sorpresa.
+  // El reparto sigue limitado al 24/76 para evitar extremos de ocasiones.
+  const rawShare = 0.5 + 0.23 * Math.tanh(effectiveDiff / 8.0);
   const share = Math.max(0.24, Math.min(0.76, rawShare));
 
   // Unos 2.95 xG de base mantiene una media de goles cercana a la de una liga

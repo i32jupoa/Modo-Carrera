@@ -456,6 +456,11 @@ export function reassignPlayerClub(
   const player = index.byId.get(playerId);
   if (!player) return;
 
+  // Una retirada es terminal dentro de esta carrera: ni una oferta antigua,
+  // ni un movimiento forzado de la IA, ni una cesión pueden devolver al jugador
+  // al mundo activo. La restauración de un delta retirado lo mueve a null.
+  if (player.retired && clubId !== null) return;
+
   const previousClubId = player.clubId;
 
   // Barrera del club del usuario: nadie entra ni sale de su plantilla si no
@@ -493,6 +498,11 @@ export function updatePlayer(
   const index = getMarketIndex();
   const player = index.byId.get(playerId);
   if (!player) return undefined;
+
+  // `retired` no puede volver a false por un fallback de plantilla ni por una
+  // negociación que lleve tiempo abierta. Las retiradas solo se revierten
+  // creando explícitamente otro registro de jugador, no reactivando este.
+  if (player.retired && patch.retired === false) patch = { ...patch, retired: true };
 
   if (patch.ovr !== undefined && patch.ovr !== player.ovr) {
     removeFrom(index.byRating, ratingBucket(player.ovr), playerId);
@@ -558,6 +568,39 @@ export function markPlayerDirty(playerId: string): void {
   touched.add(playerId);
 }
 
+/**
+ * Retira de forma idempotente a los jugadores del ledger de la carrera.
+ * Se usa tanto en el cierre de temporada como al restaurar una partida: el
+ * ledger del save permite recuperar la retirada incluso si falta el snapshot
+ * de IndexedDB del mercado o es de una versión anterior.
+ */
+export function ensurePlayersRetired(playerIds: Iterable<string | number>): void {
+  for (const rawId of playerIds) {
+    const id = String(rawId ?? '');
+    if (!id) continue;
+    const player = getPlayer(id);
+    if (!player) continue;
+
+    const needsCleanup =
+      !player.retired || player.loanClubId !== null || player.loanOwnerClubId !== null ||
+      player.loanEndDate !== null || player.loanListed || player.transferListed ||
+      player.listReason !== null || player.minutesShare !== 0;
+    if (!needsCleanup && player.clubId === null) continue;
+
+    if (player.clubId !== null) reassignPlayerClub(id, null, "free", { force: true });
+    updatePlayer(id, {
+      retired: true,
+      loanClubId: null,
+      loanOwnerClubId: null,
+      loanEndDate: null,
+      loanListed: false,
+      transferListed: false,
+      listReason: null,
+      minutesShare: 0,
+    });
+  }
+}
+
 /** Instantánea de todos los jugadores modificados. */
 export function snapshotPlayerDeltas(): PlayerDelta[] {
   const index = getMarketIndex();
@@ -585,10 +628,14 @@ export function restorePlayerDeltas(deltas: readonly PlayerDelta[]): void {
     // propietario y `loanClubId` era sólo el destino. Ahora el jugador vive
     // en el destino y guardamos al propietario en `loanOwnerClubId`.
     const legacyLoan = !!delta.loanClubId && !delta.loanOwnerClubId;
-    const effectiveClubId = legacyLoan ? delta.loanClubId : delta.clubId;
-    const effectiveLeague = legacyLoan && delta.loanClubId
-      ? (teamById(delta.loanClubId).league)
-      : delta.leagueId;
+    // La retirada manda sobre el club guardado (incluso si un save antiguo
+    // dejó clubId con un equipo). Nunca restaurar un retirado como plantilla.
+    const effectiveClubId = delta.retired ? null : legacyLoan ? delta.loanClubId : delta.clubId;
+    const effectiveLeague = delta.retired
+      ? "free"
+      : legacyLoan && delta.loanClubId
+        ? teamById(delta.loanClubId).league
+        : delta.leagueId;
     if (player.clubId !== effectiveClubId || player.leagueId !== effectiveLeague) {
       reassignPlayerClub(delta.id, effectiveClubId, effectiveLeague, { force: true });
     }

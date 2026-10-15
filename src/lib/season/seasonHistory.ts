@@ -17,7 +17,55 @@ export type SeasonHistoryLeague = {
     ga: number;
     gd: number;
     points: number;
+    /** Last five league results from the archived season, oldest to newest. */
+    form?: Array<"W" | "D" | "L">;
   }>;
+};
+
+export type ArchivedMatch = {
+  id: string;
+  leagueId: string;
+  matchday: number;
+  round: string | null;
+  date: string | null;
+  homeId: string;
+  awayId: string;
+  homeGoals: number;
+  awayGoals: number;
+  homePenalties?: number;
+  awayPenalties?: number;
+  extraTimeHomeGoals?: number;
+  extraTimeAwayGoals?: number;
+};
+
+export type ArchivedSeasonTransfer = {
+  id: string;
+  date: string;
+  playerId: string;
+  playerName: string;
+  fromClubId: string | null;
+  toClubId: string;
+  fromLeague?: string | null;
+  toLeague?: string | null;
+  fee: number;
+  type: string;
+};
+
+export type ArchivedEuropeanCompetition = {
+  competition: "ucl" | "uel" | "uecl";
+  championId: string | null;
+  leaguePhaseTable?: Array<{
+    teamId: string;
+    played: number;
+    won: number;
+    drawn: number;
+    lost: number;
+    gf: number;
+    ga: number;
+    gd: number;
+    points: number;
+  }>;
+  fixtures: ArchivedMatch[];
 };
 
 export type SeasonArchiveAwardWinner = {
@@ -35,6 +83,21 @@ export type PlayerSeasonArchiveRecord = {
   appearances: number;
   /** Trophies attributed to this player's club in this season. */
   trophies?: string[];
+  /** Snapshot data used by the archived team of the season. */
+  positions?: string[];
+  ovr?: number;
+};
+
+export type SeasonArchiveElevenPlayer = {
+  playerId: string;
+  playerName: string;
+  clubId: string | null;
+  slot: "GK" | "DEF" | "MID" | "FWD";
+  position: string;
+  ovr: number;
+  goals: number;
+  assists: number;
+  appearances: number;
 };
 
 export type SeasonArchive = {
@@ -50,6 +113,8 @@ export type SeasonArchive = {
   awardWinners?: SeasonArchiveAwardWinner[];
   /** Compact records only for players who appeared or recorded a contribution. */
   playerSeasonRecords?: PlayerSeasonArchiveRecord[];
+  /** Best performers by position from the finished season; optional for old archives. */
+  teamOfSeason?: SeasonArchiveElevenPlayer[];
   /** Most notable completed transfers during the archived campaign. */
   featuredTransfers?: Array<{
     id: string;
@@ -61,7 +126,16 @@ export type SeasonArchive = {
     fee: number;
     type: string;
   }>;
-  /** The 36 clubs qualified to each European competition in the following season. */
+  /** Compact full-market snapshot, capped to keep long-running saves bounded. */
+  seasonTransfers?: ArchivedSeasonTransfer[];
+  /** Finished domestic cup ties, grouped by country/cup. Optional for legacy saves. */
+  domesticCupDetails?: Array<{
+    leagueId: string;
+    championId: string | null;
+    fixtures: ArchivedMatch[];
+  }>;
+  /** European league-phase standings and finished ties from the archived season. */
+  europeanCompetitionDetails?: ArchivedEuropeanCompetition[];
   /** Compact financial result for the user club after closing this season. */
   financeSummary?: {
     teamId: string;
@@ -73,6 +147,7 @@ export type SeasonArchive = {
     promoted: boolean;
     relegated: boolean;
   };
+  /** Clubs qualified to each European competition in the following season. */
   nextSeasonEuropeanQualification?: {
     seasonStartYear: number;
     ucl: string[];
@@ -120,6 +195,138 @@ export function seasonArchiveKey(saveId: string, season: string): string {
   return `fcsim:season-history:v1:${saveId}:${encodeURIComponent(season)}`;
 }
 
+/** Maximum full transfer rows retained per campaign. Featured transfers remain separately available. */
+export const MAX_ARCHIVED_SEASON_TRANSFERS = 2000;
+
+function archiveFinishedFixtures(fixtures: unknown, leagueId: string): ArchivedMatch[] {
+  if (!Array.isArray(fixtures)) return [];
+  const archived: ArchivedMatch[] = [];
+  for (const raw of fixtures as any[]) {
+    const result = raw?.result;
+    if (!result || !Number.isFinite(Number(result.homeGoals)) || !Number.isFinite(Number(result.awayGoals))) continue;
+    if (!raw?.homeId || !raw?.awayId) continue;
+    archived.push({
+      id: String(raw.id ?? `${leagueId}-${raw.matchday}-${raw.homeId}-${raw.awayId}`),
+      leagueId: String(leagueId),
+      matchday: Math.max(0, Number(raw.matchday) || 0),
+      round: typeof raw.round === "string" && raw.round ? raw.round : null,
+      date: typeof raw.date === "string" && raw.date ? raw.date : null,
+      homeId: String(raw.homeId),
+      awayId: String(raw.awayId),
+      homeGoals: Math.max(0, Number(result.homeGoals) || 0),
+      awayGoals: Math.max(0, Number(result.awayGoals) || 0),
+      ...(result.penalties && Number.isFinite(Number(result.penalties.homeGoals)) && Number.isFinite(Number(result.penalties.awayGoals)) ? {
+        homePenalties: Math.max(0, Number(result.penalties.homeGoals)),
+        awayPenalties: Math.max(0, Number(result.penalties.awayGoals)),
+      } : {}),
+      ...(result.extraTime && Number.isFinite(Number(result.extraTime.homeGoals)) && Number.isFinite(Number(result.extraTime.awayGoals)) ? {
+        extraTimeHomeGoals: Math.max(0, Number(result.extraTime.homeGoals)),
+        extraTimeAwayGoals: Math.max(0, Number(result.extraTime.awayGoals)),
+      } : {}),
+    });
+  }
+  return archived.sort((a, b) => a.matchday - b.matchday || String(a.date ?? "").localeCompare(String(b.date ?? "")) || a.id.localeCompare(b.id));
+}
+
+function seasonPositionGroup(positions: readonly string[]): SeasonArchiveElevenPlayer["slot"] | null {
+  const codes = positions.map((position) => String(position).trim().toUpperCase()).filter(Boolean);
+  if (codes.some((position) => ["GK", "POR", "GOALKEEPER"].includes(position))) return "GK";
+  if (codes.some((position) => ["DFC", "CB", "DEF", "LD", "LI", "RB", "LB", "RWB", "LWB", "CD", "LCB", "RCB"].includes(position))) return "DEF";
+  if (codes.some((position) => ["MCD", "CDM", "MC", "CM", "MCO", "CAM", "MD", "MI", "RM", "LM", "MID", "DM", "AM", "CMF"].includes(position))) return "MID";
+  if (codes.some((position) => ["DC", "ST", "CF", "ED", "EI", "RW", "LW", "FWD", "ATT", "SS", "RF", "LF"].includes(position))) return "FWD";
+  return null;
+}
+
+/** Uses only archived season statistics and player snapshot fields; it does not consult the next season's roster. */
+export function buildSeasonTeamOfSeason(records: readonly PlayerSeasonArchiveRecord[]): SeasonArchiveElevenPlayer[] {
+  const candidates = records
+    .filter((record) => record.playerId && record.playerName && (Number(record.appearances) > 0 || Number(record.goals) > 0 || Number(record.assists) > 0))
+    .map((record) => ({
+      record,
+      slot: seasonPositionGroup(record.positions ?? []),
+      score: (Math.max(0, Number(record.ovr) || 0) * 0.5) + (Math.min(45, Math.max(0, Number(record.appearances) || 0)) * 0.35) + (Math.max(0, Number(record.goals) || 0) * 0.55) + (Math.max(0, Number(record.assists) || 0) * 0.35),
+    }))
+    .sort((a, b) => b.score - a.score || a.record.playerName.localeCompare(b.record.playerName));
+  const selected = new Map<string, SeasonArchiveElevenPlayer>();
+  const roleOrder: Array<SeasonArchiveElevenPlayer["slot"]> = ["GK", "DEF", "MID", "FWD"];
+  const roleCounts: Record<SeasonArchiveElevenPlayer["slot"], number> = { GK: 1, DEF: 4, MID: 3, FWD: 3 };
+  for (const slot of roleOrder) {
+    for (const candidate of candidates) {
+      if (selected.size >= 11 || selected.has(candidate.record.playerId) || candidate.slot !== slot) continue;
+      const count = [...selected.values()].filter((player) => player.slot === slot).length;
+      if (count >= roleCounts[slot]) break;
+      selected.set(candidate.record.playerId, {
+        playerId: candidate.record.playerId,
+        playerName: candidate.record.playerName,
+        clubId: candidate.record.clubId ?? null,
+        slot,
+        position: (candidate.record.positions ?? []).join("/") || slot,
+        ovr: Math.max(0, Number(candidate.record.ovr) || 0),
+        goals: Math.max(0, Number(candidate.record.goals) || 0),
+        assists: Math.max(0, Number(candidate.record.assists) || 0),
+        appearances: Math.max(0, Number(candidate.record.appearances) || 0),
+      });
+    }
+  }
+  // Some imported player databases have incomplete position codes. Fill any
+  // remaining slots with the best unused eligible players, without duplicating IDs.
+  for (const candidate of candidates) {
+    if (selected.size >= 11) break;
+    if (selected.has(candidate.record.playerId)) continue;
+    const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+    for (const player of selected.values()) counts[player.slot] += 1;
+    const preferred = candidate.slot;
+    const slot = preferred && counts[preferred] < roleCounts[preferred]
+      ? preferred
+      : preferred
+        ? roleOrder.find((role) => counts[role] < roleCounts[role]) ?? preferred
+        : (["MID", "FWD", "DEF", "GK"] as const).find((role) => counts[role] < roleCounts[role]) ?? "MID";
+    selected.set(candidate.record.playerId, {
+      playerId: candidate.record.playerId,
+      playerName: candidate.record.playerName,
+      clubId: candidate.record.clubId ?? null,
+      slot,
+      position: (candidate.record.positions ?? []).join("/") || slot,
+      ovr: Math.max(0, Number(candidate.record.ovr) || 0),
+      goals: Math.max(0, Number(candidate.record.goals) || 0),
+      assists: Math.max(0, Number(candidate.record.assists) || 0),
+      appearances: Math.max(0, Number(candidate.record.appearances) || 0),
+    });
+  }
+  return [...selected.values()].sort((a, b) => roleOrder.indexOf(a.slot) - roleOrder.indexOf(b.slot) || b.ovr - a.ovr || b.goals - a.goals);
+}
+
+function compactArchivedTransfers(transfers: readonly ArchivedSeasonTransfer[]): ArchivedSeasonTransfer[] {
+  const normalized = transfers
+    .filter((transfer) => transfer && transfer.id && transfer.playerName && transfer.toClubId)
+    .map((transfer) => ({
+      id: String(transfer.id),
+      date: String(transfer.date ?? ""),
+      playerId: String(transfer.playerId ?? ""),
+      playerName: String(transfer.playerName),
+      fromClubId: transfer.fromClubId == null ? null : String(transfer.fromClubId),
+      toClubId: String(transfer.toClubId),
+      fromLeague: transfer.fromLeague == null ? null : String(transfer.fromLeague),
+      toLeague: transfer.toLeague == null ? null : String(transfer.toLeague),
+      fee: Math.max(0, Number(transfer.fee) || 0),
+      type: String(transfer.type ?? "permanent"),
+    }));
+  const unique = new Map<string, ArchivedSeasonTransfer>();
+  for (const transfer of normalized) unique.set(transfer.id, transfer);
+  const all = [...unique.values()];
+  if (all.length <= MAX_ARCHIVED_SEASON_TRANSFERS) {
+    return all.sort((a, b) => a.date.localeCompare(b.date) || a.playerName.localeCompare(b.playerName));
+  }
+  // Preserve a mix of the most expensive deals and the latest market activity.
+  const chosen = new Map<string, ArchivedSeasonTransfer>();
+  for (const transfer of [...all].sort((a, b) => b.fee - a.fee || b.date.localeCompare(a.date)).slice(0, MAX_ARCHIVED_SEASON_TRANSFERS * 0.6)) chosen.set(transfer.id, transfer);
+  for (const transfer of [...all].sort((a, b) => b.date.localeCompare(a.date) || b.fee - a.fee)) {
+    if (chosen.size >= MAX_ARCHIVED_SEASON_TRANSFERS) break;
+    chosen.set(transfer.id, transfer);
+  }
+  return [...chosen.values()].sort((a, b) => a.date.localeCompare(b.date) || a.playerName.localeCompare(b.playerName));
+}
+
 export function buildSeasonArchive(input: {
   saveId: string;
   save: SaveGame;
@@ -127,6 +334,7 @@ export function buildSeasonArchive(input: {
   awardWinners?: SeasonArchiveAwardWinner[];
   playerSeasonRecords?: PlayerSeasonArchiveRecord[];
   featuredTransfers?: NonNullable<SeasonArchive["featuredTransfers"]>;
+  seasonTransfers?: NonNullable<SeasonArchive["seasonTransfers"]>;
   nextSeasonEuropeanQualification?: SeasonArchive["nextSeasonEuropeanQualification"];
   topScorers?: SeasonArchive["topScorers"];
   retirements?: RetiredPlayerRecord[];
@@ -134,6 +342,20 @@ export function buildSeasonArchive(input: {
   archivedAt?: string;
 }): SeasonArchive {
   const { save } = input;
+  const teamForm = new Map<string, Array<"W" | "D" | "L">>();
+  const leagueFixtures = Object.values(save.fixtures ?? {}).flat()
+    .filter((fixture) => fixture?.competition === "league" && fixture.result && Number.isFinite(Number(fixture.result.homeGoals)) && Number.isFinite(Number(fixture.result.awayGoals)))
+    .sort((a, b) => Number(a.matchday ?? 0) - Number(b.matchday ?? 0) || String(a.date ?? "").localeCompare(String(b.date ?? "")) || String(a.id).localeCompare(String(b.id)));
+  for (const fixture of leagueFixtures) {
+    const homeForm = teamForm.get(fixture.homeId) ?? [];
+    const awayForm = teamForm.get(fixture.awayId) ?? [];
+    const homeGoals = Number(fixture.result!.homeGoals);
+    const awayGoals = Number(fixture.result!.awayGoals);
+    homeForm.push(homeGoals > awayGoals ? "W" : homeGoals < awayGoals ? "L" : "D");
+    awayForm.push(awayGoals > homeGoals ? "W" : awayGoals < homeGoals ? "L" : "D");
+    teamForm.set(fixture.homeId, homeForm.slice(-5));
+    teamForm.set(fixture.awayId, awayForm.slice(-5));
+  }
   const leagues: SeasonHistoryLeague[] = Object.entries(save.standings ?? {}).map(([leagueId, rows]) => {
     const sorted = [...(rows ?? [])].sort((a, b) =>
       Number(b.points ?? 0) - Number(a.points ?? 0) ||
@@ -155,6 +377,7 @@ export function buildSeasonArchive(input: {
         ga: Number(row.ga ?? 0),
         gd: Number(row.gd ?? 0),
         points: Number(row.points ?? 0),
+        ...(teamForm.has(row.teamId) ? { form: [...(teamForm.get(row.teamId) ?? [])] } : {}),
       })),
     };
   });
@@ -198,6 +421,38 @@ export function buildSeasonArchive(input: {
     domesticCupChampions,
     europeanChampions,
     playerSeasonRecords,
+    teamOfSeason: buildSeasonTeamOfSeason(playerSeasonRecords),
+    seasonTransfers: compactArchivedTransfers(input.seasonTransfers ?? input.featuredTransfers ?? []),
+    domesticCupDetails: Object.entries(save.cupFixtures ?? {})
+      .filter(([leagueId, fixtures]) => !leagueId.endsWith("_structure") && Array.isArray(fixtures))
+      .map(([leagueId, fixtures]) => ({
+        leagueId,
+        championId: typeof (save.cupChampion as Record<string, unknown> | undefined)?.[leagueId] === "string"
+          ? String((save.cupChampion as Record<string, unknown>)[leagueId])
+          : null,
+        fixtures: archiveFinishedFixtures(fixtures, leagueId, "cup"),
+      }))
+      .filter((cup) => cup.fixtures.length > 0 || Boolean(cup.championId)),
+    europeanCompetitionDetails: ([
+      { competition: "ucl" as const, fixtures: save.uclFixtures, state: save.ucl, championId: save.uclChampion },
+      { competition: "uel" as const, fixtures: save.uelFixtures, state: save.uel, championId: save.uelChampion },
+      { competition: "uecl" as const, fixtures: save.ueclFixtures, state: save.uecl, championId: save.ueclChampion },
+    ]).map(({ competition, fixtures, state, championId }) => ({
+      competition,
+      championId: championId ?? null,
+      leaguePhaseTable: (state?.leaguePhaseTable ?? state?.table ?? []).map((row: any) => ({
+        teamId: String(row.teamId),
+        played: Math.max(0, Number(row.played) || 0),
+        won: Math.max(0, Number(row.won) || 0),
+        drawn: Math.max(0, Number(row.drawn) || 0),
+        lost: Math.max(0, Number(row.lost) || 0),
+        gf: Math.max(0, Number(row.gf) || 0),
+        ga: Math.max(0, Number(row.ga) || 0),
+        gd: Number(row.gd) || 0,
+        points: Math.max(0, Number(row.points) || 0),
+      })),
+      fixtures: archiveFinishedFixtures(fixtures, competition, competition),
+    })).filter((competition) => competition.fixtures.length > 0 || competition.leaguePhaseTable?.length || Boolean(competition.championId)),
     featuredTransfers: (input.featuredTransfers ?? []).slice(0, 12).map((transfer) => ({
       id: String(transfer.id),
       date: String(transfer.date),
@@ -234,12 +489,44 @@ export async function persistSeasonArchive(archive: SeasonArchive): Promise<void
   }
 }
 
+function normalizeSeasonArchive(value: unknown, saveId: string): SeasonArchive | null {
+  if (!value || typeof value !== "object") return null;
+  const parsed = value as Partial<SeasonArchive>;
+  if (parsed.version !== 1 || parsed.saveId !== saveId || typeof parsed.season !== "string" || !parsed.season) return null;
+  const european: Partial<SeasonArchive["europeanChampions"]> = parsed.europeanChampions && typeof parsed.europeanChampions === "object"
+    ? parsed.europeanChampions
+    : {};
+  return {
+    ...(parsed as SeasonArchive),
+    archivedAt: typeof parsed.archivedAt === "string" ? parsed.archivedAt : "",
+    leagues: Array.isArray(parsed.leagues) ? parsed.leagues : [],
+    domesticCupChampions: Array.isArray(parsed.domesticCupChampions) ? parsed.domesticCupChampions : [],
+    europeanChampions: {
+      ucl: typeof european.ucl === "string" ? european.ucl : null,
+      uel: typeof european.uel === "string" ? european.uel : null,
+      uecl: typeof european.uecl === "string" ? european.uecl : null,
+    },
+    awards: parsed.awards && typeof parsed.awards === "object" && !Array.isArray(parsed.awards) ? parsed.awards : {},
+    topScorers: Array.isArray(parsed.topScorers) ? parsed.topScorers : [],
+    retirements: Array.isArray(parsed.retirements) ? parsed.retirements : [],
+    promotions: Array.isArray(parsed.promotions) ? parsed.promotions : [],
+    relegations: Array.isArray(parsed.relegations) ? parsed.relegations : [],
+    awardWinners: Array.isArray(parsed.awardWinners) ? parsed.awardWinners : undefined,
+    playerSeasonRecords: Array.isArray(parsed.playerSeasonRecords) ? parsed.playerSeasonRecords : undefined,
+    teamOfSeason: Array.isArray(parsed.teamOfSeason) ? parsed.teamOfSeason : undefined,
+    featuredTransfers: Array.isArray(parsed.featuredTransfers) ? parsed.featuredTransfers : undefined,
+    seasonTransfers: Array.isArray(parsed.seasonTransfers) ? parsed.seasonTransfers : undefined,
+    domesticCupDetails: Array.isArray(parsed.domesticCupDetails) ? parsed.domesticCupDetails : undefined,
+    europeanCompetitionDetails: Array.isArray(parsed.europeanCompetitionDetails) ? parsed.europeanCompetitionDetails : undefined,
+  };
+}
+
 export function getSeasonArchive(saveId: string, season: string): SeasonArchive | null {
   const value = getSaveItem(seasonArchiveKey(saveId, season));
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as SeasonArchive;
-    return parsed?.version === 1 && parsed.saveId === saveId && parsed.season === season ? parsed : null;
+    const parsed = normalizeSeasonArchive(JSON.parse(value), saveId);
+    return parsed?.season === season ? parsed : null;
   } catch {
     return null;
   }
@@ -270,8 +557,7 @@ export function listSeasonArchives(saveId: string): SeasonArchive[] {
       const value = getSaveItem(key);
       if (!value) return null;
       try {
-        const archive = JSON.parse(value) as SeasonArchive;
-        return archive?.version === 1 && archive.saveId === saveId ? archive : null;
+        return normalizeSeasonArchive(JSON.parse(value), saveId);
       } catch {
         return null;
       }

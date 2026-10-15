@@ -18,6 +18,8 @@ import type { TeamOfRoundData } from "@/lib/teamOfRound";
 import { getPlayer } from "@/lib/transfers/PlayerIndex";
 import { listRenewals } from "@/lib/transfers/RenewalLog";
 import { listTransfers } from "@/lib/transfers/TransferHistory";
+import { listRumors } from "@/lib/transfers/RumorEngine";
+import { filterStoriesByEntityCooldown, isWithinNewsWindow } from "./newsRules";
 import {
   ClubRef,
   aThe,
@@ -51,7 +53,8 @@ export type NewsTheme =
   | "cesion"
   | "renovacion"
   | "lesion"
-  | "jugador";
+  | "jugador"
+  | "retirada";
 
 export interface NewsTransfer {
   fromId?: string;
@@ -1370,6 +1373,28 @@ function dayNum(date: string): number {
   return Number.isFinite(t) ? Math.floor(t / 86_400_000) : NaN;
 }
 
+function newsReferenceDate(save: SaveGame): string {
+  if (typeof save.currentDate === "string" && isWithinNewsWindow(save.currentDate, save.currentDate, 0)) {
+    return save.currentDate.slice(0, 10);
+  }
+  const dates: string[] = [];
+  for (const fixtures of Object.values(save.fixtures ?? {})) {
+    for (const fixture of fixtures ?? []) if (fixture.result && fixture.date) dates.push(fixture.date);
+  }
+  for (const fixtures of Object.values(save.cupFixtures ?? {})) {
+    if (!Array.isArray(fixtures)) continue;
+    for (const fixture of fixtures) if (fixture.result && fixture.date) dates.push(fixture.date);
+  }
+  for (const fixtures of [save.uclFixtures, save.uelFixtures, save.ueclFixtures]) {
+    for (const fixture of fixtures ?? []) if (fixture.result && fixture.date) dates.push(fixture.date);
+  }
+  for (const transfer of listTransfers(120)) if (transfer.date) dates.push(transfer.date);
+  for (const renewal of listRenewals(60)) if (renewal.date) dates.push(renewal.date);
+  for (const retirement of save.retiredPlayers ?? []) if (retirement.retiredAt) dates.push(retirement.retiredAt);
+  dates.sort((a, b) => b.localeCompare(a));
+  return dates[0]?.slice(0, 10) ?? "";
+}
+
 function marketNews(ctx: Ctx, refDay: number): NewsItem[] {
   const out: NewsItem[] = [];
   const transfers = listTransfers(120);
@@ -1522,6 +1547,148 @@ function marketNews(ctx: Ctx, refDay: number): NewsItem[] {
     });
   }
   return out;
+}
+
+// ============================================================================
+// RUMORES CREÍBLES DEL MOTOR DE MERCADO
+// ============================================================================
+
+function rumorNews(ctx: Ctx, referenceDate: string): NewsItem[] {
+  if (!referenceDate) return [];
+  const currentRumors = filterStoriesByEntityCooldown(
+    listRumors(120).map((rumor) => ({
+      ...rumor,
+      type: rumor.kind,
+      entityId: rumor.playerId || null,
+    })),
+    referenceDate,
+    { windowDays: 30, cooldownDays: 5 },
+  );
+
+  return currentRumors.slice(0, 28).map((rumor) => {
+    const player = rumor.playerId ? getPlayer(rumor.playerId) : undefined;
+    const club = nameOf(rumor.clubId);
+    const target = rumor.targetClubId ? nameOf(rumor.targetClubId) : undefined;
+    const playerName = player?.name ?? (rumor.playerId ? rumor.playerId : undefined);
+    const mine = isMine(ctx, rumor.clubId, rumor.targetClubId ?? undefined);
+    const rng = rngFor(`news:rumor:${rumor.id}`);
+    const title = (() => {
+      switch (rumor.kind) {
+        case "wants-out":
+          return pick(rng, [
+            `${playerName ?? "Un jugador"} podría abrir la puerta a una salida`,
+            `Crece la incertidumbre sobre el futuro de ${playerName ?? "un jugador"}`,
+          ]);
+        case "searching":
+          return pick(rng, [`${The(club)} rastrea el mercado`, `El mercado, en el radar ${deThe(club)}`]);
+        case "bid-war":
+          return pick(rng, [
+            `Varios clubes se disputan a ${playerName ?? "un objetivo"}`,
+            `Sube la tensión en la puja por ${playerName ?? "un jugador"}`,
+          ]);
+        case "renewal":
+          return pick(rng, [
+            `La renovación de ${playerName ?? "un futbolista"} centra la atención`,
+            `Conversaciones abiertas por el futuro de ${playerName ?? "un jugador"}`,
+          ]);
+        case "interest":
+        default:
+          return pick(rng, [
+            `${The(club)} sigue de cerca a ${playerName ?? "un jugador"}`,
+            `Movimiento en el mercado alrededor de ${playerName ?? "un objetivo"}`,
+            `Crece el interés por ${playerName ?? "un futbolista"}`,
+          ]);
+      }
+    })();
+    const reliability = clamp(Number(rumor.reliability) || 0, 0, 1);
+    const theme: NewsTheme = rumor.kind === "renewal" ? "renovacion" : "fichaje";
+    return {
+      id: `rumor:${rumor.id}`,
+      cat: "mercado",
+      icon: rumor.kind === "renewal" ? "🖊️" : rumor.kind === "wants-out" ? "🗣️" : "👀",
+      title,
+      lead: target ? `${club} ↔ ${target}` : `Información de mercado · ${club}`,
+      body: [
+        rumor.text,
+        `Fiabilidad estimada del rumor: ${Math.round(reliability * 100)}%. No equivale a un fichaje cerrado.`,
+      ],
+      facts: [
+        { label: "Club implicado", value: club },
+        ...(target ? [{ label: "Otro club", value: target }] : []),
+        ...(playerName ? [{ label: "Jugador", value: playerName }] : []),
+        { label: "Fiabilidad", value: `${Math.round(reliability * 100)}%` },
+      ],
+      visual: visualFor({
+        teams: [rumor.clubId, ...(rumor.targetClubId ? [rumor.targetClubId] : [])],
+        players: playerName && rumor.playerId ? [{ id: rumor.playerId, name: playerName }] : [],
+      }),
+      score: clamp(34 + reliability * 40 + prestige(rumor.clubId) * 10 + (mine ? 12 : 0), 10, 92),
+      when: `Mercado · ${prettyDate(rumor.date) ?? rumor.date}`,
+      mine,
+      theme,
+    } satisfies NewsItem;
+  });
+}
+
+// ============================================================================
+// DESPEDIDAS Y RETIRADAS
+// ============================================================================
+
+function retirementNews(ctx: Ctx, referenceDate: string): NewsItem[] {
+  if (!referenceDate || !Array.isArray(ctx.save.retiredPlayers)) return [];
+  return ctx.save.retiredPlayers
+    .filter((record) => record && record.playerId && record.playerName && isWithinNewsWindow(record.retiredAt, referenceDate, 45))
+    .slice()
+    .sort((a, b) => b.retiredAt.localeCompare(a.retiredAt))
+    .slice(0, 20)
+    .map((record) => {
+      const clubId = record.lastClubId ?? undefined;
+      const club = clubId ? nameOf(clubId) : "sin club";
+      const mine = isMine(ctx, clubId);
+      const rng = rngFor(`news:retirement:${record.playerId}:${record.retiredAt}`);
+      const isVeteran = Number(record.age) >= 37;
+      const reason = record.reason === "age-and-injury"
+        ? "El registro atribuye la retirada a la edad y a una lesión de larga duración."
+        : record.reason === "free-agent"
+          ? "El registro indica que terminó su carrera sin pertenecer a un club."
+          : "El registro de la carrera clasifica la retirada como asociada a la edad.";
+      const title = mine
+        ? pick(rng, [
+            `${record.playerName} se despide de ${club}`,
+            `${isVeteran ? "Un veterano" : "Un jugador"} pone fin a su etapa en ${club}`,
+            `Gracias por todo: ${record.playerName} cuelga las botas`,
+          ])
+        : pick(rng, [
+            `${record.playerName} pone fin a su carrera`,
+            `El fútbol despide a ${record.playerName}`,
+            `${record.playerName} se retira a los ${record.age} años`,
+          ]);
+      return {
+        id: `retirement:${record.playerId}:${record.retiredAt}`,
+        cat: mine ? "club" : "jugadores",
+        icon: "👋",
+        title,
+        lead: `${record.playerName} se retira${Number.isFinite(record.age) ? ` a los ${record.age} años` : ""}.`,
+        body: [
+          `${record.playerName} pone fin a su carrera futbolística. Su último club registrado fue ${club}.`,
+          `La ficha de retirada conserva una media final de ${Number.isFinite(record.ovr) ? record.ovr : "no disponible"}.`,
+          reason,
+          "El archivo actual de retiradas no contiene un resumen fiable de goles, partidos y títulos de toda su trayectoria, por lo que no se muestran cifras de carrera que no estén archivadas.",
+        ],
+        facts: [
+          { label: "Edad", value: Number.isFinite(record.age) ? `${record.age} años` : "—" },
+          { label: "Último club", value: club },
+          { label: "Media al retirarse", value: Number.isFinite(record.ovr) ? String(record.ovr) : "—" },
+          { label: "Motivo registrado", value: record.reason === "age-and-injury" ? "Edad y lesión" : record.reason === "free-agent" ? "Sin club" : "Edad" },
+          { label: "Temporada", value: record.season || "—" },
+        ],
+        visual: visualFor({ teams: clubId ? [clubId] : [], players: [{ id: record.playerId, name: record.playerName }] }),
+        score: clamp(58 + (mine ? 30 : 0) + (record.ovr >= 85 ? 10 : 0), 10, 100),
+        when: `Retirada · ${prettyDate(record.retiredAt) ?? record.retiredAt}`,
+        mine,
+        theme: "retirada",
+      } satisfies NewsItem;
+    });
 }
 
 // ============================================================================
@@ -1769,6 +1936,7 @@ export function buildGameNews(save: SaveGame, opts: { limit?: number } = {}): Ne
   const limit = opts.limit ?? 14;
   if (!save) return [];
   const ctx: Ctx = { save, myId: save.myTeamId };
+  const referenceDate = newsReferenceDate(save);
   const leagues = dedupe([save.myLeague, ...TOP_LEAGUES]).filter((lg) => (save.fixtures?.[lg]?.length ?? 0) > 0);
   const all: NewsItem[] = [];
   try {
@@ -1806,6 +1974,16 @@ export function buildGameNews(save: SaveGame, opts: { limit?: number } = {}): Ne
   } catch (e) {
     console.warn("[news] error en noticias de cantera", e);
   }
+  try {
+    all.push(...rumorNews(ctx, referenceDate));
+  } catch (e) {
+    console.warn("[news] error en rumores del mercado", e);
+  }
+  try {
+    all.push(...retirementNews(ctx, referenceDate));
+  } catch (e) {
+    console.warn("[news] error en noticias de retiradas", e);
+  }
   const chosen = selectVaried(all, limit);
   for (const it of chosen) it.theme = it.theme ?? themeOf(it);
   return chosen;
@@ -1822,6 +2000,8 @@ function themeOf(it: NewsItem): NewsTheme {
   if (id.startsWith("academy:")) return "jugador";
   if (id.startsWith("inj:")) return "lesion";
   if (id.startsWith("scorer:")) return "jugador";
+  if (id.startsWith("retirement:")) return "retirada";
+  if (id.startsWith("rumor:")) return id.includes("renewal") ? "renovacion" : "fichaje";
   return "liga";
 }
 

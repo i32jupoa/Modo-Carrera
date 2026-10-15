@@ -80,7 +80,7 @@ export function loanDurationMonthsForDate(date: string): number {
  */
 export function wantsToLoanOut(clubId: string, playerId: string, cacheKey: string): boolean {
   const player = getPlayer(playerId);
-  if (!player || player.clubId !== clubId || player.loanClubId) return false;
+  if (!player || player.retired || player.clubId !== clubId || player.loanClubId) return false;
   // En enero el mercado de cesiones de la IA queda reservado para operaciones
   // extraordinarias que gestiona el usuario. Un club no manda a un titular o
   // a un jugador de rotación consolidado a mitad de temporada sólo porque el
@@ -224,7 +224,7 @@ export function arrangeLoan(
     record: null,
     message: "La cesión no se puede plantear.",
   };
-  if (!player || !player.clubId || player.loanClubId) return base;
+  if (!player || player.retired || !player.clubId || player.loanClubId) return base;
   if (player.clubId === borrowerClubId) return base;
   if (windowForDate(options.date) === "winter" && movedInSummerThisSeason(playerId, options.date)) {
     return { ...base, message: "El jugador ya cambió de club en verano y no puede volver a moverse en enero." };
@@ -414,7 +414,7 @@ function executeLoanObligation(
 export function resolveLoansDue(date: string, options: { excludePlayerIds?: ReadonlySet<string> } = {}): LoanReturn[] {
   const returns: LoanReturn[] = [];
   for (const player of getMarketIndex().byId.values()) {
-    if (options.excludePlayerIds?.has(player.id)) continue;
+    if (options.excludePlayerIds?.has(player.id) || player.retired) continue;
     if (!player.loanClubId || !player.clubId || !player.loanEndDate) continue;
     if (player.loanEndDate > date) continue;
 
@@ -475,7 +475,7 @@ export function resolveLoansEndOfSeason(date: string, options: { excludePlayerId
   const returns = resolveLoansDue(date, options);
 
   for (const player of getMarketIndex().byId.values()) {
-    if (options.excludePlayerIds?.has(player.id)) continue;
+    if (options.excludePlayerIds?.has(player.id) || player.retired) continue;
     if (!player.loanClubId || !player.clubId || player.loanEndDate) continue;
 
     const borrowerClubId = player.loanClubId;

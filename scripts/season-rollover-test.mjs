@@ -38,6 +38,18 @@ const retire2 = selectSeasonRetirements([older], { seed: 12345, season: '2040/41
 assert.deepEqual(retire1, retire2, 'retirements must be deterministic for the same career/season/player');
 assert.equal(retire1.length, 1, 'a 41-year-old free agent has a high retirement probability');
 
+const olderWithContract = { id: 'older-contract', name: 'Veteran With Contract', age: 36, ovr: 64, clubId: 'club', contractYearsLeft: 1 };
+const olderWithoutContractExpiry = { ...olderWithContract, id: 'older-long-contract', contractYearsLeft: 3 };
+assert.ok(
+  retirementProbability(olderWithContract) > retirementProbability(olderWithoutContractExpiry),
+  'contract ending should modestly increase retirement probability for an older player',
+);
+assert.equal(
+  retirementProbability({ id: 'young-star', name: 'Young Star', age: 30, ovr: 93, clubId: 'club', contractYearsLeft: 1 }),
+  0,
+  'a player in his peak must not retire only because his contract is ending',
+);
+
 const archive = buildSeasonArchive({
   saveId: 'career-test',
   save: {

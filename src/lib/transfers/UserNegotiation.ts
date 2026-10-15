@@ -264,7 +264,7 @@ function isBlockedForWindow(blockedForWindow: string | undefined, date: string):
 }
 
 function isImportantFreeAgent(player: MarketPlayer | undefined): boolean {
-  return Boolean(player && !player.clubId && player.ovr >= FREE_AGENT_IMPORTANT_OVR);
+  return Boolean(player && !player.retired && !player.clubId && player.ovr >= FREE_AGENT_IMPORTANT_OVR);
 }
 
 /**
@@ -807,6 +807,7 @@ export interface SubmitOfferResult {
 export function submitUserOffer(input: SubmitOfferInput): SubmitOfferResult {
   const player = getPlayer(input.playerId);
   if (!player) return { ok: false, reason: "Jugador no encontrado en el mercado." };
+  if (player.retired) return { ok: false, reason: "Este jugador se ha retirado y ya no está disponible." };
   const isFreeAgent = !player.clubId;
   if (player.clubId === input.userClubId) return { ok: false, reason: "Ya es tu jugador." };
   if (player.loanClubId) return { ok: false, reason: "El jugador está cedido y no puede cambiar de operación ahora." };
@@ -1409,6 +1410,9 @@ export function finalizeUserDeal(dealId: string, date: string): FinalizeResult {
   }
   const deal = deals.get(dealId);
   if (!deal) return { ok: false, reason: "Negociación no encontrada." };
+  if (getPlayer(deal.playerId)?.retired) {
+    return { ok: false, reason: "El jugador se ha retirado y la negociación ya no puede completarse." };
+  }
   const movementBlock = playerMovementBlockReason(deal.playerId, date);
   if (movementBlock) return { ok: false, reason: movementBlock };
   const canFinalizeDeferredSale = deal.direction === "out" && deal.stage === "closing";
@@ -1584,6 +1588,19 @@ export function advanceUserDeals(userClubId: string, date: string): UserDealEven
   for (const deal of Array.from(deals.values())) {
     if (deal.stage === "completed" || deal.stage === "failed") continue;
     if (deal.userClubId !== userClubId) continue;
+
+    // Una negociación guardada de antes de la retirada no puede seguir viva
+    // ni llegar a la fase de cierre en este u otro avance de calendario.
+    if (getPlayer(deal.playerId)?.retired) {
+      deal.stage = "failed";
+      deal.finishedOn = date;
+      deal.offer.status = "withdrawn";
+      deal.blockedForWindow = undefined;
+      dropInterest(deal.playerId, deal.direction === "in" ? deal.userClubId : deal.otherClubId);
+      log(deal, date, `${deal.playerName} se ha retirado; la negociación queda anulada.`);
+      pushEvent(events, deal, `${deal.playerName} se ha retirado. La negociación queda anulada.`, "bad");
+      continue;
+    }
 
     // Las ofertas del usuario al club se resuelven solas al llegar su fecha.
     // Las contraofertas que esperan una decisión del usuario quedan congeladas.

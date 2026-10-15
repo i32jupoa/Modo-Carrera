@@ -36,6 +36,8 @@ import { isKeyPlayer } from "./MarketValuation";
 import { decideOnRenewal, wantsOut } from "./PlayerDecision";
 import { clamp, seededUnit } from "./random";
 import { logRenewal, setRenewalLogDate } from "./RenewalLog";
+import { isClosed, listNegotiations } from "./NegotiationEngine";
+import { clubRenewalProbability, getContractRenewalPhase, getContractRenewalPhaseKey, type ContractRenewalPhase } from "./RenewalPolicy";
 import type { Contract, MarketPlayer, SquadReport, TransferListReason } from "./types";
 
 // ============================================================================
@@ -51,6 +53,8 @@ export interface RenewalOutcome {
   /** Ficha final acordada (o la última ofrecida si no hubo acuerdo). */
   wage: number;
   years: number;
+  /** Salario antes del intento, para que el histórico no lea el contrato ya actualizado. */
+  previousWage?: number;
   message: string;
 }
 
@@ -202,36 +206,47 @@ function renewedContract(player: MarketPlayer, wage: number, years: number): Con
  * su banquillo; no renueva a veteranos por debajo del nivel del once ni a
  * descartes, y nunca si la ficha se sale del tope salarial.
  */
-export function clubWantsToRenew(clubId: string, playerId: string, cacheKey: string): boolean {
+export function clubWantsToRenew(
+  clubId: string,
+  playerId: string,
+  cacheKey: string,
+  phase: ContractRenewalPhase = "late-season",
+): boolean {
   const player = getPlayer(playerId);
-  if (!player || player.clubId !== clubId) return false;
+  if (!player || player.retired || player.clubId !== clubId) return false;
   if (player.transferListed && player.listReason !== "contract-ending") return false;
 
   const report = getSquadReport(clubId, cacheKey);
   const profile = getClubProfile(clubId);
-
-  // Un portero de 34 sigue en su prime; un lateral de 34, normalmente no.
   const renewalCurve = POSITION_AGE_CURVE[player.group];
-  if (player.age > renewalCurve.declineEnd && player.ovr < report.startingRating) return false;
+  const isDecliningVeteran = player.age > renewalCurve.declineEnd && player.ovr < report.startingRating;
+  if (isDecliningVeteran) return false;
 
   const isYoungProspect =
     player.age <= SQUAD_LIMITS.youngAge && player.potential >= report.startingRating - 1;
   const isUseful = player.ovr >= report.startingRating - SQUAD_LIMITS.benchGapForSale / 2;
+  const keyPlayer = isKeyPlayer(playerId, cacheKey);
 
-  if (!isYoungProspect && !isUseful && !isKeyPlayer(playerId, cacheKey)) return false;
+  // No se renuevan descartes salvo que sean una promesa con recorrido o un
+  // jugador clave. La prioridad real se decide antes de recorrer el listado.
+  if (!isYoungProspect && !isUseful && !keyPlayer) return false;
 
-  // Un club ambicioso renueva antes; uno conservador deja correr el contrato.
-  const veteranKeyBoost = isKeyPlayer(playerId, cacheKey) && player.age >= 32 ? 0.22 : 0;
-  const keyBoost = isKeyPlayer(playerId, cacheKey) ? 0.12 : 0;
-  const chance = clamp(0.45 + profile.ambition * 0.4 + (isYoungProspect ? 0.15 : 0) + keyBoost + veteranKeyBoost, 0, 0.97);
-  return seededUnit(clubId, playerId, cacheKey, "renew") < chance;
+  const chance = clubRenewalProbability({
+    phase,
+    ambition: profile.ambition,
+    isKeyPlayer: keyPlayer,
+    isYoungProspect,
+    isUseful,
+    isDecliningVeteran,
+  });
+  return seededUnit(clubId, playerId, cacheKey, "renew-club-willingness") < chance;
 }
 
 /**
  * Intenta renovar a un jugador: el club ofrece la ficha que puede pagar y el
  * jugador decide. Si pide más y cabe en el tope, el club mejora una vez.
  */
-export function attemptRenewal(clubId: string, playerId: string, cacheKey: string): RenewalOutcome {
+export function attemptRenewal(clubId: string, playerId: string, cacheKey: string, date?: string): RenewalOutcome {
   const player = getPlayer(playerId);
   const base: RenewalOutcome = {
     playerId,
@@ -240,29 +255,61 @@ export function attemptRenewal(clubId: string, playerId: string, cacheKey: strin
     renewed: false,
     wage: player?.contract.wage ?? WAGE_RULES.minimumWage,
     years: 0,
+    previousWage: player?.contract.wage ?? WAGE_RULES.minimumWage,
     message: "No se puede renovar a este jugador.",
   };
-  if (!player || player.clubId !== clubId) return base;
+  if (!player || player.retired || player.clubId !== clubId) return base;
 
-  const ceiling = maxWageOffer(clubId);
-  const ask = decideOnRenewal(playerId, cacheKey);
-  let offeredWage = Math.min(
-    ceiling,
-    Math.round(player.contract.wage * CONTRACT_RULES.renewalRaise),
+  const finances = getFinances(clubId);
+  const wageRoom = Math.max(0, Math.round(finances.wageBudget - finances.wageBill));
+  const transferRoom = Math.max(0, Math.round(finances.budget - finances.initialBudget * 0.05));
+  // Una renovación compromete el incremento salarial y la prima. El límite de
+  // oferta combina el margen salarial real con el presupuesto disponible, sin
+  // tocar la economía del club del usuario (que nunca entra en el ciclo IA).
+  const maxRaiseFromBudget = Math.max(
+    0,
+    Math.floor((transferRoom + player.contract.wage) / (1 + CONTRACT_RULES.signingBonusShare)) - player.contract.wage,
   );
-  let decision = decideOnRenewal(playerId, cacheKey, offeredWage);
+  const affordableCeiling = player.contract.wage + Math.min(wageRoom, maxRaiseFromBudget);
+  const ceiling = Math.min(maxWageOffer(clubId), affordableCeiling);
+  const ask = decideOnRenewal(playerId, cacheKey, undefined, date);
+  let offeredWage = Math.min(ceiling, Math.round(player.contract.wage * CONTRACT_RULES.renewalRaise));
+  let decision = decideOnRenewal(playerId, cacheKey, offeredWage, date);
 
   if (!decision.accepted && ask.wageRequested <= ceiling) {
     offeredWage = ask.wageRequested;
-    decision = decideOnRenewal(playerId, cacheKey, offeredWage);
+    decision = decideOnRenewal(playerId, cacheKey, offeredWage, date);
   }
 
-  if (!decision.accepted) {
-    // Si no renueva y le queda un año o menos, pasa a ser vendible.
-    if (player.contract.yearsLeft <= 1) {
-      listForTransfer(playerId, "contract-ending");
-    }
-    return { ...base, wage: offeredWage, message: decision.message };
+  const betterExternalOffer = listNegotiations().some(({ offer }) =>
+    offer.playerId === playerId &&
+    offer.sellerClubId === clubId &&
+    offer.buyerClubId !== clubId &&
+    !isClosed(offer.status) &&
+    offer.wageOffer > offeredWage
+  );
+  if (betterExternalOffer && decision.accepted) {
+    decision = {
+      ...decision,
+      accepted: false,
+      message: `${player.name} está valorando una oferta salarial mejor de otro club.`,
+    };
+  }
+
+  const wageCommitment = additionalWageCommitment(player.contract.wage, offeredWage);
+  const signingBonus = Math.round(offeredWage * CONTRACT_RULES.signingBonusShare);
+  const cashRoom = Math.max(0, Math.round(finances.budget - finances.initialBudget * 0.05));
+  if (
+    !decision.accepted ||
+    wageCommitment > wageRoom ||
+    wageCommitment + signingBonus > cashRoom
+  ) {
+    // Si no renueva y le queda un año o menos, pasa a ser vendible. Las
+    // renovaciones posteriores no le fuerzan a firmar ni ignoran su rechazo.
+    if (player.contract.yearsLeft <= 1) listForTransfer(playerId, "contract-ending");
+    return { ...base, wage: offeredWage, message: decision.accepted
+      ? "El club no dispone de margen salarial o económico suficiente para cerrar la renovación."
+      : decision.message };
   }
 
   const years = clamp(
@@ -270,6 +317,10 @@ export function attemptRenewal(clubId: string, playerId: string, cacheKey: strin
     CONTRACT_RULES.minYears,
     CONTRACT_RULES.maxYears,
   );
+  const previousWage = player.contract.wage;
+  // Registrar la operación primero para que presupuesto y masa salarial se
+  // actualicen junto al contrato de mercado.
+  registerRenewal(clubId, previousWage, offeredWage, signingBonus);
   updatePlayer(playerId, {
     contract: renewedContract(player, offeredWage, years),
     transferListed: false,
@@ -283,6 +334,7 @@ export function attemptRenewal(clubId: string, playerId: string, cacheKey: strin
     renewed: true,
     wage: offeredWage,
     years,
+    previousWage,
     message: `${player.name} renueva con ${teamById(clubId).name} hasta ${years} temporada(s) más.`,
   };
 }
@@ -365,45 +417,74 @@ export interface ContractCycleResult {
 }
 
 /**
- * El club revisa contratos: renueva a quien quiere conservar y actualiza la
- * lista de transferibles. Sólo mira a quien está en el último tramo de
- * contrato, para no reescribir toda la plantilla cada día.
+ * Revisión contractual de una plantilla. Las renovaciones sólo se evalúan en
+ * las fases de enero y abril-junio; la revisión de transferibles puede seguir
+ * realizándose al abrir una ventana de mercado.
  */
 export function runClubContractCycle(
   clubId: string,
-  options: { date: string; maxRenewals?: number; reviewList?: boolean; excludePlayerIds?: ReadonlySet<string> },
+  options: {
+    date: string;
+    maxRenewals?: number;
+    reviewList?: boolean;
+    excludePlayerIds?: ReadonlySet<string>;
+    phase?: ContractRenewalPhase | null;
+    renewalsEnabled?: boolean;
+  },
 ): ContractCycleResult {
-  const cacheKey = options.date;
-  setRenewalLogDate(options.date);
-  const maxRenewals = options.maxRenewals ?? 2;
   const result: ContractCycleResult = { clubId, renewals: [], listed: [] };
+  setRenewalLogDate(options.date);
 
-  const expiring = getClubPlayers(clubId)
-    .filter((player) => player.contract.yearsLeft <= 1 && !player.loanClubId && !options.excludePlayerIds?.has(player.id))
-    .sort((a, b) => b.ovr - a.ovr);
-
-  for (const player of expiring) {
-    if (result.renewals.filter((r) => r.renewed).length >= maxRenewals) break;
-    if (!clubWantsToRenew(clubId, player.id, cacheKey)) continue;
-    const outcome = attemptRenewal(clubId, player.id, cacheKey);
-    result.renewals.push(outcome);
-    if (outcome.renewed) {
-      logRenewal({
-        date: options.date,
-        playerId: outcome.playerId,
-        playerName: outcome.playerName,
-        clubId: outcome.clubId,
-        wage: outcome.wage,
-        previousWage: player.contract.wage,
-        years: outcome.years,
+  const phase = options.phase === undefined ? getContractRenewalPhase(options.date) : options.phase;
+  if (options.renewalsEnabled !== false && phase !== null && clubId !== getUserClubId()) {
+    syncWageBill(clubId);
+    const phaseKey = getContractRenewalPhaseKey(options.date, phase);
+    const expiring = getClubPlayers(clubId)
+      .filter((player) =>
+        !player.retired &&
+        player.contract.yearsLeft <= 1 &&
+        !player.loanClubId &&
+        !options.excludePlayerIds?.has(player.id)
+      )
+      .sort((a, b) => {
+        const report = getSquadReport(clubId, phaseKey);
+        const rank = (player: MarketPlayer) => {
+          const key = isKeyPlayer(player.id, phaseKey);
+          const young = player.age <= SQUAD_LIMITS.youngAge && player.potential >= report.startingRating - 1;
+          const useful = player.ovr >= report.startingRating - SQUAD_LIMITS.benchGapForSale / 2;
+          return Number(key) * 1_000 + Number(young) * 500 + Number(useful) * 250 + player.ovr * 2 + player.potential * 0.1;
+        };
+        return rank(b) - rank(a);
       });
+
+    // El límite por defecto es la cantidad de candidatos elegibles: ya no hay
+    // un tope estructural de dos renovaciones por club en el cierre anual.
+    const maxRenewals = Math.max(0, options.maxRenewals ?? expiring.length);
+    for (const player of expiring) {
+      if (result.renewals.filter((renewal) => renewal.renewed).length >= maxRenewals) break;
+      if (!clubWantsToRenew(clubId, player.id, phaseKey, phase)) continue;
+      const outcome = attemptRenewal(clubId, player.id, phaseKey, options.date);
+      result.renewals.push(outcome);
+      if (outcome.renewed) {
+        logRenewal({
+          date: options.date,
+          playerId: outcome.playerId,
+          playerName: outcome.playerName,
+          clubId: outcome.clubId,
+          wage: outcome.wage,
+          previousWage: outcome.previousWage ?? player.contract.wage,
+          years: outcome.years,
+          releaseClause: Math.round(player.value * CONTRACT_RULES.releaseClauseFactor),
+          byUser: false,
+        });
+      }
     }
   }
 
   // Fuera de la ventana de fichajes no hace falta recalcular la lista completa
   // de transferibles todos los días: se volverá a revisar al abrir el mercado.
   if (options.reviewList !== false) {
-    result.listed = reviewTransferList(clubId, cacheKey);
+    result.listed = reviewTransferList(clubId, options.date);
   }
 
   return result;

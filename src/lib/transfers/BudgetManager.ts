@@ -513,8 +513,9 @@ export function registerSigning(clubId: string, fee: number, wage: number): void
   entry.totalBudget = entry.budget + entry.wageBudget;
 }
 
-/** Registra una renovación del club del usuario: ajusta el salario comprometido
- * por la diferencia y descuenta la prima/ficha de renovación del presupuesto.
+/** Registra una renovación contractual y actualiza la economía correspondiente.
+ * El club del usuario mantiene su puente de presupuesto; los clubes IA consumen
+ * el incremento salarial y la prima de su presupuesto interno.
  */
 export function registerRenewal(
   clubId: string,
@@ -549,7 +550,10 @@ export function registerRenewal(
   entry.budget = Math.max(0, entry.budget - delta - bonus);
   entry.spent += bonus;
   entry.wageBill = Math.max(0, Math.round(entry.wageBill + delta));
-  entry.wageBudget = Math.max(0, Math.round(entry.wageBudget - delta));
+  // Para la IA wageBudget es el límite asignado a salarios, no otra caja que
+  // deba pagar el mismo incremento por segunda vez. Al subir wageBill, el
+  // margen disponible (wageBudget - wageBill) se reduce de forma natural.
+  entry.wageBudget = Math.max(entry.wageBill, Math.round(entry.wageBudget));
   entry.totalBudget = entry.budget + entry.wageBudget;
 }
 

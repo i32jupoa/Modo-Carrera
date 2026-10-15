@@ -5,7 +5,8 @@
  * calendario en lugar de resolver la ventana de golpe.
  *
  *   - cada día actúa sólo un puñado de clubes (elegidos de forma determinista),
- *   - cada club activo renueva, busca, vende, cede o negocia,
+ *   - las renovaciones globales se revisan en enero y abril-junio; el resto de
+ *     las acciones de mercado se reparte entre clubes activos,
  *   - el deadline day multiplica la actividad y hunde los precios,
  *   - y cada ventana tiene su propia intensidad: hay veranos locos y veranos
  *     tranquilos, y nunca gastan todos a la vez.
@@ -38,9 +39,10 @@ import {
   signEmergencyMarketCandidate,
 } from "./TransferEngine";
 import { runClubContractCycle, advanceSeason } from "./ContractEngine";
+import { getContractRenewalPhase, getContractRenewalPhaseKey } from "./RenewalPolicy";
 import { runClubLoanCycle, resolveLoansDue, resolveLoansEndOfSeason } from "./LoanEngine";
 import { recordTransfers } from "./TransferHistory";
-import { rumorActiveBid, rumorBidWar, rumorConfirmedTransfer, rumorInterest } from "./RumorEngine";
+import { rumorActiveBid, rumorBidWar, rumorConfirmedTransfer, rumorInterest, rumorRenewal } from "./RumorEngine";
 import {
   setLockWindow,
   windowDeficit,
@@ -175,6 +177,8 @@ interface SimulationInternals {
 }
 
 let internals: SimulationInternals | null = null;
+/** Fases contractuales ya revisadas en esta instancia/carrera. */
+let reviewedRenewalPhases = new Set<string>();
 
 /** Intensidad de la ventana: hay mercados locos y mercados muertos. */
 function intensityFor(date: string): number {
@@ -290,6 +294,41 @@ function allClubIds(): string[] {
   return Array.from(getMarketIndex().byClub.keys());
 }
 
+
+/**
+ * Revisa contratos de todos los clubes IA dos veces por temporada: enero y
+ * abril-junio. Se hace como una fase de simulación propia y no sólo para el
+ * subconjunto de clubes que ese día actúan en el mercado; así un salto de
+ * calendario no deja equipos sin evaluar. La clave de fase hace reproducibles
+ * las decisiones si una partida se vuelve a cargar a mitad de ventana.
+ */
+function runScheduledContractReview(date: string, result: MarketDayResult): void {
+  const phase = getContractRenewalPhase(date);
+  if (!phase) return;
+  const phaseKey = getContractRenewalPhaseKey(date, phase);
+  if (reviewedRenewalPhases.has(phaseKey)) return;
+  reviewedRenewalPhases.add(phaseKey);
+
+  for (const clubId of allClubIds()) {
+    if (clubId === getUserClubId()) continue;
+    try {
+      const contracts = runClubContractCycle(clubId, {
+        date,
+        phase,
+        reviewList: false,
+      });
+      for (const renewal of contracts.renewals) {
+        if (renewal.renewed) result.renewals += 1;
+        const rumor = rumorRenewal(clubId, renewal.playerId, renewal.renewed, date, renewal.renewed ? undefined : renewal.message);
+        if (rumor) result.rumors.push(rumor);
+      }
+    } catch (error) {
+      // El fallo de contratos de un club no debe detener el resto de la jornada.
+      console.warn(`[market] contract review skipped for ${clubId} (${phaseKey}):`, error);
+    }
+  }
+}
+
 /** Prepara los contadores de una ventana nueva y recarga presupuestos. */
 function openWindow(date: string): SimulationInternals {
   const key = windowKey(date);
@@ -323,6 +362,7 @@ function openWindow(date: string): SimulationInternals {
 /** Inicializa (o reinicia) la simulación para una fecha. */
 export function initializeSimulation(date: string): MarketSimulationState {
   internals = openWindow(date);
+  reviewedRenewalPhases = new Set<string>();
   return internals.state;
 }
 
@@ -361,6 +401,7 @@ export function getSimulationState(): MarketSimulationState | null {
 /** Limpia el estado de simulación. */
 export function resetSimulation(): void {
   internals = null;
+  reviewedRenewalPhases = new Set<string>();
 }
 
 /** Contadores de un club en la ventana en curso. */
@@ -554,18 +595,15 @@ function runClubDay(
   const window = clubWindowState(clubId);
   const profile = getClubProfile(clubId);
 
-  // 1. Contratos: renovaciones y revisión de la lista de transferibles.
-  // Fuera de mercado sólo mantenemos renovaciones puntuales; la revisión
-  // completa de transferibles se difiere al próximo mercado abierto.
-  if (seededUnit(clubId, date, "contracts") < 0.5) {
-    const contracts = runClubContractCycle(clubId, {
+  // 1. La lista de transferibles se mantiene vinculada a las ventanas. Las
+  // renovaciones se resuelven en una fase global (enero / abril-junio) y no
+  // al azar según qué clubes hayan sido elegidos para operar hoy.
+  if (state.window !== "closed" && seededUnit(clubId, date, "contracts-list") < 0.5) {
+    runClubContractCycle(clubId, {
       date,
-      maxRenewals: state.window === "closed" ? 1 : 2,
-      reviewList: state.window !== "closed",
+      renewalsEnabled: false,
+      reviewList: true,
     });
-    for (const renewal of contracts.renewals) {
-      if (renewal.renewed) result.renewals += 1;
-    }
   }
 
   if (state.window === "closed") {
@@ -985,6 +1023,9 @@ export function simulateDay(date: string): MarketDayResult {
 
   // Primero contamos las negociaciones heredadas de días anteriores.
   publishLiveBidRumors(result, date);
+
+  // Las renovaciones no dependen del muestreo diario de clubes activos.
+  runScheduledContractReview(date, result);
 
   for (const clubId of activeClubsForDate(date, state)) {
     try {

@@ -5,7 +5,7 @@
  *
  * Run: npm run test:season-balance -- --seasons=250 --seed=20261010
  * This executes full 20-team, 38-matchday double round-robin seasons. It models
- * the engine's home advantage, tanh quality-to-xG share, 2.95 base total xG,
+ * the engine's home advantage, tanh quality-to-xG share (0.23 / 8.0 calibration), 2.95 base total xG,
  * xG clamps and Poisson goals; it isolates league balance from the UI/store.
  */
 
@@ -53,7 +53,7 @@ function expectedGoals(home, away, random) {
   const homeStrength = home * (0.62 + 0.18 + 0.12 + 0.08);
   const awayStrength = away * (0.62 + 0.18 + 0.12 + 0.08);
   const effectiveDiff = clamp(homeStrength - awayStrength, -30, 30) + 2.0;
-  const share = clamp(0.5 + 0.26 * Math.tanh(effectiveDiff / 10.5), 0.24, 0.76);
+  const share = clamp(0.5 + 0.23 * Math.tanh(effectiveDiff / 8.0), 0.24, 0.76);
   const variation = () => 0.97 + random() * 0.06;
   return {
     home: clamp(2.95 * share * variation(), 0.22, 3.65),

@@ -17,6 +17,7 @@ import { getSquadReport } from "./SquadAnalyzer";
 import { clamp, lerp, normalize, seededPick, seededRange } from "./random";
 import type { MarketPlayer, PlayerDecision, PlayerDecisionVerdict, SquadRole } from "./types";
 import { hasMailboxWantsOut } from "@/lib/satisfaction";
+import { getPlayerUsage } from "./MarketPlayerSignals";
 
 // ============================================================================
 // SALARIO PEDIDO
@@ -373,6 +374,7 @@ export function decideOnRenewal(
   playerId: string,
   cacheKey: string,
   offeredWage?: number,
+  date?: string,
 ): RenewalDecision {
   const player = getPlayer(playerId);
   if (!player || !player.clubId) {
@@ -407,20 +409,71 @@ export function decideOnRenewal(
     };
   }
 
-  const leave = desireToLeave(playerId, cacheKey);
+  const clubProfile = getClubProfile(player.clubId);
+  const squad = getSquadReport(player.clubId, cacheKey);
+  const ambitionMismatch = Math.max(0, player.personality.ambition - clubProfile.ambition);
+  const roleGap = clamp((squad.startingRating - player.ovr) / 12, 0, 1);
+
+  // Los minutos se obtienen del registro real de apariciones de esta temporada.
+  // En saves antiguos o en pretemporada todavía pueden no existir; en ese caso
+  // sólo usamos `minutesShare` si contiene una señal persistida real y no
+  // interpretamos el cero inicial como enfado.
+  const usage = date ? getPlayerUsage(playerId, player.clubId, date) : null;
+  const hasUsageSignal = Boolean((usage?.minutes ?? 0) > 0 || player.minutesShare > 0);
+  const minutesShare = (usage?.minutes ?? 0) > 0 ? usage!.minutesShare : player.minutesShare;
+  const starIgnored = hasUsageSignal && player.ovr >= squad.startingRating + 3 && minutesShare < 0.42;
+  const lowMinutes = hasUsageSignal && minutesShare < 0.32;
+  const wantsOutPublicly = hasMailboxWantsOut(playerId);
+
+  // No renovamos únicamente por azar: una estrella que casi no juega puede
+  // estar molesta, pedir un rol mayor o buscar un proyecto más ambicioso. La
+  // lealtad reduce esos conflictos, pero no los anula si la situación es grave.
+  const playingTimeFrustration = starIgnored ? 0.34 : lowMinutes && player.personality.playingTimeDesire >= 0.6 ? 0.20 : 0;
+  const projectFrustration = ambitionMismatch >= 0.28 ? (ambitionMismatch - 0.20) * 0.32 : 0;
+  // Unas pocas situaciones graves impiden que el club "compre" la renovación
+  // sólo con salario: estrella ignorada con alta necesidad de minutos, o jugador
+  // muy ambicioso cuya lealtad ya no compensa la diferencia de proyecto.
+  const severeRoleConflict =
+    starIgnored && player.personality.playingTimeDesire >= 0.72 && player.personality.loyalty <= 0.55;
+  const severeProjectConflict =
+    ambitionMismatch >= 0.45 && player.personality.ambition >= 0.72 && player.personality.loyalty <= 0.34;
+  const leave = clamp(
+    desireToLeave(playerId, cacheKey) +
+      ambitionMismatch * 0.18 +
+      projectFrustration +
+      roleGap * player.personality.playingTimeDesire * 0.12 +
+      playingTimeFrustration +
+      (wantsOutPublicly ? 0.28 : 0),
+    0,
+    1,
+  );
   const wageRatio = offeredWage !== undefined ? offeredWage / requested : 1;
   const happiness = lerp(1 - leave, 1, player.personality.loyalty * 0.5);
-  const accepted = wageRatio >= 0.95 && happiness >= 0.45;
+  const accepted =
+    wageRatio >= 0.95 && happiness >= 0.38 && !severeRoleConflict && !severeProjectConflict;
+
+  let message = `${player.name} prefiere escuchar otras propuestas antes de renovar.`;
+  if (!accepted) {
+    if (wageRatio < 0.95) {
+      message = `${player.name} rechaza la renovación porque pide una ficha superior a la oferta del club.`;
+    } else if (starIgnored) {
+      message = `${player.name} está molesto por tener pocos minutos pese a ser una de las estrellas de la plantilla y quiere un papel más importante.`;
+    } else if (lowMinutes && player.personality.playingTimeDesire >= 0.6) {
+      message = `${player.name} quiere más minutos de juego y no acepta renovar con su rol actual.`;
+    } else if (wantsOutPublicly) {
+      message = `${player.name} mantiene su intención de salir y no quiere comprometer su futuro con el club.`;
+    } else if (ambitionMismatch >= 0.28) {
+      message = `${player.name} considera que el proyecto deportivo del club no está a la altura de sus ambiciones.`;
+    }
+  } else {
+    message = `${player.name} acepta la renovación y continúa en el proyecto del club.`;
+  }
 
   return {
     playerId,
     accepted,
     wageRequested: requested,
     yearsRequested: Math.round(yearsRequested),
-    message: accepted
-      ? `${player.name} renueva su contrato.`
-      : wageRatio < 0.95
-        ? `${player.name} pide una ficha mayor para renovar.`
-        : `${player.name} quiere buscar un nuevo destino.`,
+    message,
   };
 }
