@@ -141,6 +141,26 @@ export function ratingBucket(ovr: number): number {
   return Math.floor(ovr / 5) * 5;
 }
 
+/** Ledger de retiradas de la carrera actualmente cargada. */
+const retiredLedgerIds = new Set<string>();
+const retiredLedgerNames = new Set<string>();
+
+function normalizePlayerIdentity(name: unknown): string {
+  return String(name ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function isRetiredIdentity(id: unknown, name: unknown): boolean {
+  const key = String(id ?? "").trim();
+  const normalizedName = normalizePlayerIdentity(name);
+  return (key !== "" && retiredLedgerIds.has(key))
+    || (normalizedName !== "" && retiredLedgerNames.has(normalizedName));
+}
+
 function teamLookup(): Map<string, Team> {
   const map = new Map<string, Team>();
   for (const team of getAllTeams()) map.set(team.id, team);
@@ -165,6 +185,14 @@ function buildIndex(): MarketIndex {
   const resolvedClub: string[] = new Array(records.length);
   for (let i = 0; i < records.length; i++) {
     const raw = records[i];
+    const rawId = raw.ID !== undefined ? String(raw.ID) : `p-${i}`;
+    if (isRetiredIdentity(rawId, raw.Name)) {
+      retiredLedgerIds.add(rawId);
+      const retiredName = normalizePlayerIdentity(raw.Name);
+      if (retiredName) retiredLedgerNames.add(retiredName);
+      resolvedClub[i] = "";
+      continue;
+    }
     // Emparejamiento ESTRICTO (igualdad exacta o alias declarado, sin
     // coincidencias parciales): el resto del juego (plantilla del usuario,
     // `src/data/players.ts`) ya usa esta función. El mercado usaba antes
@@ -189,10 +217,16 @@ function buildIndex(): MarketIndex {
 
   for (let i = 0; i < records.length; i++) {
     const raw = records[i];
-    const clubId = resolvedClub[i];
-    const team = clubId ? teams.get(clubId) : undefined;
-    const leagueId = team?.league ?? "free";
     const id = raw.ID !== undefined ? String(raw.ID) : `p-${i}`;
+    const isRetired = isRetiredIdentity(id, raw.Name);
+    if (isRetired) {
+      retiredLedgerIds.add(id);
+      const retiredName = normalizePlayerIdentity(raw.Name);
+      if (retiredName) retiredLedgerNames.add(retiredName);
+    }
+    const clubId = isRetired ? "" : resolvedClub[i];
+    const team = clubId ? teams.get(clubId) : undefined;
+    const leagueId = isRetired ? "retired" : team?.league ?? "free";
     const ovr = raw.OVR ?? 70;
     const age = raw.Age ?? 24;
     const position = raw.Position ?? "CM";
@@ -237,6 +271,7 @@ function buildIndex(): MarketIndex {
       loanOwnerClubId: null,
       loanEndDate: null,
       minutesShare: 0,
+      ...(isRetired ? { retired: true } : {}),
       attributes: {
         pace: raw.PAC ?? 50,
         passing: raw.PAS ?? 50,
@@ -246,6 +281,19 @@ function buildIndex(): MarketIndex {
     };
 
     index.byId.set(id, player);
+    if (isRetired) {
+      player.clubId = null;
+      player.leagueId = "retired";
+      player.transferListed = false;
+      player.listReason = null;
+      player.loanListed = false;
+      player.loanClubId = null;
+      player.loanOwnerClubId = null;
+      player.loanEndDate = null;
+      player.minutesShare = 0;
+      touched.add(id);
+      continue;
+    }
     if (clubId) addTo(index.byClub, clubId, id);
     else index.freeAgents.add(id);
     addTo(index.byGroup, player.group, id);
@@ -258,14 +306,77 @@ function buildIndex(): MarketIndex {
 
 let cached: MarketIndex | null = null;
 
+function deactivateRetiredPlayer(index: MarketIndex, player: MarketPlayer): void {
+  const id = String(player.id);
+  retiredLedgerIds.add(id);
+  const normalizedName = normalizePlayerIdentity(player.name);
+  if (normalizedName) retiredLedgerNames.add(normalizedName);
+  if (player.clubId) removeFrom(index.byClub, player.clubId, id);
+  index.freeAgents.delete(id);
+  removeFrom(index.byGroup, player.group, id);
+  removeFrom(index.byLeague, player.leagueId, id);
+  removeFrom(index.byRating, ratingBucket(player.ovr), id);
+  player.clubId = null;
+  player.leagueId = "retired";
+  player.retired = true;
+  player.transferListed = false;
+  player.listReason = null;
+  player.loanListed = false;
+  player.loanClubId = null;
+  player.loanOwnerClubId = null;
+  player.loanEndDate = null;
+  player.minutesShare = 0;
+  touched.add(id);
+}
+
+type RetiredPlayerIdentityRecord = string | number | {
+  playerId?: string | number;
+  id?: string | number;
+  ID?: string | number;
+  playerName?: string;
+  name?: string;
+  Name?: string;
+};
+
+/** Reemplaza el ledger al cargar otra carrera y excluye sus retirados de todos los índices activos.
+ * Acepta IDs y registros completos: el nombre normalizado protege también ante fichas
+ * duplicadas/importadas que conservan el nombre pero llevan un ID diferente. */
+export function setRetiredPlayersLedger(players: Iterable<RetiredPlayerIdentityRecord>): void {
+  retiredLedgerIds.clear();
+  retiredLedgerNames.clear();
+  for (const raw of players) {
+    const record = typeof raw === "object" && raw !== null ? raw : null;
+    const rawId = record ? (record.playerId ?? record.id ?? record.ID) : raw;
+    const id = String(rawId ?? "").trim();
+    if (id) retiredLedgerIds.add(id);
+    const name = normalizePlayerIdentity(record?.playerName ?? record?.name ?? record?.Name);
+    if (name) retiredLedgerNames.add(name);
+  }
+  if (!cached) return;
+  for (const player of cached.byId.values()) {
+    if (isRetiredIdentity(player.id, player.name)) deactivateRetiredPlayer(cached, player);
+  }
+}
+
 function insertDynamicMarketPlayer(index: MarketIndex, player: MarketPlayer): void {
   if (index.byId.has(player.id)) return;
-  index.byId.set(player.id, player);
-  if (player.clubId) addTo(index.byClub, player.clubId, player.id);
-  else index.freeAgents.add(player.id);
-  addTo(index.byGroup, player.group, player.id);
-  addTo(index.byLeague, player.leagueId, player.id);
-  addTo(index.byRating, ratingBucket(player.ovr), player.id);
+  const id = String(player.id);
+  if (player.retired) retiredLedgerIds.add(id);
+  if (isRetiredIdentity(id, player.name)) {
+    retiredLedgerIds.add(id);
+    const normalizedName = normalizePlayerIdentity(player.name);
+    if (normalizedName) retiredLedgerNames.add(normalizedName);
+    const retired = { ...player, id, clubId: null, leagueId: "retired", retired: true as const, transferListed: false, listReason: null, loanListed: false, loanClubId: null, loanOwnerClubId: null, loanEndDate: null, minutesShare: 0 };
+    index.byId.set(id, retired);
+    touched.add(id);
+    return;
+  }
+  index.byId.set(id, player);
+  if (player.clubId) addTo(index.byClub, player.clubId, id);
+  else index.freeAgents.add(id);
+  addTo(index.byGroup, player.group, id);
+  addTo(index.byLeague, player.leagueId, id);
+  addTo(index.byRating, ratingBucket(player.ovr), id);
 }
 
 /** Devuelve los índices, construyéndolos la primera vez que se piden. */
@@ -456,10 +567,12 @@ export function reassignPlayerClub(
   const player = index.byId.get(playerId);
   if (!player) return;
 
-  // Una retirada es terminal dentro de esta carrera: ni una oferta antigua,
-  // ni un movimiento forzado de la IA, ni una cesión pueden devolver al jugador
-  // al mundo activo. La restauración de un delta retirado lo mueve a null.
-  if (player.retired && clubId !== null) return;
+  // Una retirada es terminal: no se puede mover ni siquiera a agentes libres.
+  if (player.retired || isRetiredIdentity(playerId, player.name)) {
+    retiredLedgerIds.add(String(playerId));
+    deactivateRetiredPlayer(index, player);
+    return;
+  }
 
   const previousClubId = player.clubId;
 
@@ -499,10 +612,19 @@ export function updatePlayer(
   const player = index.byId.get(playerId);
   if (!player) return undefined;
 
-  // `retired` no puede volver a false por un fallback de plantilla ni por una
-  // negociación que lleve tiempo abierta. Las retiradas solo se revierten
-  // creando explícitamente otro registro de jugador, no reactivando este.
-  if (player.retired && patch.retired === false) patch = { ...patch, retired: true };
+  // El mercado no debe reactivar ni modificar fichas retiradas; el historial
+  // archivado conserva sus estadísticas, pero el jugador deja el mundo activo.
+  if (player.retired || isRetiredIdentity(playerId, player.name)) {
+    retiredLedgerIds.add(String(playerId));
+    deactivateRetiredPlayer(index, player);
+    return player;
+  }
+  if (patch.retired === true) {
+    retiredLedgerIds.add(String(playerId));
+    Object.assign(player, patch);
+    deactivateRetiredPlayer(index, player);
+    return player;
+  }
 
   if (patch.ovr !== undefined && patch.ovr !== player.ovr) {
     removeFrom(index.byRating, ratingBucket(player.ovr), playerId);
@@ -575,29 +697,14 @@ export function markPlayerDirty(playerId: string): void {
  * de IndexedDB del mercado o es de una versión anterior.
  */
 export function ensurePlayersRetired(playerIds: Iterable<string | number>): void {
-  for (const rawId of playerIds) {
-    const id = String(rawId ?? '');
-    if (!id) continue;
-    const player = getPlayer(id);
-    if (!player) continue;
-
-    const needsCleanup =
-      !player.retired || player.loanClubId !== null || player.loanOwnerClubId !== null ||
-      player.loanEndDate !== null || player.loanListed || player.transferListed ||
-      player.listReason !== null || player.minutesShare !== 0;
-    if (!needsCleanup && player.clubId === null) continue;
-
-    if (player.clubId !== null) reassignPlayerClub(id, null, "free", { force: true });
-    updatePlayer(id, {
-      retired: true,
-      loanClubId: null,
-      loanOwnerClubId: null,
-      loanEndDate: null,
-      loanListed: false,
-      transferListed: false,
-      listReason: null,
-      minutesShare: 0,
-    });
+  const ids = [...playerIds].map((rawId) => String(rawId ?? "").trim()).filter(Boolean);
+  // Registrar primero todos los IDs: la construcción inicial del índice ya
+  // debe saber que no son agentes libres ni jugadores de sus clubes originales.
+  for (const id of ids) retiredLedgerIds.add(id);
+  const index = getMarketIndex();
+  for (const id of ids) {
+    const player = index.byId.get(id);
+    if (player) deactivateRetiredPlayer(index, player);
   }
 }
 
@@ -621,8 +728,14 @@ export function snapshotAllPlayerDeltas(): PlayerDelta[] {
 /** Reaplica los cambios guardados sobre el índice recién construido. */
 export function restorePlayerDeltas(deltas: readonly PlayerDelta[]): void {
   for (const delta of deltas) {
-    const player = getPlayer(delta.id);
+    const index = getMarketIndex();
+    const player = index.byId.get(String(delta.id));
     if (!player) continue;
+    if (delta.retired === true || isRetiredIdentity(delta.id, player.name)) {
+      retiredLedgerIds.add(String(delta.id));
+      deactivateRetiredPlayer(index, player);
+      continue;
+    }
 
     // Migración de partidas anteriores: antes `clubId` seguía siendo el
     // propietario y `loanClubId` era sólo el destino. Ahora el jugador vive

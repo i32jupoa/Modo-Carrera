@@ -76,9 +76,9 @@ function scorerPositionFactor(player: Player): number {
   // El delantero centro es el principal rematador. Los extremos y mediapuntas
   // siguen teniendo una cuota importante, y un jugador polivalente no pierde
   // amenaza por tener una segunda posición.
-  if (positions.includes("DC")) return 9.8;
-  if (positions.some((p) => ["ED", "EI"].includes(p))) return 5.8;
-  if (positions.includes("MCO")) return 4.6;
+  if (positions.includes("DC")) return 12.6;
+  if (positions.some((p) => ["ED", "EI"].includes(p))) return 7.2;
+  if (positions.includes("MCO")) return 5.2;
   if (positions.some((p) => ["MC", "MD", "MI", "MCD"].includes(p))) return 1.65;
   return 0.40;
 }
@@ -98,13 +98,13 @@ export function goalScorerWeight(player: Player): number {
   // mediocre todavía puede marcar y una estrella puede tener un mal partido.
   const eliteRating = Math.max(0, Math.min(1, (effectivePlayerRating(player) - 84) / 10));
   const eliteFinishing = Math.max(0, Math.min(1, ((Number(shooting.finishing) || 0) - 80) / 20));
-  const eliteBoost = 1 + eliteRating * 0.32 + eliteFinishing * 0.36;
+  const eliteBoost = 1 + eliteRating * 0.95 + eliteFinishing * 0.95;
 
   return Math.max(
     0.05,
     scorerPositionFactor(player) *
       threatFactor *
-      Math.pow(ratingFactor, 2.30) *
+      Math.pow(ratingFactor, 2.65) *
       eliteBoost,
   );
 }
@@ -246,19 +246,16 @@ export function expectedGoals(
   const awayAttack = calculateAttackStrength(awayXI) || 65;
   const awayDefense = calculateDefenseStrength(awayXI) || 65;
 
-  // Fuerza de partido: el XI real es la señal principal, mientras que la media
-  // dinámica del club actúa como estabilizador. Así un equipo de 86 no puede
-  // convertirse en un 76 por una alineación CPU mala o por una formación poco
-  // afortunada durante unas pocas jornadas.
+  // Fuerza de partido: el XI real es la señal principal. La reputación y las
+  // medias históricas del club no suman calidad cuando sus jugadores no están
+  // en el campo: solo cuenta la alineación disponible para este encuentro.
   const homeXIOverall = calculateActiveOVR(homeXI);
   const awayXIOverall = calculateActiveOVR(awayXI);
-  const homeListedOverall = (Number(home.att) + Number(home.mid) + Number(home.def)) / 3;
-  const awayListedOverall = (Number(away.att) + Number(away.mid) + Number(away.def)) / 3;
-
-  const homeStrength =
-    homeXIOverall * 0.62 + homeListedOverall * 0.18 + homeAttack * 0.12 + homeDefense * 0.08;
-  const awayStrength =
-    awayXIOverall * 0.62 + awayListedOverall * 0.18 + awayAttack * 0.12 + awayDefense * 0.08;
+  // La fuerza sale del once que realmente juega. El rating fijo del club no
+  // suma calidad gratuita: si un grande alinea once jugadores de media 50,
+  // debe rendir como un equipo débil y no como su plantilla histórica.
+  const homeStrength = homeXIOverall * 0.80 + homeAttack * 0.12 + homeDefense * 0.08;
+  const awayStrength = awayXIOverall * 0.80 + awayAttack * 0.12 + awayDefense * 0.08;
 
   // Las tácticas modifican rendimiento, posesión y creación de ocasiones sin
   // borrar la jerarquía de calidad de plantilla.
@@ -274,13 +271,11 @@ export function expectedGoals(
   const HOME_MATCH_ADVANTAGE = 2.0;
   const effectiveDiff = qualityDiff + HOME_MATCH_ADVANTAGE;
 
-  // Curva calibrada con temporadas sintéticas de las cinco grandes ligas.
-  // Responde algo más a diferencias pequeñas entre equipos parejos, pero se
-  // satura antes para que una brecha enorme de OVR no convierta al favorito en
-  // ganador casi automático. El rival conserva opciones reales de sorpresa.
-  // El reparto sigue limitado al 24/76 para evitar extremos de ocasiones.
-  const rawShare = 0.5 + 0.23 * Math.tanh(effectiveDiff / 8.0);
-  const share = Math.max(0.24, Math.min(0.76, rawShare));
+  // Curva más pronunciada: las plantillas claramente mejores deben crear
+  // muchas más ocasiones a lo largo de una temporada. El rival mantiene una
+  // posibilidad pequeña pero real de sorprender en un partido aislado.
+  const rawShare = 0.5 + 0.37 * Math.tanh(effectiveDiff / 8.0);
+  const share = Math.max(0.13, Math.min(0.87, rawShare));
 
   // Unos 2.95 xG de base mantiene una media de goles cercana a la de una liga
   // moderna, antes de presión, estilo, contraataques y creación de ocasiones.

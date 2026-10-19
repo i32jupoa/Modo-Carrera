@@ -318,17 +318,27 @@ export function calculateEuropeanQualification(input: EuropeanQualificationInput
     const id = resolveExisting(champion);
     if (id && !ucl.includes(id)) ucl.push(id);
   }
-  addFromAssociationSlots(ucl, (rank) => rank <= 4 ? 4 : rank <= 6 ? 3 : rank <= 10 ? 2 : 1, new Set(ucl));
+  // Los dos coeficientes UEFA más altos reciben una plaza adicional (5.º
+  // clasificado), como sucede con los puestos de rendimiento europeo de la vida real.
+  addFromAssociationSlots(ucl, (rank) => rank <= 2 ? 5 : rank <= 4 ? 4 : rank <= 6 ? 3 : rank <= 10 ? 2 : 1, new Set(ucl));
   fillTo36(ucl, allLeagueCandidates, new Set());
   const uclParticipants = sortedByStrength(ucl);
   for (const id of uclParticipants) globallyUsed.add(id);
 
-  // Europa League: Conference champion plus domestic cup winners; if already
-  // qualified to UCL, the cup place cascades to the next league club.
+  // Europa League: Conference champion plus winners of domestic cups in the
+  // five major leagues. UCL has absolute priority: a cup winner already in UCL
+  // stays there and cannot appear in UEL or UECL. Otherwise winning the cup
+  // upgrades a lower league-place qualification (including Conference) to UEL.
   const uel: string[] = [];
   const ueclChampion = resolveExisting(input.champions?.uecl);
   if (ueclChampion && !globallyUsed.has(ueclChampion)) uel.push(ueclChampion);
+  const majorDomesticCupAssociations = new Set(
+    input.associations
+      .filter((association) => ["laliga", "premier", "seriea", "bundesliga", "ligue1"].includes(association.topLeagueId))
+      .map((association) => association.id),
+  );
   const cupWinners = ranking
+    .filter((associationId) => majorDomesticCupAssociations.has(associationId))
     .map((associationId) => resolveExisting(input.cupWinnersByAssociation?.[associationId]))
     .filter((id): id is string => Boolean(id));
   for (const id of cupWinners) {

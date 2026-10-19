@@ -228,12 +228,29 @@ function archiveFinishedFixtures(fixtures: unknown, leagueId: string): ArchivedM
   return archived.sort((a, b) => a.matchday - b.matchday || String(a.date ?? "").localeCompare(String(b.date ?? "")) || a.id.localeCompare(b.id));
 }
 
-function seasonPositionGroup(positions: readonly string[]): SeasonArchiveElevenPlayer["slot"] | null {
-  const codes = positions.map((position) => String(position).trim().toUpperCase()).filter(Boolean);
-  if (codes.some((position) => ["GK", "POR", "GOALKEEPER"].includes(position))) return "GK";
-  if (codes.some((position) => ["DFC", "CB", "DEF", "LD", "LI", "RB", "LB", "RWB", "LWB", "CD", "LCB", "RCB"].includes(position))) return "DEF";
-  if (codes.some((position) => ["MCD", "CDM", "MC", "CM", "MCO", "CAM", "MD", "MI", "RM", "LM", "MID", "DM", "AM", "CMF"].includes(position))) return "MID";
-  if (codes.some((position) => ["DC", "ST", "CF", "ED", "EI", "RW", "LW", "FWD", "ATT", "SS", "RF", "LF"].includes(position))) return "FWD";
+export function seasonPositionGroup(positions: readonly string[]): SeasonArchiveElevenPlayer["slot"] | null {
+  const codes = positions
+    .flatMap((position) => String(position).split(/[\/,|;]/g))
+    .map((position) => position.trim().toUpperCase())
+    .filter(Boolean);
+  if (!codes.length) return null;
+
+  const goalkeeper = new Set(["GK", "POR", "GOALKEEPER", "PT"]);
+  const defender = new Set(["DFC", "CB", "DEF", "LD", "LI", "RB", "LB", "RWB", "LWB", "CD", "LCB", "RCB", "RFB", "LFB"]);
+  const midfielder = new Set(["MCD", "CDM", "MC", "CM", "MCO", "CAM", "MD", "MI", "RM", "LM", "MID", "DM", "AM", "CMF"]);
+  const forward = new Set(["DC", "ST", "CF", "ED", "EI", "RW", "LW", "FWD", "ATT", "SS", "RF", "LF", "LS", "RS", "CS"]);
+  const groupFor = (code: string): SeasonArchiveElevenPlayer["slot"] | null =>
+    goalkeeper.has(code) ? "GK" : defender.has(code) ? "DEF" : midfielder.has(code) ? "MID" : forward.has(code) ? "FWD" : null;
+
+  // La primera posición es la demarcación principal. No se debe convertir a
+  // un extremo en defensa sólo porque tenga una posición alternativa atrás
+  // (p. ej. Dembélé ST/MCO/ED o un MCD con DFC como alternativa).
+  const primary = groupFor(codes[0]);
+  if (primary) return primary;
+  for (const code of codes.slice(1)) {
+    const fallback = groupFor(code);
+    if (fallback) return fallback;
+  }
   return null;
 }
 

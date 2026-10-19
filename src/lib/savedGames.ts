@@ -10,6 +10,7 @@ import {
   rebuildMarketPlayerSignalsFromStore,
 } from "@/store/playersStore";
 import { getSaveItem, setSaveItem, removeSaveItem } from "./saveStorage";
+import { resetMarketIndex, setRetiredPlayersLedger } from "@/lib/transfers/PlayerIndex";
 
 const STORAGE_KEY = "fcsim:save:v2";
 const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
@@ -310,7 +311,26 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
   // Limpia el estado persistido del playersStore para evitar fugas entre partidas
   localStorage.removeItem(PLAYERS_PERSIST_KEY);
 
-  const retiredIds = new Set((save.retiredPlayers ?? []).map((record) => String(record.playerId)));
+  const retiredRecords = save.retiredPlayers ?? [];
+  const retiredIds = new Set(retiredRecords.map((record) => String(record.playerId)));
+  const normalizeRetiredName = (name: unknown) => String(name ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+  const retiredNames = new Set(retiredRecords.map((record) => normalizeRetiredName(record.playerName)).filter(Boolean));
+  const isRetiredIdentity = (playerId: string, candidate?: any) => {
+    if (retiredIds.has(String(playerId))) return true;
+    const player = candidate ?? fcPlayerById(String(playerId));
+    const name = normalizeRetiredName(player?.Name ?? player?.name ?? player?.playerName);
+    return name !== "" && retiredNames.has(name);
+  };
+  // Al cambiar de carrera se descarta el índice anterior y se aplica el ledger
+  // de esta partida antes de reconstruir plantilla o agentes libres. Se conserva
+  // también el nombre archivado para bloquear duplicados con otro ID.
+  resetMarketIndex();
+  setRetiredPlayersLedger(retiredRecords);
   const snap = save.playersStoreState;
   if (!snap) {
     // Partidas antiguas sin snapshot: dejar el estado limpio con sólo el equipo,
@@ -334,12 +354,16 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
   // Así no vuelve a una plantilla si el snapshot de mercado está ausente.
   for (const playerId of retiredIds) clubOverrides[playerId] = "";
   const loanedPlayers = Object.fromEntries(
-    Object.entries(snap.loanedPlayers ?? {}).filter(([playerId]) => !retiredIds.has(String(playerId))),
+    Object.entries(snap.loanedPlayers ?? {}).filter(([playerId]) => !isRetiredIdentity(String(playerId))),
   ) as Record<string, { fromClubId: string; endDate: string }>;
-  const dynamicPlayers = snap.dynamicPlayers ?? {};
+  const dynamicPlayers = Object.fromEntries(
+    Object.entries(snap.dynamicPlayers ?? {}).filter(([playerId, player]) => !isRetiredIdentity(String(playerId), player)),
+  ) as Record<string, any>;
+  const dynamicMarketPlayers = (snap.dynamicMarketPlayers ?? [])
+    .filter((player: any) => !isRetiredIdentity(String(player.id ?? player.ID ?? ""), player));
   const myTeamId = snap.myTeamId ?? save.myTeamId ?? null;
   const validRosterIds = (snap.rosterIds ?? []).filter((playerId: string) => {
-    if (retiredIds.has(String(playerId))) return false;
+    if (isRetiredIdentity(String(playerId))) return false;
     if (!myTeamId) return true;
     if (loanedPlayers[playerId]) return true;
     const override = clubOverrides[playerId];
@@ -353,7 +377,7 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
 
   setClubOverrides(clubOverrides);
   usePlayersStore.getState().hydrateDynamicPlayers(dynamicPlayers);
-  hydrateDynamicMarketPlayers(snap.dynamicMarketPlayers);
+  hydrateDynamicMarketPlayers(dynamicMarketPlayers);
   hydrateInternalContractNegotiations(snap.internalContractNegotiations);
 
   // Restaurar usando setState (mutar el objeto devuelto por getState NO notifica

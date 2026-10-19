@@ -671,39 +671,38 @@ let CLUB_MEMBERSHIP_VERSION = 0;
  * [] a getSimXI devolvía siempre una alineación vacía y un 0-0 de respaldo.
  */
 export function calendarLineupIds(squad: Player[]): string[] {
+  // La IA no debe inventar demarcaciones: un MCD como Tchouaméni no puede
+  // aparecer de lateral derecho solo porque su media sea alta. Construimos
+  // el XI con posiciones registradas y dejamos las adaptaciones a la táctica
+  // únicamente cuando el jugador tenga esa posición secundaria explícita.
   const byRating = (a: Player, b: Player) => Number(b.rating ?? b.OVR ?? 0) - Number(a.rating ?? a.OVR ?? 0);
-  const group = (player: Player): "GK" | "DEF" | "MID" | "FWD" | "OTHER" => {
-    const primary = String((player as any).position ?? "").toUpperCase();
-    const positions = new Set((player as any).positions ?? []);
-    if (primary === "GK" || positions.has("GK")) return "GK";
-    if (primary === "DEF" || ["DFC", "LD", "LI", "CB", "RB", "LB", "RWB", "LWB"].some((p) => positions.has(p))) return "DEF";
-    if (primary === "MID" || ["MCD", "MC", "MCO", "MD", "MI", "CM", "CDM", "CAM", "RM", "LM"].some((p) => positions.has(p))) return "MID";
-    if (primary === "FWD" || ["DC", "ED", "EI", "ST", "CF", "LW", "RW"].some((p) => positions.has(p))) return "FWD";
-    return "OTHER";
-  };
-  const sorted = [...(squad ?? [])].sort(byRating);
+  const normalized = (player: Player): string[] => (player.positions ?? []).map((value) => {
+    const p = String(value).toUpperCase();
+    const aliases: Record<string, string> = { POR: "GK", CB: "DFC", RB: "LD", LB: "LI", RWB: "LD", LWB: "LI", CDM: "MCD", CM: "MC", CAM: "MCO", RM: "MD", LM: "MI", RW: "ED", LW: "EI", ST: "DC", CF: "MCO" };
+    return aliases[p] ?? p;
+  });
+  const sorted = [...(squad ?? [])].filter((p) => !(p as any).retired).sort(byRating);
   const selected: Player[] = [];
-  const selectedIds = new Set<string>();
-  const take = (kind: ReturnType<typeof group>, count: number) => {
-    for (const player of sorted.filter((item) => group(item) === kind)) {
-      if (selected.length >= 11 || count <= 0) break;
-      if (selectedIds.has(String(player.id))) continue;
-      selected.push(player);
-      selectedIds.add(String(player.id));
-      count -= 1;
+  const used = new Set<string>();
+  const take = (allowed: readonly string[], count: number) => {
+    for (const player of sorted) {
+      if (count <= 0 || selected.length >= 11) break;
+      const id = String(player.id);
+      if (used.has(id) || !normalized(player).some((position) => allowed.includes(position))) continue;
+      selected.push(player); used.add(id); count--;
     }
   };
-  take("GK", 1);
-  take("DEF", 4);
-  take("MID", 3);
-  take("FWD", 3);
+  take(["GK"], 1);
+  take(["DFC", "LD", "LI"], 4);
+  take(["MCD", "MC", "MCO", "MD", "MI"], 3);
+  take(["ED", "EI", "DC"], 3);
+  // If a roster is incomplete, fill only from unselected outfield players.
+  // This is a last-resort numerical fallback, not a position assignment: the
+  // match engine receives the player's real positions and applies penalties.
   for (const player of sorted) {
     if (selected.length >= 11) break;
     const id = String(player.id);
-    if (!selectedIds.has(id)) {
-      selected.push(player);
-      selectedIds.add(id);
-    }
+    if (!used.has(id) && !normalized(player).includes("GK")) { selected.push(player); used.add(id); }
   }
   return selected.map((player) => String(player.id));
 }
@@ -3430,6 +3429,9 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
       },
 
       getSimPlayer: (playerId) => {
+        // Una retirada conserva su historial, pero nunca vuelve a ser un
+        // jugador activo para alineaciones, mercado o simulación.
+        if (getMarketPlayer(String(playerId))?.retired) return undefined;
         const fc = fcPlayerById(playerId);
 
         if (!fc) return undefined;

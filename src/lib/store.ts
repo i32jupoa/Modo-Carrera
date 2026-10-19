@@ -542,16 +542,14 @@ function positionalAssignmentScore(player: Player, required: PosCode): number {
   // conserva polivalencia real, pero solo si existe afinidad posicional clara.
   if (required === "GK" && !positions.includes("GK")) return -10000;
   if (required !== "GK" && positions.includes("GK")) return -10000;
-  if (!positions.includes(required) && similarity < 0.32) return rating - 24;
+  // La media jamás puede convertir a un jugador en lateral o central si esa
+  // demarcación no aparece en sus posiciones reales/alternativas. La afinidad
+  // se usa para valorar, no para inventar elegibilidad en el XI de la IA.
+  if (!positions.includes(required)) return -10000;
 
-  // El OVR debe decidir más que una rigidez artificial de demarcación. La
-  // posición principal suma una preferencia pequeña, una secundaria casi no
-  // penaliza y las afinidades reales (MCD↔MC, EI↔MI, LD↔DFC...) siguen siendo
-  // utilizables. Así Rodri puede ganar el puesto de MC si su calidad lo justifica.
   let score = rating;
   if (primary) score += 4;
   else if (secondary) score += 2;
-  else score += similarity * 3 - 2;
 
   // El portero fuera de portería es una conversión total; en el hueco de GK
   // sólo puede ser asignado un guardameta natural o secundario declarado.
@@ -952,6 +950,8 @@ export type Suspension = {
 
 export type SaveGame = {
   version: 2;
+  /** Save slot identifier used to retrieve this career's external history archives. */
+  saveId?: string;
 
   myTeamId: string;
 
@@ -1410,6 +1410,7 @@ function loadSaveImpl(): SaveGame | null {
     // Después de un guardado la memoria es la fuente de verdad inmediata.
     // Esto hace que volver a /season no dependa de leer/parsear la partida.
     if (parsedSaveCache?.saveId === activeId && parsedSaveCache.authoritative) {
+      if (activeId) parsedSaveCache.save.saveId = activeId;
       setActiveTeamLeagueOverrides(parsedSaveCache.save.teamLeagueOverrides);
       return parsedSaveCache.save;
     }
@@ -1431,11 +1432,13 @@ function loadSaveImpl(): SaveGame | null {
     }
 
     if (parsedSaveCache?.saveId === activeId && parsedSaveCache.raw === raw) {
+      if (activeId) parsedSaveCache.save.saveId = activeId;
       setActiveTeamLeagueOverrides(parsedSaveCache.save.teamLeagueOverrides);
       return parsedSaveCache.save;
     }
 
     const parsed = measureCalendarJumpPhase("loadSave.JSON.parse", () => JSON.parse(raw) as LegacySave);
+    if (activeId) (parsed as any).saveId = activeId;
     if (parsed.version !== 2) {
       setActiveTeamLeagueOverrides(undefined);
       return null;
@@ -2116,6 +2119,7 @@ function saveSaveImpl(s: SaveGame): boolean {
   if (typeof window === "undefined") return false;
 
   const activeId = getCurrentSaveId();
+  if (activeId) s.saveId = activeId;
   setActiveTeamLeagueOverrides(s.teamLeagueOverrides);
 
   // Publicamos el nuevo estado en memoria inmediatamente. La navegación y
@@ -3372,13 +3376,7 @@ function isXIPositionallyCoherent(players: Player[], formation: FormationName): 
   return players.every((player, index) => {
     const required = slotPosCode(slotKeys[index]);
     const positions = Array.isArray(player.positions) ? player.positions : [];
-    if (positions.includes(required)) return true;
-    if ((required === "GK") !== positions.includes("GK")) return false;
-    const similarity = positions.reduce(
-      (best, position) => Math.max(best, calculatePositionSimilarity(position, required)),
-      0,
-    );
-    return similarity >= 0.5;
+    return positions.includes(required);
   });
 }
 
@@ -6049,9 +6047,9 @@ function generateFakeMatchResult(home: Team, away: Team): SimResult {
   const diff = Math.max(-30, Math.min(30, homeOvr - awayOvr));
   const effectiveDiff = diff + 2.0;
 
-  const rawShare = 0.5 + 0.34 * Math.tanh(effectiveDiff / 8.5);
-  const share = Math.max(0.22, Math.min(0.78, rawShare));
-  const totalXg = 3.35;
+  const rawShare = 0.5 + 0.37 * Math.tanh(effectiveDiff / 8.0);
+  const share = Math.max(0.13, Math.min(0.87, rawShare));
+  const totalXg = 2.95;
 
   let homeXg = totalXg * share;
   let awayXg = totalXg * (1 - share);
@@ -9926,8 +9924,39 @@ function fromEuropeanEngineSave(save: SaveGame, comp: EuropeanStateKey): SaveGam
 
 function initializeEuropeanState(save: SaveGame, comp: EuropeanStateKey): SaveGame {
   const existing = (save as any)[comp];
-  if (existing) return save;
   const participants = getEuropeanParticipantsForSave(save, comp);
+  if (existing) {
+    const currentParticipants = Array.isArray(existing.participants) ? existing.participants as string[] : [];
+    const sameParticipants = currentParticipants.length === participants.length
+      && new Set(currentParticipants).size === currentParticipants.length
+      && currentParticipants.every((teamId) => participants.includes(teamId));
+    if (sameParticipants) return save;
+
+    // Migration segura de una clasificación antigua: solo se reordena una
+    // competición antes de disputarse partidos. Nunca se reescriben resultados
+    // ni eliminatorias que ya hayan comenzado.
+    const fixtureKey = europeanFixtureKey(comp);
+    const fixtures = Array.isArray((save as any)[fixtureKey]) ? (save as any)[fixtureKey] as any[] : [];
+    const stateTable = Array.isArray(existing.leaguePhaseTable) ? existing.leaguePhaseTable : existing.table;
+    const alreadyPlayed = fixtures.some((fixture) => fixture?.result
+      && Number.isFinite(Number(fixture.result.homeGoals)) && Number.isFinite(Number(fixture.result.awayGoals)))
+      || (Array.isArray(stateTable) && stateTable.some((row: any) => Number(row.played) > 0));
+    if (alreadyPlayed) return save;
+
+    return {
+      ...save,
+      [comp]: {
+        ...existing,
+        phase: "league",
+        participants: [...participants],
+        table: participants.map((teamId) => emptyTableEntry(teamId)),
+        drawState: { leagueDone: false, playoffDone: false, knockoutDone: false },
+        leaguePhaseTable: null,
+        bracket: [],
+      },
+      [fixtureKey]: [],
+    } as SaveGame;
+  }
   return {
     ...save,
     [comp]: {

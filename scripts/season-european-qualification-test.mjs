@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   appendEuropeanCoefficientSeason,
   calculateEuropeanAssociationCoefficient,
@@ -9,7 +10,8 @@ import {
 const associationIds = [
   "eng", "esp", "ita", "ger", "fra", "por", "ned", "tur", "bel", "pol", "sui", "den", "swe", "nor", "aut", "sco", "rou",
 ];
-const associations = associationIds.map((id, index) => ({ id, name: id.toUpperCase(), topLeagueId: `league-${id}` }));
+const primaryLeagueIds = { eng: 'premier', esp: 'laliga', ita: 'seriea', ger: 'bundesliga', fra: 'ligue1' };
+const associations = associationIds.map((id, index) => ({ id, name: id.toUpperCase(), topLeagueId: primaryLeagueIds[id] ?? `league-${id}` }));
 const clubs = [];
 const standings = {};
 for (let associationIndex = 0; associationIndex < associations.length; associationIndex += 1) {
@@ -61,6 +63,14 @@ const input = {
   },
 };
 
+const storedQualificationSource = await readFile(new URL("../src/lib/season/europeanQualification.ts", import.meta.url), "utf8");
+const storeSource = await readFile(new URL("../src/lib/store.ts", import.meta.url), "utf8");
+assert.match(storedQualificationSource, /repairStoredCupPriority/, "los guardados antiguos deben reparar las plazas del campeón de copa");
+assert.match(storedQualificationSource, /getSeasonArchive\(save\.saveId, previousSeason\)/, "la migración debe recuperar al campeón de copa del archivo de la temporada previa");
+assert.match(storedQualificationSource, /const seen = new Set<string>\(\)/, "el snapshot reparado debe impedir que un club juegue dos competiciones europeas");
+assert.match(storeSource, /new Set\(currentParticipants\)\.size === currentParticipants\.length/, "las listas antiguas con duplicados deben volver a inicializarse antes de jugarse partidos");
+assert.match(storeSource, /if \(activeId\) \(parsed as any\)\.saveId = activeId/, "la carrera cargada debe identificar su historial de temporadas para migraciones");
+
 const qualification = calculateEuropeanQualification(input);
 const again = calculateEuropeanQualification(input);
 assert.deepEqual(qualification, again, "La clasificación debe ser determinista");
@@ -74,6 +84,15 @@ assert.equal(new Set(combined).size, 108, "No puede haber equipos en dos competi
 assert.equal(qualification.ucl.includes("eng-club-01"), true, "Debe entrar el campeón de Champions");
 assert.equal(qualification.ucl.includes("esp-club-01"), true, "Debe entrar el campeón de Europa League");
 assert.equal(qualification.uel.includes("ita-club-19"), true, "El campeón de Conference debe entrar en Europa League");
+assert.equal(qualification.uel.includes("eng-club-10"), true, "El campeón de copa de una gran liga debe entrar en Europa League aunque su puesto liguero fuera de Conference");
+assert.equal(qualification.uecl.includes("eng-club-10"), false, "Un campeón de copa elegible para Europa League no debe quedarse en Conference");
+const cupWinnerAlreadyInChampions = calculateEuropeanQualification({
+  ...input,
+  cupWinnersByAssociation: { ...input.cupWinnersByAssociation, eng: "eng-club-01" },
+});
+assert.equal(cupWinnerAlreadyInChampions.ucl.includes("eng-club-01"), true, "La clasificación a Champions tiene prioridad sobre la plaza de copa");
+assert.equal(cupWinnerAlreadyInChampions.uel.includes("eng-club-01"), false, "El mismo equipo no puede jugar dos competiciones europeas");
+assert.equal(cupWinnerAlreadyInChampions.uecl.includes("eng-club-01"), false, "Un clasificado a Champions tampoco puede aparecer en Conference");
 
 const coefficient = calculateEuropeanAssociationCoefficient(input);
 assert.equal(coefficient.completedMatches, 4);

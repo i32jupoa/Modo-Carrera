@@ -66,6 +66,12 @@ assert.equal(teamOfSeason.filter((player) => player.slot === 'GK').length, 1, 's
 assert.equal(teamOfSeason.filter((player) => player.slot === 'DEF').length, 4, 'season best XI contains four defenders');
 assert.equal(teamOfSeason.filter((player) => player.slot === 'MID').length, 3, 'season best XI contains three midfielders');
 assert.equal(teamOfSeason.filter((player) => player.slot === 'FWD').length, 3, 'season best XI contains three forwards');
+const positionRegression = buildSeasonTeamOfSeason([
+  { playerId: 'dembele', playerName: 'Ousmane Dembélé', clubId: 'club-a', goals: 22, assists: 12, appearances: 40, positions: ['ST', 'MCO', 'ED'], ovr: 90 },
+  { playerId: 'tchouameni', playerName: 'Aurélien Tchouaméni', clubId: 'club-a', goals: 2, assists: 3, appearances: 30, positions: ['MCD', 'MC', 'DFC'], ovr: 86 },
+]);
+assert.equal(positionRegression.find((player) => player.playerId === 'dembele')?.slot, 'FWD', 'Dembélé must use his main forward position, not an alternative defensive role');
+assert.equal(positionRegression.find((player) => player.playerId === 'tchouameni')?.slot, 'MID', 'a defensive alternative cannot turn a primary midfielder into a defender');
 assert.deepEqual(new Set(built.playerSeasonRecords[0].trophies), new Set(['Copa · laliga', 'Champions League']), 'player archives inherit trophies won by their club');
 assert.equal(built.featuredTransfers[0].fee, 42000000, 'featured transfers are compactly archived');
 assert.equal(built.seasonTransfers.length, 2, 'the archive stores more than the featured transfer shortlist');
