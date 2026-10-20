@@ -30,9 +30,12 @@
     "test:simulation-stats-repair": "node scripts/simulation-stats-repair-regression.mjs",
     "test:player-club-resolution": "node scripts/player-club-resolution-regression.mjs",
     "test:ai-contract-renewal": "node --experimental-strip-types scripts/ai-contract-renewal-test.mjs",
+    "test:player-progression-balance": "node --experimental-strip-types scripts/player-progression-balance-test.mjs",
     "test:league-realism": "node scripts/league-realism-test.mjs --seasons=20",
     "test:scorer-ranking-scope": "node scripts/scorer-ranking-scope-test.mjs",
-    "test:news-expansion": "node --experimental-strip-types scripts/news-expansion-test.mjs"
+    "test:news-expansion": "node --experimental-strip-types scripts/news-expansion-test.mjs",
+    "test:calendar-playoff-route": "node scripts/calendar-route-playoff-regression.mjs",
+    "test:player-progression-realism": "node --experimental-strip-types scripts/player-progression-realism-test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

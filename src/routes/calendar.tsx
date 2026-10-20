@@ -61,6 +61,7 @@ import { advanceSeasonIfDue, canAdvanceToNextSeason, isSeasonRolloverDue } from 
 import { getSeasonRolloverDates } from "@/lib/season/seasonRolloverCore";
 
 import { getSeasonCalendarAnchors, getSeasonStartYear } from "@/lib/season/calendarFactory";
+import { ensurePromotionPlayoffFixtures } from "@/lib/season/promotionPlayoffs";
 
 import { getCupStructureForCountry, initCup } from "@/lib/cups";
 
@@ -238,15 +239,23 @@ function CalendarPage() {
 
     ensureLeagueSchedule();
 
-    // Fix cup draws that were simulated before extra time/penalty logic
-
-    const fixedSave = fixCupDraws(s);
-
-    if (fixedSave !== s) {
-      saveSave(fixedSave);
-
-      setSave(fixedSave);
-    } else {
+    // Repair legacy national-cup draws, but never let a malformed historical
+    // result break the calendar route. The original save remains untouched if
+    // a repair cannot be completed.
+    try {
+      // Al entrar al calendario, materializamos los playoffs de ascenso/permanencia
+      // si la temporada regular ya terminó. Antes solo se generaban al avanzar
+      // un día, así que una carrera podía acabar la liga sin ver los cruces ni la
+      // notificación del partido.
+      let preparedSave = ensurePromotionPlayoffFixtures(s, s.currentDate);
+      preparedSave = fixCupDraws(preparedSave);
+      if (preparedSave !== s) saveSave(preparedSave);
+      setSave(preparedSave);
+    } catch (error) {
+      console.error(
+        "[CalendarPage] No se pudo reparar un resultado antiguo de copa; se conserva el guardado original",
+        error,
+      );
       setSave(s);
     }
   }, [navigate, ensureLeagueSchedule]);
@@ -259,6 +268,36 @@ function CalendarPage() {
     window.addEventListener("fcsim:save-updated", refreshSaveAfterTransaction);
     return () => window.removeEventListener("fcsim:save-updated", refreshSaveAfterTransaction);
   }, []);
+
+  // El motor de playoffs también avanza en los saltos de un solo día. Los
+  // partidos de otros clubes se simulan; el del usuario queda sin resultado y
+  // se presenta como una notificación jugable en la fecha correspondiente.
+  useEffect(() => {
+    if (!currentDateIso) return;
+    const latest = loadSave();
+    if (!latest) return;
+    try {
+      const prepared = simulatePromotionPlayoffsThroughDate(latest, currentDateIso, false);
+      if (prepared !== latest) {
+        saveSave(prepared);
+        setSave(prepared);
+      }
+    } catch (error) {
+      console.error("[CalendarPage] No se pudieron procesar los playoffs de esta fecha", error);
+    }
+  }, [currentDateIso]);
+
+  const pendingPlayoffFixture = useMemo(() => {
+    if (!save || !myTeamId) return null;
+    const date = String(currentDateIso ?? "").slice(0, 10);
+    if (!date) return null;
+    return Object.values(save.cupFixtures ?? {})
+      .filter((list): list is Fixture[] => Array.isArray(list))
+      .flat()
+      .find((fixture) => fixture.promotionPlayoff && !fixture.result &&
+        (fixture.homeId === myTeamId || fixture.awayId === myTeamId) &&
+        getCupFixtureDateIso(fixture, seasonStartYear) === date) ?? null;
+  }, [save, myTeamId, currentDateIso, seasonStartYear]);
 
   // Check for cup draw pending after save changes
 
@@ -525,10 +564,19 @@ function CalendarPage() {
 
       const cupKey = (primaryLeague || save.myLeague) as LeagueId;
 
-      return (
-        save.cupFixtures[cupKey]?.filter((f) => f.homeId === myTeamId || f.awayId === myTeamId) ||
-        []
-      );
+      const domesticCup = save.cupFixtures[cupKey]?.filter((f) =>
+        !f.promotionPlayoff && (f.homeId === myTeamId || f.awayId === myTeamId),
+      ) || [];
+      // Los playoffs se guardan bajo la liga que los disputa (p. ej. laliga2),
+      // mientras que la copa nacional suele vivir bajo la primera división
+      // (laliga). Reunirlos aquí evita que desaparezcan del calendario visual.
+      const playoffFixtures = Object.values(save.cupFixtures ?? {})
+        .filter((list): list is Fixture[] => Array.isArray(list))
+        .flat()
+        .filter((f) => f.promotionPlayoff && (f.homeId === myTeamId || f.awayId === myTeamId));
+      const unique = new Map<string, Fixture>();
+      [...domesticCup, ...playoffFixtures].forEach((fixture) => unique.set(fixture.id, fixture));
+      return [...unique.values()];
     } catch (err) {
       console.error("Error al cargar fixtures de copa:", err);
 
@@ -1077,8 +1125,11 @@ function CalendarPage() {
       (fixture) => fixture.date === date && !fixture.isPlayed,
     );
     if (unresolvedLeagueMatches.length > 0) {
+      const examples = unresolvedLeagueMatches.slice(0, 4)
+        .map((fixture) => `${fixture.id} (${fixture.homeTeam}–${fixture.awayTeam})`)
+        .join(", ");
       throw new Error(
-        `No se han podido completar todos los partidos de liga del ${date}: ${unresolvedLeagueMatches.length} pendiente(s). El salto se ha detenido para no perder resultados.`,
+        `No se han podido completar todos los partidos de liga del ${date}: ${unresolvedLeagueMatches.length} pendiente(s). ${examples ? `Partidos: ${examples}${unresolvedLeagueMatches.length > 4 ? ", …" : ""}. ` : ""}El salto se ha detenido para no perder resultados.`,
       );
     }
 
@@ -1087,7 +1138,9 @@ function CalendarPage() {
     let currentSave = persistedSave ?? loadSave();
     if (currentSave) {
       const beforePlayoffs = currentSave;
-      currentSave = simulatePromotionPlayoffsThroughDate(currentSave, date, true);
+      // Los playoffs de la IA se simulan al avanzar la fecha, pero nunca el
+      // encuentro del usuario: debe permanecer pendiente para abrirlo y jugarlo.
+      currentSave = simulatePromotionPlayoffsThroughDate(currentSave, date, false);
       if (currentSave !== beforePlayoffs) {
         saveSave(currentSave);
         handled = true;
@@ -1457,6 +1510,7 @@ function CalendarPage() {
         iterations += 1;
         recordCalendarJumpCounter("calendar.loopIterations");
         const before = usePlayersStore.getState().currentDate;
+        setJumpMessage(`Procesando ${parseDateOnly(before).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}…`);
 
         // Modo jump avanza día a día. advanceTime actualiza el reloj y sus tareas
         // base; resolveIntermediateDate cierra todos los partidos/sorteos de la
@@ -1700,6 +1754,27 @@ function CalendarPage() {
       </div>
 
       <MarketStatusBanner className="mb-6" />
+
+      {pendingPlayoffFixture && (
+        <div className="mb-6 rounded-xl border border-primary/50 bg-primary/10 p-4 flex flex-wrap items-center justify-between gap-3" role="status">
+          <div>
+            <p className="font-black">Día de playoff: ¡tienes partido!</p>
+            <p className="text-sm text-muted-foreground">
+              {teamById(pendingPlayoffFixture.homeId)?.name ?? pendingPlayoffFixture.homeId}
+              {" vs "}
+              {teamById(pendingPlayoffFixture.awayId)?.name ?? pendingPlayoffFixture.awayId}
+              {" · "}{pendingPlayoffFixture.round || "Playoff de ascenso/permanencia"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate({ to: "/match", state: { matchType: "CUP", cupRound: pendingPlayoffFixture.round, fixtureId: pendingPlayoffFixture.id } as any })}
+            className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:brightness-110"
+          >
+            Jugar partido
+          </button>
+        </div>
+      )}
 
       <div className="panel-glow p-4">
         <div className="flex items-center justify-between mb-4">

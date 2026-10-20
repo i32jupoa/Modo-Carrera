@@ -2367,8 +2367,11 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                     (entry) => typeof entry.date === "string" && entry.date <= nextDate,
                   );
                   if (overdue.length > 0) {
+                    const details = overdue.slice(0, 6).map((entry) =>
+                      `${entry.isCup ? "copa" : "liga"}:${entry.league} J${Number(entry.matchday)} (${entry.date})`,
+                    ).join(", ");
                     throw new Error(
-                      `Quedan ${overdue.length} jornada(s) de otras ligas/copa sin resolver hasta ${nextDate}.`,
+                      `Quedan ${overdue.length} tarea(s) de otras ligas/copas sin resolver hasta ${nextDate}: ${details}${overdue.length > 6 ? ", …" : ""}.`,
                     );
                   }
                 }

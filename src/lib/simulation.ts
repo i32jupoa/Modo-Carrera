@@ -105,9 +105,9 @@ function scorerPositionFactor(player: Player): number {
   // El delantero centro es el principal rematador. Los extremos y mediapuntas
   // siguen teniendo una cuota importante, y un jugador polivalente no pierde
   // amenaza por tener una segunda posición.
-  if (positions.includes("DC")) return 12.6;
-  if (positions.some((p) => ["ED", "EI"].includes(p))) return 7.2;
-  if (positions.includes("MCO")) return 5.2;
+  if (positions.includes("DC")) return 13.8;
+  if (positions.some((p) => ["ED", "EI"].includes(p))) return 8.0;
+  if (positions.includes("MCO")) return 5.6;
   if (positions.some((p) => ["MC", "MD", "MI", "MCD"].includes(p))) return 1.65;
   return 0.40;
 }
@@ -125,15 +125,18 @@ export function goalScorerWeight(player: Player): number {
   // pero dentro de ese xG Haaland/Mbappe/Kane y perfiles similares reciben una
   // ventaja clara por definición + nivel general. No es determinista: un jugador
   // mediocre todavía puede marcar y una estrella puede tener un mal partido.
-  const eliteRating = Math.max(0, Math.min(1, (effectivePlayerRating(player) - 84) / 10));
-  const eliteFinishing = Math.max(0, Math.min(1, ((Number(shooting.finishing) || 0) - 80) / 20));
-  const eliteBoost = 1 + eliteRating * 0.95 + eliteFinishing * 0.95;
+  const eliteRating = Math.max(0, Math.min(1, (effectivePlayerRating(player) - 82) / 10));
+  const eliteFinishing = Math.max(0, Math.min(1, ((Number(shooting.finishing) || 0) - 78) / 22));
+  // Las estrellas con nivel y definición de élite concentran más ocasiones
+  // convertidas a lo largo de una temporada. La ventaja es probabilística:
+  // no fuerza goles y sigue dependiendo del volumen colectivo de ocasiones.
+  const eliteBoost = 1 + eliteRating * 1.20 + eliteFinishing * 1.15;
 
   return Math.max(
     0.05,
     scorerPositionFactor(player) *
       threatFactor *
-      Math.pow(ratingFactor, 2.65) *
+      Math.pow(ratingFactor, 2.90) *
       eliteBoost,
   );
 }
@@ -149,16 +152,26 @@ export function assistCreatorWeight(player: Player): number {
     creative.ballControl * 0.08;
   const positions = player.positions ?? [];
   const positionFactor = positions.includes("MCO")
-    ? 4.0
+    ? 4.2
     : positions.some((p) => ["ED", "EI", "MD", "MI"].includes(p))
-      ? 3.2
+      ? 3.5
       : positions.some((p) => ["MC", "MCD"].includes(p))
-        ? 2.7
+        ? 2.8
         : positions.includes("DC")
-          ? 1.65
+          ? 1.70
           : 0.85;
-  const ratingFactor = Math.max(0.55, effectivePlayerRating(player) / 82);
-  return Math.max(0.05, positionFactor * (0.50 + creation / 100) * Math.pow(ratingFactor, 1.55));
+  const rating = effectivePlayerRating(player);
+  const ratingFactor = Math.max(0.55, rating / 82);
+  // Premia la visión, el pase y el nivel de los creadores de élite. Esto hace
+  // que perfiles como Olise, Vinícius o Lamine generen más asistencias sin
+  // convertir a todo extremo en un pasador de 20 asistencias cada temporada.
+  const eliteCreation = Math.max(0, Math.min(1, (creation - 78) / 20));
+  const eliteRating = Math.max(0, Math.min(1, (rating - 83) / 12));
+  const creatorBoost = 1 + eliteCreation * 0.55 + eliteRating * 0.25;
+  return Math.max(
+    0.05,
+    positionFactor * (0.50 + creation / 100) * Math.pow(ratingFactor, 1.65) * creatorBoost,
+  );
 }
 
 export function weightedPlayerPick(players: Player[], weightFn: (player: Player) => number): Player | undefined {
@@ -190,7 +203,7 @@ function fastPickScorerWeighted(xi: Player[]): Player | undefined {
 
 // Fast assister pick: creation quality matters more than raw OVR alone.
 function fastPickAssister(xi: Player[], scorerId: string): Player | null {
-  if (rand() > 0.77) return null;
+  if (rand() > 0.80) return null;
   return weightedPlayerPick(
     xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions)),
     assistCreatorWeight,
@@ -498,7 +511,7 @@ function pickScorer(xi: Player[]): Player {
 }
 
 function pickAssister(xi: Player[], scorerId: string): Player | null {
-  if (rand() > 0.77) return null;
+  if (rand() > 0.80) return null;
   const candidates = xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions));
   if (candidates.length === 0) return null;
   return weightedPick(candidates, candidates.map(assistCreatorWeight));

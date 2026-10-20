@@ -764,6 +764,13 @@ function getCupMatchWinner(result: any): "home" | "away" {
 
  */
 
+function isPromotionPlayoffFixture(fixture: any): boolean {
+  // Los playoffs viven en cupFixtures para reutilizar el calendario y el visor
+  // de partidos, pero no son partidos de copa nacional y no deben migrarse
+  // con la lógica de prórroga/penaltis de las copas.
+  return Boolean(fixture?.promotionPlayoff) || String(fixture?.id ?? "").startsWith("promotion-playoff:");
+}
+
 export function fixCupDraws(save: SaveGame): SaveGame {
   const next: SaveGame = createFastMutationSnapshot(save);
   const seasonStartYear = getSeasonStartYear(save.season);
@@ -806,6 +813,8 @@ export function fixCupDraws(save: SaveGame): SaveGame {
 
     let listChanged = false;
     const migratedList = list.map((f: any) => {
+      // No mover los playoffs de ascenso/permanencia al calendario de copa.
+      if (isPromotionPlayoffFixture(f)) return f;
       const expectedMatchday = expected.get(f.round);
       if (expectedMatchday === undefined) return f;
 
@@ -836,7 +845,10 @@ export function fixCupDraws(save: SaveGame): SaveGame {
     for (let i = 0; i < cupFixtures.length; i++) {
       const f = cupFixtures[i];
 
-      if (!f.result) continue;
+      // Los playoffs tienen su propio motor de ida/vuelta y no deben pasar
+      // por la reparación heredada que simula prórrogas de copa al abrir Liga.
+      if (isPromotionPlayoffFixture(f)) continue;
+      if (!f?.result) continue;
 
       // Check if this is a draw without extra time/penalty data
 
@@ -6420,30 +6432,116 @@ export function generateRealisticStatsForO1Leagues(
 
         if (homePlayers.length === 0 || awayPlayers.length === 0) continue;
 
-        const assignGoals = (teamGoals: number, players: Player[]) => {
+        const assignGoals = (teamGoals: number, players: Player[]): Player[] => {
           const candidates = players.filter((p) => !isGoalkeeper(p.positions));
+          const scorers: Player[] = [];
           for (let i = 0; i < teamGoals; i++) {
             const scorer = weightedPlayerPick(candidates, goalScorerWeight);
-            if (scorer) store.recordGoal(scorer.id);
+            if (!scorer) continue;
+            store.recordGoal(scorer.id);
+            scorers.push(scorer);
           }
+          return scorers;
         };
 
-        const assignAssists = (teamGoals: number, players: Player[]) => {
-          const assists = Math.round(teamGoals * 0.76);
-          const candidates = players.filter((p) => !isGoalkeeper(p.positions));
-          for (let i = 0; i < assists; i++) {
+        const tallyPlayers = (players: Player[]) => {
+          const counts = new Map<string, number>();
+          for (const player of players) counts.set(player.id, (counts.get(player.id) ?? 0) + 1);
+          return counts;
+        };
+
+        const assignAssists = (scorers: Player[], players: Player[]) => {
+          // Cada gol tiene una probabilidad propia de recibir asistencia. El
+          // autor del gol queda excluido en esa acción concreta, pero puede
+          // asistir otro tanto del mismo partido.
+          const counts = new Map<string, number>();
+          for (const scorer of scorers) {
+            if (Math.random() > 0.80) continue;
+            const candidates = players.filter(
+              (p) => p.id !== scorer.id && !isGoalkeeper(p.positions),
+            );
             const assister = weightedPlayerPick(candidates, assistCreatorWeight);
-            if (assister) store.recordAssist(assister.id);
+            if (!assister) continue;
+            store.recordAssist(assister.id);
+            counts.set(assister.id, (counts.get(assister.id) ?? 0) + 1);
+          }
+          return counts;
+        };
+
+        const homeScorers = assignGoals(fixture.result.homeGoals, homePlayers);
+        const awayScorers = assignGoals(fixture.result.awayGoals, awayPlayers);
+        const homeGoalsByPlayer = tallyPlayers(homeScorers);
+        const awayGoalsByPlayer = tallyPlayers(awayScorers);
+        const homeAssistsByPlayer = assignAssists(homeScorers, homePlayers);
+        const awayAssistsByPlayer = assignAssists(awayScorers, awayPlayers);
+
+        // Las ligas de simulación rápida no generan un evento completo por
+        // jugador, pero sí necesitan notas de partido para que el desarrollo no
+        // trate a sus futbolistas como si nunca hubiesen rendido. La nota usa
+        // resultado, nivel relativo, contribución directa y trabajo defensivo.
+        const recordBackgroundRatings = (
+          players: Player[],
+          teamGoals: number,
+          opponentGoals: number,
+          goalsByPlayer: Map<string, number>,
+          assistsByPlayer: Map<string, number>,
+        ) => {
+          const teamAverage = players.length
+            ? players.reduce((sum, player) => sum + (Number(player.rating) || 65), 0) / players.length
+            : 65;
+          const resultModifier = teamGoals > opponentGoals
+            ? 0.33
+            : teamGoals === opponentGoals
+              ? 0.04
+              : -0.25;
+          for (const player of players) {
+            const rating = Number(player.rating) || teamAverage;
+            const relativeQuality = Math.max(-0.14, Math.min(0.14, (rating - teamAverage) * 0.012));
+            const playerGoals = goalsByPlayer.get(player.id) ?? 0;
+            const playerAssists = assistsByPlayer.get(player.id) ?? 0;
+            const attackingContribution = Math.min(1.25, playerGoals * 0.58) + Math.min(0.72, playerAssists * 0.32);
+            const goalkeeper = isGoalkeeper(player.positions);
+            const defender = isDefensive(player.positions);
+            const cleanSheetBonus = opponentGoals === 0
+              ? (goalkeeper ? 0.40 : defender ? 0.27 : 0.04)
+              : 0;
+            const defensiveConcedingPenalty = (goalkeeper || defender) && opponentGoals > 1
+              ? -Math.min(0.42, (opponentGoals - 1) * 0.12)
+              : 0;
+            const noise = (Math.random() - 0.5) * 0.40;
+            const matchRating = Math.max(
+              5.1,
+              Math.min(9.8, 6.20 + resultModifier + relativeQuality + attackingContribution + cleanSheetBonus + defensiveConcedingPenalty + noise),
+            );
+            store.recordMatchRating(player.id, matchRating);
           }
         };
 
-        assignGoals(fixture.result.homeGoals, homePlayers);
+        recordBackgroundRatings(
+          homePlayers,
+          fixture.result.homeGoals,
+          fixture.result.awayGoals,
+          homeGoalsByPlayer,
+          homeAssistsByPlayer,
+        );
+        recordBackgroundRatings(
+          awayPlayers,
+          fixture.result.awayGoals,
+          fixture.result.homeGoals,
+          awayGoalsByPlayer,
+          awayAssistsByPlayer,
+        );
 
-        assignGoals(fixture.result.awayGoals, awayPlayers);
-
-        assignAssists(fixture.result.homeGoals, homePlayers);
-
-        assignAssists(fixture.result.awayGoals, awayPlayers);
+        // El portero conserva la estadística convencional de porterías a cero;
+        // los centrales y laterales reciben el impacto defensivo en su nota.
+        if (fixture.result.awayGoals === 0) {
+          const keeper = homePlayers.find((p) => isGoalkeeper(p.positions));
+          if (keeper) store.recordCleanSheet(keeper.id, "league");
+        }
+        if (fixture.result.homeGoals === 0) {
+          const keeper = awayPlayers.find((p) => isGoalkeeper(p.positions));
+          if (keeper) store.recordCleanSheet(keeper.id, "league");
+        }
       }
     }
   }
@@ -7310,13 +7408,40 @@ function processScheduledBackgroundSimsImpl(
   today: string,
   skipCupTeamId?: string,
 ): SaveGame {
-    const pending = save.pendingBackgroundSims ?? [];
+    // Legacy saves may carry pending work from a schedule that was rebuilt in
+    // a newer version. A queue entry is only actionable when its date,
+    // competition and matchday still point at a real fixture. Keep real failed
+    // simulations queued for retry, but do not let an orphan queue item block
+    // every future calendar jump forever.
+    const pendingContainerValid = save.pendingBackgroundSims == null || Array.isArray(save.pendingBackgroundSims);
+    const rawPending = Array.isArray(save.pendingBackgroundSims) ? save.pendingBackgroundSims : [];
+    if (!pendingContainerValid) {
+      console.warn("[processScheduledBackgroundSims] La cola de simulación de fondo no era una lista; se reconstruirá vacía.");
+    }
+    const pending = rawPending.filter((entry) => {
+      if (!entry || typeof entry !== "object") {
+        console.warn("[processScheduledBackgroundSims] Se elimina una tarea pendiente vacía/mal formada", entry);
+        return false;
+      }
+      const validDate = typeof entry.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.date)
+        && Number.isFinite(Date.parse(`${entry.date}T00:00:00Z`));
+      const validMatchday = Number.isFinite(Number(entry.matchday)) && Number(entry.matchday) > 0;
+      const validLeague = typeof entry.league === "string" && entry.league.length > 0;
+      if (validDate && validMatchday && validLeague) return true;
+      console.warn("[processScheduledBackgroundSims] Se elimina una tarea pendiente mal formada", entry);
+      return false;
+    });
 
     const due = pending
       .filter((p) => typeof p.date === "string" && p.date <= today)
       .sort((a, b) => a.date.localeCompare(b.date) || a.league.localeCompare(b.league) || Number(a.matchday) - Number(b.matchday));
 
-    if (due.length === 0) return save;
+    if (due.length === 0) {
+      if (pending.length === rawPending.length && pendingContainerValid) return save;
+      const cleaned = createFastMutationSnapshot(save);
+      cleaned.pendingBackgroundSims = pending;
+      return cleaned;
+    }
 
     // Partial clone: only deep copy leagues/cups that are due today
 
@@ -7325,7 +7450,7 @@ function processScheduledBackgroundSimsImpl(
     const dueCups = new Set(due.filter((p) => p.isCup).map((p) => p.league));
 
     let next: SaveGame = createFastMutationSnapshot(save);
-    next.pendingBackgroundSims = [...(save.pendingBackgroundSims ?? [])];
+    next.pendingBackgroundSims = [...pending];
 
     for (const lg of dueLeagues) {
       if (save.fixtures[lg]) next.fixtures[lg] = [...save.fixtures[lg]];
@@ -7369,19 +7494,24 @@ function processScheduledBackgroundSimsImpl(
     for (const entry of due) {
       const { league, matchday, isCup } = entry;
 
-      const key = `${isCup ? "cup" : "lg"}:${league}:${matchday}`;
+      const key = `${isCup ? "cup" : "lg"}:${league}:${Number(matchday)}`;
 
       if (isCup) {
         const list = next.cupFixtures[league];
 
         if (!list) {
-          console.error("[processScheduledBackgroundSims] Copa pendiente: no existe la lista de partidos", { league, matchday });
+          console.warn("[processScheduledBackgroundSims] Se elimina una tarea de copa huérfana: no existe la lista de partidos", { league, matchday, date: entry.date });
+          processedKeys.add(key);
           continue;
         }
 
-        const roundFixtures = list.filter((f) => f.matchday === matchday);
+        const roundFixtures = list.filter((f) => Number(f.matchday) === Number(matchday) && !f.promotionPlayoff);
         if (roundFixtures.length === 0) {
-          console.error("[processScheduledBackgroundSims] Copa pendiente: no existe la ronda programada", { league, matchday });
+          // No actual match exists for this saved queue entry (commonly a stale
+          // entry from an older calendar format). Prune the queue item instead
+          // of repeatedly cancelling every jump that reaches this date.
+          console.warn("[processScheduledBackgroundSims] Se elimina una tarea de copa huérfana: no existe la ronda programada", { league, matchday, date: entry.date });
+          processedKeys.add(key);
           continue;
         }
         const fixtures = roundFixtures.filter(
@@ -7524,13 +7654,17 @@ function processScheduledBackgroundSimsImpl(
         const leagueFixtures = next.fixtures[league];
 
         if (!leagueFixtures) {
-          console.error("[processScheduledBackgroundSims] Liga pendiente: no existe la lista de partidos", { league, matchday });
+          console.warn("[processScheduledBackgroundSims] Se elimina una tarea de liga huérfana: no existe la lista de partidos", { league, matchday, date: entry.date });
+          processedKeys.add(key);
           continue;
         }
 
-        const roundFixtures = leagueFixtures.filter((f) => f.matchday === matchday);
+        const roundFixtures = leagueFixtures.filter((f) => Number(f.matchday) === Number(matchday));
         if (roundFixtures.length === 0) {
-          console.error("[processScheduledBackgroundSims] Liga pendiente: no existe la jornada programada", { league, matchday });
+          // The queue has no corresponding league round. There are no fixtures
+          // to simulate or results to lose, so discard only this orphan entry.
+          console.warn("[processScheduledBackgroundSims] Se elimina una tarea de liga huérfana: no existe la jornada programada", { league, matchday, date: entry.date });
+          processedKeys.add(key);
           continue;
         }
         const fixtures = roundFixtures.filter((f) => !f.result);
@@ -7649,7 +7783,7 @@ function processScheduledBackgroundSimsImpl(
     // Remove processed entries from pendingBackgroundSims
 
     next.pendingBackgroundSims = (next.pendingBackgroundSims ?? []).filter((p) => {
-      const key = `${p.isCup ? "cup" : "lg"}:${p.league}:${p.matchday}`;
+      const key = `${p.isCup ? "cup" : "lg"}:${p.league}:${Number(p.matchday)}`;
 
       return !processedKeys.has(key);
     });

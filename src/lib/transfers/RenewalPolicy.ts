@@ -41,6 +41,38 @@ export function getContractRenewalPhaseKey(
   return `${seasonStartYear}:${phase}`;
 }
 
+
+export interface RenewalWageRoomInput {
+  /** Margen salarial ordinario (tope salarial menos masa ya comprometida). */
+  wageRoom: number;
+  /** Dinero de fichajes disponible después de conservar la reserva del club. */
+  transferRoom: number;
+  /** Salario anual actual del jugador. */
+  currentWage: number;
+  /** Titular indiscutible, jugador clave o activo deportivo prioritario. */
+  corePlayer: boolean;
+}
+
+/**
+ * Reserva controlada para renovar a jugadores importantes.
+ *
+ * Algunos clubes grandes arrancan con la masa salarial prácticamente pegada
+ * al tope, lo que dejaba `wageRoom` en cero: la IA ni siquiera podía ofrecer
+ * la subida normal de renovación y terminaba liberando estrellas. Permitimos
+ * financiar parte de esa subida desde una fracción prudente del presupuesto de
+ * fichajes, con un límite ligado al salario actual y siempre sujeto al efectivo
+ * disponible que valida ContractEngine.
+ */
+export function renewalWageRoom(input: RenewalWageRoomInput): number {
+  const ordinaryRoom = Math.max(0, Number(input.wageRoom) || 0);
+  const transferRoom = Math.max(0, Number(input.transferRoom) || 0);
+  const currentWage = Math.max(0, Number(input.currentWage) || 0);
+  const transferShare = input.corePlayer ? 0.10 : 0.045;
+  const raiseShare = input.corePlayer ? 0.50 : 0.28;
+  const retentionReserve = Math.min(transferRoom * transferShare, currentWage * raiseShare);
+  return Math.round(Math.max(ordinaryRoom, retentionReserve));
+}
+
 /**
  * Probabilidad de que el club decida presentar una oferta en esta fase.
  * La aceptación del futbolista se calcula por separado en PlayerDecision.

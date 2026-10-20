@@ -200,3 +200,14 @@ Cambios añadidos en esta revisión:
 - El profiler ahora expone `academy.ai.clubsScheduled`, `academy.ai.clubsSimulated`, `academy.ai.statesGenerated`, `academy.ai.playersGenerated`, `simulation.academy.ai.buildCalendar`, `simulation.academy.ai.matchSimulation` y `simulation.academy.ai.persist`.
 
 La mejora real de ms/día todavía debe medirse en navegador con la misma partida: este entorno no ejecuta el juego ni puede reproducir los 59 días del usuario.
+
+## 11. Corrección adicional de bloqueos por fechas concretas (20 de octubre de 2026)
+
+- Las entradas antiguas de `pendingBackgroundSims` que ya no corresponden a una liga, jornada o ronda real se eliminan de la cola. Antes permanecían vencidas para siempre y el salto se cancelaba al alcanzar su fecha. No se descarta ningún encuentro real: solo se poda la tarea de cola cuando no hay partidos correspondientes.
+- La comparación de jornadas normaliza `matchday` con `Number(...)`, para tolerar guardados antiguos con valores numéricos serializados como texto.
+- Las tareas de copa no incluyen fixtures marcados como `promotionPlayoff`, evitando que el mismo partido se intente resolver por el subsistema equivocado.
+- Un error de simulación en la cantera de un club de IA se aísla en ese club y no cancela la simulación del resto de clubes. Si falla el partido juvenil del equipo del usuario durante un salto, se conserva la progresión por fecha y se registra el fallo; los fallos reales de persistencia siguen siendo bloqueantes.
+- La construcción del calendario juvenil y la simulación por sublotes ceden periódicamente el hilo al navegador también durante saltos largos, permitiendo que la fecha/progreso se renderice y reduciendo la apariencia de bloqueo de la interfaz.
+- Si aún queda una jornada de fondo real sin resolver, el error incluye la competición, jornada y fecha de las primeras entradas. Los partidos de liga pendientes muestran los IDs y equipos implicados.
+
+Verificación: `node scripts/calendar-jump-invariants.mjs`, `node scripts/calendar-jump-competition-regression.mjs`, `node scripts/cup-calendar-runtime-regression.mjs`, `node scripts/players-store-startup-regression.mjs`, `node --experimental-strip-types scripts/season-calendar-test.mjs`, `node --experimental-strip-types scripts/player-progression-balance-test.mjs` y `node scripts/season-balance-test.mjs --seasons=20 --seed=20261020`. La sintaxis de los cinco archivos TypeScript/TSX tocados se validó con `typescript.transpileModule`; no equivale a una compilación integral de Vite.

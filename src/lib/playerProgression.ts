@@ -17,7 +17,7 @@ import type {
   PlayerAttributeRatings,
   SeasonStats,
 } from "@/types/playerStats";
-import { type PosCode } from "@/lib/positions";
+import type { PosCode } from "@/lib/positions";
 
 const ATTRIBUTE_KEYS: Array<keyof PlayerAttributeRatings> = ["PAC", "SHO", "PAS", "DRI", "DEF", "PHY"];
 
@@ -137,10 +137,35 @@ function roleFromPositions(positions: PosCode[]): "GK" | "DEF" | "MID" | "FWD" {
   return "DEF";
 }
 
-function roleWeights(role: "GK" | "DEF" | "MID" | "FWD") {
-  // Umbrales aproximados por 90 minutos/partido para medir producción sin
-  // castigar a un centrocampista o defensa por no tener cifras de delantero.
-  // Los pesos siguientes hacen que la producción dependa de la demarcación real.
+function roleWeights(positions: PosCode[]) {
+  const role = roleFromPositions(positions);
+  const primary = positions[0];
+
+  // Cada demarcación tiene referencias propias por 90 minutos. En especial,
+  // al MCD no se le exige producir goles como un MCO: pesan más la fiabilidad
+  // defensiva, la limpieza de portería y la contribución con balón. Si marca
+  // mucho, aun así obtiene una recompensa notable.
+  if (primary === "MCD") {
+    return {
+      goal: 0.07,
+      assist: 0.18,
+      clean: 0.24,
+      goalWeight: 0.18,
+      assistWeight: 0.32,
+      cleanWeight: 0.50,
+    };
+  }
+  if (primary === "MCO") {
+    return {
+      goal: 0.24,
+      assist: 0.28,
+      clean: 0.08,
+      goalWeight: 0.43,
+      assistWeight: 0.50,
+      cleanWeight: 0.07,
+    };
+  }
+
   switch (role) {
     case "GK":
       return {
@@ -153,10 +178,8 @@ function roleWeights(role: "GK" | "DEF" | "MID" | "FWD") {
       };
     case "DEF":
       return {
-        // Para centrales, la progresión se basa sobre todo en notas sólidas
-        // y porterías a cero. Los goles/asistencias son secundarios y no se
-        // exige a un defensa de un equipo modesto conceder tan poco como a uno
-        // de élite: su referencia se ajusta a la calidad media del equipo.
+        // Para defensas, las notas y porterías a cero tienen mucho más peso
+        // que los goles o las asistencias.
         goal: 0.025,
         assist: 0.06,
         clean: 0.24,
@@ -169,9 +192,9 @@ function roleWeights(role: "GK" | "DEF" | "MID" | "FWD") {
         goal: 0.20,
         assist: 0.28,
         clean: 0.20,
-        goalWeight: 0.42,
-        assistWeight: 0.40,
-        cleanWeight: 0.18,
+        goalWeight: 0.32,
+        assistWeight: 0.48,
+        cleanWeight: 0.20,
       };
     default:
       return {
@@ -185,6 +208,20 @@ function roleWeights(role: "GK" | "DEF" | "MID" | "FWD") {
   }
 }
 
+/** Factor de crecimiento positivo según la media: subir de 94 a 95 requiere
+ * mucho más rendimiento y desarrollo que pasar de 80 a 81. No frena las caídas
+ * cuando el rendimiento o la edad justifican una regresión. */
+function overallGrowthFactor(ovr: number): number {
+  if (ovr < 70) return 1.10;
+  if (ovr < 76) return 1.00;
+  if (ovr < 80) return 0.90;
+  if (ovr < 84) return 0.76;
+  if (ovr < 88) return 0.62;
+  if (ovr < 91) return 0.48;
+  if (ovr < 94) return 0.34;
+  return 0.22;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -194,14 +231,13 @@ function calculateProductionImpact(
   positions: PosCode[],
   context?: { teamAverageOVR?: number },
 ): number {
-  const role = roleFromPositions(positions);
-  const weights = roleWeights(role);
+  const weights = roleWeights(positions);
   const apps = Math.max(1, stats.seasonAppearances);
   const minutes = Math.max(90, Number(stats.seasonMinutes) || apps * 75);
   const goalsPer90 = (Math.max(0, stats.seasonGoals) / minutes) * 90;
   const assistsPer90 = (Math.max(0, stats.seasonAssists) / minutes) * 90;
   const cleanPerMatch = Math.max(0, stats.seasonCleanSheets) / apps;
-  const isDefender = positions.some((position) => ["DFC", "LD", "LI"].includes(position));
+  const isDefender = ["DFC", "LD", "LI"].includes(positions[0]);
   const teamOVR = Number(context?.teamAverageOVR);
   // En plantillas modestas se espera menos porterías a cero; ajustar la
   // referencia evita penalizar al central por el nivel defensivo colectivo.
@@ -232,19 +268,36 @@ function calculatePerformanceIndex(
 ): number {
   if (stats.seasonAppearances <= 0) return -0.10;
 
-  const averageRating = Number(stats.seasonAverageRating) || 6;
-  // 6.7 es una actuación correcta; 7.0+ ya debe empujar con claridad y 7.5+
-  // representa una campaña de élite. La producción puede compensar una media
-  // de partido irregular, pero no ocultar una temporada realmente mala.
-  const ratingPart = clamp((averageRating - 6.50) / 0.90, -1, 1);
+  // Algunas ligas de simulación rápida no guardaban notas partido a partido.
+  // Si no hay muestra de notas, usamos un valor neutro en vez de interpretar
+  // el 6.0 de inicialización como una temporada desastrosa.
+  const hasRatingSample =
+    Number(stats.seasonRatingCount) > 0 ||
+    Number(stats.seasonRatingTotal) > 0 ||
+    Number(stats.seasonAverageRating) > 6.05;
+  const averageRating = hasRatingSample ? (Number(stats.seasonAverageRating) || 6.65) : 6.65;
+  // 6.55 es una temporada discreta, 7.0 una campaña buena y 7.5+ una temporada
+  // sobresaliente. La nota gana importancia para puestos defensivos, donde los
+  // goles y asistencias no describen la mayor parte del trabajo.
+  const ratingPart = clamp((averageRating - 6.55) / 0.85, -1, 1);
 
   const productionIndex = calculateProductionImpact(stats, positions, _context);
-  const isDefender = positions.some((position) => ["DFC", "LD", "LI"].includes(position));
-  // Para defensas, la producción tiene menos peso y el umbral es más bajo:
-  // no se penaliza en exceso a centrales de equipos que conceden más ocasiones.
+  const primary = positions[0];
+  const isDefender = ["DFC", "LD", "LI"].includes(primary);
+  const isDefensiveMidfielder = primary === "MCD";
+  const role = roleFromPositions(positions);
+
+  // Un central no debe perder desarrollo por no marcar ni por una estadística
+  // de porterías a cero que históricamente solo se guardaba para el portero.
+  // Para el MCD la producción ofensiva modesta es casi neutra; las campañas
+  // excepcionales sí suman.
   const productionPart = isDefender
-    ? clamp((productionIndex - 0.22) / 1.35, -0.25, 0.75)
-    : clamp((productionIndex - 0.42) / 1.15, -0.60, 1);
+    ? clamp((productionIndex - 0.04) / 1.25, 0, 0.72)
+    : isDefensiveMidfielder
+      ? clamp((productionIndex - 0.05) / 1.15, -0.05, 1)
+      : role === "MID"
+        ? clamp((productionIndex - 0.28) / 1.10, -0.32, 1)
+        : clamp((productionIndex - 0.42) / 1.15, -0.60, 1);
 
   const mvpRate = stats.seasonMVPs / Math.max(1, stats.seasonAppearances);
   const mvpPart = clamp((mvpRate - 0.02) / 0.12, 0, 1);
@@ -252,14 +305,42 @@ function calculatePerformanceIndex(
   const minutesPerAppearance = stats.seasonMinutes / Math.max(1, stats.seasonAppearances);
   const minuteQuality = clamp((minutesPerAppearance - 45) / 45, 0, 1);
 
-  // El rendimiento real manda. La edad no entra aquí a propósito: dos jugadores
-  // que rinden igual deben recibir una evolución parecida con independencia de
-  // que tengan 22, 29 o 31 años.
+  let ratingWeight: number;
+  let productionWeight: number;
+  let mvpWeight: number;
+  let availabilityWeight: number;
+  if (isDefender) {
+    ratingWeight = 0.68;
+    productionWeight = 0.14;
+    mvpWeight = 0.07;
+    availabilityWeight = 0.09;
+  } else if (isDefensiveMidfielder) {
+    ratingWeight = 0.50;
+    productionWeight = 0.32;
+    mvpWeight = 0.10;
+    availabilityWeight = 0.06;
+  } else if (role === "GK") {
+    ratingWeight = 0.42;
+    productionWeight = 0.42;
+    mvpWeight = 0.09;
+    availabilityWeight = 0.05;
+  } else if (role === "MID") {
+    ratingWeight = 0.43;
+    productionWeight = 0.43;
+    mvpWeight = 0.09;
+    availabilityWeight = 0.05;
+  } else {
+    ratingWeight = 0.28;
+    productionWeight = 0.59;
+    mvpWeight = 0.10;
+    availabilityWeight = 0.03;
+  }
+
   return clamp(
-    ratingPart * (isDefender ? 0.55 : 0.22) +
-      productionPart * (isDefender ? 0.27 : 0.60) +
-      mvpPart * 0.13 +
-      availability * 0.03 +
+    ratingPart * ratingWeight +
+      productionPart * productionWeight +
+      mvpPart * mvpWeight +
+      availability * availabilityWeight +
       minuteQuality * 0.02,
     -1,
     1,
@@ -302,6 +383,49 @@ function developmentHeadroomFactor(stats: DynamicPlayerStats): number {
   if (stats.currentOVR >= 84) return clamp(0.64 + gap / 13, 0.52, 1.02);
   if (stats.currentOVR >= 80) return clamp(0.76 + gap / 11, 0.60, 1.18);
   return clamp(0.88 + gap / 8, 0.62, 1.48);
+}
+
+/**
+ * Additional in-season development for production well above a player's role.
+ * It's deliberately expressed per 90 and requires a meaningful minutes sample:
+ * 30+ striker goals can create a genuine breakout, while a small hot streak or
+ * an elite OVR alone cannot trigger it. Values are monthly growth points before
+ * age and OVR difficulty factors are applied.
+ */
+function exceptionalSeasonOutputBonus(stats: DynamicPlayerStats, positions: PosCode[]): number {
+  const appearances = Math.max(0, Number(stats.seasonAppearances) || 0);
+  const minutes = Math.max(0, Number(stats.seasonMinutes) || 0);
+  if (appearances < 7 || minutes < 600) return 0;
+
+  const per90Minutes = Math.max(90, minutes);
+  const goalsPer90 = (Math.max(0, Number(stats.seasonGoals) || 0) / per90Minutes) * 90;
+  const assistsPer90 = (Math.max(0, Number(stats.seasonAssists) || 0) / per90Minutes) * 90;
+  const sample = clamp(Math.min(appearances / 10, minutes / 900), 0, 1);
+  const hasRatingSample =
+    Number(stats.seasonRatingCount) > 0 ||
+    Number(stats.seasonRatingTotal) > 0 ||
+    Number(stats.seasonAverageRating) > 6.05;
+  const rating = hasRatingSample ? (Number(stats.seasonAverageRating) || 6.65) : 6.65;
+  const quality = clamp((rating - 6.0) / 1.25, 0.35, 1.10);
+  const role = roleFromPositions(positions);
+
+  let goalBonus = 0;
+  let assistBonus = 0;
+  if (role === "FWD") {
+    // El umbral equivale aproximadamente a un delantero titular que marca
+    // 15-18 goles de liga. Los 30-35 goles sí constituyen una temporada de
+    // explosión y pueden aportar cerca de +0.4 a la progresión mensual.
+    goalBonus = clamp((goalsPer90 - 0.42) * 0.68, 0, 0.45);
+    assistBonus = clamp((assistsPer90 - 0.25) * 0.38, 0, 0.12);
+  } else if (role === "MID") {
+    goalBonus = clamp((goalsPer90 - 0.18) * 0.27, 0, 0.11);
+    assistBonus = clamp((assistsPer90 - 0.25) * 0.48, 0, 0.17);
+  } else if (role === "DEF") {
+    goalBonus = clamp((goalsPer90 - 0.06) * 0.18, 0, 0.055);
+    assistBonus = clamp((assistsPer90 - 0.12) * 0.28, 0, 0.07);
+  }
+
+  return clamp((goalBonus + assistBonus) * sample * quality, 0, 0.36);
 }
 
 function isHighLevelYoungStar(stats: DynamicPlayerStats, age: number): boolean {
@@ -388,57 +512,67 @@ export function calculateMonthlyProgression(
   const playingTime = calculateYouthPlayingTimeFactor(safe, age);
   const headroomFactor = developmentHeadroomFactor(safe);
   const prospect = isYoungProspect(safe, age);
-  const ageModifier = clamp(ageGrowthFactor(age), 0.94, 1.05);
 
   let delta: number;
 
   if (prospect) {
-    // Una promesa con media baja y margen alto recibe además un empujón de
-    // desarrollo, pero la temporada sigue mandando sobre la evolución.
-    delta = performance * 0.24;
-    delta += playingTime * 0.10 * headroomFactor;
-    delta += headroomFactor * 0.028;
-    if (performance >= 0.55) delta += 0.045 * headroomFactor;
+    // La mayor parte del crecimiento se reparte entre los meses. Las promesas
+    // que juegan regularmente y tienen margen progresan más que los suplentes.
+    delta = performance * 0.25;
+    delta += playingTime * 0.11 * headroomFactor;
+    delta += headroomFactor * 0.030;
+    if (performance >= 0.55) delta += 0.050 * headroomFactor;
   } else {
-    // Estrellas y jugadores establecidos: el rendimiento explica casi toda la
-    // evolución. El potencial solo aporta un pequeño extra y nunca bloquea una
-    // subida por encima de la valoración inicial/potencial.
-    delta = performance * 0.22 * ageModifier;
-    delta += Math.max(0, performance - 0.30) * 0.045 * Math.max(0.70, headroomFactor);
-    if (performance >= 0.70) delta += 0.015;
+    delta = performance * 0.30;
+    delta += Math.max(0, performance - 0.30) * 0.065 * Math.max(0.70, headroomFactor);
+    if (performance >= 0.70) delta += 0.022;
   }
 
-  // El ritmo de desarrollo por edad es un modulador pequeño. No existe un
-  // "muro" a los 28-30 años: un veterano puede subir si rinde a nivel élite.
+  // Un rendimiento excepcional por encima de lo normal para la demarcación
+  // también impulsa la media durante la temporada. Esto evita que 30-35 goles
+  // de un delantero joven queden reducidos a un cambio casi invisible al verano.
+  // La bonificación se modera por el margen de desarrollo, la edad y la media.
+  const outputBonus = exceptionalSeasonOutputBonus(safe, positions);
+  delta += outputBonus * clamp(0.75 + headroomFactor * 0.22, 0.80, 1.10);
+
+  // La edad afecta de forma gradual al crecimiento positivo. Las malas
+  // actuaciones y la falta de minutos también pueden provocar regresión.
+  if (delta > 0) delta *= clamp(ageGrowthFactor(age), 0.72, 1.18);
+
   if (age >= 31 && performance < -0.10) {
     delta -= 0.012 * Math.min(3, age - 30) * Math.abs(performance);
   }
 
-  // La falta total de minutos sí debe tener una consecuencia clara y gradual.
   if (safe.seasonAppearances === 0) {
     delta -= 0.055;
   } else if (safe.seasonAppearances < 4 && performance < 0.05) {
     delta -= 0.015;
   }
 
-  // Las campañas malas pueden bajar la media a cualquier edad.
   if (performance < -0.20 && safe.seasonAppearances > 0) {
     delta -= Math.min(0.085, (Math.abs(performance) - 0.20) * 0.14);
   }
 
-  // Garantías de coherencia: una temporada claramente buena no puede cerrar el
-  // mes en negativo por un ajuste pequeño de disponibilidad/edad.
+  // Una buena nota y la continuidad son el motor mensual, pero una media alta
+  // impone cada vez más exigencia: a 94 OVR el mismo rendimiento genera sólo
+  // una fracción de la subida que tendría un jugador de 80.
+  if (delta > 0) delta *= overallGrowthFactor(safe.currentOVR);
+
   if (safe.seasonAppearances >= 8 && performance >= 0.65) {
-    delta = Math.max(delta, 0.085);
+    delta = Math.max(delta, 0.085 * overallGrowthFactor(safe.currentOVR));
   } else if (safe.seasonAppearances >= 8 && performance >= 0.40) {
-    delta = Math.max(delta, 0.04);
+    delta = Math.max(delta, 0.04 * overallGrowthFactor(safe.currentOVR));
   }
 
   if (injuryDaysRemaining >= 60) delta *= 0.45;
   else if (injuryDaysRemaining >= 30) delta *= 0.65;
   else if (injuryDaysRemaining >= 14) delta *= 0.82;
 
-  return clamp(delta, -0.30, 0.34);
+  // El límite normal de crecimiento mensual sigue siendo contenido. Solo una
+  // campaña verdaderamente extraordinaria puede superar el antiguo techo de
+  // +0.34; de esta forma el progreso se reparte durante el año en vez de caer
+  // como una subida masiva en el cierre de temporada.
+  return clamp(delta, -0.30, 0.58);
 }
 
 export function calculateSeasonEndProgression(
@@ -454,40 +588,56 @@ export function calculateSeasonEndProgression(
   const playingTime = calculateYouthPlayingTimeFactor(safe, age);
   const prospect = isYoungProspect(safe, age);
 
-  // El cierre consolida la temporada, por eso tiene más peso que un mes aislado.
-  let delta = performance * 0.78;
-
+  // El cierre anual es un ajuste pequeño, no una segunda gran subida. La mejora
+  // principal ya se ha acumulado durante la temporada mediante la progresión
+  // mensual. La edad, los minutos y el rendimiento pueden inclinar el balance.
+  let delta = performance * 0.22;
   if (prospect) {
-    delta += 0.24 * headroomFactor + 0.06 * playingTime;
-    if (performance >= 0.60) delta += 0.14 * headroomFactor;
-  } else {
-    delta += Math.max(0, performance - 0.30) * 0.10 * Math.max(0.70, headroomFactor);
+    delta += 0.055 * headroomFactor + 0.025 * playingTime;
+    if (performance >= 0.60) delta += 0.045 * headroomFactor;
+  } else if (performance >= 0.30) {
+    delta += (performance - 0.30) * 0.045 * Math.max(0.70, headroomFactor);
   }
 
-  // No disputar prácticamente ningún minuto debe producir una pérdida clara,
-  // pero no una caída exagerada por edad.
   if (safe.seasonAppearances === 0) {
-    delta -= 0.32;
-  } else if (safe.seasonAppearances < 6 && performance < 0) {
     delta -= 0.12;
+  } else if (safe.seasonAppearances < 6 && performance < 0) {
+    delta -= 0.06;
   }
-
   if (performance < -0.20) {
-    delta -= Math.min(0.26, (Math.abs(performance) - 0.20) * 0.38);
-  }
-
-  // Buenas temporadas = cierre positivo. Temporadas extraordinarias = subida
-  // visible incluso para jugadores de 88-91 OVR.
-  if (safe.seasonAppearances >= 8 && performance >= 0.65) {
-    delta = Math.max(delta, 0.55);
-  } else if (safe.seasonAppearances >= 8 && performance >= 0.40) {
-    delta = Math.max(delta, 0.22);
+    delta -= Math.min(0.18, (Math.abs(performance) - 0.20) * 0.24);
   }
 
   const injuryDaysRemaining = Math.max(0, Number(context?.injuryDaysRemaining) || 0);
   if (injuryDaysRemaining >= 30) delta *= 0.70;
 
-  return clamp(delta, -1.45, 2.00);
+  // El bonus de juventud sólo aparece si el jugador ha tenido una temporada
+  // mínimamente positiva y disputado minutos; la edad avanzada sí puede traer
+  // una pequeña caída incluso si la temporada ha sido correcta.
+  let ageAdjustment = 0;
+  if (safe.seasonAppearances >= 8 && performance >= 0.20) {
+    if (age <= 20) ageAdjustment = 0.055;
+    else if (age <= 23) ageAdjustment = 0.035;
+    else if (age <= 25) ageAdjustment = 0.015;
+  }
+  if (age >= 30) {
+    ageAdjustment -= Math.min(0.24, (age - 29) * 0.035);
+  }
+
+  // Ganar títulos también impulsa el desarrollo: el valor es pequeño pero
+  // acumulativo, y se aplica antes del límite final para que una temporada
+  // llena de trofeos no provoque saltos irreales. Las estrellas con media alta
+  // reciben menos por la curva de exigencia.
+  const trophyBonus = Math.min(0.22, Math.max(0, Number(safe.seasonTrophies) || 0) * 0.055);
+  delta += trophyBonus;
+
+  // Para los jugadores de 90+ OVR sólo una campaña excepcional permite sumar
+  // una fracción visible al cierre. Las bajadas por rendimiento, edad o falta
+  // de continuidad no se maquillan con este factor.
+  if (delta > 0) delta *= overallGrowthFactor(safe.currentOVR);
+  delta += ageAdjustment;
+
+  return clamp(delta, -0.48, 0.48);
 }
 
 export function initializeDynamicStats(

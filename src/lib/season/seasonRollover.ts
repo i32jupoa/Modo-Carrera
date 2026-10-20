@@ -685,6 +685,30 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     await yieldToUi();
 
     emitProgress(options, "progression", 22, "Aplicando progresión deportiva de fin de temporada…");
+    // Los premios individuales son hitos de carrera. Sumarlos como trofeos de
+    // temporada antes del cálculo permite que Balón de Oro, Bota/Pase de Oro y
+    // premios continentales aporten una mejora moderada y persistente.
+    const awardCountByPlayer = new Map<string, number>();
+    for (const winner of awardWinners) {
+      if (!winner.playerId) continue;
+      awardCountByPlayer.set(winner.playerId, (awardCountByPlayer.get(winner.playerId) ?? 0) + 1);
+    }
+    if (awardCountByPlayer.size > 0) {
+      const state = usePlayersStore.getState();
+      const nextStats = { ...(state.stats ?? {}) } as Record<string, any>;
+      for (const [playerId, count] of awardCountByPlayer) {
+        const currentStats = nextStats[playerId];
+        if (!currentStats?.dynamicStats) continue;
+        nextStats[playerId] = {
+          ...currentStats,
+          dynamicStats: {
+            ...currentStats.dynamicStats,
+            seasonTrophies: Math.max(0, Number(currentStats.dynamicStats.seasonTrophies) || 0) + Math.min(3, count),
+          },
+        };
+      }
+      usePlayersStore.setState({ stats: nextStats } as any);
+    }
     applySeasonEndProgressionToAllPlayers(dates.seasonNumber);
     // Keep the market's OVR/potential index in sync with the progression layer
     // before AI contract decisions and retirement checks run.
@@ -817,6 +841,23 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       allTeams.map((team) => [team.id, { ...getCurrentFinances(team.id) }] as const),
     );
     setActiveTeamLeagueOverrides(domestic.teamLeagueOverrides);
+    // Realismo de descenso: los clubes de IA que bajan de categoría suelen
+    // perder alguna pieza importante por ambición, cláusulas y necesidad de
+    // ajustar salarios. No se liberan jugadores automáticamente: se ponen en
+    // venta 1-2 titulares de nivel alto para que el mercado pueda negociar su
+    // salida durante la ventana, dejando intactos los clubes del usuario.
+    const relegatedAiTeams = movement.movements
+      .filter((entry) => String(entry.reason).includes("relegation") && entry.teamId !== current.myTeamId)
+      .map((entry) => entry.teamId);
+    for (const clubId of relegatedAiTeams) {
+      const squad = getClubPlayers(clubId)
+        .filter((player) => !player.retired && player.age <= 30 && player.contract.yearsLeft > 1 && !player.transferListed)
+        .sort((a, b) => (b.ovr - a.ovr) || (b.value - a.value));
+      if (squad.length < 1) continue;
+      const clubStrength = squad.reduce((sum, player) => sum + player.ovr, 0) / squad.length;
+      const candidates = squad.filter((player) => player.ovr >= Math.max(76, clubStrength + 2)).slice(0, squad.length >= 20 ? 2 : 1);
+      for (const player of candidates) updatePlayer(player.id, { transferListed: true, listReason: "needs-cash" });
+    }
     for (const player of getMarketIndex().byId.values()) {
       if (!player.clubId || player.retired) continue;
       const leagueId = resolveTeamLeague(player.clubId, { teamLeagueOverrides: domestic.teamLeagueOverrides });

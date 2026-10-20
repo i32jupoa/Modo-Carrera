@@ -93,8 +93,12 @@ assert.match(advanceTime, /mode:\s*"jump"|options\?\.mode === "jump"/,
   'advanceTime debe tener controles específicos para el modo salto.');
 assert.match(backgroundSim, /if \(entrySucceeded\) processedKeys\.add\(key\)/,
   'No se deben retirar de la cola jornadas donde ha fallado algún partido.');
-assert.match(backgroundSim, /ronda programada|jornada programada/,
-  'Las jornadas inexistentes deben conservarse pendientes y generar diagnóstico.');
+assert.match(backgroundSim, /Se elimina una tarea de liga huérfana: no existe la jornada programada[\s\S]*processedKeys\.add\(key\)/,
+  'Una entrada de cola cuyo calendario ya no tiene esa jornada debe podarse para que no bloquee saltos futuros.');
+assert.match(backgroundSim, /Se elimina una tarea de copa huérfana: no existe la ronda programada[\s\S]*processedKeys\.add\(key\)/,
+  'Una entrada de copa sin ronda real debe podarse sin simular ni inventar resultados.');
+assert.match(backgroundSim, /Number\(f\.matchday\) === Number\(matchday\)/,
+  'Los matchdays numéricos deben compararse de forma tolerante con guardados antiguos.');
 
 assert.match(academyStore, /fastForward\?: boolean/,
   'La persistencia de cantera debe conocer el modo salto.');
@@ -102,8 +106,12 @@ assert.match(academyStore, /if \(!persisted && options\?\.fastForward\)/,
   'Un fallo de persistencia de la cantera debe interrumpir el salto.');
 assert.match(academyRunner, /pendingChanges/,
   'Las academias IA deben acumular cambios del salto hasta los checkpoints.');
+assert.match(academyRunner, /failedClubs\.push\(\{ teamId, error \}\)/,
+  'Un error de una cantera IA debe aislarse para no cancelar el salto de todo el calendario.');
 assert.match(academyRunner, /flushAcademyAiPendingChanges/,
   'Las academias IA deben poder persistir los cambios pendientes en un checkpoint.');
+assert.match(academyStore, /if \(!options\.fastForward\) throw error/,
+  'Un partido juvenil defectuoso durante el salto no debe bloquear el calendario del primer equipo.');
 assert.match(jumpHandler, /beginCalendarJumpAcademyAiBatch\(\)/,
   'El salto debe activar el batch juvenil antes de procesar fechas.');
 assert.match(jumpHandler, /flushCalendarJumpAcademyAiChanges\(\)/,
@@ -114,6 +122,10 @@ assert.match(jumpHandler, /discardCalendarJumpAcademyAiChanges\(\)/,
   'Si falla el salto, los cambios juveniles no confirmados deben descartarse.');
 assert.match(academyRunner, /academy\.ai\.clubsScheduled/,
   'El profiler debe informar cuántos clubes juveniles se programaron.');
+assert.match(academyRunner, /if \(fastForward \? index % 4 === 3 : index % 2 === 1\) await yieldToBrowser\(\)/,
+  'La construcción inicial del calendario juvenil debe ceder al navegador incluso durante saltos.');
+assert.match(academyRunner, /if \(offset \+ CLUBS_PER_SLICE < teamIds\.length\) await yieldToBrowser\(\)/,
+  'La simulación de canteras IA debe ceder al navegador entre sublotes durante saltos largos.');
 assert.match(academySimulation, /scoreById\.set\(player\.id, selectionScore\(player, date\)\)/,
   'La puntuación de cada juvenil debe calcularse una sola vez por partido.');
 assert.doesNotMatch(academySimulation, /sort\(\(a, b\) => selectionScore\(/,

@@ -4,6 +4,7 @@ import {
   clubRenewalProbability,
   getContractRenewalPhase,
   getContractRenewalPhaseKey,
+  renewalWageRoom,
 } from '../src/lib/transfers/RenewalPolicy.ts';
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
@@ -27,6 +28,13 @@ assert.equal(getContractRenewalPhase('invalid'), null);
 assert.equal(getContractRenewalPhaseKey('2027-01-15', 'winter'), '2026:winter');
 assert.equal(getContractRenewalPhaseKey('2027-06-30', 'late-season'), '2026:late-season');
 
+// Aunque el tope salarial esté lleno, un club con presupuesto de fichajes puede
+// reservar una parte prudente para renovar a sus titulares. Los suplentes tienen
+// un límite menor y el margen ordinario siempre se conserva si es más amplio.
+assert.equal(renewalWageRoom({ wageRoom: 0, transferRoom: 195_000_000, currentWage: 25_000_000, corePlayer: true }), 12_500_000);
+assert.equal(renewalWageRoom({ wageRoom: 0, transferRoom: 20_000_000, currentWage: 3_000_000, corePlayer: false }), 840_000);
+assert.equal(renewalWageRoom({ wageRoom: 4_000_000, transferRoom: 0, currentWage: 5_000_000, corePlayer: true }), 4_000_000);
+
 // Invariantes del cableado real: dos revisiones globales, sin tope fijo al cerrar la temporada,
 // y contabilidad económica aplicada antes de escribir el nuevo contrato.
 assert.match(marketSimulation, /function runScheduledContractReview\(date: string, result: MarketDayResult\)/);
@@ -38,6 +46,8 @@ assert.match(rumorEngine, /reason\?\.trim\(\) \|\|/);
 assert.match(marketSimulation, /renewalsEnabled: false/);
 assert.match(contractEngine, /options\.maxRenewals \?\? expiring\.length/);
 assert.match(contractEngine, /wageRoom/);
+assert.match(contractEngine, /renewalWageRoom\(/);
+assert.match(contractEngine, /wageCommitment > usableWageRoom/);
 assert.match(contractEngine, /transferRoom/);
 assert.match(contractEngine, /registerRenewal\(clubId, previousWage, offeredWage, signingBonus\)/);
 assert.match(budgetManager, /entry\.wageBill = Math\.max\(0, Math\.round\(entry\.wageBill \+ delta\)\)/);

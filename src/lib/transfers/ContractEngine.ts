@@ -37,7 +37,7 @@ import { decideOnRenewal, wantsOut } from "./PlayerDecision";
 import { clamp, seededUnit } from "./random";
 import { logRenewal, setRenewalLogDate } from "./RenewalLog";
 import { isClosed, listNegotiations } from "./NegotiationEngine";
-import { clubRenewalProbability, getContractRenewalPhase, getContractRenewalPhaseKey, type ContractRenewalPhase } from "./RenewalPolicy";
+import { clubRenewalProbability, getContractRenewalPhase, getContractRenewalPhaseKey, renewalWageRoom, type ContractRenewalPhase } from "./RenewalPolicy";
 import type { Contract, MarketPlayer, SquadReport, TransferListReason } from "./types";
 
 // ============================================================================
@@ -263,14 +263,27 @@ export function attemptRenewal(clubId: string, playerId: string, cacheKey: strin
   const finances = getFinances(clubId);
   const wageRoom = Math.max(0, Math.round(finances.wageBudget - finances.wageBill));
   const transferRoom = Math.max(0, Math.round(finances.budget - finances.initialBudget * 0.05));
-  // Una renovación compromete el incremento salarial y la prima. El límite de
-  // oferta combina el margen salarial real con el presupuesto disponible, sin
-  // tocar la economía del club del usuario (que nunca entra en el ciclo IA).
+  const squadReport = getSquadReport(clubId, cacheKey);
+  const corePlayer =
+    isKeyPlayer(playerId, cacheKey) ||
+    player.ovr >= squadReport.startingRating - SQUAD_LIMITS.benchGapForSale / 2 ||
+    (player.age <= SQUAD_LIMITS.youngAge && player.potential >= squadReport.startingRating - 1);
+  // Si el tope salarial está lleno, una estrella no debe quedarse sin oferta
+  // automáticamente. Se permite dedicar una parte limitada del presupuesto de
+  // fichajes a la subida, con un techo proporcional a su ficha. El presupuesto
+  // y la prima siguen comprobándose más abajo y el club nunca puede gastar su
+  // reserva protegida ni usar este puente para el equipo del usuario.
+  const usableWageRoom = renewalWageRoom({
+    wageRoom,
+    transferRoom,
+    currentWage: player.contract.wage,
+    corePlayer,
+  });
   const maxRaiseFromBudget = Math.max(
     0,
     Math.floor((transferRoom + player.contract.wage) / (1 + CONTRACT_RULES.signingBonusShare)) - player.contract.wage,
   );
-  const affordableCeiling = player.contract.wage + Math.min(wageRoom, maxRaiseFromBudget);
+  const affordableCeiling = player.contract.wage + Math.min(usableWageRoom, maxRaiseFromBudget);
   const ceiling = Math.min(maxWageOffer(clubId), affordableCeiling);
   const ask = decideOnRenewal(playerId, cacheKey, undefined, date);
   let offeredWage = Math.min(ceiling, Math.round(player.contract.wage * CONTRACT_RULES.renewalRaise));
@@ -301,7 +314,7 @@ export function attemptRenewal(clubId: string, playerId: string, cacheKey: strin
   const cashRoom = Math.max(0, Math.round(finances.budget - finances.initialBudget * 0.05));
   if (
     !decision.accepted ||
-    wageCommitment > wageRoom ||
+    wageCommitment > usableWageRoom ||
     wageCommitment + signingBonus > cashRoom
   ) {
     // Si no renueva y le queda un año o menos, pasa a ser vendible. Las

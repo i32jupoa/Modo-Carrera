@@ -157,8 +157,10 @@ async function buildCalendar(
         // Una liga irregular no debe impedir que el resto de las academias avance.
         console.warn(`[academy-ai] no se pudo construir calendario de ${leagueId}:`, error);
       }
-      // Construimos la tabla repartida en varias tareas para no bloquear el render.
-      if (!fastForward && index % 2 === 1) await yieldToBrowser();
+      // La primera fecha de cada temporada construye el calendario de todas las
+      // ligas. También en fast-forward se cede el hilo periódicamente para que
+      // el navegador pinte el progreso y no parezca que el salto se ha colgado.
+      if (fastForward ? index % 4 === 3 : index % 2 === 1) await yieldToBrowser();
     }
 
     if (activeSaveIs(saveId)) {
@@ -209,25 +211,40 @@ export async function simulateAiAcademiesForDate(args: SimulateAiAcademyMatchday
 
   let changed = 0;
   const changedStates: Record<string, ClubAcademyState> = {};
+  const failedClubs: Array<{ teamId: string; error: unknown }> = [];
   await measureCalendarJumpPhase("simulation.academy.ai.matchSimulation", async () => {
     for (let offset = 0; offset < teamIds.length; offset += CLUBS_PER_SLICE) {
       if (!activeSaveIs(saveId)) return;
       const slice = teamIds.slice(offset, offset + CLUBS_PER_SLICE);
       for (const teamId of slice) {
         if (!activeSaveIs(saveId)) return;
-        const state = simulateAcademyLeagueMatchForAiClub(saveId, teamId, date);
-        if (!state) continue;
-        runtime.clubs[teamId] = state;
-        changedStates[teamId] = state;
-        changed += 1;
+        try {
+          const state = simulateAcademyLeagueMatchForAiClub(saveId, teamId, date);
+          if (!state) continue;
+          runtime.clubs[teamId] = state;
+          changedStates[teamId] = state;
+          changed += 1;
+        } catch (error) {
+          // An individual club's broken youth state should not poison the
+          // whole AI-academy queue and roll back a first-team calendar jump.
+          // Other clubs still simulate; successful clubs are checkpointed.
+          failedClubs.push({ teamId, error });
+        }
       }
-      // En avance manual se mantiene la cesión al navegador. En salto ya se
-      // procesa por checkpoints y no se intercala una tarea por cada sublote.
-      if (!fastForward && offset + CLUBS_PER_SLICE < teamIds.length) await yieldToBrowser();
+      // También durante un salto cedemos el hilo entre sublotes: un día juvenil
+      // con muchos clubes no debe congelar la UI hasta que termine toda la liga.
+      // El ahorro del fast-forward sigue viniendo del guardado agrupado, no de
+      // ejecutar cientos de partidos en una única tarea bloqueante.
+      if (offset + CLUBS_PER_SLICE < teamIds.length) await yieldToBrowser();
     }
   });
 
   recordCalendarJumpCounter("academy.ai.clubsSimulated", changed);
+  if (failedClubs.length > 0) {
+    recordCalendarJumpCounter("academy.ai.clubsFailed", failedClubs.length);
+    console.error(`[academy-ai] ${failedClubs.length} cantera(s) no pudieron simular su partido juvenil del ${date}; el resto de la simulación continúa.`,
+      failedClubs.map(({ teamId, error }) => ({ teamId, error: error instanceof Error ? error.message : String(error) })));
+  }
   if (changed > 0 && activeSaveIs(saveId)) {
     if (fastForward) {
       // Las stats ya están aplicadas al estado en memoria. Se guarda el último

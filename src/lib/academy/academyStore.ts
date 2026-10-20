@@ -75,11 +75,20 @@ function advanceAndMaybePlayLeagueMatch(
   const advanced = measureCalendarJumpPhase("simulation.academy.user.progression", () =>
     advanceAcademyToDate(state, currentDate, saveId),
   );
-  return options?.playLeagueMatch
-    ? measureCalendarJumpPhase("simulation.academy.user.match", () =>
+  if (!options?.playLeagueMatch) return advanced;
+  try {
+    return measureCalendarJumpPhase("simulation.academy.user.match", () =>
       simulateAcademyLeagueMatchOnDate(advanced, currentDate, saveId),
-    )
-    : advanced;
+    );
+  } catch (error) {
+    // A malformed youth fixture must not cancel the first-team calendar jump.
+    // Keep and persist the academy's date-based progression, log the skipped
+    // youth match with its date, and still let genuine persistence errors throw
+    // from persistAcademyAdvanceState below.
+    if (!options.fastForward) throw error;
+    console.error(`[academy] no se pudo simular el partido juvenil del ${currentDate}; se conserva la progresión y se continúa el calendario.`, error);
+    return advanced;
+  }
 }
 
 async function persistAcademyAdvanceState(
