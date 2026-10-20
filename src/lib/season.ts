@@ -26,6 +26,16 @@ export type Fixture = {
   result?: SimResult;
   /** European cup identity while reusing the Champions League match engine. */
   europeanCompetition?: EuropeanCompetition;
+  /** Real, scheduled promotion/relegation playoff tie identity. */
+  promotionPlayoff?: {
+    country: "España" | "Francia" | "Alemania";
+    seasonStartYear: number;
+    tieId: string;
+    stage: "semifinal" | "final" | "survival";
+    leg: 1 | 2;
+    homeSeed: number;
+    awaySeed: number;
+  };
 };
 
 export type Standing = {

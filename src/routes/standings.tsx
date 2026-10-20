@@ -14,6 +14,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  getLeaguePositionZones,
+  LEAGUE_ZONE_PRESENTATION,
+  orderedLeagueZoneKinds,
+  primaryLeagueZone,
+} from "@/lib/season/leaguePositionZones";
 
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
@@ -55,6 +61,7 @@ function StandingsPage() {
   if (!save) return null;
 
   const standings = getSortedStandings(save, viewLeague);
+  const zones = getLeaguePositionZones(save, viewLeague, standings);
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -94,7 +101,7 @@ function StandingsPage() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-bold">Clasificación</h3>
         </div>
-        <StandingsTable standings={standings} myTeamId={save.myTeamId} highlight={highlight} save={save} />
+        <StandingsTable standings={standings} myTeamId={save.myTeamId} highlight={highlight} save={save} zones={zones} />
       </div>
     </div>
   );
@@ -105,11 +112,13 @@ function StandingsTable({
   myTeamId,
   highlight,
   save,
+  zones,
 }: {
   standings: ReturnType<typeof getSortedStandings>;
   myTeamId: string;
   highlight?: string;
   save: SaveGame;
+  zones: ReturnType<typeof getLeaguePositionZones>;
 }) {
   const formsByTeam = getTeamFormsForCompetition(save, 5, "league");
   return (
@@ -128,26 +137,25 @@ function StandingsTable({
         <span className="text-center">Forma</span>
       </div>
       {standings.map((s, i) => {
-        const t = teamById(s.teamId);
+        const t = teamById(s.teamId, { teamLeagueOverrides: save.teamLeagueOverrides ?? {} });
         const isMe = s.teamId === myTeamId;
         const isHighlighted = !!highlight && s.teamId === highlight && !isMe;
-        const zoneColor =
-          i < 4
-            ? "border-l-primary"
-            : i < 6
-              ? "border-l-accent"
-              : i >= standings.length - 3
-                ? "border-l-destructive"
-                : "border-l-transparent";
+        const rowZones = zones.get(s.teamId) ?? [];
+        const primaryZone = primaryLeagueZone(rowZones);
+        const zonePresentation = primaryZone ? LEAGUE_ZONE_PRESENTATION[primaryZone] : null;
+        const zoneTitle = rowZones.map((kind) => LEAGUE_ZONE_PRESENTATION[kind].label).join(" · ");
+        const zoneColor = zonePresentation?.borderClass ?? "border-l-transparent";
         return (
           <div
             key={s.teamId}
+            title={zoneTitle || undefined}
             className={`grid grid-cols-[24px_1fr_24px_24px_24px_24px_28px_28px_28px_32px_76px] items-center gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : isHighlighted ? "bg-accent/10 ring-1 ring-accent/50 font-semibold" : ""}`}
           >
-            <span className="text-muted-foreground">{i + 1}</span>
+            <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded px-0.5 ${zonePresentation?.badgeClass ?? "text-muted-foreground"}`}>{i + 1}</span>
             <span className="flex items-center gap-1.5 min-w-0">
               <TeamLogo teamName={t.name} leagueName={getLeagueName(t.league)} size={18} />
               <span className="truncate">{t.name}</span>
+              {rowZones.map((kind) => <span key={kind} title={LEAGUE_ZONE_PRESENTATION[kind].label} className={`hidden 2xl:inline-flex shrink-0 rounded px-1 py-0.5 text-[0.52rem] font-black ${LEAGUE_ZONE_PRESENTATION[kind].badgeClass}`}>{LEAGUE_ZONE_PRESENTATION[kind].shortLabel}</span>)}
             </span>
             <span className="text-center scoreline">{s.played}</span>
             <span className="text-center scoreline text-primary">{s.won}</span>
@@ -161,10 +169,14 @@ function StandingsTable({
           </div>
         );
       })}
-      <p className="text-[0.65rem] text-muted-foreground mt-3 leading-relaxed">
-        <span className="text-primary">●</span> Europa · <span className="text-destructive">●</span>{" "}
-        Descenso
-      </p>
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 text-[0.62rem] text-muted-foreground">
+        {orderedLeagueZoneKinds(zones).map((kind) => (
+          <span key={kind} className="inline-flex items-center gap-1.5">
+            <span className={`h-2 w-2 rounded-sm ${LEAGUE_ZONE_PRESENTATION[kind].dotClass}`} />
+            {LEAGUE_ZONE_PRESENTATION[kind].label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

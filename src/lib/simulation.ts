@@ -37,6 +37,35 @@ function isAttacking(positions: PosCode[]): boolean {
  */
 export type SimTactics = Partial<TeamTactics>;
 
+// Divisiones en las que suele haber más igualdad de recursos y rendimiento.
+// La varianza extra solo se aplica entre equipos de la misma categoría; no
+// permite que un gran salto de calidad entre divisiones desaparezca.
+const LOWER_TIER_LEAGUES = new Set([
+  "laliga2",
+  "championship",
+  "leagueone",
+  "leaguetwo",
+  "serieb",
+  "bundesliga2",
+  "liga3",
+  "ligue2",
+]);
+
+function isLowerTierFixture(home: Team, away: Team): boolean {
+  return home.league === away.league && LOWER_TIER_LEAGUES.has(String(home.league));
+}
+
+/** Reduce moderate gaps between lower-division sides, but retain large gaps. */
+function moderateLowerTierGap(diff: number): number {
+  const magnitude = Math.abs(diff);
+  const factor = magnitude <= 10
+    ? 0.58
+    : magnitude < 18
+      ? 0.58 + ((magnitude - 10) / 8) * 0.42
+      : 1;
+  return Math.sign(diff) * magnitude * factor;
+}
+
 function rand(): number {
   return Math.random();
 }
@@ -267,7 +296,11 @@ export function expectedGoals(
   // satura antes para que una brecha enorme de OVR no convierta al favorito en
   // ganador casi automático: el rival conserva opciones reales de sorpresa.
   const possessionDiff = (hMod.possession - aMod.possession) * 14;
-  const qualityDiff = Math.max(-30, Math.min(30, homeTacticalStrength - awayTacticalStrength + possessionDiff));
+  const rawQualityDiff = homeTacticalStrength - awayTacticalStrength + possessionDiff;
+  const moderatedQualityDiff = isLowerTierFixture(home, away)
+    ? moderateLowerTierGap(rawQualityDiff)
+    : rawQualityDiff;
+  const qualityDiff = Math.max(-30, Math.min(30, moderatedQualityDiff));
   const HOME_MATCH_ADVANTAGE = 2.0;
   const effectiveDiff = qualityDiff + HOME_MATCH_ADVANTAGE;
 
@@ -317,8 +350,11 @@ export function expectedGoals(
   // Un toque pequeño de variación por partido evita que el mismo emparejamiento
   // se repita siempre con el mismo xG, pero la aleatoriedad ya no domina el
   // resultado.
-  lh *= 0.97 + rand() * 0.06;
-  la *= 0.97 + rand() * 0.06;
+  const lowerTierFixture = isLowerTierFixture(home, away);
+  const noiseBase = lowerTierFixture ? 0.90 : 0.97;
+  const noiseRange = lowerTierFixture ? 0.20 : 0.06;
+  lh *= noiseBase + rand() * noiseRange;
+  la *= noiseBase + rand() * noiseRange;
 
   return {
     lh: Math.max(0.22, Math.min(3.65, lh)),

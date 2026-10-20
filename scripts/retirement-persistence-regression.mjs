@@ -44,6 +44,9 @@ assert.match(marketClock, /ensurePlayersRetired\(\(activeSave\?\.retiredPlayers 
 
 // Los puntos de entrada de búsqueda, fichaje y cesión también se protegen.
 assert.match(playerStore, /if \(getMarketPlayer\(id\)\?\.retired\) continue/, 'searchMarket no debe listar retirados');
+assert.match(playerStore, /const isActivePlayer = \(player: FcPlayer\) =>[\s\S]*?getMarketPlayer\(String\(player\.ID\)\)\?\.retired/, 'las plantillas deben filtrar retirados incluso desde la caché');
+assert.match(playerStore, /getRawPlayers: \(\) => \{[\s\S]*?const active = \(raw: FcPlayer\) =>[\s\S]*?getMarketPlayer\(String\(raw\.ID\)\)\?\.retired[\s\S]*?RAW_PLAYERS\.filter\(active\)/, 'el catálogo utilizado por mercado y ojeo debe excluir retirados');
+assert.match(playerStore, /export function syncSquadFromRoster\(rosterIds: string\[\]\): FcPlayer\[\] \{[\s\S]*?getMarketPlayer\(String\(p\.ID\)\)\?\.retired/, 'un jugador retirado no debe restaurarse desde una lista de plantilla antigua');
 assert.match(transfers, /if \(!player \|\| player\.retired\) return null/, 'completeTransfer debe rechazar retirados');
 assert.match(loans, /if \(!player \|\| player\.retired \|\| !player\.clubId \|\| player\.loanClubId\) return base/, 'no se debe poder iniciar una cesión de un retirado');
 assert.match(userNegotiation, /if \(player\.retired\) return \{ ok: false, reason: "Este jugador se ha retirado y ya no está disponible\." \}/, 'una oferta manual debe explicar que el jugador está retirado');

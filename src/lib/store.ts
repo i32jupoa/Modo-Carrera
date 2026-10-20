@@ -129,6 +129,7 @@ import {
   type EuropeanCompetitionConfig,
 } from "@/data/europeanCompetitions";
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
+import { ensurePromotionPlayoffFixtures } from "@/lib/season/promotionPlayoffs";
 import { getEuropeanParticipantsForSave, getInitialEuropeanQualification } from "@/lib/season/europeanQualification";
 import { assignSquadRoles } from "@/lib/squadRoles";
 import { SATISFACTION_CONFIG, computePostMatchSatisfaction, clampMorale, hydrateMailboxWantsOutOverrides, injuryWasActiveBeforeMatch, wasSuspendedBeforeMatch } from "@/lib/satisfaction";
@@ -4220,6 +4221,128 @@ function simulateFixtureInline(
   return { ...fixture, result };
 }
 
+function getPromotionPlayoffLeg1(save: SaveGame, fixture: Fixture): Fixture | null {
+  const metadata = fixture.promotionPlayoff;
+  if (!metadata) return null;
+  for (const list of Object.values(save.cupFixtures ?? {})) {
+    if (!Array.isArray(list)) continue;
+    const leg = list.find((candidate) =>
+      candidate.promotionPlayoff?.tieId === metadata.tieId && candidate.promotionPlayoff.leg === 1,
+    );
+    if (leg) return leg;
+  }
+  return null;
+}
+
+function promotionAggregateAfter90(save: SaveGame, fixture: Fixture, result: SimResult): boolean {
+  const leg1 = getPromotionPlayoffLeg1(save, fixture);
+  if (!leg1?.result || !fixture.promotionPlayoff || fixture.promotionPlayoff.leg !== 2) return false;
+  const goals = new Map<string, number>([[leg1.homeId, leg1.result.homeGoals], [leg1.awayId, leg1.result.awayGoals]]);
+  goals.set(fixture.homeId, (goals.get(fixture.homeId) ?? 0) + result.homeGoals);
+  goals.set(fixture.awayId, (goals.get(fixture.awayId) ?? 0) + result.awayGoals);
+  return (goals.get(fixture.homeId) ?? 0) === (goals.get(fixture.awayId) ?? 0);
+}
+
+/**
+ * Creates and resolves dated promotion/relegation playoff fixtures through the
+ * given day. They are stored in cupFixtures so saves, stats, match reports and
+ * the normal match screen use the same durable fixture pipeline as cup ties.
+ */
+export function simulatePromotionPlayoffsThroughDate(
+  save: SaveGame,
+  cutoffDate: string,
+  includeUserTeam = false,
+): SaveGame {
+  let next = ensurePromotionPlayoffFixtures(save, cutoffDate);
+  const seasonStartYear = getSeasonStartYear(next.season);
+  const userTeamId = next.myTeamId;
+  const processed = new Set<string>();
+
+  for (let iteration = 0; iteration < 200; iteration += 1) {
+    const pending = Object.entries(next.cupFixtures ?? {})
+      .flatMap(([league, list]) => Array.isArray(list)
+        ? list.map((fixture) => ({ league: league as LeagueId, fixture }))
+        : [])
+      .filter(({ fixture }) => fixture.promotionPlayoff && !fixture.result && !processed.has(fixture.id))
+      .filter(({ fixture }) => includeUserTeam || (fixture.homeId !== userTeamId && fixture.awayId !== userTeamId))
+      .map((entry) => ({ ...entry, date: getCupFixtureDateIso(entry.fixture, seasonStartYear) }))
+      .filter((entry) => Boolean(entry.date) && String(entry.date) <= cutoffDate)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.fixture.id.localeCompare(b.fixture.id));
+    if (pending.length === 0) break;
+
+    // All legs sharing a date are resolved during the same calendar tick.
+    const dueDate = pending[0].date!;
+    const due = pending.filter((entry) => entry.date === dueDate);
+    for (const { league, fixture } of due) {
+      if (fixture.result) continue;
+      let simulated = simulateFixtureInline(next, fixture, true, false);
+      let result = simulated.result as SimResult | undefined;
+      if (!result) { processed.add(fixture.id); continue; }
+
+      if (fixture.promotionPlayoff?.leg === 2 && promotionAggregateAfter90(next, fixture, result)) {
+        const home = teamById(fixture.homeId);
+        const away = teamById(fixture.awayId);
+        const homeData = getStartersWithFormation(next, fixture.homeId, {
+          fixture: { fixtureId: fixture.id, opponentId: fixture.awayId, isHome: true, competition: "cup", matchday: fixture.matchday },
+        });
+        const awayData = getStartersWithFormation(next, fixture.awayId, {
+          fixture: { fixtureId: fixture.id, opponentId: fixture.homeId, isHome: false, competition: "cup", matchday: fixture.matchday },
+        });
+        if (home && away && homeData.players.length > 0 && awayData.players.length > 0) {
+          const homeXI = homeData.players;
+          const awayXI = awayData.players;
+          const homeBench = getCupSimulationBench(next, fixture.homeId, homeXI, "cup");
+          const awayBench = getCupSimulationBench(next, fixture.awayId, awayXI, "cup");
+          const extraTime = simulateExtraTime(home, away, homeXI, awayXI, {
+            homeBench,
+            awayBench,
+            regularSubstitutions: result.substitutions ?? [],
+            regularCards: result.cards ?? [],
+            regularInjuries: result.injuries ?? [],
+            homeTactics: loadTactics(fixture.homeId),
+            awayTactics: loadTactics(fixture.awayId),
+          });
+          result = {
+            ...result,
+            extraTime: {
+              homeGoals: extraTime.homeGoals,
+              awayGoals: extraTime.awayGoals,
+              events: extraTime.events,
+              substitutions: extraTime.substitutions,
+            },
+            substitutions: [...(result.substitutions ?? []), ...(extraTime.substitutions ?? [])].sort((a, b) => a.minute - b.minute),
+          };
+          const aggregateAfterET = promotionAggregateAfter90(next, fixture, {
+            ...result,
+            homeGoals: result.homeGoals + extraTime.homeGoals,
+            awayGoals: result.awayGoals + extraTime.awayGoals,
+          });
+          if (aggregateAfterET) {
+            const finalHome = getActivePlayersAtMinute(homeXI, homeBench, result.substitutions ?? [], result.cards ?? [], "home", 120, result.injuries ?? []);
+            const finalAway = getActivePlayersAtMinute(awayXI, awayBench, result.substitutions ?? [], result.cards ?? [], "away", 120, result.injuries ?? []);
+            const penalties = simulatePenaltyShootout(finalHome, finalAway, { injuries: result.injuries ?? [] });
+            result.penalties = { homeGoals: penalties.homeGoals, awayGoals: penalties.awayGoals, shootout: penalties.shootout };
+          }
+        }
+      }
+
+      const officialFixture: Fixture = { ...fixture, date: fixture.date ?? dueDate, result };
+      const list = Array.isArray(next.cupFixtures?.[league]) ? [...next.cupFixtures[league]] : [];
+      const index = list.findIndex((candidate) => candidate.id === fixture.id);
+      if (index < 0) continue;
+      list[index] = officialFixture;
+      next = { ...next, cupFixtures: { ...next.cupFixtures, [league]: list } };
+      next = applyMatchToStats(next, officialFixture);
+      next = consumeSuspensionsForFixture(next, [fixture.homeId, fixture.awayId], "cup");
+      processed.add(fixture.id);
+    }
+
+    // Completing both Spanish semifinals unlocks the final immediately.
+    next = ensurePromotionPlayoffFixtures(next, cutoffDate);
+  }
+  return next;
+}
+
 /* ============================================================
 
 
@@ -4333,8 +4456,19 @@ export function getMyNextFixtureAny(save: SaveGame): Fixture | null {
       if (Array.isArray(list)) cupCandidates.push(list);
     }
   }
+  const consideredCupFixtureIds = new Set<string>();
   for (const list of cupCandidates) {
     for (const fixture of list) {
+      if (consideredCupFixtureIds.has(fixture.id)) continue;
+      consideredCupFixtureIds.add(fixture.id);
+      addFixture(fixture, parseIso(getCupFixtureDateIso(fixture, getSeasonStartYear(save.season))));
+    }
+  }
+  for (const list of Object.values(save.cupFixtures ?? {})) {
+    if (!Array.isArray(list)) continue;
+    for (const fixture of list) {
+      if (!fixture.promotionPlayoff || consideredCupFixtureIds.has(fixture.id)) continue;
+      consideredCupFixtureIds.add(fixture.id);
       addFixture(fixture, parseIso(getCupFixtureDateIso(fixture, getSeasonStartYear(save.season))));
     }
   }
@@ -4407,6 +4541,11 @@ export function getMyUpcomingCupFixtures(save: SaveGame): Fixture[] {
 
     if (cupFixtures.length > 0) {
       out.push(...cupFixtures);
+    }
+    for (const list of Object.values(save.cupFixtures ?? {})) {
+      if (!Array.isArray(list)) continue;
+      out.push(...list.filter((fixture) => fixture.promotionPlayoff && !fixture.result &&
+        (fixture.homeId === save.myTeamId || fixture.awayId === save.myTeamId)));
     }
   } catch (err) {
     console.error("Error en getMyUpcomingCupFixtures:", err);
@@ -4578,7 +4717,7 @@ export function simulateCupMatchday(save: SaveGame, league: LeagueId, matchday: 
 
   if (!cupFixtures) return next;
 
-  const roundFixtures = cupFixtures.filter((f) => f.matchday === matchday && !f.result);
+  const roundFixtures = cupFixtures.filter((f) => f.matchday === matchday && !f.result && !f.promotionPlayoff);
 
   for (const f of roundFixtures) {
     const simmed = simulateFixtureInline(next, f, false, true);
@@ -4721,7 +4860,7 @@ export async function simulateCupMatchdayLayered(
 
     if (!Array.isArray(cupFixtures)) continue;
 
-    const fixtures = cupFixtures.filter((f) => f.matchday === matchday && !f.result);
+    const fixtures = cupFixtures.filter((f) => f.matchday === matchday && !f.result && !f.promotionPlayoff);
 
     for (const f of fixtures) {
       allFixtures.push({ fixture: f, league: lg, isVIP: true });
@@ -5061,7 +5200,7 @@ export async function simulateRemainingCupMatches(
 
     // Get fixtures for the current round that don't have results
 
-    const roundFixtures = cupFixtures.filter((f) => f.round === currentRound && !f.result);
+    const roundFixtures = cupFixtures.filter((f) => f.round === currentRound && !f.result && !f.promotionPlayoff);
 
     for (const f of roundFixtures) {
       // Skip if this is the user's team (already played)
@@ -5725,6 +5864,7 @@ export function commitLiveFixtureResult(save: SaveGame, fixtureId: string, resul
     }
   }
 
+  next = ensurePromotionPlayoffFixtures(next, next.currentDate);
   saveSaveWithRetry(next);
   return next;
 }
@@ -5827,6 +5967,7 @@ export function commitCalendarScheduleResults(
     }
   }
 
+  next = ensurePromotionPlayoffFixtures(next, usePlayersStore.getState().currentDate);
   saveSaveWithRetry(next);
   return next;
 }
@@ -6475,6 +6616,7 @@ export function simulateNationalCupsThroughDate(
     for (const [league, rawList] of Object.entries(next.cupFixtures ?? {})) {
       if (!Array.isArray(rawList)) continue;
       for (const fixture of rawList as Fixture[]) {
+        if (fixture.promotionPlayoff) continue;
         if (fixture.result) continue;
         if (
           !includeUserTeam &&
@@ -6528,7 +6670,7 @@ export function simulateNationalCupsThroughDate(
       .flatMap((list: any) =>
         Array.isArray(list)
           ? list
-              .filter((f: any) => !f.result)
+              .filter((f: any) => !f.promotionPlayoff && !f.result)
               .filter((f: any) => {
                 const d = getCupFixtureDateIso(f, getSeasonStartYear(next.season));
                 return !!d && d <= cutoffDate;

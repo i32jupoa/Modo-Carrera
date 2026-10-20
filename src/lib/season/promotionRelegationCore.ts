@@ -62,6 +62,8 @@ export type PromotionRelegationInput = {
   teams: readonly PromotionClub[];
   standings: Readonly<Record<string, readonly LeagueStandingRow[] | undefined>>;
   pyramids?: readonly PromotionPyramidConfig[];
+  /** Winners of completed, match-engine playoff fixtures, keyed by country. */
+  playoffWinners?: Readonly<Record<string, string | undefined>>;
 };
 
 export const DEFAULT_PROMOTION_PYRAMIDS: readonly PromotionPyramidConfig[] = [
@@ -96,6 +98,24 @@ function overall(team: PromotionClub): number {
   return (team.att + team.mid + team.def) / 3;
 }
 
+function softenModerateRatingGap(diff: number): number {
+  const magnitude = Math.abs(diff);
+  const factor = magnitude <= 10
+    ? 0.58
+    : magnitude < 18
+      ? 0.58 + ((magnitude - 10) / 8) * 0.42
+      : 1;
+  return Math.sign(diff) * magnitude * factor;
+}
+
+function seasonFormOffset(team: PromotionClub, input: PromotionRelegationInput, leagueId: string): number {
+  // Solo entra como desempate cuando los datos deportivos de la tabla empatan.
+  // La pequeña oscilación cambia campañas de equipos parejos sin ocultar una
+  // diferencia clara de plantilla (amplitud máxima: cuatro puntos por club).
+  const sample = stableSeed(`${input.seed}|${input.seasonStartYear}|${leagueId}|${team.id}|season-form`) / 0xffffffff;
+  return (sample - 0.5) * 8;
+}
+
 function rankingForLeague(
   leagueId: string,
   input: PromotionRelegationInput,
@@ -123,10 +143,12 @@ function rankingForLeague(
       const aPlayed = Number(ar?.played ?? 0);
       const bPlayed = Number(br?.played ?? 0);
       if (aPlayed !== bPlayed) return bPlayed - aPlayed;
-      // Empty legacy tables have no merit data yet, so team level provides a
-      // stable fallback instead of alphabetical order randomly determining promotion.
-      const strengthDiff = overall(b) - overall(a);
-      return strengthDiff || a.name.localeCompare(b.name);
+      // Empty legacy tables have no merit data yet. In that case use team
+      // quality plus a tiny season-specific performance swing for close sides,
+      // rather than letting the same alphabetical clubs move up every year.
+      const fallbackA = overall(a) + seasonFormOffset(a, input, leagueId);
+      const fallbackB = overall(b) + seasonFormOffset(b, input, leagueId);
+      return (fallbackB - fallbackA) || a.name.localeCompare(b.name);
     });
 }
 
@@ -144,7 +166,7 @@ function poisson(lambda: number, random: () => number): number {
 function goalsFor(attacker: PromotionClub, defender: PromotionClub, home: boolean, random: () => number): number {
   const attack = Number(attacker.att || overall(attacker));
   const defence = Number(defender.def || overall(defender));
-  const lambda = 1.22 + (attack - defence) * 0.035 + (home ? 0.14 : 0);
+  const lambda = 1.22 + softenModerateRatingGap(attack - defence) * 0.035 + (home ? 0.14 : 0);
   return poisson(Math.max(0.25, Math.min(2.65, lambda)), random);
 }
 
@@ -168,7 +190,7 @@ function simulateTwoLegTie(
   else if (secondAggregate > firstAggregate) winnerId = second.id;
   else {
     decidedBy = "extra-time";
-    const strengthDiff = overall(first) - overall(second) + 1.5;
+    const strengthDiff = softenModerateRatingGap(overall(first) - overall(second)) + 1.5;
     const chanceFirst = 1 / (1 + Math.exp(-strengthDiff / 7));
     winnerId = random() < chanceFirst ? first.id : second.id;
   }
@@ -280,13 +302,16 @@ export function calculatePromotionRelegation(input: PromotionRelegationInput): P
       if (pyramid.mode === "promotion-playoff") {
         const candidateCount = Math.min(requiredPlayoffCandidates, lower.length - directCount);
         const candidates = lower.slice(directCount, directCount + candidateCount);
-        const winnerId = simulatePromotionPlayoff(
-          candidates,
-          stableSeed(`${input.seed}|${input.seasonStartYear}|${pyramid.country}|${lowerLeague}|${upperLeague}`),
-          pyramid.country,
-          `${lowerLeague}-ascenso`,
-          playoffTies,
-        );
+        const playedWinnerId = input.playoffWinners?.[pyramid.country];
+        const winnerId = playedWinnerId && candidates.some((team) => team.id === playedWinnerId)
+          ? playedWinnerId
+          : simulatePromotionPlayoff(
+              candidates,
+              stableSeed(`${input.seed}|${input.seasonStartYear}|${pyramid.country}|${lowerLeague}|${upperLeague}`),
+              pyramid.country,
+              `${lowerLeague}-ascenso`,
+              playoffTies,
+            );
         const winner = lower.find((team) => team.id === winnerId);
         if (winner) addMovement(winner, upperLeague, "promotion-playoff");
         // Spain, England and Italy use a third promotion/relegation place.
@@ -298,14 +323,17 @@ export function calculatePromotionRelegation(input: PromotionRelegationInput): P
         // 3rd in the lower tier over two legs. The winner remains/goes up.
         const upperCandidate = upper[upper.length - 3];
         const lowerCandidate = lower[2];
-        const tie = simulateTwoLegTie(
-          upperCandidate,
-          lowerCandidate,
-          stableSeed(`${input.seed}|${input.seasonStartYear}|${pyramid.country}|${upperLeague}|${lowerLeague}|relegation-playoff`),
-          pyramid.country,
-          `${upperLeague}-permanencia`,
-        );
-        playoffTies.push(tie);
+        const playedWinnerId = input.playoffWinners?.[pyramid.country];
+        const tie = playedWinnerId && [upperCandidate.id, lowerCandidate.id].includes(playedWinnerId)
+          ? { winnerId: playedWinnerId }
+          : simulateTwoLegTie(
+              upperCandidate,
+              lowerCandidate,
+              stableSeed(`${input.seed}|${input.seasonStartYear}|${pyramid.country}|${upperLeague}|${lowerLeague}|relegation-playoff`),
+              pyramid.country,
+              `${upperLeague}-permanencia`,
+            );
+        if ("firstLeg" in tie) playoffTies.push(tie);
         if (tie.winnerId === lowerCandidate.id) {
           addMovement(upperCandidate, lowerLeague, "relegation-playoff");
           addMovement(lowerCandidate, upperLeague, "promotion-playoff");

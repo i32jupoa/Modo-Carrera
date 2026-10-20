@@ -104,6 +104,8 @@ export function MatchDayModal() {
                 awayScore: null,
                 competition: "cup" as const,
                 matchday: f.matchday,
+                round: f.round,
+                promotionPlayoff: Boolean(f.promotionPlayoff),
               },
               lastUserMatchResult: null,
             });
@@ -240,7 +242,7 @@ export function MatchDayModal() {
           <div className={`pointer-events-none absolute inset-x-0 top-0 h-40 ${theme.bgOverlay}`} />
           <DialogHeader className="relative text-center space-y-2 mb-6">
             <span className={`mx-auto inline-flex items-center rounded-full border px-3 py-1 text-[0.65rem] font-black uppercase tracking-[0.16em] ${theme.badge}`}>
-              {competitionLabel} · {live.matchday > 0 ? `Jornada ${live.matchday}` : "Partido"}
+              {competitionLabel} · {live.promotionPlayoff ? (live.round || "Playoff de ascenso/permanencia") : live.matchday > 0 ? `Jornada ${live.matchday}` : "Partido"}
             </span>
             <DialogTitle className={`text-2xl font-black tracking-tight ${theme.accent}`}>
               {played ? "Resultado final" : "Día de partido"}

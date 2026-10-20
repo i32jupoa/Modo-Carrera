@@ -3,6 +3,8 @@ import { usePlayersStore } from "@/store/playersStore";
 import { teamById, teamsByLeague, type LeagueId } from "@/data/teams";
 import { computeLeagueStandings } from "@/lib/standings";
 import { TeamBadge } from "@/components/TeamBadge";
+import { loadSave } from "@/lib/store";
+import { getLeaguePositionZones, primaryLeagueZone, LEAGUE_ZONE_PRESENTATION } from "@/lib/season/leaguePositionZones";
 
 type LeagueTableProps = {
   league?: LeagueId;
@@ -35,6 +37,11 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
   const teamIds = useMemo(() => teamsByLeague(resolvedLeague).map((t) => t.id), [resolvedLeague]);
 
   const rows = useMemo(() => computeLeagueStandings(fixtures, teamIds), [fixtures, teamIds]);
+  const save = loadSave();
+  const zones = useMemo(
+    () => save ? getLeaguePositionZones(save, resolvedLeague, rows) : new Map(),
+    [save, resolvedLeague, rows],
+  );
 
   return (
     <section
@@ -70,8 +77,9 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
               const team = teamById(row.teamId);
               const isMe = row.teamId === myTeamId;
               const pos = i + 1;
-              const ucl = pos <= 4;
-              const rel = pos >= rows.length - 2;
+              const rowZones = zones.get(row.teamId) ?? [];
+              const primaryZone = primaryLeagueZone(rowZones);
+              const zone = primaryZone ? LEAGUE_ZONE_PRESENTATION[primaryZone] : null;
 
               return (
                 <tr
@@ -89,9 +97,7 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
                     <span
                       className={[
                         "inline-flex h-6 w-6 items-center justify-center rounded text-[0.65rem]",
-                        ucl ? "bg-emerald-500/20 text-emerald-400" : "",
-                        rel ? "bg-destructive/20 text-destructive" : "",
-                        !ucl && !rel ? "text-muted-foreground" : "",
+                        zone ? `${zone.badgeClass}` : "text-muted-foreground",
                       ].join(" ")}
                     >
                       {pos}
@@ -133,7 +139,19 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
       <footer className="flex flex-wrap gap-4 px-4 py-2.5 border-t border-border/40 text-[0.6rem] uppercase tracking-wider text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-emerald-500/80" />
+          Plazas europeas
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-sky-500/80" />
           Champions
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-amber-500/80" />
+          Europa League
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-emerald-500/80" />
+          Conference
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-destructive/80" />

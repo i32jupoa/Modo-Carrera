@@ -14,8 +14,9 @@ import {
   calculatePromotionRelegation,
   type PromotionRelegationResult,
 } from "./promotionRelegationCore";
+import { getPlayedPromotionPlayoffWinners } from "./promotionPlayoffs";
 
-export type PromotionRelegationSaveView = Pick<SaveGame, "season" | "calendarSeed" | "standings" | "teamLeagueOverrides">;
+export type PromotionRelegationSaveView = Pick<SaveGame, "season" | "calendarSeed" | "standings" | "teamLeagueOverrides"> & Partial<Pick<SaveGame, "cupFixtures">>;
 
 /** Calculate the next tier movements from one career's final league tables. */
 export function calculateSavePromotionRelegation(save: PromotionRelegationSaveView): PromotionRelegationResult {
@@ -36,6 +37,7 @@ export function calculateSavePromotionRelegation(save: PromotionRelegationSaveVi
       : 1,
     teams,
     standings: save.standings ?? {},
+    playoffWinners: save.cupFixtures ? getPlayedPromotionPlayoffWinners(save) : {},
   });
 }
 

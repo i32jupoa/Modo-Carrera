@@ -43,6 +43,12 @@ import { getSeasonArchive, getSeasonArchiveAwards, type SeasonArchive } from "@/
 import { getCurrentSaveId } from "@/lib/savedGames";
 import { getSeasonRolloverDates, type RolloverProgress } from "@/lib/season/seasonRolloverCore";
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
+import {
+  getLeaguePositionZones,
+  LEAGUE_ZONE_PRESENTATION,
+  orderedLeagueZoneKinds,
+  primaryLeagueZone,
+} from "@/lib/season/leaguePositionZones";
 
 import { usePlayersStore, ensureStatsForLeague, useCurrentDate } from "@/store/playersStore";
 
@@ -782,7 +788,7 @@ function SeasonPage() {
               {nextEuropeanCompetition && activeEuropeanTable.length > 0 ? (
                 <UCLMiniTable table={activeEuropeanTable} myTeamId={save.myTeamId} />
               ) : (
-                <StandingsTable standings={standings} myTeamId={save.myTeamId} />
+                <StandingsTable standings={standings} myTeamId={save.myTeamId} save={save} leagueId={viewLeague} />
               )}
             </div>
           </div>
@@ -1256,10 +1262,15 @@ function ResultRow({
 function StandingsTable({
   standings,
   myTeamId,
+  save,
+  leagueId,
 }: {
   standings: ReturnType<typeof getSortedStandings>;
   myTeamId: string;
+  save: SaveGame;
+  leagueId: LeagueId;
 }) {
+  const zones = getLeaguePositionZones(save, leagueId, standings);
   return (
     <div className="text-xs">
       <div className="grid grid-cols-[24px_1fr_24px_28px_32px] gap-2 text-muted-foreground uppercase tracking-wider pb-2 border-b border-border/60">
@@ -1271,30 +1282,27 @@ function StandingsTable({
       </div>
 
       {standings.map((s, i) => {
-        const t = teamById(s.teamId);
-
+        const t = teamById(s.teamId, { teamLeagueOverrides: save.teamLeagueOverrides ?? {} });
         const isMe = s.teamId === myTeamId;
-
-        const zoneColor =
-          i < 4
-            ? "border-l-primary"
-            : i < 6
-              ? "border-l-accent"
-              : i >= standings.length - 3
-                ? "border-l-destructive"
-                : "border-l-transparent";
+        const rowZones = zones.get(s.teamId) ?? [];
+        const primaryZone = primaryLeagueZone(rowZones);
+        const zonePresentation = primaryZone ? LEAGUE_ZONE_PRESENTATION[primaryZone] : null;
+        const zoneTitle = rowZones.map((kind) => LEAGUE_ZONE_PRESENTATION[kind].label).join(" · ");
+        const zoneColor = zonePresentation?.borderClass ?? "border-l-transparent";
 
         return (
           <div
             key={s.teamId}
+            title={zoneTitle || undefined}
             className={`grid grid-cols-[24px_1fr_24px_28px_32px] gap-2 py-1.5 border-b border-border/30 last:border-0 border-l-2 pl-2 ${zoneColor} ${isMe ? "bg-primary/10 text-primary font-bold" : ""}`}
           >
-            <span className="text-muted-foreground">{i + 1}</span>
+            <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded px-0.5 ${zonePresentation?.badgeClass ?? "text-muted-foreground"}`}>{i + 1}</span>
 
             <span className="flex items-center gap-1.5 min-w-0">
               <TeamLogo teamName={t.name} leagueName={getLeagueName(t.league)} size={18} />
 
               <span className="truncate">{t.short}</span>
+              {rowZones.map((kind) => <span key={kind} title={LEAGUE_ZONE_PRESENTATION[kind].label} className={`hidden xl:inline-flex shrink-0 rounded px-1 py-0.5 text-[0.5rem] font-black ${LEAGUE_ZONE_PRESENTATION[kind].badgeClass}`}>{LEAGUE_ZONE_PRESENTATION[kind].shortLabel}</span>)}
             </span>
 
             <span className="text-center scoreline">{s.played}</span>
@@ -1306,10 +1314,14 @@ function StandingsTable({
         );
       })}
 
-      <p className="text-[0.65rem] text-muted-foreground mt-3 leading-relaxed">
-        <span className="text-primary">●</span> Europa · <span className="text-destructive">●</span>{" "}
-        Descenso
-      </p>
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 text-[0.6rem] text-muted-foreground">
+        {orderedLeagueZoneKinds(zones).map((kind) => (
+          <span key={kind} className="inline-flex items-center gap-1.5">
+            <span className={`h-2 w-2 rounded-sm ${LEAGUE_ZONE_PRESENTATION[kind].dotClass}`} />
+            {LEAGUE_ZONE_PRESENTATION[kind].label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

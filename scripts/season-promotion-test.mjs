@@ -63,6 +63,57 @@ assert.deepEqual(
   "Las pirámides por defecto deben usar las claves reales del proyecto",
 );
 
+// When there is no table merit yet and squads are almost identical, direct
+// promotion must not keep selecting the same clubs just due to their names.
+// The seasonal fallback is deterministic within a save/year, and large quality
+// gaps remain larger than the maximum ±4 point form offset.
+{
+  const leagueIds = ["equal-top", "equal-second"];
+  const teams = [];
+  for (const leagueId of leagueIds) {
+    for (let index = 0; index < 8; index += 1) {
+      teams.push({
+        id: `${leagueId}-${index}`,
+        name: `${leagueId} club ${index}`,
+        leagueId,
+        att: 70,
+        mid: 70,
+        def: 70,
+      });
+    }
+  }
+  const standings = Object.fromEntries(leagueIds.map((leagueId) => [
+    leagueId,
+    teams.filter((team) => team.leagueId === leagueId).map((team) => ({
+      teamId: team.id, played: 0, won: 0, gd: 0, gf: 0, points: 0,
+    })),
+  ]));
+  const pyramids = [{ country: "Equalia", leagueIds, mode: "promotion-playoff", playoffCandidates: 4 }];
+  const promotedPerYear = [];
+  for (const seasonStartYear of [2026, 2027, 2028, 2029, 2030]) {
+    const input = { seasonStartYear, seed: 2026, teams, standings, pyramids };
+    const result = calculatePromotionRelegation(input);
+    assert.deepEqual(result, calculatePromotionRelegation(input), "la selección estacional debe seguir siendo reproducible");
+    promotedPerYear.push(result.movements
+      .filter((movement) => movement.fromLeague === "equal-second" && movement.toLeague === "equal-top" && movement.reason === "direct-promotion")
+      .map((movement) => movement.teamId).sort().join("|"));
+  }
+  assert.ok(new Set(promotedPerYear).size > 1, "los equipos de calidad pareja deben poder variar entre temporadas sin depender siempre del orden alfabético");
+
+  const strongerTeams = teams.map((team) => team.id === "equal-second-7"
+    ? { ...team, att: 95, mid: 95, def: 95 }
+    : team);
+  const strongResult = calculatePromotionRelegation({
+    seasonStartYear: 2026,
+    seed: 2026,
+    teams: strongerTeams,
+    standings,
+    pyramids,
+  });
+  assert.equal(strongResult.movements.some((movement) => movement.teamId === "equal-second-7" && movement.reason === "direct-promotion"), true,
+    "una diferencia muy grande de plantilla debe seguir pesando más que la variación de temporada");
+}
+
 function assertLeagueCounts(teams, leagueIds, expectedCounts, label) {
   const counts = Object.fromEntries(leagueIds.map((leagueId) => [
     leagueId,

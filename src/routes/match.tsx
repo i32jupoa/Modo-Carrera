@@ -166,6 +166,27 @@ function normalizeStoppageTimes(result: any): StoppageTimes {
   };
 }
 
+function promotionAggregateTiedAtScores(
+  save: SaveGame | null | undefined,
+  fixture: Fixture | null | undefined,
+  homeGoals: number,
+  awayGoals: number,
+): boolean {
+  const metadata = fixture?.promotionPlayoff;
+  if (!save || !fixture || !metadata || metadata.leg !== 2) return false;
+  let leg1: Fixture | undefined;
+  for (const list of Object.values(save.cupFixtures ?? {})) {
+    if (!Array.isArray(list)) continue;
+    leg1 = list.find((candidate) => candidate.promotionPlayoff?.tieId === metadata.tieId && candidate.promotionPlayoff.leg === 1);
+    if (leg1) break;
+  }
+  if (!leg1?.result) return false;
+  const totals = new Map<string, number>([[leg1.homeId, leg1.result.homeGoals], [leg1.awayId, leg1.result.awayGoals]]);
+  totals.set(fixture.homeId, (totals.get(fixture.homeId) ?? 0) + homeGoals);
+  totals.set(fixture.awayId, (totals.get(fixture.awayId) ?? 0) + awayGoals);
+  return (totals.get(fixture.homeId) ?? 0) === (totals.get(fixture.awayId) ?? 0);
+}
+
 export const Route = createFileRoute("/match")({ component: MatchPage });
 
 function getEuropeanFixtureList(save: any, competition?: string): any[] {
@@ -1144,26 +1165,25 @@ function MatchPage() {
       `Type check: typeof totalHomeScore = ${typeof totalHomeScore}, typeof totalAwayScore = ${typeof totalAwayScore}`,
     );
 
-    // Check if aggregate is tied for UCL two-legged ties
-    let aggregateTied = totalHomeScore === totalAwayScore;
-    const isLeg2 = fixtureRef.current?.round?.endsWith("-Leg2");
-    if (isLeg2) {
-      const aggregateFixtures = fixtureRef.current?.europeanCompetition
-        ? getEuropeanFixtureList(save, fixtureRef.current.europeanCompetition)
+    // In a promotion/relegation playoff, extra time is adjudicated on the tie aggregate.
+    const currentFixture = fixtureRef.current;
+    const isLeg2 = currentFixture?.round?.endsWith("-Leg2");
+    if (currentFixture?.promotionPlayoff?.leg === 2) {
+      aggregateTied = promotionAggregateTiedAtScores(save, currentFixture, totalHomeScore, totalAwayScore);
+    } else if (isLeg2) {
+      const aggregateFixtures = currentFixture?.europeanCompetition
+        ? getEuropeanFixtureList(save, currentFixture.europeanCompetition)
         : (save?.uclFixtures ?? []);
       const leg1 = aggregateFixtures.find(
         (l) =>
-          l.round === fixtureRef.current!.round!.replace("Leg2", "Leg1") &&
-          ((l.homeId === fixtureRef.current!.awayId && l.awayId === fixtureRef.current!.homeId) ||
-            (l.homeId === fixtureRef.current!.homeId && l.awayId === fixtureRef.current!.awayId)),
+          l.round === currentFixture!.round!.replace("Leg2", "Leg1") &&
+          ((l.homeId === currentFixture!.awayId && l.awayId === currentFixture!.homeId) ||
+            (l.homeId === currentFixture!.homeId && l.awayId === currentFixture!.awayId)),
       );
       if (leg1?.result) {
         const aggHome = totalHomeScore + leg1.result.awayGoals;
         const aggAway = totalAwayScore + leg1.result.homeGoals;
         aggregateTied = aggHome === aggAway;
-        console.log(
-          `Aggregate check: leg1 ${leg1.result.homeGoals}-${leg1.result.awayGoals}, leg2 ${totalHomeScore}-${totalAwayScore}, agg ${aggHome}-${aggAway}, tied: ${aggregateTied}`,
-        );
       }
     }
 
@@ -1340,7 +1360,7 @@ function MatchPage() {
 
       // Set phase to done immediately, then simulate remaining matches in background
       setPhase("done");
-      simulateRemainingCupMatches(fixture.matchday, s);
+      if (!fixture.promotionPlayoff) simulateRemainingCupMatches(fixture.matchday, s);
     } else {
       // Clear pending match after simulation
       usePlayersStore.setState({ pendingUserMatch: null });
@@ -1353,7 +1373,7 @@ function MatchPage() {
 
       // Set phase to done immediately, then simulate remaining matches in background
       setPhase("done");
-      simulateRemainingCupMatches(fixture.matchday, save);
+      if (!fixture.promotionPlayoff) simulateRemainingCupMatches(fixture.matchday, save);
     }
   }
 
@@ -1410,7 +1430,7 @@ function MatchPage() {
       // Set phase to done immediately, then simulate remaining matches in background
       console.log("Setting phase to done in handleMatchEndWithExtraTime");
       setPhase("done");
-      simulateRemainingCupMatches(fixture.matchday, s);
+      if (!fixture.promotionPlayoff) simulateRemainingCupMatches(fixture.matchday, s);
     } else {
       // Clear pending match after simulation
       usePlayersStore.setState({ pendingUserMatch: null });
@@ -1418,7 +1438,7 @@ function MatchPage() {
       // Set phase to done immediately, then simulate remaining matches in background
       console.log("Setting phase to done in handleMatchEndWithExtraTime");
       setPhase("done");
-      simulateRemainingCupMatches(fixture.matchday, save);
+      if (!fixture.promotionPlayoff) simulateRemainingCupMatches(fixture.matchday, save);
     }
   }
 
@@ -1735,7 +1755,7 @@ function MatchPage() {
       let cupFixture: any = null;
       for (const list of Object.values(s.cupFixtures || {})) {
         if (!Array.isArray(list)) continue;
-        cupFixture = list.find(
+        cupFixture = list.find((f: any) => f.id === pendingUserMatch.id) ?? list.find(
           (f: any) =>
             f.homeId === pendingUserMatch.homeTeam &&
             f.awayId === pendingUserMatch.awayTeam &&
@@ -1952,9 +1972,18 @@ function MatchPage() {
     setHomeScore(0);
     setAwayScore(0);
 
-    // For cup matches that end in a draw, don't save the result yet
-    // Allow user to edit lineup and go to extra time
-    const isCupDraw = isCupMatch && fixture.result.homeGoals === fixture.result.awayGoals;
+    // Standard cup ties go to extra time on a draw. Promotion playoffs only
+    // use ET after the return leg, and only when their aggregate is level.
+    const isPromotionPlayoff = Boolean(fixture.promotionPlayoff);
+    const playoffAggregateTied = isPromotionPlayoff && promotionAggregateTiedAtScores(
+      newSave,
+      fixture,
+      fixture.result.homeGoals,
+      fixture.result.awayGoals,
+    );
+    const isCupDraw = isCupMatch && (isPromotionPlayoff
+      ? fixture.promotionPlayoff?.leg === 2 && playoffAggregateTied
+      : fixture.result.homeGoals === fixture.result.awayGoals);
 
     if (!isCupDraw) {
       // If we used a temporary lineup, restore the original base lineup before saving
@@ -1998,10 +2027,13 @@ function MatchPage() {
         }
       }
 
-      // Clear pending match after simulation
+      // Clear the pending match for both national cups and promotion playoffs.
       if (isCupMatch) {
         usePlayersStore.setState({ pendingUserMatch: null });
+      }
 
+      // Promotion fixtures must never be folded into the national-cup round engine.
+      if (isCupMatch && !fixture.promotionPlayoff) {
         // Simulate remaining cup matches for the matchday
         try {
           const userCountry = LEAGUES[newSave.myLeague]?.country;
@@ -2031,8 +2063,8 @@ function MatchPage() {
         }
       }
     } else {
-      // Cup match ended in draw - don't save result yet, allow extra time
-      // Just update the state with the simulated result for display
+      // Cup/return-playoff match needs extra time. Keep the provisional result
+      // visible without committing the tie until extra time or penalties finish.
       setSave(newSave);
       // Keep isCupMatch true so the UI shows the correct buttons
       setIsCupMatch(true);
@@ -6295,7 +6327,9 @@ function MatchPage() {
 
   const headerText =
     matchType === "CUP"
-      ? `Copa Nacional · ${cupRound || fixture.round || ""}`
+      ? fixture.promotionPlayoff
+        ? `${fixture.promotionPlayoff.stage === "survival" ? "Playoff de permanencia" : "Playoff de ascenso"} · ${fixture.round || (fixture.promotionPlayoff.leg === 1 ? "Ida" : "Vuelta")}`
+        : `Copa Nacional · ${cupRound || fixture.round || ""}`
       : isEuropeanFixture(fixture)
         ? `${europeanCompetitionOf(fixture) === "uel" ? "Europa League" : "Conference League"} · ${europeanRoundLabel(fixture.round, fixture.matchday)}`
         : matchType === "UCL"
@@ -6621,9 +6655,16 @@ function MatchPage() {
                     const isLeg2 = fixture?.round?.endsWith("-Leg2");
                     const isFinal = fixture?.round === "Final";
 
-                    // Check if aggregate is tied for two-legged ties
+                    // Check the aggregate for promotion playoffs and UEFA two-legged ties.
                     let aggregateTied = false;
-                    if (isLeg2) {
+                    if (fixtureRef.current?.promotionPlayoff?.leg === 2 && fixtureRef.current?.result) {
+                      aggregateTied = promotionAggregateTiedAtScores(
+                        save,
+                        fixtureRef.current,
+                        fixtureRef.current.result.homeGoals,
+                        fixtureRef.current.result.awayGoals,
+                      );
+                    } else if (isLeg2) {
                       const aggregateFixtures = fixtureRef.current?.europeanCompetition
                         ? getEuropeanFixtureList(save, fixtureRef.current.europeanCompetition)
                         : (save?.uclFixtures ?? []);
@@ -6640,11 +6681,12 @@ function MatchPage() {
                       }
                     }
 
-                    // For cup matches: show ET button if match is drawn without ET/penalties
+                    const isPromotionPlayoff = Boolean(fixtureRef.current?.promotionPlayoff);
                     const shouldShowExtraTimeButtonForCup =
                       (isCupMatch || fixture?.competition === "cup") &&
-                      fixtureRef.current?.result?.homeGoals ===
-                        fixtureRef.current?.result?.awayGoals &&
+                      (isPromotionPlayoff
+                        ? fixtureRef.current?.promotionPlayoff?.leg === 2 && aggregateTied
+                        : fixtureRef.current?.result?.homeGoals === fixtureRef.current?.result?.awayGoals) &&
                       !fixtureRef.current?.result?.extraTime &&
                       !fixtureRef.current?.result?.penalties;
 

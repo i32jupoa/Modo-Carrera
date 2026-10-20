@@ -325,6 +325,34 @@ export function getSaveItem(key: string): string | null {
  * registrado (espejo en memoria + cola hacia IndexedDB): a diferencia de
  * `localStorage`, aquí no hay una cuota de pocos MB que pueda rechazarlo.
  */
+
+/** Lee una ranura directamente de IndexedDB si la carga inicial no la incluyó en el espejo. */
+export async function getSaveItemAsync(key: string): Promise<string | null> {
+  const cached = getSaveItem(key);
+  if (cached !== null) return cached;
+  await initSaveStorage();
+  if (mirror.has(key)) return mirror.get(key) ?? null;
+  if (typeof window === "undefined") return null;
+  if (db) {
+    try {
+      const value = await new Promise<unknown>((resolve, reject) => {
+        const tx = db!.transaction(STORE, "readonly");
+        const request = tx.objectStore(STORE).get(key);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        tx.onabort = () => reject(tx.error);
+      });
+      if (typeof value === "string") {
+        mirror.set(key, value);
+        return value;
+      }
+    } catch (error) {
+      console.warn("[saveStorage] No se pudo recuperar directamente la ranura desde IndexedDB:", error);
+    }
+  }
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
 export function setSaveItem(key: string, value: string): boolean {
   if (typeof window === "undefined") return false;
   mirror.set(key, value);

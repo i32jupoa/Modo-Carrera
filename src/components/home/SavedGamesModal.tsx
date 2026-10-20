@@ -14,7 +14,7 @@ import { Trash2, Play, Calendar, Trophy, AlertTriangle } from "lucide-react";
 import {
   loadAllSaves,
   deleteSave,
-  loadSaveById,
+  loadSaveByIdAsync,
   updateSaveLastPlayed,
   type SavedGameMeta,
 } from "@/lib/savedGames";
@@ -49,9 +49,9 @@ export default function SavedGamesModal({
     }
   }, [open]);
 
-  function handleLoadGame(id: string) {
+  async function handleLoadGame(id: string) {
     console.log("handleLoadGame llamado con id:", id);
-    const save = loadSaveById(id);
+    const save = await loadSaveByIdAsync(id);
     if (save) {
       console.log("Save cargado:", save);
       updateSaveLastPlayed(id);
@@ -59,6 +59,7 @@ export default function SavedGamesModal({
       onOpenChange(false);
     } else {
       console.error("No se pudo cargar el save con id:", id);
+      window.alert("No se ha podido recuperar esta partida del almacenamiento. No se ha borrado; prueba a recargar la página y volver a cargarla.");
     }
   }
 

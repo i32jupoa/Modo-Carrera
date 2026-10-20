@@ -125,6 +125,7 @@ import {
   commitCalendarScheduleResults,
   getCalendarMatchTeamData,
   buildAiMatchSquad,
+  simulatePromotionPlayoffsThroughDate,
 } from "@/lib/store";
 import { loadTactics } from "@/lib/teamTactics";
 
@@ -829,9 +830,18 @@ export function clubOfPlayer(playerId: string): string | null {
 
 /** Plantilla real de un club, con todos los traspasos ya aplicados. */
 export function squadForTeam(teamId: string): FcPlayer[] {
+  // Retirement is career-scoped and can be applied after a squad was cached.
+  // Re-check cached entries at read time so an old club list cannot resurrect
+  // a player who retired during the previous season rollover.
+  const isActivePlayer = (player: FcPlayer) =>
+    !(player as any).retired && !getMarketPlayer(String(player.ID))?.retired;
   const cached = SQUAD_CACHE.get(teamId);
-  if (cached) return cached;
-  const base = PLAYERS_BY_TEAM[teamId] ?? [];
+  if (cached) {
+    const activeCached = cached.filter(isActivePlayer);
+    if (activeCached.length !== cached.length) SQUAD_CACHE.set(teamId, activeCached);
+    return activeCached;
+  }
+  const base = (PLAYERS_BY_TEAM[teamId] ?? []).filter(isActivePlayer);
   const overrideIds = Object.keys(CLUB_OVERRIDES);
   if (overrideIds.length === 0) {
     SQUAD_CACHE.set(teamId, base);
@@ -845,17 +855,18 @@ export function squadForTeam(teamId: string): FcPlayer[] {
   for (const playerId of overrideIds) {
     if (CLUB_OVERRIDES[playerId] !== teamId) continue;
     const raw = FC_BY_ID.get(playerId) ?? DYNAMIC_BY_ID.get(playerId);
-    if (!raw) continue;
+    if (!raw || !isActivePlayer(raw)) continue;
     if (baseClubId(raw) === teamId) continue; // ya estaba en `base`
     squad.push(raw);
   }
   for (const raw of DYNAMIC_BY_ID.values()) {
-    if (baseClubId(raw) !== teamId) continue;
+    if (!isActivePlayer(raw) || baseClubId(raw) !== teamId) continue;
     if (squad.some((p) => String(p.ID) === String(raw.ID))) continue;
     squad.push(raw);
   }
-  SQUAD_CACHE.set(teamId, squad);
-  return squad;
+  const activeSquad = squad.filter(isActivePlayer);
+  SQUAD_CACHE.set(teamId, activeSquad);
+  return activeSquad;
 }
 
 export function defaultStats(): PlayerStats {
@@ -1127,7 +1138,7 @@ export const POS_LABEL_ES: Record<Position, string> = {
 export function syncSquadFromRoster(rosterIds: string[]): FcPlayer[] {
   return rosterIds
     .map((id) => FC_BY_ID.get(id) ?? DYNAMIC_BY_ID.get(id))
-    .filter((p): p is FcPlayer => !!p);
+    .filter((p): p is FcPlayer => !!p && !(p as any).retired && !getMarketPlayer(String(p.ID))?.retired);
 }
 
 function dynamicAttributesFor(fc: FcPlayer, stats?: PlayerStats): PlayerAttributeRatings {
@@ -2292,7 +2303,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                   if (!Array.isArray(list)) continue;
                   const dueDates = new Set<string>();
                   for (const fixture of list) {
-                    if (fixture.result) continue;
+                    if (fixture.promotionPlayoff || fixture.result) continue;
                     if (fixture.homeId === currentSave.myTeamId || fixture.awayId === currentSave.myTeamId) continue;
                     const fixtureDate = getCupFixtureDateIso(fixture, getSeasonStartYear(currentSave.season));
                     if (fixtureDate !== nextDate) continue;
@@ -2301,7 +2312,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
                   for (const date of dueDates) {
                     const matchdays = new Set(
                       list
-                        .filter((fixture) => !fixture.result)
+                        .filter((fixture) => !fixture.promotionPlayoff && !fixture.result)
                         .filter((fixture) => getCupFixtureDateIso(fixture, getSeasonStartYear(currentSave.season)) === date)
                         .map((fixture) => Number(fixture.matchday)),
                     );
@@ -2368,6 +2379,19 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               if (options?.mode === "jump") {
                 throw error instanceof Error ? error : new Error(`Error simulando las demás ligas del ${nextDate}.`);
               }
+            }
+
+            // Promotion/relegation playoffs are real saved fixtures, but are not
+            // national-cup rounds. They use the same match engine and stay pending
+            // for the user club; every other playoff match is simulated on its date.
+            try {
+              currentSave = measureCalendarJumpPhase("simulation.promotionPlayoffs", () =>
+                simulatePromotionPlayoffsThroughDate(currentSave, nextDate, false),
+              );
+              saveSave(currentSave);
+            } catch (err) {
+              console.error('[advanceTime] promotion playoff processing failed:', err);
+              if (options?.mode === "jump") throw new Error(`Error procesando los playoffs de ascenso/permanencia del ${nextDate}.`, { cause: err });
             }
 
             // 2. Detectar si hoy es día de sorteo del usuario
@@ -2446,7 +2470,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               // el matchday del fixture para alimentar el motor común.
               const dueUserCupMatchdays = new Set<number>();
               for (const f of cupFixtures) {
-                if (f.result) continue;
+                if (f.promotionPlayoff || f.result) continue;
                 const fixtureDate = f.date ? String(f.date).slice(0, 10) : null;
                 if (fixtureDate === nextDate) {
                   dueUserCupMatchdays.add(Number(f.matchday));
@@ -2457,7 +2481,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
               // The canonical round schedule remains the only source of truth.
               if (dueUserCupMatchdays.size === 0) {
                 for (const f of cupFixtures) {
-                  if (f.result) continue;
+                  if (f.promotionPlayoff || f.result) continue;
                   if (f.homeId !== currentSave.myTeamId && f.awayId !== currentSave.myTeamId) continue;
                   if (getCupFixtureDateIso(f, getSeasonStartYear(currentSave.season)) === nextDate) {
                     dueUserCupMatchdays.add(Number(f.matchday));
@@ -3360,9 +3384,14 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
       getRawPlayers: () => {
         const state = usePlayersStore.getState();
         syncPlayerAgesForDate(state.currentDate);
+        // This is consumed by the transfer-market UI and scouting screens.
+        // They need an active-player catalogue, not the historical base JSON:
+        // retirement entries must disappear from the whole current career.
+        const active = (raw: FcPlayer) =>
+          !(raw as any).retired && !getMarketPlayer(String(raw.ID))?.retired;
         return [
-          ...RAW_PLAYERS.map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)])),
-          ...Array.from(DYNAMIC_BY_ID.values()).map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)])),
+          ...RAW_PLAYERS.filter(active).map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)])),
+          ...Array.from(DYNAMIC_BY_ID.values()).filter(active).map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)])),
         ];
       },
 

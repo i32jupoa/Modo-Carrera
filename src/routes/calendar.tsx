@@ -43,6 +43,7 @@ import {
   simulateEuropeanKnockoutMatchday,
   processEuropeanKnockoutProgress,
   initializeEuropeanCompetition,
+  simulatePromotionPlayoffsThroughDate,
 } from "@/lib/store";
 
 import { monthDays, fmtMonth, COMP_COLORS } from "@/lib/calendar";
@@ -1085,13 +1086,19 @@ function CalendarPage() {
     if (persistedSave) handled = true;
     let currentSave = persistedSave ?? loadSave();
     if (currentSave) {
+      const beforePlayoffs = currentSave;
+      currentSave = simulatePromotionPlayoffsThroughDate(currentSave, date, true);
+      if (currentSave !== beforePlayoffs) {
+        saveSave(currentSave);
+        handled = true;
+      }
       const country = LEAGUES[currentSave.myLeague]?.country;
       const cupLeague = (country ? getPrimaryLeagueForCountry(country) : currentSave.myLeague) as LeagueId;
       const countryCup = currentSave.cupFixtures?.[cupLeague];
       if (Array.isArray(countryCup)) {
         const cupMatchdays = new Set<number>(
           countryCup
-            .filter((fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId))
+            .filter((fixture: any) => !fixture.promotionPlayoff && !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId))
             .filter((fixture: any) => getCupFixtureDateIso(fixture, seasonStartYear) === date)
             .map((fixture: any) => Number(fixture.matchday)),
         );
@@ -1101,7 +1108,7 @@ function CalendarPage() {
           handled = true;
         }
         let unresolvedCupMatches = (currentSave?.cupFixtures?.[cupLeague] ?? []).filter(
-          (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getCupFixtureDateIso(fixture, seasonStartYear) === date,
+          (fixture: any) => !fixture.promotionPlayoff && !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getCupFixtureDateIso(fixture, seasonStartYear) === date,
         );
         if (unresolvedCupMatches.length > 0) {
           // Recuperación para partidas antiguas: el planificador general de copas
@@ -1109,7 +1116,7 @@ function CalendarPage() {
           currentSave = simulateNationalCupsThroughDate(currentSave, date, true);
           saveSave(currentSave);
           unresolvedCupMatches = (currentSave?.cupFixtures?.[cupLeague] ?? []).filter(
-            (fixture: any) => !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getCupFixtureDateIso(fixture, seasonStartYear) === date,
+            (fixture: any) => !fixture.promotionPlayoff && !fixture.result && (fixture.homeId === teamId || fixture.awayId === teamId) && getCupFixtureDateIso(fixture, seasonStartYear) === date,
           );
           if (unresolvedCupMatches.length > 0) {
             throw new Error(`No se han podido completar todos los partidos de copa del ${date}. El salto se ha detenido para no perder resultados.`);

@@ -73,6 +73,8 @@ function FixturesPage() {
 
   const [viewMd, setViewMd] = useState(1);
 
+  const [showPlayoffs, setShowPlayoffs] = useState(false);
+
   const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
 
   useEffect(() => {
@@ -88,6 +90,7 @@ function FixturesPage() {
     setSave(s);
     setLeague(lg);
     setViewMd(s.currentMatchday[lg] ?? 1);
+    setShowPlayoffs(false);
   }, [navigate, leagueParam]);
 
   // Generate stats on-demand when league changes
@@ -100,9 +103,16 @@ function FixturesPage() {
 
   if (!save) return null;
 
-  const fixtures = getMatchdayFixtures(save, league, viewMd);
+  const countryForLeague = LEAGUES[league]?.country;
+  const leaguePlayoffFixtures = Object.values(save.cupFixtures ?? {})
+    .filter((list): list is Fixture[] => Array.isArray(list))
+    .flat()
+    .filter((fixture) => Boolean(fixture.promotionPlayoff) && fixture.promotionPlayoff?.country === countryForLeague);
+  const fixtures = showPlayoffs
+    ? leaguePlayoffFixtures.slice().sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")) || a.id.localeCompare(b.id))
+    : getMatchdayFixtures(save, league, viewMd);
 
-  const totalMd = save.fixtures[league].at(-1)?.matchday ?? 1;
+  const totalMd = (save.fixtures[league] ?? []).at(-1)?.matchday ?? 1;
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">
@@ -127,7 +137,7 @@ function FixturesPage() {
             {ALL_LEAGUES.map((lg) => (
               <DropdownMenuItem
                 key={lg}
-                onClick={() => setLeague(lg)}
+                onClick={() => { setLeague(lg); setShowPlayoffs(false); }}
                 className="flex items-center gap-2"
               >
                 <LeagueLogo
@@ -142,31 +152,43 @@ function FixturesPage() {
         </DropdownMenu>
       </div>
 
-      <div className="flex items-center justify-between mb-4">
-        <button
-          onClick={() => setViewMd((m) => Math.max(1, m - 1))}
-          disabled={viewMd <= 1}
-          className="px-3 py-1.5 rounded bg-card border border-border text-sm disabled:opacity-30"
-        >
-          ←
-        </button>
-
-        <h2 className="text-2xl font-bold">
-          Jornada {viewMd}{" "}
-          <span className="text-muted-foreground text-base font-normal">/ {totalMd}</span>
-        </h2>
-
-        <button
-          onClick={() => setViewMd((m) => Math.min(totalMd, m + 1))}
-          disabled={viewMd >= totalMd}
-          className="px-3 py-1.5 rounded bg-card border border-border text-sm disabled:opacity-30"
-        >
-          →
-        </button>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          {!showPlayoffs ? (
+            <>
+              <button
+                onClick={() => setViewMd((m) => Math.max(1, m - 1))}
+                disabled={viewMd <= 1}
+                className="px-3 py-1.5 rounded bg-card border border-border text-sm disabled:opacity-30"
+              >←</button>
+              <h2 className="text-xl md:text-2xl font-bold">
+                Jornada {viewMd}{" "}
+                <span className="text-muted-foreground text-base font-normal">/ {totalMd}</span>
+              </h2>
+              <button
+                onClick={() => setViewMd((m) => Math.min(totalMd, m + 1))}
+                disabled={viewMd >= totalMd}
+                className="px-3 py-1.5 rounded bg-card border border-border text-sm disabled:opacity-30"
+              >→</button>
+            </>
+          ) : (
+            <h2 className="text-xl md:text-2xl font-bold">Playoffs de ascenso y permanencia</h2>
+          )}
+        </div>
+        {leaguePlayoffFixtures.length > 0 && (
+          <button
+            onClick={() => setShowPlayoffs((value) => !value)}
+            className={`px-3 py-1.5 rounded border text-sm transition ${showPlayoffs ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border hover:border-primary/50"}`}
+          >
+            {showPlayoffs ? "Volver a jornadas de liga" : "Ver playoffs"}
+          </button>
+        )}
       </div>
 
       <div className="panel divide-y divide-border/40">
-        {[...fixtures].sort((a, b) => {
+        {showPlayoffs && fixtures.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no se han generado partidos de playoff para esta liga.</div>
+        ) : [...fixtures].sort((a, b) => {
           const aMine = a.homeId === save.myTeamId || a.awayId === save.myTeamId;
           const bMine = b.homeId === save.myTeamId || b.awayId === save.myTeamId;
           return aMine === bMine ? 0 : aMine ? -1 : 1;
@@ -200,6 +222,9 @@ function FixturesPage() {
 
               <div className="flex min-w-[70px] flex-col items-center text-center">
                 {isMine && <span className="mb-1 rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider text-primary">Tu partido</span>}
+                {f.promotionPlayoff && (
+                  <span className="mb-1 max-w-[220px] text-[10px] leading-tight text-muted-foreground">{f.round} · {f.date}</span>
+                )}
                 <div className="scoreline text-lg font-bold">
                 {f.competition === "cup" ? (
                   formatCupResult(f.result)

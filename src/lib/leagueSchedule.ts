@@ -34,6 +34,10 @@ export type ScheduleFixture = {
   /** UEFA competition identity when the fixture reuses the UCL schedule engine. */
   europeanCompetition?: "uel" | "uecl";
   matchday: number;
+  /** Optional descriptive round label for non-league fixtures (e.g. promotion playoffs). */
+  round?: string;
+  /** Marks promotion/relegation playoff matches in the day modal. */
+  promotionPlayoff?: boolean;
 };
 
 /** Full league calendar with realistic weekday spread + 72h rest. */

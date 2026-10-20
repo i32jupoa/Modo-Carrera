@@ -9,7 +9,7 @@ import {
   usePlayersStore,
   rebuildMarketPlayerSignalsFromStore,
 } from "@/store/playersStore";
-import { getSaveItem, setSaveItem, removeSaveItem } from "./saveStorage";
+import { getSaveItem, getSaveItemAsync, setSaveItem, removeSaveItem } from "./saveStorage";
 import { resetMarketIndex, setRetiredPlayersLedger } from "@/lib/transfers/PlayerIndex";
 
 const STORAGE_KEY = "fcsim:save:v2";
@@ -291,6 +291,24 @@ export function loadSaveById(id: string): SaveGame | null {
     return JSON.parse(raw) as SaveGame;
   } catch (err) {
     console.error("Error loading save by id:", err);
+    return null;
+  }
+}
+
+/** Recuperación fiable aunque la lectura masiva inicial de IndexedDB haya agotado su tiempo. */
+export async function loadSaveByIdAsync(id: string): Promise<SaveGame | null> {
+  if (typeof window === "undefined" || !id) return null;
+  try {
+    const raw = await getSaveItemAsync(saveKeyFor(id));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !parsed.myTeamId) {
+      console.error("La ranura de partida no contiene un guardado válido:", id);
+      return null;
+    }
+    return parsed as SaveGame;
+  } catch (err) {
+    console.error("Error loading save by id asynchronously:", id, err);
     return null;
   }
 }
