@@ -25,6 +25,39 @@ function seasonNumber(season: number | string): number {
   return Number.isFinite(n) ? n : 2026;
 }
 
+const ELITE_ACADEMY_LEAGUES = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
+const STRONG_ACADEMY_LEAGUES = new Set([
+  "championship", "ligaportugal", "eredivisie", "roshnsaudileague",
+  "trendyolsperlig", "1aproleague",
+]);
+const SECOND_TIER_ACADEMY_LEAGUES = new Set(["laliga2", "serieb", "bundesliga2", "ligue2"]);
+const LOWER_TIER_ACADEMY_LEAGUES = new Set(["leagueone", "liga3", "leaguetwo"]);
+
+/** Fuerza de desarrollo de la competición: las canteras de Segunda parten con
+ * menos recursos y exposición que las de Primera, con diferencias adicionales
+ * para categorías inferiores y ligas de menor alcance. */
+function academyLeagueStrength(leagueId: string): number {
+  const id = String(leagueId || "").toLowerCase().trim();
+  if (ELITE_ACADEMY_LEAGUES.has(id)) return 1;
+  if (id === "championship") return 0.76;
+  if (STRONG_ACADEMY_LEAGUES.has(id)) return 0.75;
+  if (SECOND_TIER_ACADEMY_LEAGUES.has(id)) return 0.62;
+  if (LOWER_TIER_ACADEMY_LEAGUES.has(id)) return id === "leagueone" ? 0.48 : 0.43;
+  if (["mls", "lpf", "scottish", "ekstraklasa", "pkobpekstraklaska", "bracksuperleague", "3fsuperliga", "allsvenskan", "eliteserien", "austrianbundesliga", "superliga"].includes(id)) return 0.66;
+  return 0.56;
+}
+
+/** Combina nivel deportivo del club y fuerza de su liga. No depende solo del
+ * perfil aleatorio de captación: un equipo modesto no puede generar de forma
+ * habitual canteranos con la misma media que un gigante europeo. */
+function academyDevelopmentQuality(teamId: string): number {
+  const team = teamById(teamId);
+  const teamAverage = (team.att + team.mid + team.def) / 3;
+  const clubQuality = clamp((teamAverage - 58) / 34, 0, 1);
+  const leagueQuality = academyLeagueStrength(team.league);
+  return clamp(clubQuality * 0.72 + leagueQuality * 0.28, 0, 1);
+}
+
 function ageFromBirthdate(birthdate: string, currentSeason: number): number {
   return Math.max(15, Math.min(21, currentSeason - Number(birthdate.slice(0, 4))));
 }
@@ -132,12 +165,27 @@ function uniqueAcademyId(saveId: string, teamId: string, season: number, index: 
   return id;
 }
 
-function potentialFor(seed: string, clubStrength: number, facility: 1 | 2 | 3 | 4 | 5): number {
+function potentialFor(
+  seed: string,
+  developmentQuality: number,
+  academyFocus: number,
+  facility: 1 | 2 | 3 | 4 | 5,
+): number {
   const roll = seededUnit(seed, "potential");
-  const highChance = ACADEMY_LIMITS.highPotentialChance + clubStrength * 0.09 + (facility - 3) * 0.025;
-  if (roll < Math.max(0.03, highChance)) return seededInt(82, ACADEMY_LIMITS.maxPotential, seed, "elite-potential");
+  const highChance = clamp(
+    ACADEMY_LIMITS.highPotentialChance
+      + developmentQuality * 0.14
+      + (academyFocus - 0.5) * 0.05
+      + (facility - 3) * 0.025,
+    0.04,
+    0.36,
+  );
+  if (roll < highChance) return seededInt(82, ACADEMY_LIMITS.maxPotential, seed, "elite-potential");
+
+  // Incluso fuera del grupo de talentos excepcionales, las mejores canteras
+  // tienen una distribución de potencial algo más alta que los clubes humildes.
   const low = ACADEMY_LIMITS.minPotential;
-  const high = 81;
+  const high = Math.round(74 + developmentQuality * 7);
   const shaped = Math.pow(seededUnit(seed, "potential-shape"), 1.55);
   return Math.round(low + shaped * (high - low));
 }
@@ -166,7 +214,7 @@ function basePlayer(
   numericSeason: number,
   index: number,
   profile: ReturnType<typeof getClubProfile>,
-  clubStrength: number,
+  developmentQuality: number,
   facility: 1 | 2 | 3 | 4 | 5,
   usedNames: Set<string>,
   currentCounts: Partial<Record<PosCode, number>>,
@@ -183,11 +231,14 @@ function basePlayer(
   const facilityBonus = ACADEMY_FACILITIES.ovrBonusByLevel[facility] ?? 0;
   const ovrLow = intake ? ACADEMY_LIMITS.minOvr : ACADEMY_LIMITS.minOvr;
   const ovrHigh = intake ? 55 : ACADEMY_LIMITS.maxOvr;
-  const clubBonus = intake ? clubStrength * 2 : clubStrength * 3;
-  const focusBonus = intake ? profile.academyFocus * 3 : profile.academyFocus * 4;
+  // Diferencia estructural por calidad del club y de su competición. Los
+  // gigantes tienen una prima clara; los equipos de categorías inferiores
+  // reciben un ajuste negativo, no solo una prima pequeña frente a los grandes.
+  const clubBonus = (developmentQuality - 0.5) * (intake ? 8 : 10);
+  const focusBonus = intake ? profile.academyFocus * 2.5 : profile.academyFocus * 3.5;
   const rawOvr = Math.round(seededRange(ovrLow, ovrHigh, seed, "ovr") + focusBonus + (intake ? 0 : facilityBonus) + clubBonus);
   const ovr = clamp(rawOvr, ACADEMY_LIMITS.minOvr, ACADEMY_LIMITS.maxOvr);
-  const potential = potentialFor(seed, profile.academyFocus * (intake ? 0.6 : 0.55) + clubStrength * (intake ? 0.4 : 0.45), facility);
+  const potential = potentialFor(seed, developmentQuality, profile.academyFocus, facility);
   const estimateWidth = Math.max(3, Math.round(10 - profile.academyFocus * 4));
   const id = uniqueAcademyId(saveId, teamId, numericSeason, index);
   for (const position of positions) incrementPositionCount(currentCounts, position);
@@ -221,17 +272,16 @@ function basePlayer(
 
 export function generateAcademyState(saveId: string, teamId: string, season: number | string): ClubAcademyState {
   const numericSeason = seasonNumber(season);
-  const team = teamById(teamId);
   const profile = getClubProfile(teamId);
   const facility = ACADEMY_FACILITIES.default;
   const targetSize = seededInt(ACADEMY_LIMITS.minPlayers, ACADEMY_LIMITS.maxPlayers, saveId, teamId, numericSeason, "size");
   const players: AcademyPlayer[] = [];
-  const clubStrength = clamp((team.att + team.mid + team.def) / 300, 0, 1);
+  const developmentQuality = academyDevelopmentQuality(teamId);
   const usedNames = new Set<string>();
   const positionCounts: Partial<Record<PosCode, number>> = {};
 
   for (let i = 0; i < targetSize; i += 1) {
-    players.push(basePlayer(saveId, teamId, numericSeason, i, profile, clubStrength, facility, usedNames, positionCounts, false));
+    players.push(basePlayer(saveId, teamId, numericSeason, i, profile, developmentQuality, facility, usedNames, positionCounts, false));
   }
 
   return {
@@ -266,8 +316,7 @@ export function generateAnnualIntake(saveId: string, state: ClubAcademyState, se
   ) + facilityBonus;
   const existing = new Set(state.players.map((player) => player.id));
   const baseSeed = state.players.length + 100;
-  const team = teamById(state.teamId);
-  const clubStrength = clamp((team.att + team.mid + team.def) / 300, 0, 1);
+  const developmentQuality = academyDevelopmentQuality(state.teamId);
   const players: AcademyPlayer[] = [];
   const usedNames = new Set(state.players.map((player) => player.name));
   const positionCounts: Partial<Record<PosCode, number>> = {};
@@ -280,7 +329,7 @@ export function generateAnnualIntake(saveId: string, state: ClubAcademyState, se
       numericSeason,
       baseSeed + i,
       profile,
-      clubStrength,
+      developmentQuality,
       state.facilityLevel,
       usedNames,
       positionCounts,

@@ -245,6 +245,40 @@ function ratingCurve(rating: number): number {
   return Math.pow(normalized, 5);
 }
 
+/**
+ * Reduce la inflación de jugadores buenos, pero no de élite, especialmente
+ * cuando la edad y el potencial disparan el precio por encima de lo que el
+ * mercado real pagaría por un futbolista de un club medio. Los jugadores de
+ * 88+ conservan intacta la curva anterior para no alterar los precios ya
+ * razonables de estrellas como Vinícius o Mbappé.
+ */
+function playerQualityMarketMultiplier(rating: number): number {
+  const points: Array<[number, number]> = [
+    [55, 0.32],
+    [60, 0.35],
+    [65, 0.39],
+    [70, 0.43],
+    [75, 0.53],
+    [80, 0.70],
+    [84, 0.86],
+    [88, 1.0],
+  ];
+
+  if (rating >= 88) return 1;
+  if (rating <= points[0][0]) return points[0][1];
+
+  for (let i = 1; i < points.length; i += 1) {
+    const [upperRating, upperMultiplier] = points[i];
+    const [lowerRating, lowerMultiplier] = points[i - 1];
+    if (rating <= upperRating) {
+      const progress = (rating - lowerRating) / (upperRating - lowerRating);
+      return lowerMultiplier + (upperMultiplier - lowerMultiplier) * progress;
+    }
+  }
+
+  return 1;
+}
+
 /** Curva de edad: pico entre 24 y 27, prima moderada a la proyección joven
  *  y caída progresiva (sin escalones) a partir de los 30. */
 function ageCurveMultiplier(age: number): number {
@@ -262,29 +296,140 @@ function ageCurveMultiplier(age: number): number {
 
 const TOP_LEAGUES = new Set(["laliga", "premier", "seriea", "bundesliga", "ligue1"]);
 const MID_LEAGUES = new Set([
-  "laliga2",
   "championship",
-  "serieb",
-  "bundesliga2",
-  "ligue2",
   "ligaportugal",
   "eredivisie",
   "roshnsaudileague",
+  "trendyolsperlig",
+  "1aproleague",
+]);
+const SECOND_DIVISION_LEAGUES = new Set(["laliga2", "serieb", "bundesliga2", "ligue2"]);
+const LOWER_DIVISION_LEAGUES = new Set(["leagueone", "liga3", "leaguetwo"]);
+const OTHER_PRO_LEAGUES = new Set([
+  "mls", "lpf", "scottish", "ekstraklasa", "pkobpekstraklaska",
+  "bracksuperleague", "3fsuperliga", "allsvenskan", "eliteserien",
+  "austrianbundesliga", "superliga",
 ]);
 
-/** Peso económico de la liga: las cinco grandes europeas no sufren
- *  penalización; las ligas "medias" pierden algo de valor; el resto, más. */
+/**
+ * Multiplicador de mercado por nivel real de la competición. Jugar en Segunda
+ * no puede dar el mismo escaparate ni la misma valoración que jugar en Primera:
+ * las segundas divisiones principales bajan al 60% y las categorías inferiores
+ * todavía más. Se mantienen primas para mercados con gran capacidad económica
+ * o de reventa, aunque no pertenezcan al top 5.
+ */
 function leagueValueMultiplier(leagueId: string): number {
-  if (TOP_LEAGUES.has(leagueId)) return 1.0;
-  if (MID_LEAGUES.has(leagueId)) return 0.82;
-  return 0.65;
+  const id = String(leagueId || "").toLowerCase().trim();
+  if (TOP_LEAGUES.has(id)) return 1.0;
+  if (id === "championship") return 0.68;
+  if (id === "roshnsaudileague") return 0.72;
+  if (MID_LEAGUES.has(id)) return 0.64;
+  // Las segundas divisiones no pueden pagar ni generar el mismo mercado que
+  // Primera. Antes el 60% seguía inflando demasiado a promesas de 75-80 OVR.
+  if (SECOND_DIVISION_LEAGUES.has(id)) return 0.45;
+  if (LOWER_DIVISION_LEAGUES.has(id)) return id === "leagueone" ? 0.36 : 0.32;
+  if (OTHER_PRO_LEAGUES.has(id)) return 0.55;
+  return 0.46;
 }
 
-/** Nivel del equipo: jugar en un equipo mejor sube ligeramente el valor
- *  (visibilidad, competición, calidad de juego alrededor), en un rango
- *  moderado para que no descompense el peso del rating y la edad. */
-function teamValueMultiplier(teamAvgRating: number): number {
-  return clamp(0.9 + (teamAvgRating - 65) / 130, 0.85, 1.1);
+/** Prima de reputación para clubes con una marca y capacidad de retención global. */
+const CLUB_PRESTIGE_BONUS: Record<string, number> = {
+  rma: 0.065, bar: 0.06, psg: 0.06, mci: 0.055, liv: 0.05, bay: 0.055,
+  ars: 0.04, che: 0.04, mun: 0.04, atm: 0.035, juv: 0.04, int: 0.035,
+  mil: 0.03, bvb: 0.025, nap: 0.025, tot: 0.025,
+};
+
+/**
+ * El nivel del club importa de verdad. Se mezcla la media de su plantilla
+ * (cuando está disponible) con la calidad del club registrada en teams.ts;
+ * así un jugador igual de bueno vale más en un candidato europeo que en un
+ * equipo modesto, incluso si el OVR individual es idéntico.
+ */
+function teamValueMultiplier(teamAvgRating: number, teamId = ""): number {
+  let effectiveRating = Number.isFinite(teamAvgRating) ? teamAvgRating : 75;
+  let team: Team | undefined;
+  if (teamId) {
+    try {
+      const candidate = teamById(teamId);
+      if (candidate.id.toLowerCase() === teamId.toLowerCase()) team = candidate;
+    } catch {
+      // Un agente libre o un club inexistente no debe heredar la reputación de otro equipo.
+    }
+  }
+
+  let categoryBonus = 0;
+  if (team) {
+    const registeredRating = (team.att + team.mid + team.def) / 3;
+    effectiveRating = effectiveRating > 50
+      ? effectiveRating * 0.68 + registeredRating * 0.32
+      : registeredRating;
+    if (team.category === "Gigante") categoryBonus = 0.055;
+    else if (team.category === "Aspirante") categoryBonus = 0.025;
+  }
+
+  // Una plantilla modesta recibe un descuento apreciable; el nivel deportivo
+  // y la reputación elevan el multiplicador hasta los valores de los gigantes.
+  const sportingLevel = clamp((effectiveRating - 58) / 34, 0, 1);
+  const prestigeBonus = CLUB_PRESTIGE_BONUS[team?.id ?? teamId] ?? 0;
+  return clamp(0.62 + sportingLevel * 0.46 + categoryBonus + prestigeBonus, 0.58, 1.18);
+}
+
+
+/**
+ * Ajuste de poder adquisitivo del club. La fórmula de reputación anterior se
+ * mantiene para los gigantes, pero los clubes de nivel medio/bajo reciben un
+ * descuento adicional: sus jugadores no deben conservar precios de mercado
+ * propios de equipos con presencia europea constante.
+ */
+function clubMarketAccessibilityMultiplier(teamAvgRating: number, teamId = ""): number {
+  if (!teamId) return 1;
+
+  let team: Team | undefined;
+  try {
+    const candidate = teamById(teamId);
+    if (candidate.id.toLowerCase() === teamId.toLowerCase()) team = candidate;
+  } catch {
+    // Los agentes libres no heredan el nivel de un club de respaldo.
+  }
+  if (!team) return 1;
+
+  const registeredRating = (team.att + team.mid + team.def) / 3;
+  const suppliedRating = Number.isFinite(teamAvgRating) ? teamAvgRating : registeredRating;
+  const effectiveRating = suppliedRating > 50
+    ? suppliedRating * 0.68 + registeredRating * 0.32
+    : registeredRating;
+  const normalizedLevel = clamp((effectiveRating - 60) / 25, 0, 1);
+  return 0.78 + normalizedLevel * 0.22;
+}
+
+/**
+ * Descuento estructural adicional para los clubes modestos. El nivel de liga
+ * por sí solo no basta: un jugador del Elche, Málaga u otro club de la zona
+ * baja no debe costar lo mismo que un futbolista equivalente de un aspirante
+ * europeo. En clubes con valoración global <=73 se reduce a la mitad el valor
+ * base; el descuento se suaviza progresivamente en clubes de nivel medio.
+ * Los jugadores de élite (88+) quedan protegidos por la regla de estrellas.
+ */
+function modestClubMarketMultiplier(teamAvgRating: number, teamId = ""): number {
+  if (!teamId) return 1;
+  let team: Team | undefined;
+  try {
+    const candidate = teamById(teamId);
+    if (candidate.id.toLowerCase() === teamId.toLowerCase()) team = candidate;
+  } catch {
+    // No aplicar descuento a agentes libres o IDs sin resolver.
+  }
+  if (!team) return 1;
+
+  // Este descuento depende del nivel estructural del club, no de la media
+  // momentánea de su plantilla: evita que un par de jugadores buenos eleven
+  // artificialmente el precio de todo el equipo.
+  const effectiveRating = (team.att + team.mid + team.def) / 3;
+
+  if (effectiveRating <= 73) return 0.5;
+  if (effectiveRating <= 78) return 0.5 + ((effectiveRating - 73) / 5) * 0.2;
+  if (effectiveRating <= 83) return 0.7 + ((effectiveRating - 78) / 5) * 0.3;
+  return 1;
 }
 
 // Generate transfermarkt-style value string
@@ -327,8 +472,24 @@ export function marketValueFor(
   const curve = ratingCurve(effectiveRating);
   const ageMult = ageCurveMultiplier(age);
   const roleMult = positionRoleModifier(pos);
-  const leagueMult = leagueValueMultiplier(leagueId);
-  const teamMult = teamValueMultiplier(teamAvgRating);
+  let valuationTeam: Team | undefined;
+  if (teamId) {
+    try {
+      const candidate = teamById(teamId);
+      if (candidate.id.toLowerCase() === teamId.toLowerCase()) valuationTeam = candidate;
+    } catch {
+      // Continúa con los parámetros recibidos para agentes libres o IDs antiguos.
+    }
+  }
+  const effectiveLeagueId = leagueId || valuationTeam?.league || "";
+  const leagueMult = leagueValueMultiplier(effectiveLeagueId);
+  const teamMult = teamValueMultiplier(teamAvgRating, teamId);
+  const qualityMarketMult = playerQualityMarketMultiplier(effectiveRating);
+  // Las estrellas de 88+ mantienen exactamente su valoración previa. Para el
+  // resto, media individual, liga y poder adquisitivo del club pesan más.
+  const clubAccessibilityMult = effectiveRating >= 88
+    ? 1
+    : clubMarketAccessibilityMultiplier(teamAvgRating, teamId);
   const versatilityMult = positions ? calculateVersatilityBonus(positions) : 1.0;
 
   // Prima de potencial basada en el dato REAL de players.json.
@@ -349,8 +510,12 @@ export function marketValueFor(
     0.005;
   const potentialPremium = clamp(1 + potentialGap * potentialWeight, 1, 1.45);
 
+  const modestClubMult = effectiveRating >= 88
+    ? 1
+    : modestClubMarketMultiplier(teamAvgRating, teamId);
+
   let finalValue =
-    cap * curve * ageMult * roleMult * leagueMult * teamMult * versatilityMult * potentialPremium;
+    cap * curve * ageMult * roleMult * leagueMult * teamMult * qualityMarketMult * clubAccessibilityMult * modestClubMult * versatilityMult * potentialPremium;
 
   // Techo absoluto global: ni el mejor jugador del juego en las mejores
   // condiciones puede superar el fichaje más caro de la historia real.
@@ -382,11 +547,14 @@ export function marketValueFor(
   if (positions && positions.length > 1) reasons.push("versátil");
   if (potentialGap >= 5) reasons.push(`potencial ${Math.round(effectivePotential)}`);
 
-  if (TOP_LEAGUES.has(leagueId)) reasons.push("liga top");
-  else if (MID_LEAGUES.has(leagueId)) reasons.push("liga media");
-  else reasons.push("liga menor");
+  if (TOP_LEAGUES.has(effectiveLeagueId)) reasons.push("liga top");
+  else if (SECOND_DIVISION_LEAGUES.has(effectiveLeagueId)) reasons.push("segunda división");
+  else if (MID_LEAGUES.has(effectiveLeagueId) || OTHER_PRO_LEAGUES.has(effectiveLeagueId)) reasons.push("liga profesional secundaria");
+  else reasons.push("liga de menor nivel");
 
-  if (teamAvgRating >= 80) reasons.push("equipo de primer nivel");
+  if (teamMult >= 1.05) reasons.push("club de gran prestigio");
+  else if (teamMult <= 0.85) reasons.push("club de nivel modesto");
+  else if (teamAvgRating >= 80) reasons.push("equipo de primer nivel");
 
   const explanation = `Valorado en ${formatMarketValue(finalValue)}: ${reasons.join(", ")}.`;
 

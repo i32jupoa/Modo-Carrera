@@ -1,6 +1,7 @@
 import type { FcPlayer, PlayerStats } from "@/store/playersStore";
 import { estimateAnnualWage } from "@/lib/transfers/SalaryEngine";
 import { marketValueFor } from "@/data/players";
+import { teamById } from "@/data/teams";
 import type { AcademyPlayer } from "./academyTypes";
 import type { PosCode } from "@/lib/positions";
 
@@ -84,17 +85,31 @@ export function academyPlayerToStats(player: AcademyPlayer): PlayerStats {
 }
 
 export function academyMarketValue(player: AcademyPlayer): number {
+  let leagueId = "";
+  let teamAverage = Math.max(50, player.ovr);
+  try {
+    const team = player.teamId ? teamById(player.teamId) : undefined;
+    // teamById mantiene un fallback por compatibilidad; solo usarlo si el ID
+    // coincide realmente para no asignar la liga del fallback a clubes huérfanos.
+    if (team && team.id.toLowerCase() === player.teamId.toLowerCase()) {
+      leagueId = team.league;
+      teamAverage = (team.att + team.mid + team.def) / 3;
+    }
+  } catch {
+    // Las partidas antiguas pueden conservar canteranos de clubes ya no disponibles.
+  }
+
   const market = marketValueFor(
     Math.round(player.ovr),
     player.age,
     positionToEa(player.positions[0] ?? "MC"),
     player.teamId,
-    "",
+    leagueId,
     0,
     0,
     0,
     false,
-    Math.max(50, player.ovr),
+    teamAverage,
     undefined,
     undefined,
     player.potential,

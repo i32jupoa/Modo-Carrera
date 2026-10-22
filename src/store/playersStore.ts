@@ -1062,7 +1062,7 @@ export function marketValueEuros(
   fc: FcPlayer,
   teamId = "",
   leagueId = "",
-  teamAvgRating = 75,
+  teamAvgRating?: number,
 ): number {
   // Las partidas antiguas pueden contener un id de jugador que ya no existe
   // en la base actual. El valor de mercado no debe romper el avance del día
@@ -1075,19 +1075,32 @@ export function marketValueEuros(
 
   const isStar = ovr >= 82;
 
-  // If leagueId not provided, get it from player's league name
-  const effectiveLeagueId = leagueId || leagueIdFromName(fc.League || "");
-
   try {
+    // Muchas pantallas consultan marketValueEuros(player) sin pasar el club.
+    // Resolverlo desde la ficha evita que jugadores de Segunda o equipos
+    // modestos se valoren como agentes libres o como un club medio genérico.
+    const resolvedTeamId = teamId || (fc.Team ? findTeamStrict(fc.Team, fc.League || undefined)?.id ?? "" : "");
+    let resolvedTeam: ReturnType<typeof teamById> | undefined;
+    if (resolvedTeamId) {
+      const candidate = teamById(resolvedTeamId);
+      if (candidate.id.toLowerCase() === resolvedTeamId.toLowerCase()) resolvedTeam = candidate;
+    }
+    const effectiveLeagueId = leagueId || resolvedTeam?.league || leagueIdFromName(fc.League || "");
+    const effectiveTeamAverage = Number.isFinite(teamAvgRating)
+      ? Number(teamAvgRating)
+      : resolvedTeam
+        ? (resolvedTeam.att + resolvedTeam.mid + resolvedTeam.def) / 3
+        : 75;
+
     return Math.round(
       marketValueMillions(
         ovr,
         age,
         fc.Position,
-        teamId,
+        resolvedTeamId,
         effectiveLeagueId,
         isStar,
-        Number.isFinite(Number(teamAvgRating)) ? Number(teamAvgRating) : 75,
+        effectiveTeamAverage,
         fc.potential,
       ) * 1_000_000,
     );
@@ -1236,7 +1249,16 @@ function fcToPlayer(
 
     teamId,
 
-    marketValue: marketValueMillions(currentOVR, effectivePlayerAge(fc, stats), fc.Position, "", "", false, 75, currentPotential),
+    marketValue: marketValueMillions(
+      currentOVR,
+      effectivePlayerAge(fc, stats),
+      fc.Position,
+      teamId,
+      teamById(teamId).league,
+      false,
+      (teamById(teamId).att + teamById(teamId).mid + teamById(teamId).def) / 3,
+      currentPotential,
+    ),
 
     isReal: true,
 

@@ -9,6 +9,7 @@ import {
 } from "./academyConstants";
 import { generateAcademyState } from "./academyGenerator";
 import { advanceAcademyToDate } from "./academyProgression";
+import type { AcademyPlayer } from "./academyTypes";
 
 describe("academy generator", () => {
   it("is deterministic for the same save, club and season", () => {
@@ -25,6 +26,21 @@ describe("academy generator", () => {
       expect(state.facilityLevel).toBe(1);
       expect(state.youthCoach?.level).toBe(1);
     }
+  });
+
+  it("gives elite clubs a stronger academy profile than modest clubs in a lower division", () => {
+    const realMadridPlayers: AcademyPlayer[] = [];
+    const cordobaPlayers: AcademyPlayer[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      realMadridPlayers.push(...generateAcademyState(`quality-rma-${index}`, "rma", 2026).players);
+      cordobaPlayers.push(...generateAcademyState(`quality-cordoba-${index}`, "cordoba", 2026).players);
+    }
+
+    const average = (players: typeof realMadridPlayers, key: "ovr" | "potential") =>
+      players.reduce((sum, player) => sum + player[key], 0) / players.length;
+
+    expect(average(realMadridPlayers, "ovr")).toBeGreaterThan(average(cordobaPlayers, "ovr") + 3);
+    expect(average(realMadridPlayers, "potential")).toBeGreaterThan(average(cordobaPlayers, "potential") + 1);
   });
 
   it("keeps players inside the designed ranges and ids in the reserved block", () => {
