@@ -3053,11 +3053,17 @@ function MatchPage() {
       if (gk && performance.minutesPlayed[gk.id] > 0) {
         store.recordCleanSheet(gk.id, statsCompetition);
       }
+      for (const defender of performance.homeParticipants.filter((p: any) => p.positions?.some((pos: string) => ["DFC", "LD", "LI"].includes(pos)) && performance.minutesPlayed[p.id] > 0)) {
+        store.recordDefensiveCleanSheet(defender.id);
+      }
     }
     if (finalHomeGoals === 0) {
       const gk = performance.awayFinalXI.find((p: any) => p.positions?.includes("GK"));
       if (gk && performance.minutesPlayed[gk.id] > 0) {
         store.recordCleanSheet(gk.id, statsCompetition);
+      }
+      for (const defender of performance.awayParticipants.filter((p: any) => p.positions?.some((pos: string) => ["DFC", "LD", "LI"].includes(pos)) && performance.minutesPlayed[p.id] > 0)) {
+        store.recordDefensiveCleanSheet(defender.id);
       }
     }
 

@@ -84,6 +84,7 @@ import {
   simulateExtraTime,
   simulatePenaltyShootout,
   getActivePlayersAtMinute,
+  ASSIST_PROBABILITY,
   goalScorerWeight,
   assistCreatorWeight,
   weightedPlayerPick,
@@ -3784,15 +3785,21 @@ function applyMatchToStats(
   if (!skipPlayerPerformanceStats) {
     // Clean sheets (GK of team that conceded 0)
     try {
-      const homeGoals = r.homeGoals ?? 0;
-    const awayGoals = r.awayGoals ?? 0;
+      const homeGoals = (r.homeGoals ?? 0) + (r.extraTime?.homeGoals ?? 0);
+      const awayGoals = (r.awayGoals ?? 0) + (r.extraTime?.awayGoals ?? 0);
     if (awayGoals === 0) {
       const gk = homeXI.find((p) => p.positions.includes("GK"));
       if (gk && gk.teamId !== skipTeamId) store.recordCleanSheet(gk.id, statsCompetition);
+      for (const defender of homeXI.filter((p) => p.positions.some((pos) => ["DFC", "LD", "LI"].includes(pos)))) {
+        if (defender.teamId !== skipTeamId) store.recordDefensiveCleanSheet(defender.id);
+      }
     }
     if (homeGoals === 0) {
       const gk = awayXI.find((p) => p.positions.includes("GK"));
       if (gk && gk.teamId !== skipTeamId) store.recordCleanSheet(gk.id, statsCompetition);
+      for (const defender of awayXI.filter((p) => p.positions.some((pos) => ["DFC", "LD", "LI"].includes(pos)))) {
+        if (defender.teamId !== skipTeamId) store.recordDefensiveCleanSheet(defender.id);
+      }
     }
     // MOTM: top scorer of the match (or a random starter of winner if 0-0)
     const scorerCounts: Record<string, number> = {};
@@ -6456,7 +6463,7 @@ export function generateRealisticStatsForO1Leagues(
           // asistir otro tanto del mismo partido.
           const counts = new Map<string, number>();
           for (const scorer of scorers) {
-            if (Math.random() > 0.80) continue;
+            if (Math.random() > ASSIST_PROBABILITY) continue;
             const candidates = players.filter(
               (p) => p.id !== scorer.id && !isGoalkeeper(p.positions),
             );
@@ -6537,10 +6544,16 @@ export function generateRealisticStatsForO1Leagues(
         if (fixture.result.awayGoals === 0) {
           const keeper = homePlayers.find((p) => isGoalkeeper(p.positions));
           if (keeper) store.recordCleanSheet(keeper.id, "league");
+          for (const defender of homePlayers.filter((p) => p.positions.some((pos) => ["DFC", "LD", "LI"].includes(pos)))) {
+            store.recordDefensiveCleanSheet(defender.id);
+          }
         }
         if (fixture.result.homeGoals === 0) {
           const keeper = awayPlayers.find((p) => isGoalkeeper(p.positions));
           if (keeper) store.recordCleanSheet(keeper.id, "league");
+          for (const defender of awayPlayers.filter((p) => p.positions.some((pos) => ["DFC", "LD", "LI"].includes(pos)))) {
+            store.recordDefensiveCleanSheet(defender.id);
+          }
         }
       }
     }
@@ -7189,6 +7202,15 @@ function recordFakeMatchStats(
         const scorer = pickScorer(players);
         if (!scorer) continue;
         store.recordGoal(scorer.id, competition);
+
+        // An omitted event payload must not silently turn every fallback goal
+        // into an unassisted goal. Credit a plausible creator using the same
+        // weights/probability as the normal fast and detailed engines.
+        if (Math.random() <= ASSIST_PROBABILITY) {
+          const candidates = players.filter((p) => p.id !== scorer.id && !isGoalkeeper(p.positions));
+          const assister = weightedPlayerPick(candidates, assistCreatorWeight);
+          if (assister) store.recordAssist(assister.id, competition);
+        }
       }
     };
 
@@ -7281,10 +7303,18 @@ function recordFakeMatchStats(
   if (finalAwayGoals === 0) {
     const gk = findGoalkeeper("home", homePlayers);
     if (gk) store.recordCleanSheet(gk.id, competition);
+    const homeLineup = result.homeLineup ?? homePlayers;
+    for (const defender of homeLineup.filter((p) => p.positions.some((pos) => ["DFC", "LD", "LI"].includes(pos)))) {
+      store.recordDefensiveCleanSheet(defender.id);
+    }
   }
   if (finalHomeGoals === 0) {
     const gk = findGoalkeeper("away", awayPlayers);
     if (gk) store.recordCleanSheet(gk.id, competition);
+    const awayLineup = result.awayLineup ?? awayPlayers;
+    for (const defender of awayLineup.filter((p) => p.positions.some((pos) => ["DFC", "LD", "LI"].includes(pos)))) {
+      store.recordDefensiveCleanSheet(defender.id);
+    }
   }
 
   const motmId =

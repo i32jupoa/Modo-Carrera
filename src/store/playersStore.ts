@@ -1448,6 +1448,8 @@ export type PlayersState = {
   /** Removes one assist previously credited to a player (never goes below 0). */
   unrecordAssist: (playerId: string, competition?: string) => void;
   recordCleanSheet: (playerId: string, competition?: string) => void;
+  /** Tracks defensive clean sheets for outfield defenders without inflating GK/public clean-sheet totals. */
+  recordDefensiveCleanSheet: (playerId: string) => void;
 
   recordMotm: (playerId: string, competition?: string) => void;
   recordMatchRating: (playerId: string, rating: number) => void;
@@ -3837,6 +3839,21 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             ...s,
             formHistory: history.slice(-6),
             dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { rating: safeRating }),
+          };
+        });
+      },
+      recordDefensiveCleanSheet: (playerId) => {
+        mutatePlayerStat(get, set, playerId, (s) => {
+          if (!s.dynamicStats) return s;
+          const dynamic = {
+            ...s.dynamicStats,
+            seasonCleanSheets: Math.max(0, Number(s.dynamicStats.seasonCleanSheets) || 0) + 1,
+          };
+          return {
+            ...s,
+            // This is a progression signal, not the conventional goalkeeper
+            // clean-sheet statistic shown in season tables.
+            dynamicStats: withMonthlyDelta(dynamic, get().currentDate, { cleanSheets: 1 }),
           };
         });
       },

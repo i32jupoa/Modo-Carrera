@@ -310,8 +310,11 @@ function calculatePerformanceIndex(
   let mvpWeight: number;
   let availabilityWeight: number;
   if (isDefender) {
-    ratingWeight = 0.68;
-    productionWeight = 0.14;
+    // Defensa y portería a cero son señales reales de una buena temporada para
+    // un central/lateral. Antes la progresión dependía casi sólo de la nota y
+    // el jugador apenas recibía crédito por sostener una defensa fiable.
+    ratingWeight = 0.60;
+    productionWeight = 0.22;
     mvpWeight = 0.07;
     availabilityWeight = 0.09;
   } else if (isDefensiveMidfielder) {
@@ -535,6 +538,24 @@ export function calculateMonthlyProgression(
   const outputBonus = exceptionalSeasonOutputBonus(safe, positions);
   delta += outputBonus * clamp(0.75 + headroomFactor * 0.22, 0.80, 1.10);
 
+  // Los centrales y laterales deben poder progresar aunque no marquen. Un
+  // titular defensivo con continuidad, minutos y notas decentes acumula margen
+  // de desarrollo durante el año; las porterías a cero registradas aparte
+  // refuerzan la señal, y la curva de OVR sigue limitando a las estrellas.
+  const primaryIsDefender = ["DFC", "LD", "LI"].includes(positions[0]);
+  if (primaryIsDefender && safe.seasonAppearances >= 8 && performance >= -0.05) {
+    const defensiveAvailability = clamp(safe.seasonAppearances / 24, 0, 1);
+    const minutesPerAppearance = safe.seasonMinutes / Math.max(1, safe.seasonAppearances);
+    const defensiveMinutes = clamp((minutesPerAppearance - 50) / 40, 0, 1);
+    const hasRatingSample =
+      Number(safe.seasonRatingCount) > 0 ||
+      Number(safe.seasonRatingTotal) > 0 ||
+      Number(safe.seasonAverageRating) > 6.05;
+    const defensiveRating = hasRatingSample ? (Number(safe.seasonAverageRating) || 6.65) : 6.65;
+    const defensiveForm = clamp((defensiveRating - 6.25) / 0.85, 0.40, 1.0);
+    delta += 0.070 * defensiveAvailability * defensiveMinutes * defensiveForm * headroomFactor;
+  }
+
   // La edad afecta de forma gradual al crecimiento positivo. Las malas
   // actuaciones y la falta de minutos también pueden provocar regresión.
   if (delta > 0) delta *= clamp(ageGrowthFactor(age), 0.72, 1.18);
@@ -630,6 +651,18 @@ export function calculateSeasonEndProgression(
   // reciben menos por la curva de exigencia.
   const trophyBonus = Math.min(0.22, Math.max(0, Number(safe.seasonTrophies) || 0) * 0.055);
   delta += trophyBonus;
+
+  const primaryIsDefender = ["DFC", "LD", "LI"].includes(positions[0]);
+  if (primaryIsDefender && safe.seasonAppearances >= 18 && performance >= 0.20) {
+    const defensiveContinuity = clamp(safe.seasonAppearances / 30, 0, 1);
+    const defensiveRating =
+      Number(safe.seasonRatingCount) > 0 || Number(safe.seasonRatingTotal) > 0 || Number(safe.seasonAverageRating) > 6.05
+        ? (Number(safe.seasonAverageRating) || 6.65)
+        : 6.65;
+    if (defensiveRating >= 6.65) {
+      delta += 0.06 * defensiveContinuity * headroomFactor;
+    }
+  }
 
   // Para los jugadores de 90+ OVR sólo una campaña excepcional permite sumar
   // una fracción visible al cierre. Las bajadas por rendimiento, edad o falta

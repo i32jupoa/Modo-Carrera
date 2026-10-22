@@ -240,14 +240,14 @@ function scorerWeight(player) {
   const goalThreat = stats.finishing * 0.39 + stats.positioning * 0.25 + stats.shooting * 0.16 + stats.composure * 0.12 + stats.shotPower * 0.08;
   const threatFactor = 0.44 + (goalThreat / 100) * 1.10;
   const ratingFactor = Math.max(0.50, player.rating / 84);
-  const eliteRating = clamp((player.rating - 84) / 10, 0, 1);
-  const eliteFinishing = clamp((stats.finishing - 80) / 20, 0, 1);
-  const eliteBoost = 1 + eliteRating * 0.32 + eliteFinishing * 0.36;
-  const positionFactor = player.positions.includes('DC') ? 9.8
-    : player.positions.some((position) => ['ED', 'EI'].includes(position)) ? 5.8
-      : player.positions.includes('MCO') ? 4.6
+  const eliteRating = clamp((player.rating - 82) / 10, 0, 1);
+  const eliteFinishing = clamp((stats.finishing - 78) / 22, 0, 1);
+  const eliteBoost = 1 + eliteRating * 1.20 + eliteFinishing * 1.15;
+  const positionFactor = player.positions.includes('DC') ? 14.5
+    : player.positions.some((position) => ['ED', 'EI'].includes(position)) ? 8.2
+      : player.positions.includes('MCO') ? 5.7
         : player.positions.some((position) => ['MC', 'MD', 'MI', 'MCD'].includes(position)) ? 1.65 : 0.40;
-  return Math.max(0.05, positionFactor * threatFactor * Math.pow(ratingFactor, 2.30) * eliteBoost);
+  return Math.max(0.05, positionFactor * threatFactor * Math.pow(ratingFactor, 2.90) * eliteBoost);
 }
 function weightedScorer(xi, random) {
   const candidates = xi.filter((player) => !player.positions.includes('GK'));
@@ -430,10 +430,12 @@ assert.match(simulationSource, /homeXIOverall \* 0\.80 \+ homeAttack \* 0\.12 \+
 assert.doesNotMatch(simulationSource.slice(simulationSource.indexOf('const homeStrength ='), simulationSource.indexOf('// Las tácticas modifican')), /homeListedOverall|home\.att|home\.mid|home\.def/);
 assert.match(simulationSource, /const rawShare = 0\.5 \+ 0\.37 \* Math\.tanh\(effectiveDiff \/ 8\.0\)/);
 assert.match(simulationSource, /const totalXg = 2\.95/);
+assert.match(simulationSource, /export const ASSIST_PROBABILITY = 0\.88/);
+assert.match(storeSource, /Math\.random\(\) > ASSIST_PROBABILITY/);
 assert.match(storeSource, /const rawShare = 0\.5 \+ 0\.37 \* Math\.tanh\(effectiveDiff \/ 8\.0\)/);
 assert.match(storeSource, /const totalXg = 2\.95/);
-assert.match(simulationSource, /Math\.pow\(ratingFactor, 2\.65\)/);
-assert.match(simulationSource, /const eliteBoost = 1 \+ eliteRating \* 0\.95 \+ eliteFinishing \* 0\.95/);
+assert.match(simulationSource, /Math\.pow\(ratingFactor, 2\.90\)/);
+assert.match(simulationSource, /const eliteBoost = 1 \+ eliteRating \* 1\.20 \+ eliteFinishing \* 1\.15/);
 assert.match(lineupSource, /isPlayerInjuredAtDate/);
 assert.match(lineupSource, /suspensionAppliesToCompetition/);
 assert.match(calendarTeamSource, /getStartersWithFormation/);

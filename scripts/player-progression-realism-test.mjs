@@ -96,6 +96,19 @@ assert.ok(
   `un guardado antiguo sin muestra de notas no debe provocar una caída fuerte ni una subida automática (${noRatingsCentreBack.growth.toFixed(2)})`,
 );
 
+const cbWithoutCleanSheets = initializeDynamicStats(80, 88);
+Object.assign(cbWithoutCleanSheets, {
+  seasonAppearances: 28, seasonMinutes: 2450, seasonAverageRating: 6.8,
+  seasonRatingCount: 28, seasonRatingTotal: 190.4,
+});
+const cbWithCleanSheets = { ...cbWithoutCleanSheets, seasonCleanSheets: 11 };
+const cbBaselineGrowth = applyMonthlyProgression(cbWithoutCleanSheets, 23, ['DFC'], 5, 2026).currentOVR;
+const cbCleanSheetGrowth = applyMonthlyProgression(cbWithCleanSheets, 23, ['DFC'], 5, 2026).currentOVR;
+assert.ok(
+  cbCleanSheetGrowth > cbBaselineGrowth,
+  `las porterías a cero deben mejorar la progresión de un central (${cbBaselineGrowth} vs ${cbCleanSheetGrowth})`,
+);
+
 console.log('player-progression-realism-test: OK');
 for (const result of [breakoutStriker, ordinaryStriker, eliteStriker, youngCentreBack, noRatingsCentreBack]) {
   console.log(`  ${result.label}: ${result.startOVR.toFixed(2)} → ${result.endOVR.toFixed(2)} (${result.growth >= 0 ? '+' : ''}${result.growth.toFixed(2)})`);

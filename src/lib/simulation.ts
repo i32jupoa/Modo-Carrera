@@ -74,6 +74,10 @@ function effectivePlayerRating(player: Player): number {
   return Number(player.rating) * staminaPerformanceMultiplier(player.energy ?? 100);
 }
 
+// A high share of goals should have a credited assist, especially for creative
+// wide players. Keep this centralized so detailed and fast simulations agree.
+export const ASSIST_PROBABILITY = 0.88;
+
 // Weighted scorer pick considering position and OVR for fast simulation
 function penaltyTakerScore(player: Player): number {
   const stats = getPlayerShootingStats(player.id, player.attributes);
@@ -105,9 +109,9 @@ function scorerPositionFactor(player: Player): number {
   // El delantero centro es el principal rematador. Los extremos y mediapuntas
   // siguen teniendo una cuota importante, y un jugador polivalente no pierde
   // amenaza por tener una segunda posición.
-  if (positions.includes("DC")) return 13.8;
-  if (positions.some((p) => ["ED", "EI"].includes(p))) return 8.0;
-  if (positions.includes("MCO")) return 5.6;
+  if (positions.includes("DC")) return 14.5;
+  if (positions.some((p) => ["ED", "EI"].includes(p))) return 8.2;
+  if (positions.includes("MCO")) return 5.7;
   if (positions.some((p) => ["MC", "MD", "MI", "MCD"].includes(p))) return 1.65;
   return 0.40;
 }
@@ -152,9 +156,9 @@ export function assistCreatorWeight(player: Player): number {
     creative.ballControl * 0.08;
   const positions = player.positions ?? [];
   const positionFactor = positions.includes("MCO")
-    ? 4.2
+    ? 4.3
     : positions.some((p) => ["ED", "EI", "MD", "MI"].includes(p))
-      ? 3.5
+      ? 4.2
       : positions.some((p) => ["MC", "MCD"].includes(p))
         ? 2.8
         : positions.includes("DC")
@@ -167,7 +171,7 @@ export function assistCreatorWeight(player: Player): number {
   // convertir a todo extremo en un pasador de 20 asistencias cada temporada.
   const eliteCreation = Math.max(0, Math.min(1, (creation - 78) / 20));
   const eliteRating = Math.max(0, Math.min(1, (rating - 83) / 12));
-  const creatorBoost = 1 + eliteCreation * 0.55 + eliteRating * 0.25;
+  const creatorBoost = 1 + eliteCreation * 0.70 + eliteRating * 0.35;
   return Math.max(
     0.05,
     positionFactor * (0.50 + creation / 100) * Math.pow(ratingFactor, 1.65) * creatorBoost,
@@ -203,7 +207,7 @@ function fastPickScorerWeighted(xi: Player[]): Player | undefined {
 
 // Fast assister pick: creation quality matters more than raw OVR alone.
 function fastPickAssister(xi: Player[], scorerId: string): Player | null {
-  if (rand() > 0.80) return null;
+  if (rand() > ASSIST_PROBABILITY) return null;
   return weightedPlayerPick(
     xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions)),
     assistCreatorWeight,
@@ -511,7 +515,7 @@ function pickScorer(xi: Player[]): Player {
 }
 
 function pickAssister(xi: Player[], scorerId: string): Player | null {
-  if (rand() > 0.80) return null;
+  if (rand() > ASSIST_PROBABILITY) return null;
   const candidates = xi.filter((p) => p.id !== scorerId && !isGoalkeeper(p.positions));
   if (candidates.length === 0) return null;
   return weightedPick(candidates, candidates.map(assistCreatorWeight));
