@@ -1,4 +1,4 @@
-import { Team, TEAMS, teamById, findTeamStrict } from "./teams";
+import { Team, getAllTeams, teamById, findTeamStrict } from "./teams";
 import playersData from "./playersData";
 import {
   buildPositions,
@@ -596,9 +596,11 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
 
   const map: Record<string, Player[]> = {};
 
-  // Inicializamos las listas de todos los equipos registrados en el sistema
-  TEAMS.forEach((t) => {
-    map[t.id] = [];
+  // Inicializamos las plantillas de todos los equipos jugables, tanto los
+  // heredados como los generados a partir de la base de datos de jugadores.
+  const allTeams = getAllTeams();
+  allTeams.forEach((team) => {
+    map[team.id] = [];
   });
   map["free_agent"] = [];
 
@@ -745,7 +747,7 @@ export function generateAllSquads(dynamicStatsMap?: Record<string, any>): Record
     EI: 10,
     DC: 11,
   };
-  TEAMS.forEach((t) => {
+  allTeams.forEach((t) => {
     if (map[t.id]) {
       map[t.id].sort((a, b) => {
         const aPos = a.positions[0] || "MC";

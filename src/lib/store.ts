@@ -8,7 +8,6 @@ import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "./season/
 import { getPlayer as getMarketPlayer } from "./transfers/PlayerIndex";
 import {
   LeagueId,
-  TEAMS,
   teamById,
   teamsByLeague,
   getAllTeams,
@@ -4016,7 +4015,7 @@ export function applyDailyMailboxMessages(save: SaveGame, date: string): SaveGam
       .map((entry) => entry.playerId),
   );
   const unavailable = new Set([...injured, ...suspended]);
-  const teamNames = new Map(TEAMS.map((team) => [team.id, team.name]));
+  const teamNames = new Map(getAllTeams().map((team) => [team.id, team.name]));
   let mailbox = save.mailbox ?? createEmptyMailbox();
   const released = releasePendingMailboxResolutions(mailbox, squad, date, allFixtures, userTeamId);
   mailbox = released.state;

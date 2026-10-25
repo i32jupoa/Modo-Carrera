@@ -57,14 +57,12 @@ const LEAGUE_TO_COUNTRY: Record<string, { country: string; flag: string }> = {
   "EFL League Two": { country: "Inglaterra", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
   "Serie A Enilive": { country: "Italia", flag: "🇮🇹" },
   "Serie BKT": { country: "Italia", flag: "🇮🇹" },
-  // === GERMAN LEAGUES (strictly Germany/Alemania only) ===
   Bundesliga: { country: "Alemania", flag: "🇩🇪" },
   "Bundesliga 2": { country: "Alemania", flag: "🇩🇪" },
   "3. Liga": { country: "Alemania", flag: "🇩🇪" },
-  // === FRENCH LEAGUES ===
+  "2. BUNDESLIGA": { country: "Alemania", flag: "🇩🇪" },
   "Ligue 1 McDonald's": { country: "Francia", flag: "🇫🇷" },
   "Ligue 2 BKT": { country: "Francia", flag: "🇫🇷" },
-  "2. BUNDESLIGA": { country: "Alemania", flag: "🇩🇪" },
   "Liga Portugal": { country: "Portugal", flag: "🇵🇹" },
   "Primeira Liga": { country: "Portugal", flag: "🇵🇹" },
   "PRIMEIRA LIGA": { country: "Portugal", flag: "🇵🇹" },
@@ -78,48 +76,157 @@ const LEAGUE_TO_COUNTRY: Record<string, { country: string; flag: string }> = {
   "1A Pro League": { country: "Bélgica", flag: "🇧🇪" },
   "BELGIAN PRO LEAGUE": { country: "Bélgica", flag: "🇧🇪" },
   "PKO BP Ekstraklasa": { country: "Polonia", flag: "🇵🇱" },
-  "Ekstraklasa": { country: "Polonia", flag: "🇵🇱" },
+  Ekstraklasa: { country: "Polonia", flag: "🇵🇱" },
   "Brack Super League": { country: "Suiza", flag: "🇨🇭" },
   "3F Superliga": { country: "Dinamarca", flag: "🇩🇰" },
+  "Metropolitan Division": { country: "Dinamarca", flag: "🇩🇰" },
   Allsvenskan: { country: "Suecia", flag: "🇸🇪" },
   Eliteserien: { country: "Noruega", flag: "🇳🇴" },
   "ROSHN Saudi League": { country: "Arabia Saudí", flag: "🇸🇦" },
-  // === AUSTRIAN LEAGUE (strictly separate from German Bundesliga) ===
   "Ö. Bundesliga": { country: "Austria", flag: "🇦🇹" },
+  "Liga BBVA MX": { country: "México", flag: "🇲🇽" },
+  CSL: { country: "China", flag: "🇨🇳" },
+  "K League 1": { country: "Corea del Sur", flag: "🇰🇷" },
+  "Isuzu UTE A League": { country: "Australia", flag: "🇦🇺" },
+  ISL: { country: "India", flag: "🇮🇳" },
+  "SSE Airtricity Men's Premier Division": { country: "Irlanda", flag: "🇮🇪" },
+  "Hellas Liga": { country: "Grecia", flag: "🇬🇷" },
+  "Česká Liga": { country: "Chequia", flag: "🇨🇿" },
+  "Ukrayina Liha": { country: "Ucrania", flag: "🇺🇦" },
+  "Liga Hrvatska": { country: "Croacia", flag: "🇭🇷" },
+  "Liga Cyprus": { country: "Chipre", flag: "🇨🇾" },
+  "Brasileirão Série A": { country: "Brasil", flag: "🇧🇷" },
+  "Liga do Brasil": { country: "Brasil", flag: "🇧🇷" },
+  "Primera División de Chile": { country: "Chile", flag: "🇨🇱" },
+  "Liga de Primera (Chile)": { country: "Chile", flag: "🇨🇱" },
+  "Categoría Primera A": { country: "Colombia", flag: "🇨🇴" },
+  "Liga Colombia": { country: "Colombia", flag: "🇨🇴" },
+  "LigaPro Serie A": { country: "Ecuador", flag: "🇪🇨" },
+  "Primera División de Paraguay": { country: "Paraguay", flag: "🇵🇾" },
+  "Liga 1 Perú": { country: "Perú", flag: "🇵🇪" },
+  "División Profesional de Bolivia": { country: "Bolivia", flag: "🇧🇴" },
+  "Primera División de Uruguay": { country: "Uruguay", flag: "🇺🇾" },
+  "Liga FUTVE": { country: "Venezuela", flag: "🇻🇪" },
 };
 
 const LEAGUE_NAME_TO_ID: Record<string, string> = {
   "LALIGA EA SPORTS": "laliga",
-  "Premier League": "premier",
-  "Serie A Enilive": "seriea",
-  Bundesliga: "bundesliga",
-  "Ligue 1 McDonald's": "ligue1",
   "LALIGA HYPERMOTION": "laliga2",
-  "Trendyol Süper Lig": "trendyolsperlig",
-  "Scottish Premiership": "scottish",
-  "Ekstraklasa": "ekstraklasa",
-  "PKO BP Ekstraklasa": "ekstraklasa",
-  "3F Superliga": "3fsuperliga",
-  "BELGIAN PRO LEAGUE": "1aproleague",
-  "Primeira Liga": "ligaportugal",
-  "PRIMEIRA LIGA": "ligaportugal",
-  "2. BUNDESLIGA": "bundesliga2",
+  "Premier League": "premier",
   "EFL Championship": "championship",
   "EFL League One": "leagueone",
   "EFL League Two": "leaguetwo",
+  "Serie A Enilive": "seriea",
   "Serie BKT": "serieb",
+  Bundesliga: "bundesliga",
   "Bundesliga 2": "bundesliga2",
+  "2. BUNDESLIGA": "bundesliga2",
   "3. Liga": "liga3",
+  "Ligue 1 McDonald's": "ligue1",
   "Ligue 2 BKT": "ligue2",
+  "Trendyol Süper Lig": "trendyolsperlig",
+  "Scottish Premiership": "scottish",
+  "Scottish Prem": "scottish",
+  Ekstraklasa: "ekstraklasa",
+  "PKO BP Ekstraklasa": "ekstraklasa",
+  "3F Superliga": "3fsuperliga",
+  "Metropolitan Division": "3fsuperliga",
+  "1A Pro League": "1aproleague",
+  "BELGIAN PRO LEAGUE": "1aproleague",
+  "Primeira Liga": "ligaportugal",
+  "PRIMEIRA LIGA": "ligaportugal",
   "Liga Portugal": "ligaportugal",
   Eredivisie: "eredivisie",
-  "Scottish Prem": "scottish",
-  // === AUSTRIAN LEAGUE (strictly separate from German Bundesliga) ===
   "Ö. Bundesliga": "austrianbundesliga",
+  MLS: "mls",
+  LPF: "lpf",
+  SUPERLIGA: "superliga",
+  "Brack Super League": "bracksuperleague",
+  Allsvenskan: "allsvenskan",
+  Eliteserien: "eliteserien",
+  "ROSHN Saudi League": "roshnsaudileague",
+  "Liga BBVA MX": "ligabbvamx",
+  CSL: "csl",
+  "K League 1": "kleague1",
+  "Isuzu UTE A League": "aleague",
+  ISL: "isl",
+  "SSE Airtricity Men's Premier Division": "sseairtricitypd",
+  "Hellas Liga": "hellasliga",
+  "Česká Liga": "ceskaliga",
+  "Ukrayina Liha": "ukrayinaliha",
+  "Liga Hrvatska": "ligahrvatska",
+  "Liga Cyprus": "ligacyprus",
+  "Brasileirão Série A": "brasileirao",
+  "Liga do Brasil": "brasileirao",
+  "Primera División de Chile": "chileprimera",
+  "Liga de Primera (Chile)": "chileprimera",
+  "Categoría Primera A": "ligabetplay",
+  "Liga Colombia": "ligabetplay",
+  "LigaPro Serie A": "ligaproecuador",
+  "Primera División de Paraguay": "paraguayprimera",
+  "Liga 1 Perú": "liga1peru",
+  "División Profesional de Bolivia": "boliviaprofesional",
+  "Primera División de Uruguay": "uruguayprimera",
+  "Liga FUTVE": "ligafutve",
+};
+
+const CANONICAL_LEAGUE_NAME_BY_ID: Record<string, string> = {
+  laliga: "LALIGA EA SPORTS",
+  laliga2: "LALIGA HYPERMOTION",
+  premier: "Premier League",
+  championship: "EFL Championship",
+  leagueone: "EFL League One",
+  leaguetwo: "EFL League Two",
+  seriea: "Serie A Enilive",
+  serieb: "Serie BKT",
+  bundesliga: "Bundesliga",
+  bundesliga2: "Bundesliga 2",
+  liga3: "3. Liga",
+  ligue1: "Ligue 1 McDonald's",
+  ligue2: "Ligue 2 BKT",
+  trendyolsperlig: "Trendyol Süper Lig",
+  scottish: "Scottish Premiership",
+  ekstraklasa: "Ekstraklasa",
+  "1aproleague": "Belgian Pro League",
+  ligaportugal: "Liga Portugal",
+  eredivisie: "Eredivisie",
+  austrianbundesliga: "Ö. Bundesliga",
+  mls: "MLS",
+  lpf: "LPF",
+  superliga: "SuperLiga (Rumanía)",
+  bracksuperleague: "Brack Super League",
+  "3fsuperliga": "3F Superliga",
+  allsvenskan: "Allsvenskan",
+  eliteserien: "Eliteserien",
+  roshnsaudileague: "ROSHN Saudi League",
+  ligabbvamx: "Liga MX",
+  csl: "Chinese Super League",
+  kleague1: "K League 1",
+  aleague: "A-League Men",
+  isl: "Indian Super League",
+  sseairtricitypd: "League of Ireland Premier Division",
+  hellasliga: "Super League Greece",
+  ceskaliga: "Czech First League",
+  ukrayinaliha: "Ukrainian Premier League",
+  ligahrvatska: "Croatian Football League",
+  ligacyprus: "Cypriot First Division",
+  brasileirao: "Brasileirão Série A",
+  chileprimera: "Primera División de Chile",
+  ligabetplay: "Categoría Primera A",
+  ligaproecuador: "LigaPro Serie A",
+  paraguayprimera: "Primera División de Paraguay",
+  liga1peru: "Liga 1 Perú",
+  boliviaprofesional: "División Profesional de Bolivia",
+  uruguayprimera: "Primera División de Uruguay",
+  ligafutve: "Liga FUTVE",
 };
 
 function normalizeLeagueLabel(value: string): string {
-  return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 const NORMALIZED_LEAGUE_NAME_TO_ID: Record<string, string> = Object.fromEntries(
@@ -129,57 +236,155 @@ const NORMALIZED_LEAGUE_TO_COUNTRY: Record<string, { country: string; flag: stri
   Object.entries(LEAGUE_TO_COUNTRY).map(([name, mapping]) => [normalizeLeagueLabel(name), mapping]),
 );
 
-// Excluded leagues (not loaded into the game)
+// Solo se excluyen competiciones continentales y ligas para las que el dataset
+// no contiene suficientes plantillas completas como para jugar una temporada.
 export const EXCLUDED_LEAGUES = new Set<string>([
-  "ligahrvatska", // Croacia
-  "hellasliga", // Grecia
-  "unitedemiratesleague", // EAU
-  "libertadores", // Sudamérica
-  "sudamericana", // Sudamérica
-  "ceskaliga", // Chequia
-  "ukrayinaliha", // Ucrania
-  "magyarliga", // Hungría
-  "kleague1", // Corea del Sur
-  "csl", // China
-  "ligacyprus", // Chipre
-  "ligachile", // Chile
-  "aleague", // Australia
-  "ligaazerbaijan", // Azerbaiyán
-  "finnliiga", // Finlandia
-  "isl", // India
-  "sseairtricitypd", // Irlanda
+  "conmebollibertadores",
+  "conmebolsudamericana",
+  "libertadores",
+  "sudamericana",
+  "unitedemiratesleague",
+  "magyarliga",
+  "ligachile",
+  "ligaazerbaijan",
+  "finnliiga",
+  "thailandleague",
+  "ligabulgaria",
 ]);
 
 export function leagueIdFromName(leagueName: string): string {
-  return LEAGUE_NAME_TO_ID[leagueName] ?? NORMALIZED_LEAGUE_NAME_TO_ID[normalizeLeagueLabel(leagueName)] ?? leagueName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (
+    LEAGUE_NAME_TO_ID[leagueName] ??
+    NORMALIZED_LEAGUE_NAME_TO_ID[normalizeLeagueLabel(leagueName)] ??
+    normalizeLeagueLabel(leagueName)
+  );
 }
 
-function extractLeaguesFromJSON(): Record<
-  string,
-  { id: string; name: string; country: string; flag: string }
-> {
-  const leagues: Record<string, { id: string; name: string; country: string; flag: string }> = {};
-  const dataArray = Array.isArray(playersData) ? playersData : [];
-  const seen = new Set<string>();
+// El export de jugadores coloca parte de los clubes brasileños en ligas vacías
+// o en sus torneos CONMEBOL. La pertenencia nacional se resuelve por club para
+// que el mercado y las plantillas no conviertan esas competiciones en ligas.
+const BRAZILIAN_CLUB_KEYS = new Set([
+  "atleticomineiro", "bahia", "botafogo", "corinthians", "cruzeiro", "flamengo",
+  "fluminense", "gremio", "mirassol", "palmeiras", "rbbragantino", "santos",
+  "saopaulo", "vascodagama",
+]);
 
-  dataArray.forEach((p: any) => {
-    const leagueName = p.League;
-    if (!leagueName || seen.has(leagueName)) return;
-    seen.add(leagueName);
+// Clubes cuya única plantilla del dataset está clasificada en Libertadores /
+// Sudamericana. Se reasignan a su liga doméstica real, no a una copa continental.
+const SOUTH_AMERICAN_CLUB_LEAGUES: Record<string, string> = {
+  // Chile
+  "unicatolica": "chileprimera",
+  "coquimbounido": "chileprimera",
+  "audaxitaliano": "chileprimera",
+  "palestino": "chileprimera",
+  "ohiggins": "chileprimera",
+  // Colombia
+  "atlnacional": "ligabetplay",
+  "deportestolima": "ligabetplay",
+  "indepsantafe": "ligabetplay",
+  "indepmedellin": "ligabetplay",
+  "junior": "ligabetplay",
+  "americadecali": "ligabetplay",
+  "millonarios": "ligabetplay",
+  // Ecuador
+  "lduquito": "ligaproecuador",
+  "idv": "ligaproecuador",
+  "barcelonasc": "ligaproecuador",
+  "depcuenca": "ligaproecuador",
+  "macar": "ligaproecuador",
+  // Paraguay
+  "cerroporteno": "paraguayprimera",
+  "libertad": "paraguayprimera",
+  "recoleta": "paraguayprimera",
+  "olimpia": "paraguayprimera",
+  // Perú
+  "sportingcristal": "liga1peru",
+  "cuscofc": "liga1peru",
+  "cusco": "liga1peru",
+  "universitario": "liga1peru",
+  "cienciano": "liga1peru",
+  "alianzaatltico": "liga1peru",
+  "alianzaatletico": "liga1peru",
+  // Bolivia
+  "bolivar": "boliviaprofesional",
+  "alwaysready": "boliviaprofesional",
+  "blooming": "boliviaprofesional",
+  "indpetrolero": "boliviaprofesional",
+  // Uruguay
+  "penarol": "uruguayprimera",
+  "juventud": "uruguayprimera",
+  "citytorque": "uruguayprimera",
+  "bostonriver": "uruguayprimera",
+  // Venezuela
+  "ucvfc": "ligafutve",
+  "deplaguaira": "ligafutve",
+  "puertocabello": "ligafutve",
+  "caracasfc": "ligafutve",
+  "carabobofc": "ligafutve",
+};
 
-    const id = leagueIdFromName(leagueName);
+function datasetLeagueId(rawLeague: string, rawTeam: string): string | null {
+  const teamKey = normalizeTeamLookup(rawTeam);
+  if (BRAZILIAN_CLUB_KEYS.has(teamKey)) return "brasileirao";
+  const SouthAmericanLeague = SOUTH_AMERICAN_CLUB_LEAGUES[teamKey];
+  if (SouthAmericanLeague) return SouthAmericanLeague;
+  // Jamshedpur tiene una plantilla completa en el export, pero sin League.
+  if (teamKey === "jamshedpurfc") return "isl";
+  if (!rawLeague.trim()) return null;
+  const id = leagueIdFromName(rawLeague);
+  if (id === "ligadobrasil") return "brasileirao";
+  return id;
+}
 
-    // Skip excluded leagues - they should not appear in the menu
-    if (EXCLUDED_LEAGUES.has(id)) return;
-
-    // Only include leagues that are properly mapped in LEAGUE_TO_COUNTRY
+function getLeagueCountryMapping(leagueId: string, sourceLabel: string): { country: string; flag: string } | undefined {
+  const canonicalName = CANONICAL_LEAGUE_NAME_BY_ID[leagueId];
+  if (canonicalName && LEAGUE_TO_COUNTRY[canonicalName]) return LEAGUE_TO_COUNTRY[canonicalName];
+  const originalMapping = LEAGUE_TO_COUNTRY[sourceLabel] ?? NORMALIZED_LEAGUE_TO_COUNTRY[normalizeLeagueLabel(sourceLabel)];
+  if (originalMapping) return originalMapping;
+  for (const [leagueName, mappedId] of Object.entries(LEAGUE_NAME_TO_ID)) {
+    if (mappedId !== leagueId) continue;
     const mapping = LEAGUE_TO_COUNTRY[leagueName] ?? NORMALIZED_LEAGUE_TO_COUNTRY[normalizeLeagueLabel(leagueName)];
-    if (!mapping) return; // Skip unmapped leagues
-    // Labels with different casing/legacy names can map to the same canonical league.
-    if (leagues[id]) return;
+    if (mapping) return mapping;
+  }
+  return undefined;
+}
 
-    leagues[id] = { id, name: leagueName, country: mapping.country, flag: mapping.flag };
-  });
+function extractLeaguesFromJSON(): Record<string, { id: string; name: string; country: string; flag: string }> {
+  const dataArray = Array.isArray(playersData) ? playersData : [];
+  const teamCountsByLeague = new Map<string, Map<string, number>>();
+  const metadataByLeague = new Map<string, { country: string; flag: string }>();
+
+  for (const player of dataArray) {
+    const rawLeague = String(player?.League ?? "").trim();
+    const rawTeam = String(player?.Team ?? "").trim();
+    if (!rawTeam) continue;
+    const id = datasetLeagueId(rawLeague, rawTeam);
+    if (!id || EXCLUDED_LEAGUES.has(id)) continue;
+    const mapping = getLeagueCountryMapping(id, rawLeague);
+    if (!mapping) continue;
+
+    metadataByLeague.set(id, mapping);
+    const teamKey = normalizeLeagueLabel(rawTeam);
+    if (!teamCountsByLeague.has(id)) teamCountsByLeague.set(id, new Map());
+    const counts = teamCountsByLeague.get(id)!;
+    counts.set(teamKey, (counts.get(teamKey) ?? 0) + 1);
+  }
+
+  const leagues: Record<string, { id: string; name: string; country: string; flag: string }> = {};
+  for (const [id, clubCounts] of teamCountsByLeague) {
+    // Una competición solo se activa si la base aporta al menos dos plantillas
+    // de 11 o más jugadores. Así no aparecen ligas fantasma de un único club.
+    const completeClubCount = [...clubCounts.values()].filter((count) => count >= 11).length;
+    if (completeClubCount < 2 || EXCLUDED_LEAGUES.has(id)) continue;
+    const mapping = metadataByLeague.get(id);
+    if (!mapping) continue;
+    leagues[id] = {
+      id,
+      name: CANONICAL_LEAGUE_NAME_BY_ID[id] ?? id,
+      country: mapping.country,
+      flag: mapping.flag,
+    };
+  }
 
   return leagues;
 }
@@ -188,17 +393,93 @@ export const LEAGUES = extractLeaguesFromJSON();
 
 export type LeagueEntry = { id: string; name: string; country: string; flag: string };
 
+const LEAGUE_COUNTRY_ORDER: Record<string, number> = {
+  laliga: 1,
+  laliga2: 2,
+  premier: 1,
+  championship: 2,
+  leagueone: 3,
+  leaguetwo: 4,
+  seriea: 1,
+  serieb: 2,
+  bundesliga: 1,
+  bundesliga2: 2,
+  liga3: 3,
+  ligue1: 1,
+  ligue2: 2,
+  brasileirao: 1,
+  chileprimera: 1,
+  ligabetplay: 1,
+  ligaproecuador: 1,
+  paraguayprimera: 1,
+  liga1peru: 1,
+  boliviaprofesional: 1,
+  uruguayprimera: 1,
+  ligafutve: 1,
+};
+
 export const LEAGUES_BY_COUNTRY: Record<string, LeagueEntry[]> = Object.values(LEAGUES).reduce(
-  (acc, lg) => {
-    if (!acc[lg.country]) acc[lg.country] = [];
-    acc[lg.country].push(lg);
+  (acc, league) => {
+    if (!acc[league.country]) acc[league.country] = [];
+    acc[league.country].push(league);
     return acc;
   },
   {} as Record<string, LeagueEntry[]>,
 );
 
-/** Returns the canonical primary league id for a country (the one that "owns" the cup). */
+for (const countryLeagues of Object.values(LEAGUES_BY_COUNTRY)) {
+  countryLeagues.sort(
+    (a, b) => (LEAGUE_COUNTRY_ORDER[a.id] ?? 99) - (LEAGUE_COUNTRY_ORDER[b.id] ?? 99) || a.name.localeCompare(b.name),
+  );
+}
+
+const PRIMARY_LEAGUE_BY_COUNTRY: Record<string, string> = {
+  España: "laliga",
+  Inglaterra: "premier",
+  Italia: "seriea",
+  Alemania: "bundesliga",
+  Francia: "ligue1",
+  Portugal: "ligaportugal",
+  "Países Bajos": "eredivisie",
+  Turquía: "trendyolsperlig",
+  "EE.UU.": "mls",
+  Argentina: "lpf",
+  Rumanía: "superliga",
+  Escocia: "scottish",
+  Bélgica: "1aproleague",
+  Polonia: "ekstraklasa",
+  Suiza: "bracksuperleague",
+  Dinamarca: "3fsuperliga",
+  Suecia: "allsvenskan",
+  Noruega: "eliteserien",
+  "Arabia Saudí": "roshnsaudileague",
+  Austria: "austrianbundesliga",
+  México: "ligabbvamx",
+  China: "csl",
+  "Corea del Sur": "kleague1",
+  Australia: "aleague",
+  India: "isl",
+  Irlanda: "sseairtricitypd",
+  Grecia: "hellasliga",
+  Chequia: "ceskaliga",
+  Ucrania: "ukrayinaliha",
+  Croacia: "ligahrvatska",
+  Chipre: "ligacyprus",
+  Brasil: "brasileirao",
+  Chile: "chileprimera",
+  Colombia: "ligabetplay",
+  Ecuador: "ligaproecuador",
+  Paraguay: "paraguayprimera",
+  Perú: "liga1peru",
+  Bolivia: "boliviaprofesional",
+  Uruguay: "uruguayprimera",
+  Venezuela: "ligafutve",
+};
+
+/** Devuelve la máxima categoría nacional activa, usada para configurar la copa del país. */
 export function getPrimaryLeagueForCountry(country: string): LeagueId | undefined {
+  const primary = PRIMARY_LEAGUE_BY_COUNTRY[country];
+  if (primary && LEAGUES[primary]) return primary as LeagueId;
   return LEAGUES_BY_COUNTRY[country]?.[0]?.id as LeagueId | undefined;
 }
 
@@ -1648,58 +1929,63 @@ export const TEAMS: Team[] = [
   },
 ];
 
-// Algunos participantes europeos proceden de ligas que no se cargan en el menú
-// doméstico (por ejemplo la liga checa). Se incorporan SOLO si forman parte de
-// Europa League / Conference League para que tengan plantilla real, sin crear
-// una liga doméstica fantasma.
-const EUROPEAN_EXTRA_TEAM_NAMES = new Set([
-  "Slavia Praha",
-  "Sparta Praha",
-  "Viktoria Plzeň",
-]);
-
 function generateDynamicTeams(): Team[] {
   const dataArray = Array.isArray(playersData) ? playersData : [];
-  const staticTeamNames = new Set(TEAMS.map((t) => t.name.toLowerCase().replace(/[^a-z0-9]/g, "")));
-  const staticLeagues = new Set(TEAMS.map((t) => t.league));
-
-  const teamMap = new Map<string, { name: string; league: string; players: any[] }>();
-
-  // First pass: collect all teams (excluding filtered leagues)
-  for (const p of dataArray) {
-    const leagueName = p.League;
-    if (!leagueName) continue;
-    const leagueId = leagueIdFromName(leagueName);
-    const teamName = p.Team;
-    if (!teamName) continue;
-    const isEuropeanExtra = EUROPEAN_EXTRA_TEAM_NAMES.has(teamName);
-
-    // Los equipos de las ligas principales ya definidos en TEAMS no se duplican.
-    // Para los 3 clubes que solo necesitamos en Europa, sí permitimos crear la
-    // ficha dinámica aunque su competición doméstica esté excluida del juego.
-    if (staticLeagues.has(leagueId) && !isEuropeanExtra) continue;
-    if (EXCLUDED_LEAGUES.has(leagueId) && !isEuropeanExtra) continue;
-
-    const teamKey = teamName.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (staticTeamNames.has(teamKey)) continue;
-
-    if (!teamMap.has(teamKey)) {
-      teamMap.set(teamKey, { name: teamName, league: leagueId, players: [] });
+  const staticNameKeys = new Set(
+    TEAMS.flatMap((team) => [normalizeTeamLookup(team.name), normalizeTeamLookup(team.id)]),
+  );
+  const staticAliasKeys = new Set<string>();
+  for (const [alias, target] of Object.entries(TEAM_NAME_ALIASES)) {
+    if (staticNameKeys.has(normalizeTeamLookup(target))) {
+      staticAliasKeys.add(normalizeTeamLookup(alias));
     }
-    teamMap.get(teamKey)!.players.push(p);
   }
 
-  // Filter out teams with fewer than 11 players (not a valid squad)
-  const validTeams = Array.from(teamMap.entries()).filter(([_, data]) => data.players.length >= 11);
+  // Cada grupo pertenece a una sola liga. Así un ascenso/descenso o un club
+  // homónimo de otro país no termina mezclando plantillas de dos competiciones.
+  const teamMap = new Map<string, { name: string; league: string; players: any[] }>();
+  for (const player of dataArray) {
+    const rawLeague = String(player?.League ?? "").trim();
+    const rawTeam = String(player?.Team ?? "").trim();
+    if (!rawTeam) continue;
 
-  // Filter out leagues with fewer than 2 teams
+    const leagueId = datasetLeagueId(rawLeague, rawTeam);
+    if (!leagueId || EXCLUDED_LEAGUES.has(leagueId) || !LEAGUES[leagueId]) continue;
+
+    const rawTeamKey = normalizeTeamLookup(rawTeam);
+    const aliasTarget = TEAM_NAME_ALIASES[rawTeamKey];
+    const canonicalName = aliasTarget ?? rawTeam;
+    const canonicalKey = normalizeTeamLookup(canonicalName);
+
+    // Los equipos definidos manualmente conservan sus IDs históricos, pero
+    // sus ligas se sincronizan con el club y la temporada presentes en el JSON.
+    if (
+      staticNameKeys.has(rawTeamKey) ||
+      staticNameKeys.has(canonicalKey) ||
+      staticAliasKeys.has(rawTeamKey)
+    ) {
+      continue;
+    }
+
+    const groupKey = `${leagueId}::${canonicalKey}`;
+    if (!teamMap.has(groupKey)) {
+      teamMap.set(groupKey, { name: canonicalName, league: leagueId, players: [] });
+    }
+    teamMap.get(groupKey)!.players.push(player);
+  }
+
+  // No se crean equipos falsos a partir de grupos incompletos de datos (11
+  // jugadores mínimo) ni se activa una competición con un solo club jugable.
+  const validTeams = [...teamMap.entries()].filter(([, data]) => data.players.length >= 11);
   const leagueCounts = new Map<string, number>();
-  for (const [_, data] of validTeams) {
-    leagueCounts.set(data.league, (leagueCounts.get(data.league) || 0) + 1);
+  for (const [, data] of validTeams) {
+    leagueCounts.set(data.league, (leagueCounts.get(data.league) ?? 0) + 1);
   }
-  const playableTeams = validTeams.filter(([_, data]) => (leagueCounts.get(data.league) || 0) >= 2);
+  const playableTeams = validTeams
+    .filter(([, data]) => (leagueCounts.get(data.league) ?? 0) >= 2)
+    .sort(([, a], [, b]) => a.league.localeCompare(b.league) || a.name.localeCompare(b.name, "es"));
 
-  const COLORS = [
+  const colors = [
     "#1a1a2e",
     "#16213e",
     "#0f3460",
@@ -1713,47 +1999,44 @@ function generateDynamicTeams(): Team[] {
     "#c0392b",
     "#16a085",
   ];
+  const usedIds = new Set(TEAMS.map((team) => normalizeTeamLookup(team.id)));
 
-  return playableTeams.map(([key, data], i) => {
-    const sorted = data.players.slice().sort((a, b) => (b.OVR || 70) - (a.OVR || 70));
-    const top3 = sorted.slice(0, 3).map((p: any) => p.Name || "?");
-    const avgOvr =
-      sorted.length > 0
-        ? Math.round(sorted.reduce((s: number, p: any) => s + (p.OVR || 70), 0) / sorted.length)
-        : 70;
-    const att =
-      Math.round(
-        sorted
-          .filter((p: any) => ["ST", "CF", "LW", "RW", "LF", "RF", "CAM"].includes(p.Position))
-          .reduce((s: number, p: any, _: number, arr: any[]) => s + (p.OVR || 70) / arr.length, 0),
-      ) || avgOvr;
-    const def =
-      Math.round(
-        sorted
-          .filter((p: any) => ["CB", "LB", "RB", "LWB", "RWB"].includes(p.Position))
-          .reduce((s: number, p: any, _: number, arr: any[]) => s + (p.OVR || 70) / arr.length, 0),
-      ) || avgOvr;
-    const mid =
-      Math.round(
-        sorted
-          .filter((p: any) => ["CM", "CDM", "CAM", "LM", "RM"].includes(p.Position))
-          .reduce((s: number, p: any, _: number, arr: any[]) => s + (p.OVR || 70) / arr.length, 0),
-      ) || avgOvr;
+  return playableTeams.map(([groupKey, data], index) => {
+    const sorted = data.players.slice().sort((a, b) => Number(b.OVR || 70) - Number(a.OVR || 70));
+    const top3 = sorted.slice(0, 3).map((player: any) => String(player.Name || "Jugador"));
+    const averageOvr = sorted.length
+      ? Math.round(sorted.reduce((sum: number, player: any) => sum + Number(player.OVR || 70), 0) / sorted.length)
+      : 70;
+    const averageForPositions = (positions: string[]) => {
+      const rolePlayers = sorted.filter((player: any) => positions.includes(String(player.Position ?? "").toUpperCase()));
+      return rolePlayers.length
+        ? Math.round(rolePlayers.reduce((sum: number, player: any) => sum + Number(player.OVR || 70), 0) / rolePlayers.length)
+        : averageOvr;
+    };
+    const teamKey = normalizeTeamLookup(data.name);
+    let id = teamKey || normalizeTeamLookup(groupKey);
+    if (usedIds.has(id)) id = `${id}-${data.league}`;
+    usedIds.add(id);
+
+    const words = data.name.trim().split(/\s+/).filter(Boolean);
+    const shortWords = words.filter((word) => !/^(fc|cf|ac|sc|rc|cd|ud|real|club|de|the)$/i.test(word));
+    const acronym = shortWords.slice(0, 3).map((word) => word[0]).join("").toUpperCase();
+    const short = acronym.length >= 2 ? acronym.slice(0, 3) : data.name.slice(0, 3).toUpperCase();
+
     return {
-      id: key,
+      id,
       name: data.name,
-      short: data.name.replace(/[^A-Z]/g, "").slice(0, 3) || data.name.slice(0, 3).toUpperCase(),
+      short,
       city: data.name,
       league: data.league,
-      att: Math.max(50, att || avgOvr),
-      mid: Math.max(50, mid || avgOvr),
-      def: Math.max(50, def || avgOvr),
+      att: Math.max(50, averageForPositions(["ST", "CF", "LW", "RW", "LF", "RF", "CAM"])),
+      mid: Math.max(50, averageForPositions(["CM", "CDM", "CAM", "LM", "RM"])),
+      def: Math.max(50, averageForPositions(["CB", "LB", "RB", "LWB", "RWB"])),
       stars: top3,
-      color: COLORS[i % COLORS.length],
-    };
+      color: colors[index % colors.length],
+    } satisfies Team;
   });
 }
-
 
 let _dynamicTeams: Team[] | null = null;
 function getDynamicTeams(): Team[] {
@@ -1770,6 +2053,7 @@ function getDynamicTeams(): Team[] {
 
 let _allTeamsMap: Map<string, Team> | null = null;
 export function getAllTeams(context?: TeamLeagueContext): Team[] {
+  synchronizeStaticTeamLeaguesFromDataset();
   const teams = [...TEAMS, ...getDynamicTeams()];
   const overrides = resolveTeamLeagueContext(context)?.teamLeagueOverrides;
   if (!overrides || Object.keys(overrides).length === 0) return teams;
@@ -1777,6 +2061,7 @@ export function getAllTeams(context?: TeamLeagueContext): Team[] {
 }
 
 function getTeamsMap(): Map<string, Team> {
+  synchronizeStaticTeamLeaguesFromDataset();
   if (!_allTeamsMap) {
     _allTeamsMap = new Map();
     for (const t of TEAMS) _allTeamsMap.set(t.id.toLowerCase(), t);
@@ -1843,7 +2128,102 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   olympiquelyon: "OL", // dataset: "Olympique Lyon"
   stadebrestois: "Stade Brestois 29", // dataset: "Stade Brestois" (sin "29")
   lehavreac: "Havre AC", // dataset: "Le Havre AC"
+  celtavigo: "Celta",
+  racingclubdesantander: "R. Racing Club",
+  albacetebalompie: "Albacete BP",
+  cadiz: "Cádiz CF",
+  almeria: "UD Almería",
+  realzaragoza: "Real Zaragoza",
+  westhamunited: "West Ham Utd",
+  westham: "West Ham Utd",
+  wolves: "Wolves",
+  wolverhamptonwanderers: "Wolves",
+  sheffieldunited: "Sheffield United",
+  leicestercity: "Leicester City",
+  necnimega: "NEC Nijmegen",
+  necnijmegen: "NEC Nijmegen",
+  vflwolfsburgo: "VfL Wolfsburg",
+  alemanaaachen: "Alemannia Aachen",
+  alemanachaachen: "Alemannia Aachen",
+  atlticodesl: "Atlético de San Luis",
+  clublen: "Club León",
+  fcjurez: "FC Juárez",
+  quertarofc: "Querétaro FC",
+  olymiakos: "Olympiacos",
+  lduquito: "LDU Quito",
+  idv: "Independiente del Valle",
+  unicatolica: "Universidad Católica",
+  indepsantafe: "Independiente Santa Fe",
+  indepmedellin: "Independiente Medellín",
+  deptolima: "Deportes Tolima",
+  deportestolima: "Deportes Tolima",
+  barcelonasc: "Barcelona SC",
+  depcuenca: "Deportivo Cuenca",
+  macar: "Macará",
+  alianzaatltico: "Alianza Atlético",
+  indepetr: "Independiente Petrolero",
+  indpetrolero: "Independiente Petrolero",
+  ucvfc: "Universidad Central de Venezuela",
+  deplaguaira: "Deportivo La Guaira",
+  puertocabello: "Academia Puerto Cabello",
+  citytorque: "Montevideo City Torque",
+  atlnacional: "Atlético Nacional",
+  junior: "Junior de Barranquilla",
+  recoleta: "Deportivo Recoleta",
+  juventud: "Juventud de Las Piedras",
 };
+
+let _staticTeamLeaguesSynced = false;
+
+/**
+ * Alinea los clubes heredados con la liga del catálogo de jugadores que acompaña
+ * al proyecto. Los IDs históricos no cambian, por lo que las partidas guardadas
+ * siguen siendo compatibles, pero los equipos dejan de quedarse en divisiones
+ * antiguas después de ascensos, descensos o cambios de temporada.
+ */
+function synchronizeStaticTeamLeaguesFromDataset(): void {
+  if (_staticTeamLeaguesSynced) return;
+  _staticTeamLeaguesSynced = true;
+
+  const byName = new Map<string, Team>();
+  for (const team of TEAMS) {
+    byName.set(normalizeTeamLookup(team.name), team);
+    byName.set(normalizeTeamLookup(team.id), team);
+  }
+
+  const staticTeamForSourceName = (sourceName: string): Team | undefined => {
+    const normalized = normalizeTeamLookup(sourceName);
+    const direct = byName.get(normalized);
+    if (direct) return direct;
+    const alias = TEAM_NAME_ALIASES[normalized];
+    return alias ? byName.get(normalizeTeamLookup(alias)) : undefined;
+  };
+
+  const countsByTeam = new Map<string, Map<string, number>>();
+  for (const player of Array.isArray(playersData) ? playersData : []) {
+    const teamName = String(player?.Team ?? "").trim();
+    const leagueName = String(player?.League ?? "").trim();
+    if (!teamName) continue;
+    const leagueId = datasetLeagueId(leagueName, teamName);
+    if (!leagueId || !LEAGUES[leagueId] || EXCLUDED_LEAGUES.has(leagueId)) continue;
+    const staticTeam = staticTeamForSourceName(teamName);
+    if (!staticTeam) continue;
+
+    if (!countsByTeam.has(staticTeam.id)) countsByTeam.set(staticTeam.id, new Map());
+    const counts = countsByTeam.get(staticTeam.id)!;
+    counts.set(leagueId, (counts.get(leagueId) ?? 0) + 1);
+  }
+
+  for (const team of TEAMS) {
+    const counts = countsByTeam.get(team.id);
+    if (!counts || counts.size === 0) continue;
+    const ranked = [...counts.entries()].sort(([leagueA, countA], [leagueB, countB]) =>
+      countB - countA || Number(leagueB === team.league) - Number(leagueA === team.league) || leagueA.localeCompare(leagueB),
+    );
+    const [mostLikelyLeague, playerCount] = ranked[0];
+    if (playerCount > 0 && LEAGUES[mostLikelyLeague]) team.league = mostLikelyLeague;
+  }
+}
 
 let _teamLookupMap: Map<string, Team> | null = null;
 function getTeamLookupMap(): Map<string, Team> {
@@ -1921,7 +2301,7 @@ export function findTeamStrict(name: string, leagueName?: string, context?: Team
   // promotion/relegation must not make an identically named foreign club win
   // the lookup merely because the active career moved the first club.
   if (leagueName) {
-    const sourceLeagueId = leagueIdFromName(leagueName);
+    const sourceLeagueId = datasetLeagueId(leagueName, name) ?? leagueIdFromName(leagueName);
     if (sourceLeagueId && baseTeam.league !== sourceLeagueId) {
       const sameNameInSourceLeague = getAllTeams({ teamLeagueOverrides: {} }).find(
         (candidate) => candidate.league === sourceLeagueId

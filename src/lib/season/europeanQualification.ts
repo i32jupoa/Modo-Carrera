@@ -81,6 +81,12 @@ const ASSOCIATION_DEFINITIONS: Array<{ id: string; country: string; topLeagueId:
   { id: "austrianbundesliga", country: "Austria", topLeagueId: "austrianbundesliga" },
   { id: "scottish", country: "Escocia", topLeagueId: "scottish" },
   { id: "superliga", country: "Rumanía", topLeagueId: "superliga" },
+  { id: "hellasliga", country: "Grecia", topLeagueId: "hellasliga" },
+  { id: "ceskaliga", country: "Chequia", topLeagueId: "ceskaliga" },
+  { id: "ukrayinaliha", country: "Ucrania", topLeagueId: "ukrayinaliha" },
+  { id: "ligahrvatska", country: "Croacia", topLeagueId: "ligahrvatska" },
+  { id: "ligacyprus", country: "Chipre", topLeagueId: "ligacyprus" },
+  { id: "sseairtricitypd", country: "Irlanda", topLeagueId: "sseairtricitypd" },
 ];
 
 function availableAssociations(): EuropeanAssociation[] {

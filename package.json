@@ -29,6 +29,7 @@
     "test:season-boundary-rollover": "node --experimental-strip-types scripts/season-boundary-rollover-test.mjs",
     "test:simulation-stats-repair": "node scripts/simulation-stats-repair-regression.mjs",
     "test:player-club-resolution": "node scripts/player-club-resolution-regression.mjs",
+    "test:team-catalog-expansion": "node scripts/team-catalog-expansion-regression.mjs",
     "test:ai-contract-renewal": "node --experimental-strip-types scripts/ai-contract-renewal-test.mjs",
     "test:player-progression-balance": "node --experimental-strip-types scripts/player-progression-balance-test.mjs",
     "test:league-realism": "node scripts/league-realism-test.mjs --seasons=20",

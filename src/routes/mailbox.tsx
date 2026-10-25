@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownRight, ArrowLeft, ArrowUpRight, Bell, Check, CheckCheck, GraduationCap, History, MessageCircle, Search, Send, Trophy, UserRoundX } from "lucide-react";
 import { loadSave, saveSaveWithRetry } from "@/lib/store";
-import { TEAMS } from "@/data/teams";
+import { getAllTeams } from "@/data/teams";
 import { usePlayersStore } from "@/store/playersStore";
 import { faceUrl } from "@/lib/playerFaces";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
@@ -103,7 +103,7 @@ function MailboxPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [selectedConversation?.messages.length, typing]);
 
-  const teamNames = useMemo(() => new Map(TEAMS.map((team) => [team.id, team.name])), []);
+  const teamNames = useMemo(() => new Map(getAllTeams().map((team) => [team.id, team.name])), []);
 
   if (!save) {
     return <div className="flex min-h-[70vh] items-center justify-center text-muted-foreground">No hay una partida cargada.</div>;

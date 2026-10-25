@@ -44,7 +44,6 @@ import { buildPositions } from "@/lib/positions";
 import type { Position } from "@/data/players";
 
 import {
-  TEAMS,
   getAllTeams,
   teamById,
   findTeamStrict,
@@ -550,7 +549,7 @@ function syncPlayerAgesForDate(currentDate: string): void {
 }
 
 const TEAM_NAME_TO_ID: Record<string, string> = Object.fromEntries(
-  TEAMS.map((t) => [t.name, t.id]),
+  getAllTeams().map((t) => [t.name, t.id]),
 );
 
 const PLAYERS_BY_TEAM: Record<string, FcPlayer[]> = {};

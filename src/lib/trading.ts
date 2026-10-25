@@ -1,4 +1,4 @@
-import { TEAMS, teamById } from "@/data/teams";
+import { getAllTeams, teamById } from "@/data/teams";
 import { Player } from "@/data/players";
 
 export type Offer = {
@@ -20,7 +20,7 @@ const STARTING_BUDGET_BY_OVR = (ovr: number): number => {
 
 export function initialBudgets(): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const t of TEAMS) {
+  for (const t of getAllTeams()) {
     const ovr = Math.round((t.att + t.mid + t.def) / 3);
     out[t.id] = STARTING_BUDGET_BY_OVR(ovr);
   }
@@ -37,7 +37,7 @@ export function generateIncomingOffers(args: {
 }): Offer[] {
   const { myTeamId, myPlayers, transferList, budgets, matchday } = args;
   const offers: Offer[] = [];
-  const otherTeams = TEAMS.filter((t) => t.id !== myTeamId);
+  const otherTeams = getAllTeams().filter((t) => t.id !== myTeamId);
 
   // Offers for transfer-listed players (high probability)
   for (const playerId of transferList) {
@@ -95,7 +95,7 @@ export function generateIncomingOffers(args: {
   return offers;
 }
 
-function pickBidder(p: Player, candidates: typeof TEAMS, budgets: Record<string, number>) {
+function pickBidder(p: Player, candidates: ReturnType<typeof getAllTeams>, budgets: Record<string, number>) {
   const ovr = p.rating;
   // bidder strength loosely matches player rating
   const eligible = candidates.filter((t) => {
