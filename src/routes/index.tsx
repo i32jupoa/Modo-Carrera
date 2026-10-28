@@ -41,21 +41,7 @@ function Index() {
 
   const savedGames = useMemo(() => loadAllSaves(), [hasSave]);
 
-  // Generar partículas solo en el cliente para evitar error de hidratación
-  const [particles, setParticles] = useState<any[]>([]);
   const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-    setParticles(
-      [...Array(20)].map((_, i) => ({
-        left: `${Math.random() * 100}%`,
-        animationDelay: `${Math.random() * 20}s`,
-        animationDuration: `${15 + Math.random() * 10}s`,
-        background: selectedTeamColor || undefined,
-      })),
-    );
-  }, [selectedTeamColor]);
 
   useEffect(() => {
     setMounted(true);
@@ -195,24 +181,6 @@ function Index() {
             : undefined,
         }}
       />
-
-      {/* Partículas */}
-      {mounted && (
-        <div className="fixed inset-0 pointer-events-none overflow-hidden">
-          {particles.map((particle, i) => (
-            <div
-              key={i}
-              className="ambient-particle"
-              style={{
-                left: particle.left,
-                animationDelay: particle.animationDelay,
-                animationDuration: particle.animationDuration,
-                background: particle.background,
-              }}
-            />
-          ))}
-        </div>
-      )}
 
       {/* Sonido ambiente */}
       <SoundAmbient />

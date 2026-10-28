@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownRight, ArrowLeft, ArrowUpRight, Bell, Check, CheckCheck, GraduationCap, History, MessageCircle, Search, Send, Trophy, UserRoundX } from "lucide-react";
 import { loadSave, saveSaveWithRetry } from "@/lib/store";
-import { getAllTeams } from "@/data/teams";
+import { TEAMS } from "@/data/teams";
 import { usePlayersStore } from "@/store/playersStore";
 import { faceUrl } from "@/lib/playerFaces";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
@@ -103,7 +103,7 @@ function MailboxPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [selectedConversation?.messages.length, typing]);
 
-  const teamNames = useMemo(() => new Map(getAllTeams().map((team) => [team.id, team.name])), []);
+  const teamNames = useMemo(() => new Map(TEAMS.map((team) => [team.id, team.name])), []);
 
   if (!save) {
     return <div className="flex min-h-[70vh] items-center justify-center text-muted-foreground">No hay una partida cargada.</div>;
@@ -265,7 +265,7 @@ function MailboxPage() {
                       <div key={message.id}>
                         {showDay && <div className="my-4 text-center"><span className="rounded-full border border-border/60 bg-background/80 px-3 py-1 text-[0.55rem] font-black uppercase tracking-wider text-muted-foreground">{formatDay(message.date, currentDate)}</span></div>}
                         <div className={`flex ${message.sender === "manager" ? "justify-end" : "justify-start"}`}>
-                          <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 shadow-sm ${message.sender === "manager" ? "rounded-br-md bg-primary text-primary-foreground" : "rounded-bl-md border border-border/60 bg-card"}`}>
+                          <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 shadow-sm ${message.sender === "manager" ? "rounded-br-md bg-msg-sent text-primary-foreground" : "rounded-bl-md border border-border/60 bg-card"}`}>
                             <p className="text-sm leading-relaxed">{message.text}</p>
                             <div className={`mt-1 flex items-center justify-end gap-1 text-[0.52rem] ${message.sender === "manager" ? "text-primary-foreground/70" : "text-muted-foreground"}`}><span>{formatTime(message.date)}</span>{message.sender === "manager" && (message.read ? <CheckCheck className="h-3 w-3" /> : <Check className="h-3 w-3" />)}</div>
                           </div>

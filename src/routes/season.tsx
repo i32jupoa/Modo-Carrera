@@ -686,7 +686,7 @@ function SeasonPage() {
               </div>
             ) : null}
 
-            {!rolloverReadiness.ok && save.currentDate >= getSeasonRolloverDates(save.season).endDate && (
+            {!rolloverReadiness.ok && (save.currentDate ?? "") >= getSeasonRolloverDates(save.season).endDate && (
               <section className="panel border border-amber-500/40 bg-amber-500/5 p-5" role="alert" aria-live="polite">
                 <p className="text-[0.62rem] font-black uppercase tracking-[0.16em] text-amber-500">Temporada bloqueada</p>
                 <h3 className="mt-1 text-lg font-black">No se puede iniciar la siguiente temporada todavía</h3>
@@ -981,7 +981,7 @@ function NextMatchCard({
   const isLineupComplete = activeStartersCount === 11;
 
   // Calculate match date based on competition type
-  const seasonStartYear = getSeasonStartYear(save.season);
+  const seasonStartYear = getSeasonStartYear(save!.season);
   const seasonAnchors = getSeasonCalendarAnchors(seasonStartYear);
   const seasonStart = new Date(`${seasonAnchors.leagueKickoffSaturday}T12:00:00Z`);
   const cupStart = new Date(`${seasonAnchors.nationalCupStart}T00:00:00Z`);
@@ -1181,7 +1181,7 @@ function TeamSide({
 
             const outcomeColor =
               outcome === "V"
-                ? "bg-primary text-primary-foreground"
+                ? "bg-emerald-500 text-white shadow-sm shadow-emerald-950/30"
                 : outcome === "D"
                   ? "bg-destructive text-destructive-foreground"
                   : "bg-muted text-foreground";
@@ -1224,7 +1224,7 @@ function ResultRow({
 
   const outcomeColor =
     outcome === "V"
-      ? "bg-primary text-primary-foreground"
+      ? "bg-emerald-500 text-white shadow-sm shadow-emerald-950/30"
       : outcome === "D"
         ? "bg-destructive text-destructive-foreground"
         : "bg-muted text-foreground";

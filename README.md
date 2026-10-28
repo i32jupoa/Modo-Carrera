@@ -1,12 +1,12 @@
-# Match Simulator Pro
+# Colorful Competition
 
-En base al zip que te he mandado, y tambien te voy a mandar el enlace del repositorio de github, que es este: https://github.com/i32jupoa/Modo-Carrera.git, quiero que veas como se simulan los partidos, quiero que me digas todas las ideas que se te ocurran y que puedas implementar en un solo mensaje para la simulacion de los partidos de mi equipo.
+quiero que cambies toda la interfaz sin cambiar ninguna funcionalidad, debe de quedar profesional pero tambien muy visual, que de gusto verla y jugar al juego. Sigue respetando los colors propios de competiciones. Debe de ser alegre y bonita, añadiendo detalles chulos.
 
 This project was built with [Lovable](https://lovable.dev).
 
 ## Build with Lovable
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/656f9f1a-559e-4cad-b7ae-b6593e472fa0).
+Continue developing this project in the [Lovable editor](https://lovable.dev/projects/ca03a21d-402e-4747-9fc8-ce4815fce5c6).
 
 - **Ship faster**: describe what you want to build and Lovable handles the code.
 - **Stay in sync**: every change made in Lovable is committed straight to this repository.

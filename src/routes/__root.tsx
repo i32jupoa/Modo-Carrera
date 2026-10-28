@@ -7,12 +7,14 @@ import {
   useRouterState,
   HeadContent,
   Scripts,
+  type ErrorComponentProps,
 } from "@tanstack/react-router";
 
 import appCss from "../styles.css?url";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { GameDayBar } from "@/components/GameDayBar";
+import { GameAmbient } from "@/components/GameAmbient";
 import { MatchDayModal } from "@/components/MatchDayModal";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { MarketClock } from "@/hooks/useMarketClock";
@@ -117,6 +119,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap",
       },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Manrope:wght@400;500;600;700;800&display=swap",
+      },
       { rel: "stylesheet", href: appCss },
     ],
   }),
@@ -158,6 +164,7 @@ function AppShell() {
   usePlayersReady();
   const currentPath = useRouterState({ select: (router) => router.location.pathname });
   const immersiveMatch = currentPath === "/match";
+  const isHomePage = currentPath === "/";
 
   // IndexedDB se inicializa en segundo plano. El juego NO debe bloquear el
   // render esperando a IndexedDB: loadSave() dispone de `localStorage` como
@@ -208,11 +215,12 @@ function AppShell() {
 
   return (
     <SidebarProvider>
-      <div className={`min-h-screen flex w-full ${immersiveMatch ? "match-immersive" : ""}`}>
+      <GameAmbient />
+      <div className={`game-shell min-h-screen flex w-full ${immersiveMatch ? "match-immersive" : ""}`}>
         {!immersiveMatch && <MarketNotifier />}
-        {!immersiveMatch && <AppSidebar />}
+        {!immersiveMatch && !isHomePage && <AppSidebar />}
         <div className="flex-1 flex flex-col min-w-0">
-          {!immersiveMatch && <header className="h-12 flex items-center gap-3 border-b border-border/60 bg-background/70 backdrop-blur sticky top-0 z-40 px-3">
+          {!immersiveMatch && !isHomePage && <header className="h-12 flex items-center gap-3 game-topbar sticky top-0 z-40 px-3">
             <SidebarTrigger />
             <GameDayBar />
           </header>}

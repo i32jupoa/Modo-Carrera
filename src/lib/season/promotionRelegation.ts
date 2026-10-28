@@ -37,7 +37,7 @@ export function calculateSavePromotionRelegation(save: PromotionRelegationSaveVi
       : 1,
     teams,
     standings: save.standings ?? {},
-    playoffWinners: save.cupFixtures ? getPlayedPromotionPlayoffWinners(save) : {},
+    playoffWinners: save.cupFixtures ? getPlayedPromotionPlayoffWinners(save as never) : {},
   });
 }
 
@@ -113,7 +113,7 @@ export function prepareNextSeasonDomesticState(
       seed,
       teamLeagueOverrides,
     });
-    standings[leagueId] = emptyStandings(leagueId, teamContext);
+    standings[leagueId] = emptyStandings(leagueId, teamContext as never);
     currentMatchday[leagueId] = 1;
   }
 

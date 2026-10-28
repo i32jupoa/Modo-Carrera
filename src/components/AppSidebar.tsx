@@ -148,13 +148,13 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className="border-r border-border/60">
       <SidebarHeader className="border-b border-border/60 px-4 py-4">
         <Link to="/" className="flex items-center gap-2 group">
-          <div className="w-8 h-8 rounded-md bg-primary grid place-items-center glow-neon shrink-0">
-            <span className="text-primary-foreground font-black text-sm">FC</span>
+          <div className="w-8 h-8 rounded-md brand-mark-gold grid place-items-center shrink-0">
+            <span className="font-black text-sm">DM</span>
           </div>
           {!collapsed && (
             <div className="min-w-0">
               <div className="font-black tracking-tight leading-none">
-                FC <span className="text-primary">SIM</span>
+                Dynasty <span className="text-gold">Manager</span>
               </div>
               {hasSave && teamName && (
                 <div className="text-[0.65rem] text-muted-foreground truncate mt-0.5">

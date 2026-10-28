@@ -12,11 +12,10 @@ import { usePlayersStore } from "@/store/playersStore";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
-import { TeamForm } from "@/components/TeamForm";
-import { getTeamFormsForCompetition } from "@/lib/teamForm";
 import { MatchStatsModal } from "@/components/MatchStatsModal";
 import { KnockoutTieList } from "@/components/competition/KnockoutTieList";
-import { sortUCLTable, UCLTableEntry, UCLBracketSlot } from "@/data/ucl";
+import { EuropeanStandingsTable } from "@/components/competition/EuropeanStandingsTable";
+import { UCLBracketSlot } from "@/data/ucl";
 import type { Fixture } from "@/lib/season";
 
 export const Route = createFileRoute("/conference-league")({ component: EuropeanCompetitionPage });
@@ -91,197 +90,6 @@ function Result({ f }: { f: Fixture }) {
     <span className="font-mono font-semibold whitespace-nowrap">
       {homeGoals} – {awayGoals}
     </span>
-  );
-}
-
-// ── Table view (league phase) ─────────────────────────────────────────────────
-
-function CUT({ label, color }: { label: string; color: string }) {
-  return (
-    <tr>
-      <td colSpan={9} className={`px-3 py-0.5 text-xs font-semibold text-center ${color}`}>
-        {label}
-      </td>
-    </tr>
-  );
-}
-
-function TeamLogoById({ id, size = 26 }: { id: string; size?: number }) {
-  try {
-    const t = teamById(id);
-    return <TeamLogo teamName={t.name} leagueName={getLeagueName(t.league)} size={size} />;
-  } catch {
-    return <TeamBadge teamId={id} size={size} />;
-  }
-}
-
-function TableView({
-  table,
-  userTeamId,
-  fixtures,
-  save,
-}: {
-  table: UCLTableEntry[];
-  userTeamId: string;
-  fixtures: Fixture[];
-  save: SaveGame;
-}) {
-  const sorted = sortUCLTable(table);
-  const formsByTeam = getTeamFormsForCompetition(save, 5, "uecl");
-
-  return (
-    <section className="overflow-hidden rounded-xl border border-border/80 bg-gradient-to-b from-card/90 to-background shadow-lg">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-muted/20">
-        <h2 className="text-sm font-black uppercase tracking-wider text-foreground">
-          Clasificación
-        </h2>
-        <span className="text-[0.65rem] text-muted-foreground uppercase tracking-widest">
-          Fase de Liga
-        </span>
-      </header>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-muted/30 text-muted-foreground uppercase tracking-wider">
-              <th className="w-10 py-2.5 px-1 font-bold text-center pl-4">#</th>
-              <th className="min-w-[10rem] flex-1 py-2.5 px-1 font-bold text-left">Equipo</th>
-              <th className="w-9 py-2.5 px-1 font-bold text-center">PJ</th>
-              <th className="w-9 py-2.5 px-1 font-bold text-center text-emerald-400">V</th>
-              <th className="w-9 py-2.5 px-1 font-bold text-center">E</th>
-              <th className="w-9 py-2.5 px-1 font-bold text-center text-destructive">D</th>
-              <th className="w-9 py-2.5 px-1 font-bold text-center">GF</th>
-              <th className="w-9 py-2.5 px-1 font-bold text-center">GC</th>
-              <th className="w-10 py-2.5 px-1 font-bold text-center">DG</th>
-              <th className="w-11 py-2.5 px-1 font-bold text-center text-primary">PTS</th>
-              <th className="w-24 py-2.5 px-1 font-bold text-center">Forma</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((e, i) => {
-              const pos = i + 1;
-              const isUser = e.teamId === userTeamId;
-              const r16 = pos <= 8;
-              const playoff = pos > 8 && pos <= 24;
-              const elim = pos > 24;
-              const form = formsByTeam.get(e.teamId) ?? [];
-
-              const rows: React.ReactNode[] = [];
-
-              if (pos === 9) {
-                rows.push(
-                  <tr key="cut-playoff">
-                    <td colSpan={11} className="py-0 px-0">
-                      <div className="flex items-center gap-2 px-3 py-0.5 bg-yellow-950/30">
-                        <div className="flex-1 h-px bg-yellow-600/40" />
-                        <span className="text-[0.6rem] text-yellow-500 font-semibold uppercase tracking-wider whitespace-nowrap">
-                          Play-offs
-                        </span>
-                        <div className="flex-1 h-px bg-yellow-600/40" />
-                      </div>
-                    </td>
-                  </tr>,
-                );
-              }
-              if (pos === 25) {
-                rows.push(
-                  <tr key="cut-elim">
-                    <td colSpan={11} className="py-0 px-0">
-                      <div className="flex items-center gap-2 px-3 py-0.5 bg-red-950/30">
-                        <div className="flex-1 h-px bg-red-600/40" />
-                        <span className="text-[0.6rem] text-red-400 font-semibold uppercase tracking-wider whitespace-nowrap">
-                          Eliminados
-                        </span>
-                        <div className="flex-1 h-px bg-red-600/40" />
-                      </div>
-                    </td>
-                  </tr>,
-                );
-              }
-
-              rows.push(
-                <tr
-                  key={e.teamId}
-                  className={[
-                    "border-t border-border/40 transition-colors",
-                    isUser
-                      ? "bg-primary/15 hover:bg-primary/20"
-                      : i % 2 === 0
-                        ? "bg-background/40 hover:bg-muted/20"
-                        : "bg-muted/5 hover:bg-muted/15",
-                  ].join(" ")}
-                >
-                  <td className="py-2.5 pl-4 pr-1 font-bold tabular-nums">
-                    <span
-                      className={[
-                        "inline-flex h-6 w-6 items-center justify-center rounded text-[0.65rem]",
-                        r16 ? "bg-emerald-500/20 text-emerald-400" : "",
-                        playoff ? "bg-yellow-500/20 text-yellow-400" : "",
-                        elim ? "bg-destructive/20 text-destructive" : "",
-                      ].join(" ")}
-                    >
-                      {pos}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <TeamLogoById id={e.teamId} size={26} />
-                      <span className={`font-semibold truncate ${isUser ? "text-primary" : ""}`}>
-                        {teamName(e.teamId)}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="py-2 text-center tabular-nums text-muted-foreground">
-                    {e.played}
-                  </td>
-                  <td className="py-2 text-center tabular-nums text-emerald-400 font-semibold">
-                    {e.won}
-                  </td>
-                  <td className="py-2 text-center tabular-nums text-muted-foreground">{e.drawn}</td>
-                  <td className="py-2 text-center tabular-nums text-destructive font-semibold">
-                    {e.lost}
-                  </td>
-                  <td className="py-2 text-center tabular-nums">{e.gf}</td>
-                  <td className="py-2 text-center tabular-nums">{e.ga}</td>
-                  <td
-                    className={`py-2 text-center tabular-nums font-semibold ${e.gd > 0 ? "text-emerald-400" : e.gd < 0 ? "text-destructive" : ""}`}
-                  >
-                    {e.gd > 0 ? `+${e.gd}` : e.gd}
-                  </td>
-                  <td className="py-2 pr-2 text-center tabular-nums font-black text-primary text-sm">
-                    {e.points}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <TeamForm results={form} />
-                  </td>
-                </tr>,
-              );
-
-              return rows;
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <footer className="flex flex-wrap gap-4 px-4 py-2.5 border-t border-border/40 text-[0.6rem] uppercase tracking-wider text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-emerald-500/80" />
-          Octavos directos
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-yellow-500/80" />
-          Play-offs
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-destructive/80" />
-          Eliminados
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-primary" />
-          Tu equipo
-        </span>
-      </footer>
-    </section>
   );
 }
 
@@ -1933,7 +1741,7 @@ function EuropeanCompetitionPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="bg-gradient-to-r from-green-950 to-green-950 border-b border-border px-4 py-5">
+      <div className="comp-hero px-4 md:px-6">
         <div className="flex items-center gap-3">
           <div className="text-3xl">
             <Trophy className="h-8 w-8 text-white/90" />
@@ -1973,7 +1781,7 @@ function EuropeanCompetitionPage() {
       {/* Content */}
       <div className="p-4">
         {tab === "tabla" && (
-          <TableView table={displayTable} userTeamId={save.myTeamId} fixtures={fixtures} save={save} />
+          <div className="mx-auto w-full max-w-5xl"><EuropeanStandingsTable table={displayTable} userTeamId={save.myTeamId} save={save} competition="uecl" /></div>
         )}
 
         {tab === "partidos" &&

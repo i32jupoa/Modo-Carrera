@@ -47,8 +47,8 @@
   --card-foreground: oklch(0.98 0 0);
   --popover: oklch(0.17 0.008 250);
   --popover-foreground: oklch(0.98 0 0);
-  --primary: oklch(0.86 0.22 152); /* neon green #00ff87 */
-  --primary-foreground: #ffffff;
+  --primary: oklch(0.84 0.13 85); /* dorado de la portada */
+  --primary-foreground: oklch(0.16 0.01 80);
   --secondary: oklch(0.22 0.01 250);
   --secondary-foreground: oklch(0.98 0 0);
   --muted: oklch(0.2 0.008 250);
@@ -60,7 +60,7 @@
   --destructive-foreground: oklch(0.98 0 0);
   --border: oklch(0.25 0.01 250);
   --input: oklch(0.22 0.01 250);
-  --ring: oklch(0.86 0.22 152);
+  --ring: oklch(0.84 0.13 85);
   --pitch: oklch(0.32 0.12 145);
   --neon: oklch(0.86 0.22 152);
   --cyan: oklch(0.85 0.16 220);
@@ -862,3 +862,606 @@ a:focus-visible,
 .hero-aaa .hero-stat-badge:hover {
   box-shadow: 0 16px 40px -16px color-mix(in oklab, var(--primary) 55%, transparent);
 }
+
+/* Portada editorial: menos efectos de plantilla y más identidad de producto. */
+.hero-aaa.hero-editorial {
+  min-height: 100svh;
+  background: #07100c;
+  color: #f7f7f2;
+  font-family: "Manrope", "Space Grotesk", system-ui, sans-serif;
+}
+
+.hero-editorial::before,
+.hero-editorial::after {
+  display: none;
+}
+
+.hero-editorial > img {
+  object-position: center center;
+}
+
+.hero-editorial .hero-image-shade {
+  background:
+    linear-gradient(90deg, rgba(3, 8, 6, 0.9) 0%, rgba(3, 8, 6, 0.79) 35%, rgba(3, 8, 6, 0.42) 65%, rgba(3, 8, 6, 0.2) 100%),
+    linear-gradient(0deg, rgba(3, 8, 6, 0.78) 0%, rgba(3, 8, 6, 0.05) 42%, rgba(3, 8, 6, 0.24) 100%);
+}
+
+.hero-editorial-shell {
+  box-sizing: border-box;
+}
+
+.hero-masthead {
+  min-height: 56px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  padding-bottom: 1.1rem;
+}
+
+.hero-brand-mark {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(227, 208, 149, 0.7);
+  border-radius: 5px;
+  color: #e3d095;
+  background: rgba(5, 12, 8, 0.38);
+}
+
+.hero-brand-name {
+  color: #d7c58d;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  font-weight: 850;
+  letter-spacing: 0.16em;
+}
+
+.hero-brand-caption {
+  margin-top: 0.3rem;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 0.55rem;
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: 0.18em;
+}
+
+.hero-masthead-note {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+
+.hero-masthead-rule {
+  display: block;
+  width: 28px;
+  height: 1px;
+  background: #d7c58d;
+}
+
+.hero-main {
+  align-items: center;
+}
+
+.hero-copy {
+  position: relative;
+}
+
+.hero-kicker {
+  color: #d7c58d;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.19em;
+  line-height: 1.5;
+}
+
+.hero-kicker-mark {
+  display: inline-block;
+  width: 26px;
+  height: 2px;
+  flex: 0 0 auto;
+  background: #d7c58d;
+}
+
+.hero-editorial-title {
+  display: flex;
+  flex-direction: column;
+  color: #d7c58d;
+  font-family: "Bricolage Grotesque", "Space Grotesk", system-ui, sans-serif;
+  font-size: clamp(4.1rem, 9.6vw, 8.2rem);
+  font-weight: 850;
+  letter-spacing: -0.085em;
+  line-height: 0.82;
+  text-shadow: none;
+}
+
+.hero-title-second-line {
+  margin-top: 0.16em;
+  color: #d7c58d;
+}
+
+
+.hero-lede {
+  color: #f7f7f2;
+  font-size: clamp(1.08rem, 2vw, 1.43rem);
+  font-weight: 650;
+  line-height: 1.45;
+  letter-spacing: -0.025em;
+}
+
+.hero-description {
+  color: rgba(248, 248, 242, 0.72);
+  font-size: 0.94rem;
+  font-weight: 450;
+  line-height: 1.75;
+}
+
+.hero-actions {
+  align-items: stretch;
+}
+
+.hero-action {
+  display: flex;
+  min-height: 108px;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1rem 1.05rem;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  text-decoration: none;
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.hero-action:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+.hero-action-primary {
+  color: #172012;
+  background: #d7c58d;
+  border-color: rgba(215, 197, 141, 0.92);
+}
+
+.hero-action-primary:hover:not(:disabled) {
+  background: #d7c58d;
+  border-color: #d7c58d;
+}
+
+.hero-action-secondary {
+  color: #f8f8f2;
+  background: rgba(4, 11, 7, 0.58);
+  border-color: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.hero-action-secondary:hover:not(:disabled) {
+  background: rgba(10, 21, 14, 0.78);
+  border-color: rgba(255, 255, 255, 0.46);
+}
+
+.hero-action-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 5px;
+}
+
+.hero-action-primary .hero-action-icon {
+  color: #23351b;
+  background: rgba(35, 53, 27, 0.08);
+  border: 1px solid rgba(35, 53, 27, 0.16);
+}
+
+.hero-action-secondary .hero-action-icon {
+  color: #e0d4ab;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.hero-action-overline {
+  margin-bottom: 0.28rem;
+  font-size: 0.53rem;
+  font-weight: 850;
+  letter-spacing: 0.15em;
+  line-height: 1.4;
+}
+
+.hero-action-primary .hero-action-overline {
+  color: rgba(23, 32, 18, 0.7);
+}
+
+.hero-action-secondary .hero-action-overline {
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.hero-action-title {
+  font-size: 1.08rem;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+}
+
+.hero-action-description {
+  margin-top: 0.22rem;
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.hero-action-primary .hero-action-description {
+  color: rgba(23, 32, 18, 0.74);
+}
+
+.hero-action-secondary .hero-action-description {
+  color: rgba(255, 255, 255, 0.64);
+}
+
+.hero-action-arrow {
+  color: currentColor;
+  opacity: 0.78;
+}
+
+.hero-capabilities {
+  color: rgba(248, 248, 242, 0.72);
+  font-size: 0.73rem;
+  font-weight: 600;
+}
+
+.hero-capability {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.48rem;
+  white-space: nowrap;
+}
+
+.hero-capability svg {
+  color: #d7c58d;
+  stroke-width: 1.7;
+}
+
+.hero-footer {
+  min-height: 40px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.63);
+  font-size: 0.56rem;
+  font-weight: 750;
+  letter-spacing: 0.15em;
+  line-height: 1.6;
+}
+
+.hero-footer > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.hero-footer i {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #d7c58d;
+}
+
+.hero-footer-signoff {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+@media (min-width: 1024px) {
+  .hero-copy {
+    padding-left: clamp(0rem, 2.2vw, 2rem);
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-editorial .hero-image-shade {
+    background:
+      linear-gradient(90deg, rgba(3, 8, 6, 0.83) 0%, rgba(3, 8, 6, 0.66) 100%),
+      linear-gradient(0deg, rgba(3, 8, 6, 0.86) 0%, rgba(3, 8, 6, 0.12) 100%);
+  }
+
+  .hero-editorial-title {
+    font-size: clamp(3.2rem, 15vw, 5.5rem);
+  }
+
+  .hero-kicker {
+    font-size: 0.58rem;
+    letter-spacing: 0.13em;
+  }
+
+  .hero-lede {
+    font-size: 1.08rem;
+  }
+
+  .hero-description {
+    font-size: 0.86rem;
+  }
+
+  .hero-action {
+    min-height: 94px;
+  }
+
+  .hero-capabilities {
+    gap: 0.75rem 1.15rem;
+    font-size: 0.69rem;
+  }
+
+  .hero-footer-signoff {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-action,
+  .hero-action-arrow {
+    transition: none;
+  }
+}
+
+/* ===================================================================
+ * Interfaz interna: ambiente por competición + colores del club
+ * =================================================================== */
+:root {
+  --club: oklch(0.68 0.19 150);
+  --club-2: oklch(0.74 0.16 155);
+  --comp-accent: var(--club);
+  --surface-glass: color-mix(in oklab, var(--card) 72%, transparent);
+  --surface-glass-strong: color-mix(in oklab, var(--card) 88%, transparent);
+  --sidebar: color-mix(in oklab, oklch(0.11 0.006 250) 90%, transparent);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: oklch(0.13 0.005 250);
+  --sidebar-accent: color-mix(in oklab, var(--club) 14%, transparent);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: color-mix(in oklab, var(--club) 22%, transparent);
+  --sidebar-ring: var(--primary);
+  --msg-sent: oklch(0.78 0.17 150);
+}
+html[data-comp="ucl"] { --comp-accent: oklch(0.7 0.17 255); }
+html[data-comp="uel"] { --comp-accent: oklch(0.74 0.18 55); }
+html[data-comp="uecl"] { --comp-accent: oklch(0.85 0.21 135); }
+html[data-comp="cup"] { --comp-accent: var(--club); }
+html[data-comp="laliga"] { --comp-accent: oklch(0.7 0.2 30); }
+html[data-comp="premier"] { --comp-accent: oklch(0.68 0.24 330); }
+html[data-comp="seriea"] { --comp-accent: oklch(0.65 0.2 262); }
+html[data-comp="bundesliga"] { --comp-accent: oklch(0.63 0.23 27); }
+html[data-comp="ligue1"] { --comp-accent: oklch(0.78 0.13 210); }
+html[data-comp="nordic"] { --comp-accent: oklch(0.8 0.1 200); }
+html[data-comp="league"] { --comp-accent: var(--club); }
+
+@theme inline {
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-club: var(--club);
+  --color-club-2: var(--club-2);
+  --color-gold: var(--gold);
+  --color-comp: var(--comp-accent);
+  --color-msg-sent: var(--msg-sent);
+}
+
+.game-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background: var(--background);
+}
+.game-ambient-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 72vh;
+  object-fit: cover;
+  object-position: center 40%;
+  opacity: 0.5;
+  filter: saturate(1.05);
+  animation: ambient-in 900ms ease-out both;
+  mask-image: linear-gradient(180deg, #000 0%, #000 35%, transparent 100%);
+}
+.game-ambient[data-ambient="ucl"] .game-ambient-img { opacity: 0.62; object-position: 70% 50%; }
+.game-ambient-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--background) 70%, transparent) 0%, color-mix(in oklab, var(--background) 25%, transparent) 70%, transparent 100%),
+    linear-gradient(180deg, transparent 0%, color-mix(in oklab, var(--background) 60%, transparent) 45%, var(--background) 78%);
+}
+.game-ambient-club {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60rem 30rem at 100% 0%, color-mix(in oklab, var(--club) 16%, transparent), transparent 70%),
+    radial-gradient(40rem 26rem at 0% 100%, color-mix(in oklab, var(--comp-accent) 10%, transparent), transparent 70%);
+}
+@keyframes ambient-in { from { opacity: 0; transform: scale(1.03); } }
+
+.game-shell { position: relative; z-index: 1; }
+.game-shell main { position: relative; }
+
+.game-topbar {
+  height: 3.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: color-mix(in oklab, var(--background) 62%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom: 1px solid color-mix(in oklab, var(--club) 24%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--club) 25%, transparent);
+}
+
+/* Sidebar */
+[data-sidebar="sidebar"] {
+  backdrop-filter: blur(18px);
+}
+[data-sidebar="menu-button"][data-active="true"] {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--club) 22%, transparent), transparent) !important;
+  box-shadow: inset 2px 0 0 var(--club);
+  color: var(--foreground) !important;
+  font-weight: 700;
+}
+[data-sidebar="group-label"] {
+  color: color-mix(in oklab, var(--club) 62%, var(--muted-foreground));
+  letter-spacing: 0.14em;
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.brand-mark-gold {
+  border: 1px solid color-mix(in oklab, var(--gold) 70%, transparent);
+  color: var(--gold);
+  background: color-mix(in oklab, var(--background) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--club) 18%, transparent);
+}
+
+/* Superficies: cristal sobre el ambiente */
+.game-shell main .bg-card,
+.game-shell main [data-slot="card"] {
+  background-color: var(--surface-glass);
+  backdrop-filter: blur(10px);
+}
+.game-shell main .min-h-screen.bg-background,
+.game-shell main > div.bg-background { background-color: transparent; }
+
+/* Cabecera de sección reutilizable */
+.comp-heading-bar {
+  height: 3px;
+  width: 3.5rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--comp-accent), var(--club));
+}
+
+/* Retransmisión TV del partido */
+.match-immersive .tv-scorebug {
+  border: 1px solid color-mix(in oklab, var(--comp-accent) 45%, transparent);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--background) 70%, transparent), color-mix(in oklab, var(--background) 90%, transparent));
+  box-shadow: 0 20px 50px -20px color-mix(in oklab, var(--comp-accent) 60%, transparent), inset 0 1px 0 color-mix(in oklab, var(--foreground) 10%, transparent);
+  backdrop-filter: blur(14px);
+}
+.wizard-ambient { background: transparent; }
+.wizard-ambient .game-ambient-img { opacity: 0.42; }
+.game-ambient[data-ambient="ucl"] .game-ambient-img { left: 0; right: auto; width: 100%; object-position: center 38%; }
+.tv-scorebug-comp {
+  background: color-mix(in oklab, var(--comp-accent) 85%, var(--background));
+  color: var(--primary-foreground);
+}
+.tv-scorebug-score {
+  background: var(--foreground);
+  color: var(--background);
+}
+.tv-scorebug-clock {
+  background: color-mix(in oklab, var(--background) 80%, transparent);
+  color: var(--comp-accent);
+  border-left: 1px solid color-mix(in oklab, var(--comp-accent) 30%, transparent);
+}
+.tv-live-dot {
+  width: 0.5rem; height: 0.5rem; border-radius: 999px;
+  background: var(--destructive);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--destructive) 60%, transparent);
+  animation: tv-live 1.4s ease-out infinite;
+}
+@keyframes tv-live { to { box-shadow: 0 0 0 8px transparent; } }
+.match-immersive .panel-glow {
+  background: color-mix(in oklab, var(--card) 70%, transparent);
+  backdrop-filter: blur(12px);
+  border-color: color-mix(in oklab, var(--comp-accent) 30%, transparent);
+}
+.comp-hero {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  min-height: 11rem;
+  padding-top: 2.5rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--comp-accent) 35%, transparent);
+  background: linear-gradient(180deg, transparent 0%, color-mix(in oklab, var(--background) 55%, transparent) 100%);
+}
+.comp-hero::after {
+  content: "";
+  position: absolute;
+  left: 1rem; bottom: -2px;
+  width: 5rem; height: 3px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--comp-accent), var(--club));
+}
+.comp-hero h1 { font-size: clamp(1.6rem, 3vw, 2.4rem); font-weight: 900; letter-spacing: -0.02em; }
+
+/* Identidad de la interfaz interna: verde de juego + acentos del club.
+   La portada conserva su paleta dorada porque no activa data-game-active. */
+html[data-game-active="true"] {
+  --primary: oklch(0.72 0.19 150);
+  --primary-foreground: oklch(0.14 0.025 150);
+  --ring: oklch(0.72 0.19 150);
+  --sidebar-primary: oklch(0.72 0.19 150);
+  --sidebar-ring: oklch(0.72 0.19 150);
+  --market-accent: oklch(0.78 0.18 150);
+  --market-soft: color-mix(in oklab, var(--market-accent) 13%, transparent);
+}
+
+html[data-game-active="true"] .game-topbar {
+  border-bottom-color: color-mix(in oklab, var(--club) 26%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--club) 25%, transparent);
+}
+html[data-game-active="true"] [data-sidebar="group-label"] {
+  color: color-mix(in oklab, var(--club) 70%, var(--muted-foreground));
+}
+html[data-game-active="true"] .brand-mark-gold {
+  border-color: color-mix(in oklab, var(--club) 78%, transparent);
+  color: var(--club);
+  background: color-mix(in oklab, var(--club) 9%, var(--background));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--club) 16%, transparent), 0 0 22px color-mix(in oklab, var(--club) 12%, transparent);
+}
+html[data-game-active="true"] .text-gold {
+  color: var(--club) !important;
+}
+html[data-game-active="true"] .panel,
+html[data-game-active="true"] .panel-glow {
+  border-color: color-mix(in oklab, var(--club) 18%, var(--border));
+}
+html[data-game-active="true"] .panel-glow {
+  box-shadow: 0 14px 44px -28px color-mix(in oklab, var(--club) 50%, transparent), inset 0 1px 0 color-mix(in oklab, white 4%, transparent);
+}
+html[data-game-active="true"] .game-ambient-club {
+  background:
+    radial-gradient(60rem 30rem at 100% 0%, color-mix(in oklab, var(--club) 22%, transparent), transparent 70%),
+    radial-gradient(42rem 28rem at 0% 100%, color-mix(in oklab, var(--club-2) 12%, transparent), transparent 72%);
+}
+
+/* En el mercado, los antiguos avisos/detalles dorados pasan a verde.
+   La tarjeta de Salidas conserva su acento naranja original y los colores semánticos siguen intactos. */
+html[data-game-route="transfers"] [class*="text-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="text-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="text-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
+  color: var(--market-accent) !important;
+}
+html[data-game-route="transfers"] [class*="bg-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="bg-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="bg-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
+  background-color: var(--market-soft) !important;
+}
+html[data-game-route="transfers"] [class*="border-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="border-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="border-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
+  border-color: color-mix(in oklab, var(--market-accent) 40%, transparent) !important;
+}
+html[data-game-route="transfers"] [class*="shadow-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="shadow-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="shadow-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
+  --tw-shadow-color: color-mix(in oklab, var(--market-accent) 28%, transparent) !important;
+}
+html[data-game-route="transfers"] [class*="rgba(245,158,11"]:not(.market-exits-banner):not(.market-exits-banner *) {
+  box-shadow: 0 0 28px color-mix(in oklab, var(--market-accent) 18%, transparent) !important;
+}
+html[data-game-route="transfers"] [class*="from-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="from-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="from-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
+  --tw-gradient-from: var(--market-accent) var(--tw-gradient-from-position) !important;
+}
+html[data-game-route="transfers"] [class*="to-orange"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="to-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
+html[data-game-route="transfers"] [class*="to-yellow"]:not(.market-exits-banner):not(.market-exits-banner *) {
+  --tw-gradient-to: color-mix(in oklab, var(--market-accent) 78%, black) var(--tw-gradient-to-position) !important;
+}
+
+

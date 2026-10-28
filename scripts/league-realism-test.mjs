@@ -124,7 +124,7 @@ const aliases = new Map();
 for (const match of (aliasMatch?.[1] ?? '').matchAll(/^\s*([A-Za-z0-9_]+):\s*"([^"]+)"\s*,?/gm)) {
   aliases.set(match[1], match[2]);
 }
-const players = JSON.parse(read('src/data/players.json'));
+const players = [0,1,2,3,4].flatMap(i=>JSON.parse(read(`src/data/players.part${i}.json`)));
 for (const raw of players) {
   const sourceLeagueId = SOURCE_LEAGUE_IDS.get(String(raw.League ?? ''));
   if (!sourceLeagueId || !raw.Team) continue;

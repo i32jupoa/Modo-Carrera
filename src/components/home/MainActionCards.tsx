@@ -1,5 +1,4 @@
-import React from "react";
-import { Save, Rocket } from "lucide-react";
+import { ArrowRight, FolderOpen, Plus } from "lucide-react";
 
 export default function MainActionCards({
   savedGamesCount,
@@ -13,47 +12,43 @@ export default function MainActionCards({
   onNewGame: () => void;
 }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl mx-auto mt-10 animate-fade-in">
+    <div className="hero-actions mt-8 grid w-full max-w-[760px] grid-cols-1 gap-3 sm:grid-cols-[1.15fr_1fr]">
       <button
-        onClick={onLoadGame}
+        type="button"
+        onClick={onNewGame}
         disabled={loading}
-        className="continue-card-aaa group text-left relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none"
+        className="hero-action hero-action-primary group text-left disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-700 bg-gradient-to-br from-primary/10 via-accent/5 to-transparent" />
-        <div className="relative z-10 flex items-start justify-between gap-4">
-          <div>
-            <div className="text-xs uppercase tracking-[0.25em] text-white/50 mb-3">Continuar</div>
-            <div className="text-3xl font-black mb-2">Cargar partida</div>
-            <div className="text-sm text-white/60">
-              {savedGamesCount === 0
-                ? "No tienes partidas guardadas"
-                : `${savedGamesCount} partida${savedGamesCount === 1 ? "" : "s"} guardada${savedGamesCount === 1 ? "" : "s"}`}
-            </div>
-          </div>
-          <div className="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/30 grid place-items-center group-hover:scale-110 transition-transform duration-300">
-            <Save className="h-7 w-7 text-primary" />
-          </div>
-        </div>
+        <span className="hero-action-icon grid shrink-0 place-items-center" aria-hidden>
+          <Plus className="h-5 w-5" strokeWidth={2.2} />
+        </span>
+        <span className="hero-action-copy flex min-w-0 flex-1 flex-col">
+          <span className="hero-action-overline">EMPEZAR DE CERO</span>
+          <span className="hero-action-title">Nueva carrera</span>
+          <span className="hero-action-description">Elige tu club y toma el mando</span>
+        </span>
+        <ArrowRight className="hero-action-arrow h-5 w-5 shrink-0 transition-transform duration-200 group-hover:translate-x-1" aria-hidden />
       </button>
 
       <button
-        onClick={onNewGame}
+        type="button"
+        onClick={onLoadGame}
         disabled={loading}
-        className="continue-card-aaa group text-left relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none"
+        className="hero-action hero-action-secondary group text-left disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-700 bg-gradient-to-bl from-accent/10 via-primary/5 to-transparent" />
-        <div className="relative z-10 flex items-start justify-between gap-4">
-          <div>
-            <div className="text-xs uppercase tracking-[0.25em] text-white/50 mb-3">Comenzar</div>
-            <div className="text-3xl font-black mb-2">Nueva Partida</div>
-            <div className="text-sm text-white/60">
-              Elige un club y empieza tu camino hacia la gloria
-            </div>
-          </div>
-          <div className="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-accent/20 to-accent/5 border border-accent/30 grid place-items-center group-hover:scale-110 transition-transform duration-300">
-            <Rocket className="h-7 w-7 text-accent" />
-          </div>
-        </div>
+        <span className="hero-action-icon grid shrink-0 place-items-center" aria-hidden>
+          <FolderOpen className="h-5 w-5" strokeWidth={1.8} />
+        </span>
+        <span className="hero-action-copy flex min-w-0 flex-1 flex-col">
+          <span className="hero-action-overline">VOLVER AL BANQUILLO</span>
+          <span className="hero-action-title">Cargar partida</span>
+          <span className="hero-action-description">
+            {savedGamesCount === 0
+              ? "Todavía no hay carreras guardadas"
+              : `${savedGamesCount} carrera${savedGamesCount === 1 ? "" : "s"} guardada${savedGamesCount === 1 ? "" : "s"}`}
+          </span>
+        </span>
+        <ArrowRight className="hero-action-arrow h-5 w-5 shrink-0 transition-transform duration-200 group-hover:translate-x-1" aria-hidden />
       </button>
     </div>
   );

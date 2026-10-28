@@ -4,6 +4,7 @@ import { LeagueLogo } from "@/components/LeagueLogo";
 import WorldMap from "./WorldMap";
 import ClubCardPremium from "./ClubCardPremium";
 import RandomPickModal from "./RandomPickModal";
+import { COMPETITION_AMBIENT, themeForLeagueCountry } from "@/lib/competitionAmbient";
 import { ArrowLeft, Dice5, Globe2, Trophy, Sparkles, ChevronRight } from "lucide-react";
 
 type Step = "intro" | "country" | "league" | "team";
@@ -59,6 +60,12 @@ export default function MainMenuWizard({
 
   return (
     <div className="relative">
+      {country && (step === "league" || step === "team") && (
+        <div aria-hidden className="game-ambient wizard-ambient" key={country}>
+          <img src={COMPETITION_AMBIENT[themeForLeagueCountry(country)].image} alt="" className="game-ambient-img" />
+          <div className="game-ambient-shade" />
+        </div>
+      )}
       {/* Stepper */}
       <div className="sticky top-0 z-30 backdrop-blur-xl bg-black/40 border-b border-white/10">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
@@ -82,7 +89,7 @@ export default function MainMenuWizard({
                   }`}
                 >
                   <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${i === stepIndex ? "bg-primary text-white" : i < stepIndex ? "bg-white/20 text-white" : "bg-white/10 text-white/50"}`}
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${i === stepIndex ? "bg-primary text-primary-foreground" : i < stepIndex ? "bg-white/20 text-white" : "bg-white/10 text-white/50"}`}
                   >
                     {i < stepIndex ? "✓" : i + 1}
                   </span>
@@ -107,7 +114,7 @@ export default function MainMenuWizard({
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8 min-h-[60vh]">
+      <div className="relative z-10 max-w-7xl mx-auto px-6 py-8 min-h-[60vh]">
         {step === "intro" && (
           <div key="intro" className="animate-fade-in">
             <IntroStep
@@ -252,7 +259,7 @@ function IntroStep({
       <div className="flex items-center justify-center gap-3 flex-wrap">
         <button
           onClick={onStart}
-          className="flex items-center gap-2 px-7 py-3.5 rounded-xl bg-primary text-white font-black hover:brightness-125 transition shadow-lg shadow-primary/40"
+          className="flex items-center gap-2 px-7 py-3.5 rounded-xl bg-primary text-primary-foreground font-black hover:brightness-125 transition shadow-lg shadow-primary/40"
         >
           <Globe2 className="h-5 w-5" /> Empezar guiado
         </button>

@@ -1348,7 +1348,7 @@ function TransfersPage() {
 
       {tab === "exits" && (
         <div className="space-y-5">
-          <div className="rounded-2xl border border-orange-500/20 bg-gradient-to-r from-orange-500/10 via-card to-card p-5 shadow-sm">
+          <div className="market-exits-banner rounded-2xl border border-orange-500/20 bg-gradient-to-r from-orange-500/10 via-card to-card p-5 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="grid h-11 w-11 place-items-center rounded-xl bg-orange-500/15 text-orange-400">
                 <ArrowUpFromLine className="h-5 w-5" />

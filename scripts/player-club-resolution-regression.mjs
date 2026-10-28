@@ -3,7 +3,7 @@ import fs from "node:fs";
 
 const playerStore = fs.readFileSync("src/store/playersStore.ts", "utf8");
 const teamsSource = fs.readFileSync("src/data/teams.ts", "utf8");
-const players = JSON.parse(fs.readFileSync("src/data/players.json", "utf8"));
+const players = [0,1,2,3,4].flatMap(i=>JSON.parse(fs.readFileSync(`src/data/players.part${i}.json`,"utf8")));
 
 // La conversión de FcPlayer a Player debe usar el mismo resolutor estricto que
 // agrupa las plantillas; la tabla de nombre literal no contiene los alias.

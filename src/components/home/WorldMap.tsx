@@ -86,7 +86,7 @@ export default function WorldMap({
             onClick={() => setRegion(r.id)}
             className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider transition ${
               region === r.id
-                ? "bg-primary text-white shadow"
+                ? "bg-primary text-primary-foreground shadow"
                 : "text-white/65 hover:text-white hover:bg-white/10"
             }`}
           >

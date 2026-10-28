@@ -54,7 +54,7 @@ function fallbackStats(): PlayerStats {
     yellowCards: 0,
     redCards: 0,
     accumulatedYellowCards: 0,
-  };
+  } as unknown as PlayerStats;
 }
 
 function averageRating(stats: PlayerStats | undefined): number | null {

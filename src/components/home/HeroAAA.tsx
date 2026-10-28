@@ -1,5 +1,4 @@
-import React from "react";
-import { Globe, Users, TrendingUp, Wallet, Cpu } from "lucide-react";
+import { BriefcaseBusiness, ChartNoAxesCombined, Trophy } from "lucide-react";
 import MainActionCards from "./MainActionCards";
 import heroStadium from "@/assets/hero-stadium.jpg";
 
@@ -15,127 +14,74 @@ export default function HeroAAA({
   onNewGame: () => void;
 }) {
   return (
-    <section className="hero-aaa relative flex items-center justify-center overflow-hidden">
-      <img src={heroStadium} alt="" aria-hidden width={1920} height={1088} className="absolute inset-0 h-full w-full object-cover opacity-60" />
-      <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-background/30 via-background/55 to-background" />
-      <div className="hero-ambient-light bg-primary" style={{ top: "10%", left: "10%" }} />
-      <div className="hero-ambient-light bg-accent" style={{ bottom: "20%", right: "15%" }} />
+    <section className="hero-aaa hero-editorial relative flex min-h-[100svh] items-stretch overflow-hidden">
+      {/* Se conserva la imagen original de la portada. */}
+      <img
+        src={heroStadium}
+        alt=""
+        aria-hidden
+        width={1920}
+        height={1088}
+        className="absolute inset-0 h-full w-full object-cover opacity-60"
+      />
+      <div aria-hidden className="hero-image-shade absolute inset-0" />
 
-      <div className="relative z-10 text-center px-6 max-w-7xl mx-auto">
-        <div className="animate-fade-in">
-          <div className="relative mb-10">
-            <div className="absolute inset-0 blur-3xl opacity-30 bg-primary/20 rounded-full scale-150" />
+      <div className="hero-editorial-shell relative z-10 mx-auto flex min-h-[100svh] w-full max-w-[1440px] flex-col px-5 pb-6 pt-6 sm:px-8 sm:pb-8 sm:pt-8 lg:px-12 lg:pb-8 lg:pt-9">
+        <header className="hero-masthead flex items-center justify-between gap-5">
+          <div className="hero-brand-lockup flex items-center gap-3">
+            <span className="hero-brand-mark grid shrink-0 place-items-center" aria-hidden>
+              <Trophy className="h-5 w-5" strokeWidth={1.7} />
+            </span>
+            <span className="flex flex-col">
+              <span className="hero-brand-name">DYNASTY MANAGER</span>
+              <span className="hero-brand-caption">FOOTBALL MANAGEMENT</span>
+            </span>
+          </div>
+          <div className="hero-masthead-note hidden items-center gap-3 sm:flex">
+            <span className="hero-masthead-rule" />
+            <span>EL JUEGO SE DECIDE FUERA DEL CAMPO</span>
+          </div>
+        </header>
 
-            <div className="relative">
-              <div className="inline-flex items-center gap-3 px-5 py-2 rounded-full border border-border bg-card/50 backdrop-blur-xl mb-8">
-                <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+        <main className="hero-main flex flex-1 items-center py-12 sm:py-14 lg:py-16">
+          <div className="hero-copy w-full max-w-4xl">
+            <div className="hero-kicker flex items-center gap-3">
+              <span className="hero-kicker-mark" />
+              <span>ELIGE UN CLUB. CONSTRUYE ALGO GRANDE.</span>
+            </div>
 
-                <span className="text-xs uppercase tracking-[0.25em] text-foreground/80 font-semibold">
-                  Football Universe Simulation
-                </span>
-              </div>
+            <h1 className="hero-editorial-title mt-5" aria-label="Dynasty Manager">
+              <span>DYNASTY</span>
+              <span className="hero-title-second-line">MANAGER</span>
+            </h1>
 
-              <h1 className="hero-title-aaa mb-6">
-                DYNASTY
-                <br />
-                MANAGER
-              </h1>
+            <p className="hero-lede mt-6 max-w-2xl">
+              No se trata solo de ganar el domingo. Se trata de construir un equipo que deje huella.
+            </p>
+            <p className="hero-description mt-3 max-w-xl">
+              Negocia fichajes, descubre talento y toma las decisiones que marcarán el futuro de tu club.
+              Cada temporada empieza una nueva historia.
+            </p>
 
-              <div className="flex flex-wrap justify-center gap-2 mb-6">
-                {[["Liga","--comp-league"],["Copa","--comp-cup"],["Champions","--comp-ucl"],["Europa League","--comp-uel"],["Conference","--comp-uecl"]].map(([n,c]) => (
-                  <span key={n} className="nav-tile !w-auto !h-auto px-3 py-1 text-xs font-bold rounded-full" style={{ ["--tile" as string]: `var(${c})` } as React.CSSProperties}>{n}</span>
-                ))}
-              </div>
-              <p className="hero-subtitle-aaa max-w-3xl mx-auto">
-                Construye una dinastía. Toma cada decisión. Domina el fútbol mundial.
-              </p>
+            <MainActionCards
+              savedGamesCount={savedGamesCount}
+              loading={loading}
+              onLoadGame={onLoadGame}
+              onNewGame={onNewGame}
+            />
 
-              <p className="mt-4 text-sm text-muted-foreground max-w-2xl mx-auto">
-                Modo Carrera: Gestiona tácticas, fichajes, desarrollo juvenil y finanzas para
-                convertirte en la referencia global del fútbol. Cada temporada, cada decisión, cada
-                fichaje cuenta.
-              </p>
+            <div className="hero-capabilities mt-9 flex flex-wrap items-center gap-x-6 gap-y-3 sm:gap-x-8">
+              <span className="hero-capability"><BriefcaseBusiness aria-hidden className="h-4 w-4" /> Gestión del club</span>
+              <span className="hero-capability"><ChartNoAxesCombined aria-hidden className="h-4 w-4" /> Mercado y cantera</span>
+              <span className="hero-capability"><Trophy aria-hidden className="h-4 w-4" /> Lucha por los títulos</span>
             </div>
           </div>
+        </main>
 
-          <div className="flex items-center justify-center gap-6 mb-12">
-            <div className="h-px w-32 bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
-
-            <div className="w-14 h-14 rounded-full bg-gradient-trophy grid place-items-center text-2xl shadow-lg animate-float" aria-hidden>🏆</div>
-
-            <div className="h-px w-32 bg-gradient-to-r from-transparent via-accent/50 to-transparent" />
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto mt-14">
-            {[
-              { title: "Mercado dinámico", desc: "Negociaciones vivas", Icon: Wallet },
-              { title: "IA avanzada", desc: "Clubes con identidad", Icon: Cpu },
-              { title: "Historias emergentes", desc: "Historias únicas", Icon: Globe },
-              { title: "Simulación profunda", desc: "Cada decisión importa", Icon: TrendingUp },
-            ].map((item, idx) => (
-              <div
-                key={item.title}
-                className="feature-card-aaa animate-slide-in"
-                style={{ animationDelay: `${idx * 0.08}s` }}
-              >
-                <div className="text-3xl mb-4">
-                  <item.Icon className="h-7 w-7" />
-                </div>
-                <div className="text-lg font-black mb-1">{item.title}</div>
-                <div className="text-sm text-muted-foreground">{item.desc}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex items-center justify-center gap-4 flex-wrap mt-12 mb-12">
-            <div className="hero-stat-badge">
-              <div className="flex items-center gap-2 mb-1">
-                <Globe className="h-4 w-4 text-primary" />
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Ligas
-                </span>
-              </div>
-              <div className="text-2xl font-black text-primary">72</div>
-            </div>
-
-            <div className="hero-stat-badge">
-              <div className="flex items-center gap-2 mb-1">
-                <Users className="h-4 w-4 text-accent" />
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Jugadores
-                </span>
-              </div>
-              <div className="text-2xl font-black text-accent">1500+</div>
-            </div>
-
-            <div className="hero-stat-badge">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingUp className="h-4 w-4 text-primary" />
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Simulación
-                </span>
-              </div>
-              <div className="text-2xl font-black text-primary">Profunda</div>
-            </div>
-
-            <div className="hero-stat-badge">
-              <div className="flex items-center gap-2 mb-1">
-                <Wallet className="h-4 w-4 text-accent" />
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Mercado
-                </span>
-              </div>
-              <div className="text-2xl font-black text-accent">Dinámico</div>
-            </div>
-          </div>
-
-          <MainActionCards
-            savedGamesCount={savedGamesCount}
-            loading={loading}
-            onLoadGame={onLoadGame}
-            onNewGame={onNewGame}
-          />
-        </div>
+        <footer className="hero-footer flex flex-wrap items-center justify-between gap-3 pt-4">
+          <span>72 LIGAS <i /> MÁS DE 1.500 JUGADORES</span>
+          <span className="hero-footer-signoff">TU CLUB. TUS DECISIONES. TU LEGADO.</span>
+        </footer>
       </div>
     </section>
   );

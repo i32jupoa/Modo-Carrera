@@ -2,6 +2,7 @@
  * Transactional season rollover. Heavy systems are imported lazily so the
  * module is safe to load from the UI without creating circular store imports.
  */
+import { settleSeasonEconomyForCampaign } from "./seasonEconomyCore";
 import type { SaveGame } from "../store";
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 import { getSeasonCalendarAnchors, getSeasonStartYear } from "./calendarFactory";
@@ -909,9 +910,9 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
         uecl: new Set<string>([...(current.uecl?.participants ?? []), ...(current.europeanQualification?.uecl ?? [])]),
       };
       const nextTeamIdsByCompetition = {
-        ucl: new Set<string>(european.europeanQualification.ucl),
-        uel: new Set<string>(european.europeanQualification.uel),
-        uecl: new Set<string>(european.europeanQualification.uecl),
+        ucl: new Set<string>(european.europeanQualification?.ucl ?? []),
+        uel: new Set<string>(european.europeanQualification?.uel ?? []),
+        uecl: new Set<string>(european.europeanQualification?.uecl ?? []),
       };
       const currentEuropeanFor = (teamId: string): "ucl" | "uel" | "uecl" | null =>
         teamIdsByCompetition.ucl.has(teamId) ? "ucl"

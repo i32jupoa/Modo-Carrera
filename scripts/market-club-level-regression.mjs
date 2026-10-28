@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const teams = fs.readFileSync("src/data/teams.ts", "utf8");
-const players = JSON.parse(fs.readFileSync("src/data/players.json", "utf8"));
+const players = [0,1,2,3,4].flatMap(i=>JSON.parse(fs.readFileSync(`src/data/players.part${i}.json`,"utf8")));
 const market = fs.readFileSync("src/data/players.ts", "utf8");
 
 const malagaBlock = teams.match(/id: "malaga",[\s\S]*?color: "#[0-9A-Fa-f]{6}"/);

@@ -447,7 +447,7 @@ export function buildSeasonArchive(input: {
         championId: typeof (save.cupChampion as Record<string, unknown> | undefined)?.[leagueId] === "string"
           ? String((save.cupChampion as Record<string, unknown>)[leagueId])
           : null,
-        fixtures: archiveFinishedFixtures(fixtures, leagueId, "cup"),
+        fixtures: archiveFinishedFixtures(fixtures, leagueId),
       }))
       .filter((cup) => cup.fixtures.length > 0 || Boolean(cup.championId)),
     europeanCompetitionDetails: ([
@@ -468,7 +468,7 @@ export function buildSeasonArchive(input: {
         gd: Number(row.gd) || 0,
         points: Math.max(0, Number(row.points) || 0),
       })),
-      fixtures: archiveFinishedFixtures(fixtures, competition, competition),
+      fixtures: archiveFinishedFixtures(fixtures, competition),
     })).filter((competition) => competition.fixtures.length > 0 || competition.leaguePhaseTable?.length || Boolean(competition.championId)),
     featuredTransfers: (input.featuredTransfers ?? []).slice(0, 12).map((transfer) => ({
       id: String(transfer.id),

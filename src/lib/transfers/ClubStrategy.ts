@@ -52,28 +52,8 @@ const LEAGUE_WEIGHT: Record<string, number> = {
   // Ligas menores
   eliteserien: 0.3, // Noruega
   allsvenskan: 0.3, // Suecia
-  ekstraklasa: 0.3, // Polonia
+  pkobpekstraklasa: 0.3, // Polonia
   superliga: 0.28, // Rumanía
-  ligabbvamx: 0.4, // México
-  csl: 0.42, // China
-  kleague1: 0.3, // Corea del Sur
-  aleague: 0.32, // Australia
-  isl: 0.2, // India
-  sseairtricitypd: 0.18, // Irlanda
-  hellasliga: 0.32, // Grecia
-  ceskaliga: 0.32, // Chequia
-  ukrayinaliha: 0.25, // Ucrania
-  ligahrvatska: 0.28, // Croacia
-  ligacyprus: 0.25, // Chipre
-  brasileirao: 0.43, // Brasil: gran mercado, con economías muy desiguales entre clubes
-  chileprimera: 0.25,
-  ligabetplay: 0.24,
-  ligaproecuador: 0.23,
-  paraguayprimera: 0.17,
-  liga1peru: 0.19,
-  boliviaprofesional: 0.15,
-  uruguayprimera: 0.21,
-  ligafutve: 0.12,
   leagueone: 0.28, // Inglaterra 3ª
   liga3: 0.25, // Alemania 3ª
   leaguetwo: 0.22, // Inglaterra 4ª
@@ -125,33 +105,13 @@ const LEAGUE_COUNTRY: Record<string, string> = {
   lpf: "Argentina",
   scottish: "Scotland",
   "1aproleague": "Belgium",
-  ekstraklasa: "Poland",
+  pkobpekstraklasa: "Poland",
   bracksuperleague: "Switzerland",
   "3fsuperliga": "Denmark",
   allsvenskan: "Sweden",
   eliteserien: "Norway",
   austrianbundesliga: "Austria",
   superliga: "Romania",
-  ligabbvamx: "Mexico",
-  csl: "China",
-  kleague1: "South Korea",
-  aleague: "Australia",
-  isl: "India",
-  sseairtricitypd: "Ireland",
-  hellasliga: "Greece",
-  ceskaliga: "Czechia",
-  ukrayinaliha: "Ukraine",
-  ligahrvatska: "Croatia",
-  ligacyprus: "Cyprus",
-  brasileirao: "Brazil",
-  chileprimera: "Chile",
-  ligabetplay: "Colombia",
-  ligaproecuador: "Ecuador",
-  paraguayprimera: "Paraguay",
-  liga1peru: "Peru",
-  boliviaprofesional: "Bolivia",
-  uruguayprimera: "Uruguay",
-  ligafutve: "Venezuela",
 };
 
 /** Ajustes manuales de identidad de mercado por club. */

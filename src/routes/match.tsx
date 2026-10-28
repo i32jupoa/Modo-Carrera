@@ -6381,21 +6381,28 @@ function MatchPage() {
     <div
       className={`w-full max-w-[1600px] mx-auto px-2 py-3 sm:px-4 md:px-6 lg:px-8 ${phase === "playing" ? "pb-24 md:pb-8" : ""}`}
     >
-      {/* Always-visible match clock */}
-      <div className="sticky top-0 z-30 -mx-3 md:-mx-4 mb-1 px-1.5 md:px-2 py-1 bg-background/85 backdrop-blur border-b border-border/60">
-        <div className="flex items-center justify-between gap-3">
-          <span className="chip truncate">{headerText}</span>
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-bold truncate max-w-[8rem] text-right">{home.short}</span>
-            <span className="scoreline text-base font-black tabular-nums">
-              {phase === "preview"
-                ? "– : –"
-                : `${homeScore + extraTimeHomeScore} : ${awayScore + extraTimeAwayScore}`}
-            </span>
-            <span className="text-sm font-bold truncate max-w-[8rem]">{away.short}</span>
-            <span className="scoreline text-lg font-black text-primary tabular-nums w-12 text-right">
-              {liveMinuteLabel}
-            </span>
+      {/* Marcador estilo retransmisión TV (siempre visible) */}
+      <div className="sticky top-2 z-30 mb-4 flex justify-center px-1">
+        <div className="tv-scorebug flex w-full max-w-3xl items-stretch overflow-hidden rounded-2xl">
+          <div className="tv-scorebug-comp hidden sm:flex items-center px-3 text-[0.6rem] font-black uppercase tracking-[0.16em]">
+            <span className="truncate max-w-[11rem]">{headerText}</span>
+          </div>
+          <div className="flex flex-1 items-center justify-end gap-2 px-3 py-2" style={{ boxShadow: `inset 0 -3px 0 ${matchTeamColors.homeColor}` }}>
+            <span className="text-sm md:text-base font-black uppercase tracking-wide truncate max-w-[9rem] text-right">{home.short}</span>
+            <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={22} />
+          </div>
+          <div className="tv-scorebug-score scoreline flex items-center px-4 text-xl md:text-2xl font-black tabular-nums">
+            {phase === "preview"
+              ? "– : –"
+              : `${homeScore + extraTimeHomeScore} : ${awayScore + extraTimeAwayScore}`}
+          </div>
+          <div className="flex flex-1 items-center gap-2 px-3 py-2" style={{ boxShadow: `inset 0 -3px 0 ${matchTeamColors.awayColor}` }}>
+            <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={22} />
+            <span className="text-sm md:text-base font-black uppercase tracking-wide truncate max-w-[9rem]">{away.short}</span>
+          </div>
+          <div className="tv-scorebug-clock flex items-center gap-1.5 px-3 scoreline text-base md:text-lg font-black tabular-nums">
+            {phase !== "preview" && phase !== "done" && <span className="tv-live-dot" aria-hidden />}
+            <span className="w-12 text-right">{liveMinuteLabel}</span>
           </div>
         </div>
       </div>
