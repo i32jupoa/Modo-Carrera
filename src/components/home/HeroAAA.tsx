@@ -1,6 +1,7 @@
 import React from "react";
 import { Globe, Users, TrendingUp, Wallet, Cpu } from "lucide-react";
 import MainActionCards from "./MainActionCards";
+import heroStadium from "@/assets/hero-stadium.jpg";
 
 export default function HeroAAA({
   savedGamesCount,
@@ -14,7 +15,9 @@ export default function HeroAAA({
   onNewGame: () => void;
 }) {
   return (
-    <section className="hero-aaa relative flex items-center justify-center">
+    <section className="hero-aaa relative flex items-center justify-center overflow-hidden">
+      <img src={heroStadium} alt="" aria-hidden width={1920} height={1088} className="absolute inset-0 h-full w-full object-cover opacity-60" />
+      <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-background/30 via-background/55 to-background" />
       <div className="hero-ambient-light bg-primary" style={{ top: "10%", left: "10%" }} />
       <div className="hero-ambient-light bg-accent" style={{ bottom: "20%", right: "15%" }} />
 
@@ -24,10 +27,10 @@ export default function HeroAAA({
             <div className="absolute inset-0 blur-3xl opacity-30 bg-primary/20 rounded-full scale-150" />
 
             <div className="relative">
-              <div className="inline-flex items-center gap-3 px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-xl mb-8">
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              <div className="inline-flex items-center gap-3 px-5 py-2 rounded-full border border-border bg-card/50 backdrop-blur-xl mb-8">
+                <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
 
-                <span className="text-xs uppercase tracking-[0.25em] text-white/70 font-semibold">
+                <span className="text-xs uppercase tracking-[0.25em] text-foreground/80 font-semibold">
                   Football Universe Simulation
                 </span>
               </div>
@@ -38,11 +41,16 @@ export default function HeroAAA({
                 MANAGER
               </h1>
 
+              <div className="flex flex-wrap justify-center gap-2 mb-6">
+                {[["Liga","--comp-league"],["Copa","--comp-cup"],["Champions","--comp-ucl"],["Europa League","--comp-uel"],["Conference","--comp-uecl"]].map(([n,c]) => (
+                  <span key={n} className="nav-tile !w-auto !h-auto px-3 py-1 text-xs font-bold rounded-full" style={{ ["--tile" as string]: `var(${c})` } as React.CSSProperties}>{n}</span>
+                ))}
+              </div>
               <p className="hero-subtitle-aaa max-w-3xl mx-auto">
                 Construye una dinastía. Toma cada decisión. Domina el fútbol mundial.
               </p>
 
-              <p className="mt-4 text-sm text-white/60 max-w-2xl mx-auto">
+              <p className="mt-4 text-sm text-muted-foreground max-w-2xl mx-auto">
                 Modo Carrera: Gestiona tácticas, fichajes, desarrollo juvenil y finanzas para
                 convertirte en la referencia global del fútbol. Cada temporada, cada decisión, cada
                 fichaje cuenta.
@@ -53,7 +61,7 @@ export default function HeroAAA({
           <div className="flex items-center justify-center gap-6 mb-12">
             <div className="h-px w-32 bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
 
-            <div className="w-12 h-12 rounded-full bg-white/5 border border-white/8 animate-float" />
+            <div className="w-14 h-14 rounded-full bg-gradient-trophy grid place-items-center text-2xl shadow-lg animate-float" aria-hidden>🏆</div>
 
             <div className="h-px w-32 bg-gradient-to-r from-transparent via-accent/50 to-transparent" />
           </div>
@@ -74,7 +82,7 @@ export default function HeroAAA({
                   <item.Icon className="h-7 w-7" />
                 </div>
                 <div className="text-lg font-black mb-1">{item.title}</div>
-                <div className="text-sm text-white/60">{item.desc}</div>
+                <div className="text-sm text-muted-foreground">{item.desc}</div>
               </div>
             ))}
           </div>

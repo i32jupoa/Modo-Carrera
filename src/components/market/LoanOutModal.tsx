@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { X } from "lucide-react";
-import { getAllTeams } from "@/data/teams";
+import { TEAMS } from "@/data/teams";
 import { formatEuro } from "@/store/playersStore";
 import { windowForDate } from "@/lib/transferWindows";
 import type { SquadRole } from "@/lib/transfers";
@@ -38,7 +38,7 @@ export function LoanOutModal({
   const winter = windowForDate(currentDate) === "winter";
   const durationMonths = winter ? 6 : 12;
   const destinations = useMemo(
-    () => getAllTeams().filter((team) => team.id !== currentClubId).sort((a, b) => a.name.localeCompare(b.name)),
+    () => TEAMS.filter((team) => team.id !== currentClubId).sort((a, b) => a.name.localeCompare(b.name)),
     [currentClubId],
   );
   const [borrowerClubId, setBorrowerClubId] = useState(destinations[0]?.id ?? "");

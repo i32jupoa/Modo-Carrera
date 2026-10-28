@@ -826,3 +826,39 @@ a:focus-visible,
 .hover-glow:hover {
   box-shadow: 0 10px 40px color-mix(in oklab, var(--color-primary) 20%, transparent);
 }
+
+/* ===== Portada (solo la pantalla de inicio) ===== */
+:root {
+  --gold: oklch(0.86 0.16 85);
+  --coral: oklch(0.72 0.19 25);
+  --comp-league: oklch(0.72 0.19 25);
+  --comp-cup: oklch(0.86 0.16 85);
+  --comp-ucl: oklch(0.62 0.17 262);
+  --comp-uel: oklch(0.74 0.18 55);
+  --comp-uecl: oklch(0.8 0.2 145);
+  --gradient-trophy: linear-gradient(135deg, var(--gold), var(--coral));
+}
+
+.hero-aaa {
+  font-family: "Manrope", system-ui, sans-serif;
+  background: var(--background);
+}
+.hero-aaa > .relative.z-10 { z-index: 10; }
+.hero-aaa .nav-tile {
+  display: grid; place-items: center; border-radius: 999px;
+  background: color-mix(in oklab, var(--tile, var(--primary)) 18%, transparent);
+  color: var(--tile, var(--primary));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tile, var(--primary)) 30%, transparent);
+}
+.hero-aaa .bg-gradient-trophy { background: var(--gradient-trophy); }
+.hero-aaa .hero-title-aaa {
+  font-family: "Bricolage Grotesque", "Space Grotesk", system-ui, sans-serif;
+  font-weight: 800;
+  background-image: linear-gradient(120deg, var(--primary) 0%, var(--accent) 30%, var(--gold) 55%, var(--primary) 80%, var(--accent) 100%);
+  filter: drop-shadow(0 8px 30px color-mix(in oklab, var(--primary) 35%, transparent));
+}
+.hero-aaa .hero-subtitle-aaa { font-weight: 500; color: var(--foreground); }
+.hero-aaa .feature-card-aaa:hover,
+.hero-aaa .hero-stat-badge:hover {
+  box-shadow: 0 16px 40px -16px color-mix(in oklab, var(--primary) 55%, transparent);
+}
