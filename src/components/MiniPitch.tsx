@@ -28,6 +28,8 @@ interface MiniPitchProps {
   currentMinute?: number;
   revealAllInjuries?: boolean;
   vacantSlots?: Record<number, "injury" | "red">;
+  compact?: boolean;
+  onPlayerSelect?: (player: Player) => void;
 }
 
 // Position role mappings for CPU lineup generation
@@ -102,6 +104,8 @@ export function MiniPitch({
   currentMinute = 120,
   revealAllInjuries = false,
   vacantSlots = {},
+  compact = false,
+  onPlayerSelect,
 }: MiniPitchProps) {
   const formationPositions = FORMATION_COORDINATES[formation] ?? FORMATION_COORDINATES["Táctica 4-4-2"];
   const positionKeys = Object.keys(formationPositions);
@@ -186,18 +190,25 @@ export function MiniPitch({
   return (
     <div className={`relative ${className}`}>
       <div
-        className="relative bg-green-800/20 border-2 border-green-600/30 rounded-lg overflow-hidden"
-        style={{ aspectRatio: "3/4", width: "100%", maxWidth: "380px", minHeight: "380px" }}
+        className="match-pitch-surface relative overflow-hidden rounded-xl border-2 border-green-400/35 shadow-inner"
+        style={{
+          aspectRatio: "3/4",
+          width: "100%",
+          maxWidth: compact ? "260px" : "380px",
+          minHeight: compact ? undefined : "380px",
+          backgroundImage: "repeating-linear-gradient(180deg, rgba(34,197,94,.17) 0, rgba(34,197,94,.17) 36px, rgba(21,128,61,.12) 36px, rgba(21,128,61,.12) 72px), linear-gradient(180deg, rgba(20,83,45,.34), rgba(5,46,22,.28))",
+          backgroundSize: "100% 72px, 100% 100%",
+        }}
       >
         {/* Pitch markings */}
-        <div className="absolute inset-0">
-          {/* Center circle */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-20 h-20 border-2 border-green-500/40 rounded-full" />
-          {/* Halfway line */}
-          <div className="absolute top-1/2 left-0 right-0 h-px bg-green-500/40" />
-          {/* Goal areas */}
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-20 h-10 border-2 border-green-500/40 border-t-0" />
-          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-20 h-10 border-2 border-green-500/40 border-b-0" />
+        <div className="pointer-events-none absolute inset-2 rounded-sm border border-green-200/35">
+          {/* Markings styled like a broadcast tactics board. */}
+          <div className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-green-100/35 ${compact ? "h-14 w-14" : "h-20 w-20"}`} />
+          <div className="absolute left-0 right-0 top-1/2 h-px bg-green-100/35" />
+          <div className={`absolute left-1/2 top-0 -translate-x-1/2 border border-t-0 border-green-100/35 ${compact ? "h-8 w-16" : "h-10 w-20"}`} />
+          <div className={`absolute bottom-0 left-1/2 -translate-x-1/2 border border-b-0 border-green-100/35 ${compact ? "h-8 w-16" : "h-10 w-20"}`} />
+          <div className={`absolute left-1/2 top-0 -translate-x-1/2 border border-t-0 border-green-100/20 ${compact ? "h-3 w-8" : "h-4 w-10"}`} />
+          <div className={`absolute bottom-0 left-1/2 -translate-x-1/2 border border-b-0 border-green-100/20 ${compact ? "h-3 w-8" : "h-4 w-10"}`} />
         </div>
 
         {/* Player nodes */}
@@ -260,10 +271,21 @@ export function MiniPitch({
                   ? "border-amber-400/45 bg-amber-500/12 text-amber-300"
                   : "border-destructive/45 bg-destructive/10 text-destructive";
 
+          const Marker: any = onPlayerSelect ? "button" : "div";
+          const markerProps = onPlayerSelect
+            ? {
+                type: "button",
+                onClick: () => onPlayerSelect(player),
+                "aria-label": `Ver ficha de ${player.name}, ${player.positions?.[0] ?? "jugador"}, media ${player.rating}`,
+                title: `${player.name} · ${player.positions?.[0] ?? "Jugador"} · Media ${player.rating}`,
+              }
+            : {};
+
           return (
-            <div
+            <Marker
               key={posKey}
-              className="absolute flex flex-col items-center justify-center"
+              {...markerProps}
+              className={`match-player-marker ${onPlayerSelect ? "is-interactive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-300" : "is-static"} absolute flex flex-col items-center justify-center rounded-xl border-0 bg-transparent p-0 text-inherit`}
               style={{
                 top: `${coord.top}%`,
                 left: `${coord.left}%`,
@@ -275,7 +297,7 @@ export function MiniPitch({
                   name={player.name}
                   image={faceUrl(player.id, player.cardImage)}
                   role={roleFromPosition(player.positions[0])}
-                  size={34}
+                  size={compact ? 28 : 34}
                   className="shadow-lg"
                   showRing={false}
                 />
@@ -306,10 +328,10 @@ export function MiniPitch({
                   {wasSubstituted && <span className="text-[0.45rem]">🔄</span>}
                 </div>
               </div>
-              <div className="mt-0.5 text-[0.45rem] text-foreground font-medium text-center leading-tight">
+              <div className={`mt-0.5 text-foreground font-semibold text-center leading-tight ${compact ? "text-[0.4rem] sm:text-[0.43rem]" : "text-[0.45rem]"}`}>
                 {player.name.split(" ").pop()}
               </div>
-            </div>
+            </Marker>
           );
         })}
       </div>

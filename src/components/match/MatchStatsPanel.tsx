@@ -43,8 +43,11 @@ function Bar({
 
 export function MatchStatsPanel({ home, away, homeColor, awayColor }: { home: TeamStats; away: TeamStats; homeColor: string; awayColor: string }) {
   return (
-    <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-      <h3 className="text-sm font-bold uppercase tracking-wide">Estadísticas</h3>
+    <div className="match-data-panel space-y-3 rounded-xl border border-border/70 bg-card/75 p-3.5 backdrop-blur-sm sm:p-4">
+      <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-2.5">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em]">Estadísticas</h3>
+        <span className="text-[0.62rem] font-semibold uppercase tracking-wider text-muted-foreground">En directo</span>
+      </div>
       <Bar
         label="Posesión"
         home={Math.round(home.possession)}

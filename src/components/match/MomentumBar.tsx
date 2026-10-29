@@ -17,7 +17,7 @@ export function MomentumBar({ value, homeLabel, awayLabel, status, compact = fal
   const awayDominant = clamped > 58;
 
   return (
-    <div className={`rounded-xl border border-border/70 bg-card/70 backdrop-blur ${compact ? "p-2.5" : "p-4"} shadow-sm`}>
+    <div className={`match-live-card rounded-xl border border-border/70 bg-card/70 backdrop-blur ${compact ? "p-2.5" : "p-4"} shadow-sm`}>
       <div className={`flex items-center justify-between gap-2 ${compact ? "mb-1" : "mb-2"}`}>
         <div className="text-[0.6rem] font-black uppercase tracking-[0.16em] text-muted-foreground">
           Momentum del partido

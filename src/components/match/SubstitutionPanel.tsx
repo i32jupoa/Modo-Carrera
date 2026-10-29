@@ -53,7 +53,7 @@ export function SubstitutionPanel({
     onPitch.find((p) => p.id === id)?.name ?? bench.find((p) => p.id === id)?.name ?? id;
 
   return (
-    <div className="panel p-5 mt-4">
+    <div className="match-substitution-panel panel mt-4 p-4 sm:p-5">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 mb-4">
         <div className="min-w-0">
           <h3 className="font-bold truncate">Cambios</h3>

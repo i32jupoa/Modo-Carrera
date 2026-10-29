@@ -45,6 +45,12 @@ import {
 } from "@/lib/simulation";
 import { accumulateStats, computePlayerRatings, type MatchStats } from "@/lib/matchStats";
 import { MatchStatsPanel } from "@/components/match/MatchStatsPanel";
+import { MatchIntroPanel, MatchFinalSummary } from "@/components/match/MatchShowcase";
+import { buildMatchPreviewAnalysis } from "@/lib/matchPreviewAnalysis";
+import { MatchPlayerDetailsModal } from "@/components/match/MatchPlayerDetailsModal";
+import { HalftimeOverlay } from "@/components/match/HalftimeOverlay";
+import { MatchTimeline } from "@/components/match/MatchTimeline";
+import { MomentumBar } from "@/components/match/MomentumBar";
 import { resolveMatchTeamColors } from "@/lib/matchPresentation";
 import { PlayerRatingsPanel } from "@/components/match/PlayerRatingsPanel";
 import {
@@ -77,7 +83,7 @@ import {
   segmentBase,
   segmentItem,
 } from "@/components/match/matchUi";
-import { Pause, Play, FastForward, ClipboardList } from "lucide-react";
+import { Pause, Play, FastForward, ClipboardList, Trophy } from "lucide-react";
 import { isPlayerInjuredAtDate, usePlayersStore, withPlayerStatsBatch } from "@/store/playersStore";
 import { addDaysToIso } from "@/lib/transferWindows";
 import { getPlayerShootingStats } from "@/data/players";
@@ -86,7 +92,6 @@ import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";
-import { MomentumBar } from "@/components/match/MomentumBar";
 import { LiveEventOverlay } from "@/components/match/LiveEventOverlay";
 import { LiveCommentary, type CommentaryEntry } from "@/components/match/LiveCommentary";
 import {
@@ -105,7 +110,6 @@ import {
   buildMissDetail,
   buildNarrativeCommentary,
   buildSyntheticMoment,
-  momentumStatus,
   updateMomentum,
   type LiveManagerEffects,
   type LiveMoment,
@@ -114,6 +118,13 @@ import {
 // Helper to get league name from league ID
 function getLeagueName(leagueId: string): string {
   return LEAGUES[leagueId as LeagueId]?.name || leagueId;
+}
+
+function getLineupPlayerIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((player: any) => String(typeof player === "string" ? player : player?.id ?? ""))
+    .filter((id: string) => id.length > 0);
 }
 
 const DEFAULT_FORMATION: FormationName = "Táctica 4-4-2";
@@ -277,6 +288,7 @@ function MatchPage() {
   const location = useLocation();
   const [save, setSave] = useState<SaveGame | null>(null);
   const [phase, setPhase] = useState<Phase>("preview");
+  const [selectedMatchPlayer, setSelectedMatchPlayer] = useState<{ player: any; side: "home" | "away" } | null>(null);
   const [minute, setMinute] = useState(0);
   const [homeScore, setHomeScore] = useState(0);
   const [awayScore, setAwayScore] = useState(0);
@@ -319,14 +331,14 @@ function MatchPage() {
   const [highlightFeed, setHighlightFeed] = useState<HighlightEvent[]>([]);
   const allHighlightsRef = useRef<HighlightEvent[]>([]);
   const [isPaused, setIsPaused] = useState(false);
+  // The halftime intro can be dismissed without resuming the match. The actual
+  // second-half clock only starts from the persistent "Comenzar 2ª parte" control.
+  const [halftimeOverlayDismissed, setHalftimeOverlayDismissed] = useState(false);
   const minuteRef = useRef(0);
 
   // ---- living match layer --------------------------------------------------
   const [momentum, setMomentum] = useState(50);
   const momentumRef = useRef(50);
-  const [momentumHistory, setMomentumHistory] = useState<Array<{ minute: number; value: number }>>(
-    [],
-  );
   const momentumHistoryRef = useRef<Array<{ minute: number; value: number }>>([]);
   const [liveMoment, setLiveMoment] = useState<LiveMoment | null>(null);
   const momentTimerRef = useRef<number | null>(null);
@@ -447,8 +459,12 @@ function MatchPage() {
   const playedHighlightsRef = useRef<any[]>([]);
   const resumeLive = (location.state as any)?.resumeLive === true;
 
-  // Extract temporary lineup from router state (if passed from lineup page)
+  // Extract temporary lineup from router state (if passed from lineup page).
+  // Returning from the live lineup editor during a break should behave exactly
+  // like pressing "Continuar" on the break overlay: keep the match paused, but
+  // do not display the break overlay a second time.
   const routerState = location.state as any;
+  const dismissHalftimeOverlayOnReturn = routerState?.dismissHalftimeOverlayOnReturn === true;
   const matchLineup = routerState?.matchLineup as string[] | undefined;
   const matchFormation = routerState?.matchFormation as string | undefined;
   const returningFromLineup = routerState?.returningFromLineupEdit === true;
@@ -623,7 +639,6 @@ function MatchPage() {
         ? st.momentumHistory
         : [];
       momentumHistoryRef.current = restoredMomentumHistory;
-      setMomentumHistory(restoredMomentumHistory);
       const restoredEffects = {
         ...DEFAULT_MANAGER_EFFECTS,
         ...(st.managerEffects && typeof st.managerEffects === "object"
@@ -678,8 +693,12 @@ function MatchPage() {
       );
 
       handledInjuriesRef.current = safeHandledInjuries;
-      halftimeDoneRef.current = m >= 45;
-      etHalftimeDoneRef.current = m >= 105;
+      // Minute 45/105 is not proof that the break has actually happened: a
+      // card, injury, VAR or other scene may pause the game immediately before
+      // added time. Mark a half complete only after its boundary has passed or
+      // the persisted phase explicitly says the match is at the break.
+      halftimeDoneRef.current = m > 45 || st.phase === "halftime" || st.phase === "et_halftime" || st.phase === "et_break";
+      etHalftimeDoneRef.current = m > 105 || st.phase === "et_halftime" || st.phase === "et_break";
       isExtraTimeRef.current = !!st.isExtraTime;
       setMatchType(st.matchType === "CUP" ? "CUP" : st.matchType === "UCL" ? "UCL" : "LEAGUE");
       setCupRound(st.cupRound);
@@ -705,7 +724,7 @@ function MatchPage() {
 
       const restoredPhase =
         st.phase || (st.isExtraTime ? "et_playing" : "playing");
-      const atBreak = restoredPhase === "halftime" || restoredPhase === "et_halftime";
+      const atBreak = ["halftime", "et_halftime", "et_break"].includes(restoredPhase);
       setPhase(st.isExtraTime ? "extra_time" : "playing");
       finishScheduledRef.current = false;
       halftimePendingAfterMomentRef.current = false;
@@ -714,13 +733,14 @@ function MatchPage() {
       if (st.scene?.moment) setLiveMoment(st.scene.moment);
 
       if (atBreak) {
+        setHalftimeOverlayDismissed(dismissHalftimeOverlayOnReturn);
         pausedRef.current = true;
-        pauseReasonRef.current =
-          restoredPhase === "et_halftime" ? "et_halftime" : "halftime";
+        const restoredBreakReason =
+          restoredPhase === "et_halftime" ? "et_halftime" :
+          restoredPhase === "et_break" ? "et_break" : "halftime";
+        pauseReasonRef.current = restoredBreakReason;
         setIsPaused(true);
-        setPauseReason(
-          restoredPhase === "et_halftime" ? "et_halftime" : "halftime",
-        );
+        setPauseReason(restoredBreakReason);
         resumeClockRef.current = null;
         setResumeClockPending(false);
         return;
@@ -785,7 +805,7 @@ function MatchPage() {
       };
       setResumeClockPending(true);
     }
-  }, [resumeLive, fixtureId]);
+  }, [resumeLive, fixtureId, dismissHalftimeOverlayOnReturn]);
 
   // Start a restored live match only after the restored save/fixture has made
   // it through a React render. Starting it from the hydration effect above can
@@ -807,9 +827,20 @@ function MatchPage() {
     // ref instead of introducing a second timer lifecycle.
     clockTimeoutRef.current = window.setTimeout(() => {
       if (pausedRef.current || !resumeLive) return;
-      if (stoppagePeriodRef.current) runAddedTimeTicks(stoppagePeriodRef.current, stoppageElapsedRef.current);
-      else if (pending.isExtraTime) runExtraTimeClock(pending.minute);
-      else runClock(pending.minute);
+      if (stoppagePeriodRef.current) {
+        runAddedTimeTicks(stoppagePeriodRef.current, stoppageElapsedRef.current);
+      } else if (!pending.isExtraTime && pending.minute === 45 && !halftimeDoneRef.current) {
+        // A scene at 45' can send the manager to the lineup editor before the
+        // first-half stoppage ticks have started. Resume those ticks instead of
+        // advancing straight to 46', which used to strand the pause controls.
+        runAddedTimeTicks("firstHalf");
+      } else if (pending.isExtraTime && pending.minute === 105 && !etHalftimeDoneRef.current) {
+        runAddedTimeTicks("extraFirstHalf");
+      } else if (pending.isExtraTime) {
+        runExtraTimeClock(pending.minute);
+      } else {
+        runClock(pending.minute);
+      }
     }, 0);
   }, [resumeLive, resumeClockPending, save]);
 
@@ -2170,7 +2201,6 @@ function MatchPage() {
     momentumRef.current = 50;
     setMomentum(50);
     momentumHistoryRef.current = [{ minute: 0, value: 50 }];
-    setMomentumHistory(momentumHistoryRef.current);
     managerEffectsRef.current = { ...DEFAULT_MANAGER_EFFECTS };
     setManagerEffects(managerEffectsRef.current);
     outcomeBiasRef.current = 0;
@@ -2207,6 +2237,7 @@ function MatchPage() {
     finishScheduledRef.current = false;
     setIsPaused(false);
     setPauseReason(null);
+    setHalftimeOverlayDismissed(false);
     setLiveFormation(matchFormation || s.formations?.[s.myTeamId] || null);
   }
 
@@ -2276,49 +2307,12 @@ function MatchPage() {
     };
   }
 
-  function showHalftimeMoment(extraTime = false) {
-    const title = extraTime ? "DESCANSO DE LA PRÓRROGA" : "DESCANSO";
-    const homeTotal = homeScoreRef.current + (extraTime ? extraTimeHomeScoreRef.current : 0);
-    const awayTotal = awayScoreRef.current + (extraTime ? extraTimeAwayScoreRef.current : 0);
-    const minute = extraTime ? 105 : 45;
-    showLiveMoment(
-      {
-        id: `halftime-notification-${extraTime ? "et" : "regular"}-${minute}-${homeTotal}-${awayTotal}`,
-        type: "halftime",
-        minute,
-        kicker: "⏸️ Descanso",
-        title,
-        body: `${home.name} ${homeTotal}-${awayTotal} ${away.name}.`,
-        emoji: "⏸️",
-        hardPause: true,
-        teamName: `${home.name} vs ${away.name}`,
-      } as any,
-      3200,
-      false,
-    );
-  }
-
-  function announceHalftime(extraTime = false) {
-    const title = extraTime ? "DESCANSO DE LA PRÓRROGA" : "DESCANSO";
-    const homeTotal = homeScoreRef.current + (extraTime ? extraTimeHomeScoreRef.current : 0);
-    const awayTotal = awayScoreRef.current + (extraTime ? extraTimeAwayScoreRef.current : 0);
-    const minute = extraTime ? 105 : 45;
-    recordChronicleMoment({
-      id: `halftime-${extraTime ? "et" : "regular"}-${minute}-${homeTotal}-${awayTotal}`,
-      type: "halftime",
-      minute,
-      kicker: "⏸️ Descanso",
-      title,
-      body: `${home.name} ${homeTotal}-${awayTotal} ${away.name}.`,
-      emoji: "⏸️",
-      hardPause: true,
-      teamSide: undefined as any,
-      teamName: "",
-    } as any);
-    toast.info(title, {
-      description: `${home.name} ${homeTotal}-${awayTotal} ${away.name}.`,
-      duration: 4500,
-    });
+  function enterHalftimeBreak(extraTime = false) {
+    // Do not add a transient live-event popup here: the dedicated halftime
+    // screen is the single notification shown when each half ends.
+    setLiveMoment(null);
+    pendingSceneRef.current = null;
+    pauseMatch(extraTime ? "et_halftime" : "halftime");
   }
 
   function persistLive() {
@@ -2384,6 +2378,9 @@ function MatchPage() {
     clockRunIdRef.current += 1;
     pausedRef.current = true;
     pauseReasonRef.current = reason;
+    if (reason === "halftime" || reason === "et_halftime" || reason === "et_break") {
+      setHalftimeOverlayDismissed(false);
+    }
     setIsPaused(true);
     setPauseReason(reason);
     if (clockTimeoutRef.current !== null) {
@@ -2407,6 +2404,8 @@ function MatchPage() {
     window.setTimeout(() => {
       if (pausedRef.current) return;
       if (addedPeriod) runAddedTimeTicks(addedPeriod, stoppageElapsedRef.current);
+      else if (!extraTime && startMinute === 45 && !halftimeDoneRef.current) runAddedTimeTicks("firstHalf");
+      else if (extraTime && startMinute === 105 && !etHalftimeDoneRef.current) runAddedTimeTicks("extraFirstHalf");
       else if (extraTime) runExtraTimeClock(startMinute);
       else runClock(startMinute);
     }, 0);
@@ -3791,6 +3790,7 @@ function MatchPage() {
       halftimePendingAfterMomentRef.current = false;
       pauseReasonRef.current = "halftime";
       setPauseReason("halftime");
+      setHalftimeOverlayDismissed(false);
       pausedRef.current = true;
       setIsPaused(true);
       halftimeDoneRef.current = true;
@@ -3802,6 +3802,7 @@ function MatchPage() {
       halftimePendingAfterMomentRef.current = false;
       pauseReasonRef.current = "et_halftime";
       setPauseReason("et_halftime");
+      setHalftimeOverlayDismissed(false);
       pausedRef.current = true;
       setIsPaused(true);
       etHalftimeDoneRef.current = true;
@@ -3840,7 +3841,6 @@ function MatchPage() {
     setMomentum(next);
     const point = { minute: m, value: next };
     momentumHistoryRef.current = [...momentumHistoryRef.current, point].slice(-91);
-    setMomentumHistory(momentumHistoryRef.current);
   }
 
   function currentAvgStamina() {
@@ -5154,12 +5154,12 @@ function MatchPage() {
     persistLive();
     if (period === "firstHalf") {
       halftimeDoneRef.current = true;
-      showHalftimeMoment(false);
+      enterHalftimeBreak(false);
     } else if (period === "secondHalf") {
       finishRegularLiveMatch();
     } else if (period === "extraFirstHalf") {
       etHalftimeDoneRef.current = true;
-      showHalftimeMoment(true);
+      enterHalftimeBreak(true);
     } else {
       handleExtraTimeFinished();
     }
@@ -6321,14 +6321,29 @@ function MatchPage() {
   // the competition round. The public label must use md1..md8 / playoff /
   // knockout instead of exposing that internal day counter.
   const europeanRoundLabel = (round: string | undefined, fallback: number | undefined) => {
-    const md = String(round ?? "").match(/^md(\d+)$/i);
-    if (md) return `Jornada ${md[1]}`;
-    if (round?.startsWith("Playoff")) return "Playoff";
-    if (round?.startsWith("R16")) return "Octavos";
-    if (round?.startsWith("QF")) return "Cuartos";
-    if (round?.startsWith("SF")) return "Semifinal";
-    if (round === "Final") return "Final";
-    return typeof fallback === "number" ? `Jornada ${fallback}` : "";
+    const rawRound = String(round ?? "").trim();
+    const matchdayMatch = rawRound.match(/^(?:md|matchday|jornada)\s*[-_ ]?(\d+)$/i)
+      ?? rawRound.match(/^jornada\s+(\d+)$/i);
+    if (matchdayMatch) return `Jornada ${matchdayMatch[1]}`;
+
+    const leg = /leg\s*1|ida/i.test(rawRound)
+      ? " · Ida"
+      : /leg\s*2|vuelta/i.test(rawRound)
+        ? " · Vuelta"
+        : "";
+    if (/play.?off/i.test(rawRound)) return `Playoff${leg}`;
+    if (/^(r32|round.?of.?32|treintaidosavos)/i.test(rawRound)) return `Treintaidosavos${leg}`;
+    if (/^(r16|round.?of.?16|octavos)/i.test(rawRound)) return `Octavos${leg}`;
+    if (/^(qf|quarter.?final|cuartos)/i.test(rawRound)) return `Cuartos${leg}`;
+    if (/^(sf|semi.?final|semifinales)/i.test(rawRound)) return `Semifinales${leg}`;
+    if (/^final$/i.test(rawRound)) return "Final";
+
+    // UCL/UEL calendar offsets can be much larger than the competition's actual
+    // matchday (e.g. day 76). Only values 1–8 are valid league-phase matchdays.
+    const fallbackDay = Number(fallback);
+    if (Number.isFinite(fallbackDay) && fallbackDay >= 1 && fallbackDay <= 8) return `Jornada ${fallbackDay}`;
+    if (Number.isFinite(fallbackDay) && fallbackDay > 8) return "Fase eliminatoria";
+    return rawRound || "Competición europea";
   };
 
   const headerText =
@@ -6339,8 +6354,35 @@ function MatchPage() {
       : isEuropeanFixture(fixture)
         ? `${europeanCompetitionOf(fixture) === "uel" ? "Europa League" : "Conference League"} · ${europeanRoundLabel(fixture.round, fixture.matchday)}`
         : matchType === "UCL"
-          ? `Champions League · Jornada ${fixture.matchday}`
+          ? `Champions League · ${europeanRoundLabel(fixture.round, fixture.matchday)}`
           : `Liga · Jornada ${fixture.matchday}`;
+
+  const scorebarCompetitionKey = (() => {
+    const key = String(currentMatchCompetition() ?? "league").toLowerCase();
+    if (matchType === "UCL" || key === "ucl") return "ucl";
+    if (key === "uel") return "uel";
+    if (key === "uecl") return "uecl";
+    if (matchType === "CUP" || key === "cup") return "cup";
+    return "league";
+  })();
+  const scorebarCompetitionName = scorebarCompetitionKey === "ucl"
+    ? "Champions League"
+    : scorebarCompetitionKey === "uel"
+      ? "Europa League"
+      : scorebarCompetitionKey === "uecl"
+        ? "Conference League"
+        : scorebarCompetitionKey === "cup"
+          ? "Copa Nacional"
+          : (LEAGUES[home.league as LeagueId]?.name || "Liga");
+  const scorebarCompetitionLogo = scorebarCompetitionKey === "ucl"
+    ? "/logos/competitions/champions-league.svg"
+    : scorebarCompetitionKey === "uel"
+      ? "/logos/competitions/europa-league.svg"
+      : scorebarCompetitionKey === "uecl"
+        ? "/logos/competitions/conference-league.svg"
+        : scorebarCompetitionKey === "cup"
+          ? "/logos/competitions/national-cup.svg"
+          : null;
 
   const getVacantSlots = (side: "home" | "away", lineup: any[]): Record<number, "injury" | "red"> => {
     const result: Record<number, "injury" | "red"> = {};
@@ -6375,82 +6417,186 @@ function MatchPage() {
   };
 
   const liveMinuteLabel =
-    phase === "preview" ? "00'" : phase === "penalties" ? "PEN" : phase === "done" ? "FINAL" : (clockLabelOverride ?? `${minute}'`);
+    phase === "preview" ? "" : phase === "penalties" ? "PEN" : phase === "done" ? "FINAL" : (clockLabelOverride ?? `${minute}'`);
+  const matchScorebug = (() => {
+    if (phase === "preview") return "– : –";
+    const result = fixtureRef.current?.result;
+    const finalHome = Number(result?.homeGoals ?? homeScore) + Number(result?.extraTime?.homeGoals ?? 0);
+    const finalAway = Number(result?.awayGoals ?? awayScore) + Number(result?.extraTime?.awayGoals ?? 0);
+    if (phase === "done" && result?.penalties) {
+      return `${finalHome} (${result.penalties.homeGoals}) : (${result.penalties.awayGoals}) ${finalAway}`;
+    }
+    if (phase === "penalties") {
+      return `${homeScore + extraTimeHomeScore} (${penaltyHomeScore}) : (${penaltyAwayScore}) ${awayScore + extraTimeAwayScore}`;
+    }
+    return `${phase === "done" ? finalHome : homeScore + extraTimeHomeScore} : ${phase === "done" ? finalAway : awayScore + extraTimeAwayScore}`;
+  })();
+
+  const timelineMinute = Math.max(
+    minute,
+    phase === "done" ? (fixture.result?.extraTime ? 120 : 90) : 0,
+    ...feed.filter((event: any) => event.type !== "penalty").map((event: any) => Number(event.minute) || 0),
+    ...cardFeed.map((event: any) => Number(event.minute) || 0),
+    ...highlightFeed.map((event: any) => Number(event.minute) || 0),
+    ...subFeed.map((event: any) => Number(event.minute) || 0),
+    ...keyMoments.map((event: any) => Number(event.minute) || 0),
+  );
+
+  // Momentum is stored relative to the user's team; convert it to home/away
+  // percentages for the broadcast bar without restoring the removed match-rhythm chart.
+  const homeMomentumShare = isHome ? momentum : 100 - momentum;
+  const momentumStatus = homeMomentumShare >= 59
+    ? `${home.short} domina`
+    : homeMomentumShare <= 41
+      ? `${away.short} domina`
+      : "Partido equilibrado";
+
+  // Build a data-backed editorial preview only before kickoff. It reads the
+  // career's real previous results, standings and registered tactical setups;
+  // it does not simulate or mutate any match data.
+  const matchPreviewAnalysis = phase === "preview"
+    ? buildMatchPreviewAnalysis({
+        save,
+        fixture,
+        home,
+        away,
+        homeFormation,
+        awayFormation,
+        competitionLabel: headerText,
+        homePlayers: homeLineup.filter(Boolean),
+        awayPlayers: awayLineup.filter(Boolean),
+      })
+    : null;
 
   return (
     <div
-      className={`w-full max-w-[1600px] mx-auto px-2 py-3 sm:px-4 md:px-6 lg:px-8 ${phase === "playing" ? "pb-24 md:pb-8" : ""}`}
+      className={`match-screen match-phase-${phase} w-full max-w-[1680px] mx-auto px-2 py-3 sm:px-4 md:px-5 xl:px-6 ${phase === "playing" ? "pb-24 md:pb-8" : "pb-6"}`}
+      data-match-phase={phase}
     >
-      {/* Marcador estilo retransmisión TV (siempre visible) */}
-      <div className="sticky top-2 z-30 mb-4 flex justify-center px-1">
-        <div className="tv-scorebug flex w-full max-w-3xl items-stretch overflow-hidden rounded-2xl">
-          <div className="tv-scorebug-comp hidden sm:flex items-center px-3 text-[0.6rem] font-black uppercase tracking-[0.16em]">
-            <span className="truncate max-w-[11rem]">{headerText}</span>
+      {/* Marcador compacto durante el encuentro. El resumen final ocupa su lugar al terminar. */}
+      {phase !== "done" && phase !== "preview" && <div className="match-scorebar sticky top-2 z-40 mb-3 flex justify-center">
+        <div className="tv-scorebug flex w-full max-w-4xl items-stretch overflow-hidden rounded-xl">
+          <div className="tv-scorebug-comp flex max-w-[2.8rem] shrink-0 items-center gap-2 px-2 sm:max-w-[13rem] sm:px-3">
+            {scorebarCompetitionLogo ? (
+              <img
+                src={scorebarCompetitionLogo}
+                alt={scorebarCompetitionName}
+                className="h-6 w-6 shrink-0 object-contain sm:h-7 sm:w-7"
+              />
+            ) : (
+              <LeagueLogo
+                league={scorebarCompetitionName}
+                size="sm"
+                className="h-6 w-6 shrink-0 sm:h-7 sm:w-7"
+                fallback={<Trophy className="h-4 w-4 shrink-0" aria-hidden="true" />}
+              />
+            )}
+            <span className="hidden max-w-[9rem] truncate text-[0.58rem] font-black uppercase tracking-[0.1em] sm:block">
+              {scorebarCompetitionName}
+            </span>
           </div>
-          <div className="flex flex-1 items-center justify-end gap-2 px-3 py-2" style={{ boxShadow: `inset 0 -3px 0 ${matchTeamColors.homeColor}` }}>
-            <span className="text-sm md:text-base font-black uppercase tracking-wide truncate max-w-[9rem] text-right">{home.short}</span>
-            <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={22} />
+          <div className="match-score-team flex min-w-0 flex-1 items-center justify-end gap-1.5 px-1.5 py-1.5 sm:gap-2 sm:px-3" style={{ boxShadow: `inset 0 -2px 0 ${matchTeamColors.homeColor}` }}>
+            <span className="max-w-[4.2rem] truncate text-[0.62rem] font-extrabold uppercase tracking-wide text-right sm:max-w-[7rem] sm:text-xs">{home.short}</span>
+            <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={19} />
           </div>
-          <div className="tv-scorebug-score scoreline flex items-center px-4 text-xl md:text-2xl font-black tabular-nums">
-            {phase === "preview"
-              ? "– : –"
-              : `${homeScore + extraTimeHomeScore} : ${awayScore + extraTimeAwayScore}`}
+          <div className={`tv-scorebug-score scoreline flex shrink-0 items-center whitespace-nowrap px-2 text-sm font-black tabular-nums sm:px-3 sm:text-lg ${phase === "penalties" || (phase === "done" && fixtureRef.current?.result?.penalties) ? "match-score-penalties" : ""}`}>
+            {matchScorebug}
           </div>
-          <div className="flex flex-1 items-center gap-2 px-3 py-2" style={{ boxShadow: `inset 0 -3px 0 ${matchTeamColors.awayColor}` }}>
-            <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={22} />
-            <span className="text-sm md:text-base font-black uppercase tracking-wide truncate max-w-[9rem]">{away.short}</span>
+          <div className="match-score-team flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1.5 sm:gap-2 sm:px-3" style={{ boxShadow: `inset 0 -2px 0 ${matchTeamColors.awayColor}` }}>
+            <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={19} />
+            <span className="max-w-[4.2rem] truncate text-[0.62rem] font-extrabold uppercase tracking-wide sm:max-w-[7rem] sm:text-xs">{away.short}</span>
           </div>
-          <div className="tv-scorebug-clock flex items-center gap-1.5 px-3 scoreline text-base md:text-lg font-black tabular-nums">
+          <div className="tv-scorebug-clock flex shrink-0 items-center gap-1 px-1.5 scoreline text-xs font-black tabular-nums sm:gap-1.5 sm:px-2.5 sm:text-sm">
             {phase !== "preview" && phase !== "done" && <span className="tv-live-dot" aria-hidden />}
-            <span className="w-12 text-right">{liveMinuteLabel}</span>
+            <span className="w-8 text-right sm:w-10">{liveMinuteLabel}</span>
           </div>
         </div>
-      </div>
+      </div>}
 
-      {phase !== "preview" && (
-        <div className="mb-5 grid gap-3 xl:grid-cols-[minmax(360px,0.85fr)_minmax(0,1.15fr)]">
-          <MomentumBar
-            compact
-            value={isHome ? 100 - momentum : momentum}
-            homeLabel={home.short}
-            awayLabel={away.short}
-            status={momentumStatus(
-              momentum,
-              isHome ? home.name : away.name,
-              isHome ? away.name : home.name,
-            )}
-            homeColor={matchTeamColors.homeColor}
-            awayColor={matchTeamColors.awayColor}
-          />
+      {phase === "preview" && (
+        <MatchIntroPanel
+          competition={headerText}
+          home={{ name: home.name, short: home.short, leagueName: getLeagueName(home.league), formation: homeFormation }}
+          away={{ name: away.name, short: away.short, leagueName: getLeagueName(away.league), formation: awayFormation }}
+          homeColor={matchTeamColors.homeColor}
+          awayColor={matchTeamColors.awayColor}
+          analysis={matchPreviewAnalysis!}
+        />
+      )}
+
+      {phase === "done" && (
+        <MatchFinalSummary
+          competition={headerText}
+          home={{ name: home.name, short: home.short, leagueName: getLeagueName(home.league), formation: homeFormation }}
+          away={{ name: away.name, short: away.short, leagueName: getLeagueName(away.league), formation: awayFormation }}
+          homeScore={Number(fixture.result?.homeGoals ?? homeScore) + Number(fixture.result?.extraTime?.homeGoals ?? 0)}
+          awayScore={Number(fixture.result?.awayGoals ?? awayScore) + Number(fixture.result?.extraTime?.awayGoals ?? 0)}
+          homeColor={matchTeamColors.homeColor}
+          awayColor={matchTeamColors.awayColor}
+          result={fixture.result}
+          goalEvents={[...feed, ...(fixture.result?.extraTime?.events ?? [])]}
+          timelineEvents={[
+            ...feed.map((event: any) => ({ ...event, kind: "goal", playerName: event.scorerName ?? event.playerName })),
+            ...(fixture.result?.extraTime?.events ?? []).map((event: any) => ({ ...event, kind: "goal", playerName: event.scorerName ?? event.playerName })),
+            ...cardFeed.map((event: any) => ({ ...event, kind: "card", type: event.cardType === "red" || event.isSecondYellow ? "red_card" : "yellow_card" })),
+            ...((fixture.result as any)?.cards ?? []).map((event: any) => ({ ...event, kind: "card", type: event.cardType === "red" || event.isSecondYellow ? "red_card" : "yellow_card" })),
+            ...highlightFeed.map((event: any) => ({ ...event, kind: "highlight" })),
+            ...((fixture.result as any)?.highlights ?? []).map((event: any) => ({ ...event, kind: "highlight" })),
+            ...subFeed.map((event: any) => ({ ...event, kind: "substitution" })),
+            ...((fixture.result as any)?.substitutions ?? []).map((event: any) => ({ ...event, kind: "substitution" })),
+            ...keyMoments.map((event: any) => ({ ...event, kind: "moment", team: event.teamSide ?? event.team })),
+          ]}
+        />
+      )}
+
+      {(phase === "playing" || phase === "extra_time" || phase === "penalties") && (
+        <div className="match-live-strip mb-3 grid gap-2.5">
           <LiveCommentary
             latest={commentaryEntries[0] ?? null}
             entries={commentaryEntries.slice(0, 4)}
             compact
+            homeTeam={{ name: home.name, leagueName: getLeagueName(home.league) }}
+            awayTeam={{ name: away.name, leagueName: getLeagueName(away.league) }}
           />
         </div>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.9fr)] 2xl:gap-7 items-start">
-        <div className="min-w-0">
-          <div className="panel-glow p-4 md:p-5 xl:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <span className="chip">{headerText}</span>
-              <div className="text-sm scoreline font-bold text-primary">{liveMinuteLabel}</div>
+      <div className="match-main-grid grid items-start gap-3.5 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.88fr)] 2xl:gap-4">
+        <div className="min-w-0 space-y-3">
+          <div className="match-pitch-panel panel-glow p-3 sm:p-4 xl:p-4">
+            <div className="match-section-head mb-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[0.58rem] font-extrabold uppercase tracking-[0.18em] text-muted-foreground">{phase === "preview" ? "Centro táctico" : phase === "done" ? "Informe del encuentro" : "Centro del partido"}</div>
+                <h2 className="mt-0.5 truncate text-sm font-extrabold sm:text-base">{phase === "preview" ? "Alineaciones previstas" : phase === "done" ? "Alineaciones del encuentro" : "Alineaciones en directo"}</h2>
+                <div className="mt-0.5 truncate text-[0.58rem] font-semibold text-muted-foreground sm:hidden">{headerText}</div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="chip hidden sm:inline-flex">FORMACIONES</span>
+                <span className={`match-phase-pill ${phase === "playing" || phase === "extra_time" ? "is-live" : phase === "done" ? "is-done" : ""}`}>
+                  {phase === "preview" ? "PREVIA" : phase === "playing" ? "EN JUEGO" : phase === "extra_time" ? "PRÓRROGA" : phase === "penalties" ? "PENALTIS" : "FINAL"}
+                </span>
+              </div>
             </div>
 
-            <div className="grid grid-cols-[1fr_auto_1fr] gap-4 md:gap-6 items-center text-center">
-              <div className="flex flex-col items-center gap-2 md:gap-3">
-                <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={36} />
-                <div className="flex items-center gap-2">
-                  <LeagueLogo league={LEAGUES[home.league]?.name || ""} size="sm" />
-                  <CountryFlag country={LEAGUES[home.league]?.country || ""} />
-                  <div className="font-bold text-sm md:text-base">{home.name}</div>
+            <div className="match-pitches-grid grid grid-cols-[minmax(0,1fr)_34px_minmax(0,1fr)] items-start gap-1.5 text-center sm:gap-3">
+              <div className="match-team-pitch min-w-0 flex flex-col items-center gap-2 rounded-xl border border-border/60 bg-background/30 p-2 sm:p-3">
+                <div className="match-team-title flex w-full min-w-0 items-center justify-center gap-1.5 sm:gap-2">
+                  <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={25} />
+                  <div className="min-w-0 text-left">
+                    <div className="truncate text-[0.66rem] font-black leading-tight sm:text-sm">{home.name}</div>
+                    <div className="mt-0.5 flex items-center gap-1 text-[0.55rem] text-muted-foreground sm:text-[0.62rem]">
+                      <LeagueLogo league={LEAGUES[home.league]?.name || ""} size="sm" />
+                      <CountryFlag country={LEAGUES[home.league]?.country || ""} />
+                      <span className="truncate">{homeFormation.replace("Táctica ", "")}</span>
+                    </div>
+                  </div>
                 </div>
                 <MiniPitch
                   startingXI={homeLineup}
                   formation={homeFormation}
                   teamId={fixture.homeId}
-                  className="mt-1"
+                  className="match-pitch-canvas mt-0.5"
+                  compact
                   cards={cardFeed.filter((c) => c.team === "home")}
                   goals={feed}
                   assists={feed}
@@ -6461,51 +6607,30 @@ function MatchPage() {
                   revealAllInjuries={phase === "done"}
                   vacantSlots={getVacantSlots("home", homeLineup)}
                   stamina={isHome ? stamina : {}}
+                  onPlayerSelect={phase === "preview" || phase === "done" ? (player) => setSelectedMatchPlayer({ player, side: "home" }) : undefined}
                 />
               </div>
-              <div className="scoreline text-3xl md:text-4xl font-black">
-                {phase === "preview"
-                  ? "–"
-                  : phase === "extra_time"
-                    ? homeScore + extraTimeHomeScore
-                    : phase === "penalties"
-                      ? `${homeScore + extraTimeHomeScore}(${penaltyHomeScore})`
-                      : phase === "done" && fixtureRef.current?.result?.penalties
-                        ? `${fixtureRef.current.result.homeGoals + (fixtureRef.current.result.extraTime?.homeGoals || 0)}(${fixtureRef.current.result.penalties.homeGoals})`
-                        : phase === "done" && fixtureRef.current?.result?.extraTime
-                          ? fixtureRef.current.result.homeGoals +
-                            fixtureRef.current.result.extraTime.homeGoals
-                          : phase === "done"
-                            ? fixtureRef.current?.result?.homeGoals || homeScore
-                            : homeScore}
-                <span className="text-muted-foreground mx-2 md:mx-3">:</span>
-                {phase === "preview"
-                  ? "–"
-                  : phase === "extra_time"
-                    ? awayScore + extraTimeAwayScore
-                    : phase === "penalties"
-                      ? `${penaltyAwayScore})${awayScore + extraTimeAwayScore}`
-                      : phase === "done" && fixtureRef.current?.result?.penalties
-                        ? `${fixtureRef.current.result.penalties.awayGoals})${fixtureRef.current.result.awayGoals + (fixtureRef.current.result.extraTime?.awayGoals || 0)}`
-                        : phase === "done" && fixtureRef.current?.result?.extraTime
-                          ? fixtureRef.current.result.awayGoals +
-                            fixtureRef.current.result.extraTime.awayGoals
-                          : phase === "done"
-                            ? fixtureRef.current?.result?.awayGoals || awayScore
-                            : awayScore}
+              <div className="match-pitch-versus flex h-full min-h-20 items-center justify-center pt-12 sm:pt-16" aria-hidden="true">
+                <span className="rounded-full border border-border/70 bg-card/90 px-1.5 py-1 text-[0.55rem] font-black uppercase tracking-wider text-muted-foreground shadow-sm sm:px-2 sm:text-[0.62rem]">VS</span>
               </div>
-              <div className="flex flex-col items-center gap-2 md:gap-3">
-                <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={36} />
-                <div className="flex items-center gap-2">
-                  <LeagueLogo league={LEAGUES[away.league]?.name || ""} size="sm" />
-                  <CountryFlag country={LEAGUES[away.league]?.country || ""} />
-                  <div className="font-bold text-sm md:text-base">{away.name}</div>
+              <div className="match-team-pitch min-w-0 flex flex-col items-center gap-2 rounded-xl border border-border/60 bg-background/30 p-2 sm:p-3">
+                <div className="match-team-title flex w-full min-w-0 items-center justify-center gap-1.5 sm:gap-2">
+                  <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={25} />
+                  <div className="min-w-0 text-left">
+                    <div className="truncate text-[0.66rem] font-black leading-tight sm:text-sm">{away.name}</div>
+                    <div className="mt-0.5 flex items-center gap-1 text-[0.55rem] text-muted-foreground sm:text-[0.62rem]">
+                      <LeagueLogo league={LEAGUES[away.league]?.name || ""} size="sm" />
+                      <CountryFlag country={LEAGUES[away.league]?.country || ""} />
+                      <span className="truncate">{awayFormation.replace("Táctica ", "")}</span>
+                    </div>
+                  </div>
                 </div>
                 <MiniPitch
                   startingXI={awayLineup}
                   formation={awayFormation}
                   teamId={fixture.awayId}
-                  className="mt-1"
+                  className="match-pitch-canvas mt-0.5"
+                  compact
                   cards={cardFeed.filter((c) => c.team === "away")}
                   goals={feed}
                   assists={feed}
@@ -6516,12 +6641,13 @@ function MatchPage() {
                   revealAllInjuries={phase === "done"}
                   vacantSlots={getVacantSlots("away", awayLineup)}
                   stamina={!isHome ? stamina : {}}
+                  onPlayerSelect={phase === "preview" || phase === "done" ? (player) => setSelectedMatchPlayer({ player, side: "away" }) : undefined}
                 />
               </div>
             </div>
 
             {phase !== "preview" && (
-              <div className="mt-4 h-1 bg-secondary rounded overflow-hidden">
+              <div className="match-minute-track mt-3 h-1.5 overflow-hidden rounded-full bg-secondary">
                 <div
                   className="h-full bg-primary transition-all"
                   style={{ width: `${(minute / (phase === "extra_time" ? 120 : 90)) * 100}%` }}
@@ -6529,7 +6655,7 @@ function MatchPage() {
               </div>
             )}
 
-            <div className="mt-4 flex gap-1.5 justify-center flex-wrap items-center">
+            <div className="match-control-dock mt-3 flex flex-wrap items-center justify-center gap-1.5 border-t border-border/60 pt-3">
               {phase === "preview" && (
                 <>
                   <button
@@ -6590,13 +6716,28 @@ function MatchPage() {
                       ))}
                     </div>
                     <button
-                      onClick={() => (isPaused ? resumeMatch() : pauseMatch("manual"))}
+                      onClick={() => {
+                        if (!isPaused) {
+                          pauseMatch("manual");
+                          return;
+                        }
+                        // An active moment must be acknowledged in its modal. If
+                        // the modal has disappeared but the pause reason remains,
+                        // recover the saved scene (or resume the clock) instead of
+                        // leaving the only visible control disabled forever.
+                        if (pauseReason === "moment" && !liveMoment && !pendingPenalty) {
+                          if (pendingSceneRef.current) continueLiveMoment();
+                          else resumeMatch();
+                          return;
+                        }
+                        resumeMatch();
+                      }}
                       className={`${isPaused ? btnPrimary : btnSecondary} px-3 py-1.5 text-xs`}
                       disabled={
                         pauseReason === "injury" ||
                         pauseReason === "coach" ||
                         pauseReason === "penalty" ||
-                        pauseReason === "moment"
+                        (pauseReason === "moment" && (!!liveMoment || !!pendingPenalty))
                       }
                     >
                       {isPaused ? (
@@ -6616,9 +6757,10 @@ function MatchPage() {
                     </button>
                     <button
                       onClick={goEditLineupLive}
+                      title="Cambios y táctica"
                       className={`${btnSecondary} px-3 py-1.5 text-xs`}
                     >
-                      <ClipboardList className="h-3.5 w-3.5" /> Alineación
+                      <ClipboardList className="h-3.5 w-3.5" /> Cambios
                     </button>
                     <button onClick={skipToEnd} className={`${btnGhost} px-3 py-1.5 text-xs`}>
                       <FastForward className="h-3.5 w-3.5" /> Saltar
@@ -6760,7 +6902,7 @@ function MatchPage() {
           </div>
 
           {(phase === "playing" || phase === "extra_time" || phase === "done") && (
-            <div className="mt-4 grid gap-4 lg:grid-cols-2 items-start">
+            <div className="match-postgame-grid grid items-start gap-3 lg:grid-cols-2">
               {fixture?.result?.stats &&
                 (() => {
                   const acc = accumulateStats(fixture.result.stats, phase === "done" ? 90 : minute);
@@ -6772,20 +6914,56 @@ function MatchPage() {
                   mvp={fixture.result.mvp}
                   homeName={fixture.homeTeam?.name ?? "Local"}
                   awayName={fixture.awayTeam?.name ?? "Visitante"}
+                  homeStartingIds={getLineupPlayerIds(fixture.result?.homeStartingLineup ?? fixture.result?.homeLineup)}
+                  awayStartingIds={getLineupPlayerIds(fixture.result?.awayStartingLineup ?? fixture.result?.awayLineup)}
+                  substitutions={subFeed}
+                  finalMinute={fixture.result?.extraTime ? 120 : 90}
                 />
               )}
             </div>
           )}
         </div>
 
-        <div className="min-w-0">
-          <div className="panel p-4 md:p-5 xl:p-6 xl:sticky xl:top-16">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-bold">Crónica del partido</h3>
+        <div className="match-chronicle-column min-w-0">
+          <div className="match-chronicle panel p-3.5 sm:p-4 xl:sticky xl:top-16">
+            <div className="mb-3 flex items-center justify-between gap-3 border-b border-border/60 pb-3">
+              <div>
+                <div className="text-[0.58rem] font-extrabold uppercase tracking-[0.18em] text-muted-foreground">{phase === "preview" ? "Análisis previo" : phase === "done" ? "Informe final" : "En directo"}</div>
+                <h3 className="mt-0.5 text-sm font-extrabold">{phase === "preview" ? "Lectura del encuentro" : "Crónica del partido"}</h3>
+              </div>
               <span className="scoreline text-sm font-black text-primary tabular-nums">
-                {liveMinuteLabel}
+                {phase === "preview" ? "PREVIA" : liveMinuteLabel}
               </span>
             </div>
+            {phase !== "preview" && (
+              <>
+              <div className="match-timeline-shell mb-3">
+                <MatchTimeline
+                  minute={timelineMinute}
+                  homeLabel={home.short}
+                  awayLabel={away.short}
+                  homeName={home.name}
+                  awayName={away.name}
+                  events={feed}
+                  cards={cardFeed}
+                  highlights={highlightFeed}
+                  substitutions={subFeed}
+                  moments={keyMoments as any}
+                />
+              </div>
+              <div className="mt-2.5">
+                <MomentumBar
+                  value={100 - homeMomentumShare}
+                  homeLabel={home.short}
+                  awayLabel={away.short}
+                  status={momentumStatus}
+                  compact
+                  homeColor={matchTeamColors.homeColor}
+                  awayColor={matchTeamColors.awayColor}
+                />
+              </div>
+              </>
+            )}
             {phase === "preview" ? (
               <p className="text-sm text-muted-foreground">
                 {home.name} recibe a {away.name}. Pulsa "Iniciar partido" para comenzar.
@@ -6799,7 +6977,7 @@ function MatchPage() {
                 Sin eventos aún... el partido está disputado.
               </p>
             ) : (
-              <div className="space-y-1 max-h-[calc(100vh-14rem)] overflow-y-auto pr-1">
+              <div className="match-event-list max-h-[min(68vh,760px)] space-y-0.5 overflow-y-auto pr-1">
                 {(() => {
                   // Only the highlights that add colour to the chronicle without flooding it.
                   const KEEP: Record<string, { icon: string; label: string }> = {
@@ -6857,7 +7035,7 @@ function MatchPage() {
                       return (
                         <div
                           key={`moment-${m.id}-${i}`}
-                          className="flex items-start gap-3 rounded-lg border-b border-border/40 py-2.5"
+                          className="match-event-row flex items-start gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2.5 last:border-b-0"
                         >
                           <span className="scoreline w-10 shrink-0 pt-0.5 text-sm font-bold text-primary">
                             {m.minute}'
@@ -6904,7 +7082,7 @@ function MatchPage() {
                       return (
                         <div
                           key={`card-${i}`}
-                          className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
+                          className="match-event-row flex items-center gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2 last:border-0"
                         >
                           <span className="scoreline text-sm text-primary font-bold w-10">
                             {card.minute}'
@@ -6938,7 +7116,7 @@ function MatchPage() {
                       return (
                         <div
                           key={`sub-${i}`}
-                          className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
+                          className="match-event-row flex items-center gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2 last:border-0"
                         >
                           <span className="scoreline text-sm text-primary font-bold w-10">
                             {s.minute}'
@@ -6972,7 +7150,7 @@ function MatchPage() {
                       return (
                         <div
                           key={`hl-${i}`}
-                          className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
+                          className="match-event-row flex items-center gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2 last:border-0"
                         >
                           <span className="scoreline text-sm text-muted-foreground font-bold w-10">
                             {h.minute}'
@@ -7009,7 +7187,7 @@ function MatchPage() {
                     return (
                       <div
                         key={`goal-${i}`}
-                        className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
+                        className="match-event-row flex items-center gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2 last:border-0"
                       >
                         <span className="scoreline text-sm text-primary font-bold w-10">
                           {e.minute}'
@@ -7086,7 +7264,7 @@ function MatchPage() {
                     })}
                   </div>
                 )}
-                <div className="mt-4 pt-4 border-t border-border/60 text-xs text-muted-foreground grid grid-cols-2 gap-2">
+                <div className="match-xg-footer mt-3 grid grid-cols-2 gap-2 border-t border-border/60 pt-3 text-xs text-muted-foreground">
                   <div>
                     xG {home.short}:{" "}
                     <span className="text-foreground scoreline">
@@ -7105,6 +7283,22 @@ function MatchPage() {
           </div>
         </div>
       </div>
+
+      {isPaused && !liveMoment && !pendingPenalty && !halftimeOverlayDismissed && (pauseReason === "halftime" || pauseReason === "et_halftime" || pauseReason === "et_break") && (
+        <HalftimeOverlay
+          minute={minute}
+          homeName={home.name}
+          awayName={away.name}
+          homeScore={homeScore + extraTimeHomeScore}
+          awayScore={awayScore + extraTimeAwayScore}
+          momentum={isHome ? momentum : 100 - momentum}
+          isExtraTime={pauseReason === "et_halftime" || pauseReason === "et_break"}
+          homeLeagueName={getLeagueName(home.league)}
+          awayLeagueName={getLeagueName(away.league)}
+          onContinue={() => setHalftimeOverlayDismissed(true)}
+          onEdit={goEditLineupLive}
+        />
+      )}
 
       <AnimatePresence>
         {phase !== "preview" && liveMoment && (
@@ -7139,6 +7333,21 @@ function MatchPage() {
         penalty={pendingPenalty}
         onResolve={resolveInteractivePenalty}
         onContinue={continueInteractivePenalty}
+      />
+      <MatchPlayerDetailsModal
+        player={selectedMatchPlayer?.player ?? null}
+        teamName={selectedMatchPlayer?.side === "away" ? away.name : home.name}
+        teamLeagueName={selectedMatchPlayer?.side === "away" ? getLeagueName(away.league) : getLeagueName(home.league)}
+        phase={phase}
+        energy={selectedMatchPlayer && selectedMatchPlayer.side === (isHome ? "home" : "away") ? stamina[selectedMatchPlayer.player.id] : undefined}
+        matchInfo={selectedMatchPlayer ? {
+          goals: feed.filter((event: any) => event.scorerId === selectedMatchPlayer.player.id && event.type !== "own_goal").length,
+          assists: feed.filter((event: any) => event.assistId === selectedMatchPlayer.player.id).length,
+          rating: phase === "done" ? fixture.result?.ratings?.find((rating: any) => rating.playerId === selectedMatchPlayer.player.id)?.rating : undefined,
+          hasYellow: cardFeed.some((card: any) => card.playerId === selectedMatchPlayer.player.id && card.cardType === "yellow"),
+          hasRed: cardFeed.some((card: any) => card.playerId === selectedMatchPlayer.player.id && (card.cardType === "red" || card.isSecondYellow)),
+        } : undefined}
+        onOpenChange={(open) => { if (!open) setSelectedMatchPlayer(null); }}
       />
     </div>
   );

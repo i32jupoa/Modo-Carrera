@@ -7,7 +7,7 @@ import { teamById, LEAGUES } from "@/data/teams";
 import { registerDynamicMarketPlayer, unregisterDynamicMarketPlayer } from "@/lib/transfers/PlayerIndex";
 import { registerDynamicPlayer, unregisterDynamicPlayer, usePlayersStore } from "@/store/playersStore";
 import { academyPlayerToFcPlayer, academyPlayerToStats, academyContract, academyMarketValue } from "./academyAdapters";
-import { ACADEMY_FACILITIES, ACADEMY_LIMITS, ACADEMY_ID_BASE } from "./academyConstants";
+import { ACADEMY_FACILITIES, ACADEMY_LIMITS, ACADEMY_ID_BASE, ACADEMY_ID_SPAN } from "./academyConstants";
 import { generateAcademyState, generateAnnualIntake } from "./academyGenerator";
 import { advanceAcademyToDate, simulateAcademyLeagueMatchOnDate } from "./academyProgression";
 import { ACADEMY_STATE_VERSION, loadAcademySave, saveAcademySave, clearAcademySave } from "./academyPersistence";
@@ -17,7 +17,9 @@ import { syncCalledUpAcademyPlayer } from "./academyCallUp";
 import { listForTransfer, unlistFromTransfer } from "@/lib/transfers/ContractEngine";
 import { getPlayer } from "@/lib/transfers/PlayerIndex";
 import { saveTransferSystem } from "@/lib/transfers/Persistence";
+import { createEmptyAcademySeasonStats } from "./academyTypes";
 import type { AcademyPlayer, AcademyCareerRecord, ClubAcademyState } from "./academyTypes";
+import type { YouthProspect } from "@/lib/transfers/YouthScouting";
 import type { MarketPlayer } from "@/lib/transfers/types";
 import { measureCalendarJumpPhase } from "@/lib/calendarJumpProfiler";
 
@@ -46,6 +48,12 @@ type AcademyState = {
   retrainPosition: (playerId: number, position: AcademyPlayer["positions"][number], date: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   reconcileUserAcademy: (teamId: string) => Promise<void>;
   addAnnualIntake: (teamId: string, season: number | string) => Promise<{ ok: true; added: number } | { ok: false; reason: string }>;
+  recruitScoutedProspect: (
+    teamId: string,
+    prospect: YouthProspect,
+    date: string,
+    contractTerms?: { years: number; wage: number; releaseClause: number; signingBonus: number },
+  ) => Promise<{ ok: true; playerId: number } | { ok: false; reason: string }>;
   upgradeFacilities: (teamId: string) => Promise<{ ok: true; level: number; cost: number } | { ok: false; reason: string }>;
   upgradeYouthCoach: (teamId: string) => Promise<{ ok: true; level: number; cost: number } | { ok: false; reason: string }>;
   getUserPlayers: (teamId: string | null) => AcademyPlayer[];
@@ -452,6 +460,84 @@ export const useAcademyStore = create<AcademyState>((set, get) => ({
     set({ clubs: { ...get().clubs, [teamId]: next } });
     await get().save();
     return { ok: true, added: additions.length };
+  },
+
+  recruitScoutedProspect: async (teamId, prospect, date, contractTerms) => {
+    const saveId = getCurrentSaveId();
+    if (!saveId) return { ok: false, reason: "No hay una partida activa." };
+    const numericSeason = Number(String(date || usePlayersStore.getState().currentDate).slice(0, 4)) || 2026;
+    let club: ClubAcademyState;
+    try {
+      club = await get().ensureClub(teamId, numericSeason, date);
+    } catch {
+      return { ok: false, reason: "No se ha podido cargar la cantera del club." };
+    }
+    if (getCurrentSaveId() !== saveId) return { ok: false, reason: "La partida activa ha cambiado. Vuelve a intentarlo." };
+    club = get().clubs[teamId] ?? club;
+    if (club.players.length >= ACADEMY_LIMITS.maxPlayers) {
+      return { ok: false, reason: "La cantera está llena. Libera o promociona jugadores antes de incorporar más talento." };
+    }
+    const playersState = usePlayersStore.getState();
+    const price = Math.max(0, Math.round(Number(prospect.price) || 0));
+    if (playersState.budget < price) {
+      return { ok: false, reason: `No hay presupuesto suficiente. Necesitas ${price.toLocaleString("es-ES")} € y tienes ${playersState.budget.toLocaleString("es-ES")} €.` };
+    }
+
+    const occupied = new Set(Object.values(get().clubs).flatMap((entry) => entry.players.map((player) => Number(player.id))));
+    let id = ACADEMY_ID_BASE + Math.floor(Math.random() * ACADEMY_ID_SPAN);
+    while (occupied.has(id)) id = ACADEMY_ID_BASE + Math.floor(Math.random() * ACADEMY_ID_SPAN);
+    const player: AcademyPlayer = {
+      id,
+      teamId,
+      name: prospect.name,
+      nation: prospect.nation,
+      birthdate: prospect.birthdate,
+      age: prospect.age,
+      positions: prospect.positions.length ? [...prospect.positions] : ["MC"],
+      internalOvr: prospect.ovr,
+      ovr: prospect.ovr,
+      potential: prospect.potential,
+      potentialEstimate: { ...prospect.potentialEstimate },
+      attributes: { ...prospect.attributes },
+      traits: [...prospect.traits],
+      growthProfile: prospect.growthProfile,
+      joinedSeason: prospect.joinedSeason || numericSeason,
+      contractYearsLeft: Math.max(1, Math.round(contractTerms?.years ?? prospect.contractYearsLeft ?? 2)),
+      contractWage: contractTerms ? Math.max(0, Math.round(contractTerms.wage)) : undefined,
+      contractReleaseClause: contractTerms ? Math.max(0, Math.round(contractTerms.releaseClause)) : undefined,
+      contractSigningBonus: contractTerms ? Math.max(0, Math.round(contractTerms.signingBonus)) : undefined,
+      scoutedFromClubId: prospect.sourceClubId,
+      scoutedFromClubName: prospect.sourceClubName,
+      status: "academy",
+      minutesThisSeason: 0,
+      academyStats: createEmptyAcademySeasonStats(numericSeason, prospect.ovr),
+      academyCareerSeasons: [],
+    };
+    player.value = academyMarketValue(player);
+    const next = cloneClub(club, [...club.players, player]);
+    const nextClubs = { ...get().clubs, [teamId]: next };
+    set({ clubs: nextClubs });
+    const persisted = await saveAcademySave({
+      version: ACADEMY_STATE_VERSION,
+      savedAt: new Date().toISOString(),
+      userTeamId: teamId,
+      clubs: { [teamId]: next },
+    }, saveId);
+    if (!persisted) {
+      set({ clubs: { ...get().clubs, [teamId]: club } });
+      return { ok: false, reason: "No se ha podido guardar la cantera. No se ha cobrado el fichaje." };
+    }
+    if (!usePlayersStore.getState().spendBudget(price)) {
+      set({ clubs: { ...get().clubs, [teamId]: club } });
+      await saveAcademySave({
+        version: ACADEMY_STATE_VERSION,
+        savedAt: new Date().toISOString(),
+        userTeamId: teamId,
+        clubs: { [teamId]: club },
+      }, saveId);
+      return { ok: false, reason: "El presupuesto ha cambiado y ya no se puede completar el fichaje." };
+    }
+    return { ok: true, playerId: id };
   },
 
   loanForUser: async (playerId, borrowerClubId, date) => {

@@ -2629,8 +2629,14 @@ function LineupPage() {
             unresolvedInjury ||
             (!isLineupComplete && !intentionalVacancies);
           return (
-            <div className="panel mt-8 p-5">
-              <div className="flex flex-wrap items-center gap-2 mb-4">
+            <div className="match-substitution-panel panel mt-7 p-4 sm:p-5">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <div className="text-[0.58rem] font-black uppercase tracking-[0.18em] text-primary">Dirección de equipo</div>
+                  <h3 className="mt-1 text-base font-black tracking-tight sm:text-lg">Cambios y ajustes tácticos</h3>
+                  <p className="mt-1 text-[0.65rem] text-muted-foreground">El partido permanece pausado mientras preparas los cambios.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
                 <span className={infoChip}>Partido en pausa · {live.minute}'</span>
                 <span className={infoChip}>
                   Cambios {live.subsUsed + changes}/{limits.maxSubs}
@@ -2639,6 +2645,7 @@ function LineupPage() {
                   Ventanas {live.windowsUsed + (changes > 0 && !free ? 1 : 0)}/{limits.maxWindows}
                 </span>
                 {free && <span className={infoChip}>Descanso · no gasta ventana</span>}
+                </div>
               </div>
               <p className="text-xs text-muted-foreground mb-4">
                 Cambia la táctica libremente. Si mueves jugadores del banquillo al once se contarán
@@ -2776,7 +2783,14 @@ function LineupPage() {
                     saveLive(nextLive);
                     navigate({
                       to: "/match",
-                      state: { resumeLive: true, fixtureId: live.fixtureId } as any,
+                      state: {
+                        resumeLive: true,
+                        fixtureId: live.fixtureId,
+                        // Persist the Continue action across the route unmount.
+                        // The live phase stays at halftime, so the next-half clock
+                        // remains stopped until the manager starts it explicitly.
+                        dismissHalftimeOverlayOnReturn: ["halftime", "et_halftime", "et_break"].includes(live.phase),
+                      } as any,
                     });
                   }}
                 >

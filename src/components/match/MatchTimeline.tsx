@@ -41,7 +41,6 @@ export function MatchTimeline({
   highlights,
   substitutions,
   moments = [],
-  momentumHistory,
 }: {
   minute: number;
   homeLabel: string;
@@ -53,10 +52,9 @@ export function MatchTimeline({
   highlights: any[];
   substitutions: any[];
   moments?: Array<{ id: string; minute: number; type: string; title: string; teamName?: string; playerName?: string; teamSide?: "home" | "away" }>;
-  momentumHistory: Array<{ minute: number; value: number }>;
 }) {
   const items: TimelineItem[] = [
-    ...events.map((e: any, i) => ({
+    ...events.filter((e: any) => ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(e.type)).map((e: any, i) => ({
       id: `event-${e.minute}-${e.scorerId || i}`,
       minute: Number(e.minute) || 0,
       icon: ICONS[e.type] || "⚽",
@@ -106,10 +104,9 @@ export function MatchTimeline({
 
   const visible = items.slice(-10);
   const maxMinute = Math.max(90, minute || 1);
-  const latestMomentum = momentumHistory[momentumHistory.length - 1]?.value ?? 50;
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-card/65 backdrop-blur p-4">
+    <div className="match-timeline-panel rounded-2xl border border-border/70 bg-card/65 p-3 backdrop-blur sm:p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="text-[0.65rem] font-black uppercase tracking-[0.18em] text-muted-foreground">
           Línea de tiempo
@@ -157,8 +154,8 @@ export function MatchTimeline({
 
       <div className="mt-3 flex items-center justify-between text-[0.62rem] uppercase tracking-wider text-muted-foreground">
         <span>Inicio</span>
-        <span>Momento actual · {Math.round(latestMomentum)}%</span>
-        <span>90'</span>
+        <span>En directo · {Math.min(maxMinute, Math.max(0, minute))}'</span>
+        <span>{maxMinute}'</span>
       </div>
     </div>
   );

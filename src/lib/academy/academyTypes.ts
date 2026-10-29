@@ -75,6 +75,12 @@ export interface AcademyPlayer {
   growthProfile: AcademyGrowthProfile;
   joinedSeason: number;
   contractYearsLeft: number;
+  /** Términos pactados al incorporar una promesa externa. */
+  contractWage?: number;
+  contractReleaseClause?: number;
+  contractSigningBonus?: number;
+  scoutedFromClubId?: string;
+  scoutedFromClubName?: string;
   status: AcademyStatus;
   loanClubId?: string;
   /** Minutos acumulados en partidos de cantera del curso actual. */

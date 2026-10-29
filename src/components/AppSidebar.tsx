@@ -34,7 +34,8 @@ import {
 } from "@/components/ui/sidebar";
 import { loadSave } from "@/lib/store";
 import { loadAllSaves, loadSaveById } from "@/lib/savedGames";
-import { teamById } from "@/data/teams";
+import { teamById, LEAGUES } from "@/data/teams";
+import { TeamLogo } from "@/components/TeamLogo";
 import { useAcademyStore } from "@/lib/academy/academyStore";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import { usePlayersStore } from "@/store/playersStore";
@@ -80,6 +81,7 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const [teamName, setTeamName] = useState<string | null>(null);
+  const [teamLeagueName, setTeamLeagueName] = useState<string>("");
   const [season, setSeason] = useState<string>("");
   const [hasSave, setHasSave] = useState(false);
   const ensureAcademyClub = useAcademyStore((state) => state.ensureClub);
@@ -92,6 +94,7 @@ export function AppSidebar() {
     if (isHomePage) {
       // En la página principal, bloquear todo
       setTeamName(null);
+      setTeamLeagueName("");
       setSeason("");
       setHasSave(false);
       console.log("Página principal: bloqueando todo");
@@ -99,12 +102,15 @@ export function AppSidebar() {
       // En otras rutas, permitir navegación
       const s = loadSave();
       if (s) {
-        setTeamName(teamById(s.myTeamId).name);
+        const activeTeam = teamById(s.myTeamId);
+        setTeamName(activeTeam.name);
+        setTeamLeagueName(LEAGUES[String(activeTeam.league)]?.name ?? String(activeTeam.league));
         setSeason(s.season);
         setHasSave(true);
         console.log("Otra ruta: permitiendo navegación, teamName:", teamById(s.myTeamId).name);
       } else {
         setTeamName(null);
+        setTeamLeagueName("");
         setSeason("");
         setHasSave(false);
         console.log("Otra ruta pero no hay save: bloqueando todo");
@@ -157,8 +163,14 @@ export function AppSidebar() {
                 Dynasty <span className="text-gold">Manager</span>
               </div>
               {hasSave && teamName && (
-                <div className="text-[0.65rem] text-muted-foreground truncate mt-0.5">
-                  {teamName}
+                <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[0.65rem] text-muted-foreground">
+                  <TeamLogo
+                    teamName={teamName}
+                    leagueName={teamLeagueName}
+                    size={15}
+                    className="shrink-0"
+                  />
+                  <span className="min-w-0 truncate">{teamName}</span>
                 </div>
               )}
             </div>

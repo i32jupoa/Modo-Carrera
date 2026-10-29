@@ -39,6 +39,7 @@ import {
   type ScoutingEntry,
 } from "@/lib/transfers/Scouting";
 import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
+import { YouthScoutingPanel } from "@/components/market/YouthScoutingPanel";
 import { scoutPlayer, type ScoutingReport } from "@/lib/transfers/UserNegotiation";
 import { ALL_POS_CODES, POS_NAME, buildPositions, formatShortPositions, type PosCode } from "@/lib/positions";
 import {
@@ -365,6 +366,7 @@ function ScoutingPage() {
   const [reportEntry, setReportEntry] = useState<ScoutingEntry | null>(null);
   const [reportData, setReportData] = useState<ScoutingReport | null>(null);
   const [dismissScoutOpen, setDismissScoutOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"normal" | "youth">("normal");
 
   useEffect(() => {
     const save = loadSave();
@@ -680,12 +682,19 @@ function ScoutingPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
+    <div className={`mx-auto ${activeTab === "youth" ? "max-w-6xl space-y-3 p-3 md:space-y-4 md:p-4" : "max-w-7xl space-y-6 p-4 md:p-6"}`}>
+      <div className="inline-flex flex-wrap gap-2 rounded-2xl border border-border/60 bg-card/60 p-1.5">
+        <button type="button" aria-pressed={activeTab === "normal"} onClick={() => setActiveTab("normal")} className={`rounded-lg px-3 py-1.5 text-xs font-black transition ${activeTab === "normal" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-secondary hover:text-foreground"}`}>Ojeador estándar</button>
+        <button type="button" aria-pressed={activeTab === "youth"} onClick={() => setActiveTab("youth")} className={`rounded-lg px-3 py-1.5 text-xs font-black transition ${activeTab === "youth" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-secondary hover:text-foreground"}`}>Ojeador de canteras</button>
+      </div>
+      {activeTab === "youth" ? (
+        <YouthScoutingPanel currentDate={currentDate} teamId={myTeamId} budget={budget} />
+      ) : <>
       <div className="panel-glow overflow-hidden">
         <div className="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-primary">Mi equipo · Staff</p>
-            <h1 className="mt-1 text-2xl font-black md:text-3xl">Ojeador</h1>
+            <h1 className="mt-1 text-2xl font-black md:text-3xl">Ojeador estándar</h1>
             <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
               Contrata un profesional del catálogo mensual y úsalo para investigar jugadores con una precisión que mejora según su valoración.
             </p>
@@ -761,7 +770,7 @@ function ScoutingPage() {
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
             <h2 className="text-lg font-black">Catálogo del mes</h2>
-            <p className="text-xs text-muted-foreground">Cada mes aparecen 5 ojeadores nuevos con valoración y precio propios.</p>
+            <p className="text-xs text-muted-foreground">Cada mes aparecen 5 ojeadores estándar nuevos con valoración y precio propios.</p>
           </div>
           <span className="rounded-full border border-border/60 bg-secondary/40 px-2.5 py-1 text-[0.65rem] font-bold">5 candidatos</span>
         </div>
@@ -1076,6 +1085,7 @@ function ScoutingPage() {
           />
         </ScoutingReportBoundary>
       )}
+      </>}
     </div>
   );
 }

@@ -34,6 +34,8 @@ interface Props {
   context?: InternalContractContext;
   title?: string;
   description?: string;
+  successTitle?: string;
+  successDescription?: string;
   onClose: () => void;
   onAccepted: (offer: InternalContractOffer) => Promise<{ ok: true } | { ok: false; reason: string }>;
   onPersist?: () => void;
@@ -127,6 +129,8 @@ export function ContractNegotiationModal({
   context = {},
   title,
   description,
+  successTitle,
+  successDescription,
   onClose,
   onAccepted,
   onPersist,
@@ -285,7 +289,17 @@ export function ContractNegotiationModal({
       const completed = getInternalContractNegotiation(session.id);
       setSession(completed ?? { ...session, status: "accepted", pendingAcceptedOffer: undefined });
       onPersist?.();
-      toast.success("Renovación confirmada", { description: `${player.Name} continuará en el club con las nuevas condiciones.` });
+      const fallbackSuccessTitle = kind === "promotion"
+        ? "Promoción confirmada"
+        : kind === "youth-renewal"
+          ? "Contrato juvenil renovado"
+          : "Renovación confirmada";
+      const fallbackSuccessDescription = kind === "promotion"
+        ? `${player.Name} se incorpora al primer equipo.`
+        : `${player.Name} continuará en el club con las nuevas condiciones.`;
+      toast.success(successTitle ?? fallbackSuccessTitle, {
+        description: successDescription ?? fallbackSuccessDescription,
+      });
       onClose();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "No se pudo cerrar la renovación.";

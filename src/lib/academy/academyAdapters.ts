@@ -126,9 +126,9 @@ export function academyContract(player: AcademyPlayer): {
   const value = academyMarketValue(player);
   const wage = Math.max(40_000, estimateAnnualWage(value, player.age, Math.round(player.ovr)) * 0.65);
   return {
-    yearsLeft: Math.max(2, Math.round(player.contractYearsLeft || 2)),
-    wage: Math.round(wage / 1000) * 1000,
-    releaseClause: Math.round(value * 2),
-    signingBonus: Math.round(wage * 0.15),
+    yearsLeft: Math.max(1, Math.round(player.contractYearsLeft || 2)),
+    wage: Math.max(0, Math.round(Number(player.contractWage ?? wage) / 1000) * 1000),
+    releaseClause: Math.max(0, Math.round(Number(player.contractReleaseClause ?? value * 2))),
+    signingBonus: Math.max(0, Math.round(Number(player.contractSigningBonus ?? wage * 0.15))),
   };
 }

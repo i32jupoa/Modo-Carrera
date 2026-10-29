@@ -219,7 +219,7 @@ export function LiveEventOverlay({
       {event && (
         <motion.div
           key={event.id}
-          className="fixed inset-0 z-[90] flex items-center justify-center p-3 md:p-6"
+          className="match-live-event-overlay fixed inset-0 z-[90] flex items-center justify-center p-3 md:p-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -231,7 +231,7 @@ export function LiveEventOverlay({
           />
 
           <motion.div
-            className="relative w-full max-w-3xl overflow-hidden rounded-[2rem] border border-white/10 bg-[#11151f]/98 shadow-[0_28px_100px_rgba(0,0,0,.58)]"
+            className="match-live-event-card relative w-full max-w-3xl overflow-hidden rounded-[2rem] border border-white/10 bg-[#11151f]/98 shadow-[0_28px_100px_rgba(0,0,0,.58)]"
             initial={{ opacity: 0, y: 18, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10, scale: 0.985 }}

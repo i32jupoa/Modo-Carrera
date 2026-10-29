@@ -1,0 +1,14 @@
+PARCHE: TEMA DE COMPETICION DURANTE EL PARTIDO
+
+1. Haz una copia de seguridad de tu proyecto.
+2. Descomprime este ZIP en la carpeta raiz del proyecto, junto a package.json.
+3. Acepta combinar carpetas y reemplazar src/components/GameAmbient.tsx.
+4. Reinicia la aplicación si ya estaba abierta.
+
+Comportamiento esperado:
+- El tema queda fijado a la competición del partido al entrar en /match.
+- Al ir a Dirección de equipo (/lineup) para hacer cambios, el tema no cambia.
+- Al volver a /match, sigue con el mismo tema.
+- Al volver a /season (central de temporada) o al menú principal, se libera el bloqueo y el tema se calcula de nuevo según el próximo partido.
+
+Solo cambia el fondo y el acento visual; no modifica la simulación.

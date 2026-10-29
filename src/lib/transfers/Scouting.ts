@@ -232,7 +232,7 @@ function ratingFromIndex(index: number, month: string, saveId: string): ScoutRat
   return 0.5;
 }
 
-function costForScoutSeed(seed: string, rating: ScoutRating): number {
+export function getScoutCostForSeed(seed: string, rating: ScoutRating): number {
   const [minCost, maxCost] = PRICE_BANDS[rating];
   const rawCost = minCost + Math.round(seededUnit(seed) * (maxCost - minCost));
   return Math.round(rawCost / 50_000) * 50_000;
@@ -250,7 +250,7 @@ function buildCatalog(month: string): ScoutCandidate[] {
     usedNames.add(person.name);
 
     const rating = ratingFromIndex(index, month, saveId);
-    const cost = costForScoutSeed(`${saveId}:${month}:cost:${index}`, rating);
+    const cost = getScoutCostForSeed(`${saveId}:${month}:cost:${index}`, rating);
     const id = `scout-${month}-${index}-${hashString(`${saveId}:${month}:${person.name}`).toString(36)}`;
 
     catalog.push({
@@ -368,7 +368,7 @@ export function ensureScoutingState(currentDate: string): ScoutingState {
     // y no dependa de una URL remota.
     const migratedCatalog = state.catalog.map((candidate, index) => {
       const photoUrl = `/scout-avatars/generated-${(index % 5) + 1}.png`;
-      const cost = costForScoutSeed(candidate.id, candidate.rating);
+      const cost = getScoutCostForSeed(candidate.id, candidate.rating);
       return candidate.photoUrl === photoUrl && candidate.cost === cost
         ? candidate
         : { ...candidate, photoUrl, cost };

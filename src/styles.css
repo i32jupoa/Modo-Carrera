@@ -1465,3 +1465,849 @@ html[data-game-route="transfers"] [class*="to-yellow"]:not(.market-exits-banner)
 }
 
 
+
+/* --------------------------------------------------------------------------
+   Matchday UI refresh — one visual system for the live match experience.
+   Gameplay state and simulation are intentionally unaffected by these styles.
+   -------------------------------------------------------------------------- */
+.match-screen {
+  --match-panel-border: color-mix(in oklab, var(--border) 78%, transparent);
+  --match-panel-fill: color-mix(in oklab, var(--card) 78%, transparent);
+  color: var(--foreground);
+  isolation: isolate;
+}
+.match-screen .tv-scorebug {
+  border: 1px solid color-mix(in oklab, var(--comp-accent) 32%, var(--border));
+  border-radius: 0.9rem;
+  background: color-mix(in oklab, var(--background) 88%, transparent);
+  box-shadow: 0 14px 34px -24px color-mix(in oklab, var(--comp-accent) 48%, transparent),
+    0 5px 18px -15px black, inset 0 1px 0 color-mix(in oklab, white 7%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+}
+.match-screen .tv-scorebug-comp {
+  max-width: 13rem;
+  background: color-mix(in oklab, var(--comp-accent) 78%, var(--background));
+}
+.match-screen .tv-scorebug-score {
+  min-width: 5.4rem;
+  justify-content: center;
+  letter-spacing: -0.07em;
+  background: color-mix(in oklab, var(--foreground) 94%, var(--comp-accent));
+  box-shadow: inset 1px 0 color-mix(in oklab, black 9%, transparent), inset -1px 0 color-mix(in oklab, black 9%, transparent);
+}
+.match-screen .tv-scorebug-clock {
+  min-width: 4.4rem;
+  justify-content: center;
+  letter-spacing: -0.035em;
+  background: color-mix(in oklab, var(--comp-accent) 8%, var(--background));
+  border-left: 1px solid var(--match-panel-border);
+}
+.match-screen .tv-scorebug-clock .w-12 { width: auto; min-width: 2.35rem; }
+.match-screen .tv-scorebug-comp,
+.match-screen .tv-scorebug-score,
+.match-screen .tv-scorebug-clock { white-space: nowrap; }
+.match-screen .match-score-team { min-width: 0; }
+.match-screen .match-score-team > span { overflow: hidden; text-overflow: ellipsis; }
+.match-screen .tv-live-dot { flex: 0 0 auto; width: 0.42rem; height: 0.42rem; }
+
+.match-screen .match-live-card {
+  min-width: 0;
+  border-color: var(--match-panel-border);
+  background: linear-gradient(145deg, color-mix(in oklab, var(--card) 90%, transparent), color-mix(in oklab, var(--background) 82%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent), 0 7px 22px -22px black;
+}
+.match-screen .match-live-card .text-\[0\.58rem\],
+.match-screen .match-live-card .text-\[0\.6rem\] { letter-spacing: 0.15em; }
+.match-screen .match-commentary-card { display: flex; flex-direction: column; justify-content: center; }
+.match-screen .match-commentary-card > div:nth-child(2) { min-width: 0; }
+.match-screen .match-pitch-panel {
+  overflow: hidden;
+  border-color: color-mix(in oklab, var(--comp-accent) 22%, var(--border));
+  border-radius: 1rem;
+  background: linear-gradient(160deg, color-mix(in oklab, var(--card) 94%, transparent), color-mix(in oklab, var(--background) 92%, transparent));
+  box-shadow: 0 16px 40px -34px color-mix(in oklab, var(--comp-accent) 50%, transparent), inset 0 1px 0 color-mix(in oklab, white 4%, transparent);
+}
+.match-screen .match-section-head { min-height: 2.25rem; }
+.match-screen .match-phase-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.55rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--match-panel-border);
+  background: color-mix(in oklab, var(--muted) 45%, transparent);
+  color: var(--muted-foreground);
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  white-space: nowrap;
+}
+.match-screen .match-phase-pill.is-live {
+  border-color: color-mix(in oklab, #22c55e 42%, transparent);
+  background: color-mix(in oklab, #22c55e 12%, var(--background));
+  color: #4ade80;
+}
+.match-screen .match-phase-pill.is-live::before {
+  content: "";
+  display: inline-block;
+  width: 0.38rem;
+  height: 0.38rem;
+  margin-right: 0.38rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 12%, transparent);
+}
+.match-screen .match-phase-pill.is-done {
+  border-color: color-mix(in oklab, var(--comp-accent) 35%, transparent);
+  color: var(--comp-accent);
+}
+.match-screen .match-pitches-grid { align-items: stretch; }
+.match-screen .match-team-pitch {
+  border-color: var(--match-panel-border);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--background) 50%, transparent), color-mix(in oklab, var(--card) 34%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+  transition: border-color 180ms ease, background-color 180ms ease;
+}
+.match-screen .match-team-pitch:hover { border-color: color-mix(in oklab, var(--comp-accent) 32%, var(--border)); }
+.match-screen .match-pitch-canvas { width: 100%; min-width: 0; display: flex; justify-content: center; }
+.match-screen .match-pitch-canvas > div { width: 100%; }
+.match-screen .match-pitch-surface {
+  isolation: isolate;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, white 5%, transparent), 0 8px 20px -18px black;
+}
+.match-screen .match-pitch-versus { position: relative; z-index: 1; }
+.match-screen .match-pitch-versus::before {
+  content: "";
+  position: absolute;
+  top: 2.25rem;
+  bottom: 0.75rem;
+  left: 50%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--match-panel-border) 18%, var(--match-panel-border) 82%, transparent);
+  z-index: -1;
+}
+.match-screen .match-minute-track {
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  background: color-mix(in oklab, var(--muted) 60%, transparent);
+}
+.match-screen .match-minute-track > div {
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--primary) 76%, white), var(--primary));
+  box-shadow: 0 0 11px -4px var(--primary);
+}
+.match-screen .match-control-dock { gap: 0.4rem; }
+.match-screen .match-control-dock > button,
+.match-screen .match-control-dock > div button {
+  min-height: 2.2rem;
+  height: 2.2rem;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+  border-radius: 0.65rem;
+  font-size: 0.72rem;
+  box-shadow: none;
+}
+.match-screen .match-control-dock > button.bg-primary,
+.match-screen .match-control-dock > div button.bg-primary {
+  box-shadow: 0 5px 16px -12px var(--primary);
+}
+.match-screen .match-control-dock [class*="rounded-lg border border-border bg-card p-0.5"] { border-radius: 0.7rem; }
+.match-screen .match-control-dock [class*="rounded-lg border border-border bg-card p-0.5"] button { min-width: 2.1rem; }
+.match-screen .match-chronicle {
+  border-color: var(--match-panel-border);
+  border-radius: 1rem;
+  background: linear-gradient(155deg, color-mix(in oklab, var(--card) 91%, transparent), color-mix(in oklab, var(--background) 89%, transparent));
+  box-shadow: 0 14px 34px -32px black, inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+}
+.match-screen .match-event-list { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent; }
+.match-screen .match-event-row { transition: background-color 160ms ease; }
+.match-screen .match-event-row:hover { background: color-mix(in oklab, var(--foreground) 3%, transparent); }
+.match-screen .match-data-panel {
+  border-radius: 1rem;
+  border-color: var(--match-panel-border);
+  background: linear-gradient(150deg, color-mix(in oklab, var(--card) 92%, transparent), color-mix(in oklab, var(--background) 90%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+}
+.match-screen .match-data-panel h3 { color: var(--foreground); }
+.match-screen .match-data-panel > .grid > div { min-width: 0; }
+.match-screen .match-data-panel .rounded-lg.border { border-color: var(--match-panel-border); background: color-mix(in oklab, var(--background) 34%, transparent); }
+.match-screen .match-xg-footer { color: var(--muted-foreground); }
+
+@media (max-width: 640px) {
+  .match-screen { padding-left: 0.4rem; padding-right: 0.4rem; }
+  .match-screen .tv-scorebug { border-radius: 0.72rem; }
+  .match-screen .tv-scorebug-score { min-width: 4.7rem; padding-left: 0.45rem; padding-right: 0.45rem; font-size: 1rem; }
+  .match-screen .tv-scorebug-clock { min-width: 3.2rem; padding-left: 0.4rem; padding-right: 0.4rem; font-size: 0.78rem; }
+  .match-screen .tv-scorebug-clock .w-12 { min-width: 1.9rem; }
+  .match-screen .match-score-team { gap: 0.35rem; padding-left: 0.45rem; padding-right: 0.45rem; }
+  .match-screen .match-score-team span { font-size: 0.62rem; }
+  .match-screen .match-pitches-grid { grid-template-columns: minmax(0, 1fr) 25px minmax(0, 1fr); gap: 0.2rem; }
+  .match-screen .match-team-pitch { padding: 0.4rem; border-radius: 0.7rem; }
+  .match-screen .match-team-title { gap: 0.25rem; }
+  .match-screen .match-team-title > img,
+  .match-screen .match-team-title > div:first-child { flex-shrink: 0; }
+  .match-screen .match-pitch-versus { padding-top: 3rem; }
+  .match-screen .match-pitch-versus::before { top: 2.6rem; }
+  .match-screen .match-control-dock > button { flex: 0 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .match-screen .tv-live-dot { animation: none; }
+  .match-screen .match-event-row,
+  .match-screen .match-team-pitch,
+  .match-screen .match-minute-track > div { transition: none !important; }
+}
+.match-screen .tv-scorebug-score.match-score-penalties { min-width: 11rem; font-size: 0.9rem; letter-spacing: -0.045em; }
+@media (max-width: 640px) {
+  .match-screen .tv-scorebug-score.match-score-penalties { min-width: 8rem; padding-left: 0.25rem; padding-right: 0.25rem; font-size: 0.68rem; }
+}
+
+/* --------------------------------------------------------------------------
+   Matchday premium presentation — visual storytelling, player details, break
+   and final result. These styles are presentational; simulation stays intact.
+   -------------------------------------------------------------------------- */
+.match-screen {
+  --match-glass: color-mix(in oklab, var(--background) 82%, transparent);
+  --match-accent-soft: color-mix(in oklab, var(--comp-accent) 13%, transparent);
+  --match-radius: 1.15rem;
+}
+.match-screen::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.46;
+  background:
+    radial-gradient(38rem 20rem at 50% -5%, color-mix(in oklab, var(--comp-accent) 13%, transparent), transparent 78%),
+    radial-gradient(28rem 16rem at 92% 32%, color-mix(in oklab, var(--club) 9%, transparent), transparent 80%);
+}
+.match-screen .tv-scorebug {
+  max-width: 68rem;
+  border-radius: 1rem;
+  box-shadow: 0 18px 42px -26px color-mix(in oklab, var(--comp-accent) 60%, transparent),
+    0 8px 20px -18px black, inset 0 1px 0 color-mix(in oklab, white 9%, transparent);
+}
+.match-screen .tv-scorebug-score { font-size: clamp(1rem, 1.6vw, 1.35rem); }
+.match-screen .match-live-strip { align-items: stretch; }
+.match-screen .match-pitch-panel,
+.match-screen .match-chronicle,
+.match-screen .match-data-panel {
+  border-radius: var(--match-radius);
+}
+.match-screen .match-pitch-panel {
+  box-shadow: 0 26px 56px -46px color-mix(in oklab, var(--comp-accent) 52%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 5%, transparent);
+}
+.match-screen .match-chronicle { box-shadow: 0 18px 48px -38px black, inset 0 1px 0 color-mix(in oklab, white 4%, transparent); }
+.match-screen .match-team-pitch { position: relative; }
+.match-screen .match-team-pitch::before {
+  content: "";
+  position: absolute;
+  inset: 0 12% auto;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--comp-accent), transparent);
+  opacity: 0.42;
+}
+.match-screen .match-player-marker { z-index: 2; line-height: 1; transition: filter 160ms ease, transform 160ms ease; }
+.match-screen .match-player-marker.is-interactive { cursor: pointer; }
+.match-screen .match-player-marker.is-interactive:hover { filter: brightness(1.18); z-index: 5; }
+.match-screen .match-player-marker.is-interactive:focus-visible { z-index: 6; }
+.match-screen .match-player-marker.is-interactive:hover > div:first-child { transform: translateY(-2px) scale(1.08); }
+.match-screen .match-player-marker.is-static { cursor: default; pointer-events: none; }
+.match-screen .match-player-marker > div:first-child { transition: transform 160ms ease; }
+.match-screen .match-control-dock { transition: background-color 160ms ease, box-shadow 160ms ease; }
+.match-screen .match-control-dock > button,
+.match-screen .match-control-dock > div button { font-weight: 800; letter-spacing: 0.01em; }
+.match-screen .match-control-dock > button.bg-primary,
+.match-screen .match-control-dock > div button.bg-primary {
+  border: 1px solid color-mix(in oklab, var(--primary) 52%, transparent);
+  box-shadow: 0 7px 20px -14px var(--primary), inset 0 1px 0 color-mix(in oklab, white 12%, transparent);
+}
+
+/* Match preview: cinematic hero without blocking access to lineup / kickoff. */
+.match-intro-hero {
+  position: relative;
+  isolation: isolate;
+  border-color: color-mix(in oklab, var(--comp-accent) 34%, var(--border));
+  color: white;
+  background:
+    radial-gradient(ellipse at 50% 48%, color-mix(in oklab, var(--comp-accent) 14%, transparent), transparent 42%),
+    linear-gradient(125deg, #0a1421 0%, #101c2d 46%, #0b1521 100%);
+  box-shadow: 0 28px 64px -42px color-mix(in oklab, var(--comp-accent) 55%, transparent), inset 0 1px 0 rgba(255,255,255,.07);
+}
+.match-intro-hero::before,
+.match-intro-hero::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+}
+.match-intro-hero::before {
+  inset: 0;
+  opacity: .25;
+  background: repeating-linear-gradient(115deg, transparent 0 42px, rgba(255,255,255,.025) 43px 44px, transparent 45px 84px);
+}
+.match-intro-hero::after {
+  inset: auto 8% 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--comp-accent) 80%, white), transparent);
+  opacity: .78;
+}
+.match-intro-lights {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 22rem 6rem at 9% -5%, rgba(255,255,255,.14), transparent 72%),
+    radial-gradient(ellipse 22rem 6rem at 91% -5%, rgba(255,255,255,.12), transparent 72%),
+    radial-gradient(ellipse 28rem 9rem at 50% 110%, color-mix(in oklab, var(--comp-accent) 10%, transparent), transparent 75%);
+}
+.match-intro-topline,
+.match-final-topline { border-bottom: 1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.13); }
+.match-intro-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.8rem; height: 1.8rem; border: 1px solid rgba(190,242,100,.25); border-radius: .65rem; color: #c6f68a; background: rgba(163,230,53,.08); }
+.match-intro-status,
+.match-final-status { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid rgba(163,230,53,.2); border-radius: 999px; padding: .35rem .6rem; background: rgba(163,230,53,.07); color: #d3f9a0; font-size: .56rem; font-weight: 900; letter-spacing: .13em; white-space: nowrap; }
+.match-intro-status > span,
+.match-final-status > span { width: .38rem; height: .38rem; border-radius: 50%; background: #a3e635; box-shadow: 0 0 0 3px rgba(163,230,53,.1); }
+.match-intro-crest { width: 5.4rem; height: 5.4rem; border: 1px solid rgba(255,255,255,.12); border-radius: 1.45rem; background: radial-gradient(circle at 50% 20%, rgba(255,255,255,.1), rgba(255,255,255,.025) 72%); box-shadow: 0 18px 35px -24px var(--team-accent, rgba(255,255,255,.3)), inset 0 1px 0 rgba(255,255,255,.1); }
+.match-intro-crest img { filter: drop-shadow(0 6px 10px rgba(0,0,0,.22)); }
+.match-intro-team-name { color: #fff; letter-spacing: -.035em; text-shadow: 0 4px 18px rgba(0,0,0,.25); }
+.match-intro-formation { border: 1px solid rgba(255,255,255,.11); border-radius: 999px; padding: .28rem .55rem; background: rgba(255,255,255,.045); color: rgba(255,255,255,.67); font-size: .59rem; font-weight: 800; letter-spacing: .08em; }
+.match-intro-versus > span { display: flex; align-items: center; justify-content: center; width: 2.65rem; height: 2.65rem; border: 1px solid rgba(255,255,255,.15); border-radius: 50%; background: radial-gradient(circle at 35% 25%, rgba(255,255,255,.13), rgba(255,255,255,.025)); color: rgba(255,255,255,.82); font-size: .72rem; font-weight: 950; letter-spacing: .13em; box-shadow: 0 0 30px -18px var(--comp-accent); }
+.match-intro-footer { border-top: 1px solid rgba(255,255,255,.065); background: rgba(0,0,0,.12); }
+
+/* Full-time summary is a designed result card, not just a second score line. */
+.match-final-hero {
+  position: relative;
+  isolation: isolate;
+  border-color: color-mix(in oklab, var(--comp-accent) 35%, var(--border));
+  color: white;
+  background: radial-gradient(ellipse at 50% 30%, color-mix(in oklab, var(--comp-accent) 15%, transparent), transparent 45%), linear-gradient(135deg, #0c1724, #101b2a 52%, #0b1420);
+  box-shadow: 0 28px 64px -42px color-mix(in oklab, var(--comp-accent) 55%, transparent), inset 0 1px 0 rgba(255,255,255,.065);
+}
+.match-final-status { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.045); color: rgba(255,255,255,.72); }
+.match-final-status > span { background: #9ca3af; box-shadow: 0 0 0 3px rgba(156,163,175,.1); }
+.match-final-score { min-width: 8.5rem; letter-spacing: -.08em; color: white; font-size: clamp(2.45rem, 6vw, 4.4rem); font-weight: 950; line-height: .95; text-shadow: 0 8px 32px rgba(0,0,0,.28); }
+.match-final-dash { color: rgba(255,255,255,.3); font-size: .65em; }
+.match-final-team-name { color: rgba(255,255,255,.9); letter-spacing: -.02em; }
+.match-final-details { border-color: rgba(255,255,255,.08); background: rgba(0,0,0,.13); }
+.match-final-goal { border: 1px solid color-mix(in oklab, var(--team-accent, #a3e635) 20%, rgba(255,255,255,.06)); background: color-mix(in oklab, var(--team-accent, #a3e635) 6%, rgba(255,255,255,.018)); color: rgba(255,255,255,.8); }
+.match-final-goal > svg { color: var(--team-accent, #a3e635); }
+.match-final-goal-minute { min-width: 2.1rem; color: #c8f28c; font-size: .65rem; font-weight: 950; font-variant-numeric: tabular-nums; }
+.match-final-mvp { border-color: rgba(255,255,255,.1); background: linear-gradient(145deg, rgba(255,255,255,.065), rgba(255,255,255,.018)); }
+.match-final-rating { min-width: 2.5rem; border: 1px solid rgba(163,230,53,.22); border-radius: .65rem; padding: .45rem .4rem; background: rgba(163,230,53,.09); color: #d9f99d; font-size: 1.05rem; font-weight: 950; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* Shared event timeline and a stronger chronicle rhythm. */
+.match-timeline-panel { border-radius: .95rem; border-color: var(--match-panel-border); background: linear-gradient(145deg, color-mix(in oklab, var(--background) 76%, transparent), color-mix(in oklab, var(--card) 54%, transparent)); }
+.match-timeline-panel > div:first-child { padding-bottom: .55rem; border-bottom: 1px solid color-mix(in oklab, var(--border) 65%, transparent); }
+.match-timeline-panel .relative.mt-4 { margin-top: .75rem; }
+.match-screen .match-event-row { position: relative; border-radius: .65rem; padding-left: .55rem; padding-right: .55rem; }
+.match-screen .match-event-row:hover { background: color-mix(in oklab, var(--comp-accent) 6%, transparent); }
+.match-screen .match-event-list { padding-right: .2rem; }
+.match-screen .match-event-row > .scoreline { font-size: .72rem; font-variant-numeric: tabular-nums; }
+
+/* Player marker details and rating cards. */
+.match-player-dialog { border-color: color-mix(in oklab, var(--comp-accent) 22%, var(--border)); border-radius: 1.3rem; padding: 1.5rem; }
+.match-player-profile-head { margin-bottom: .75rem; border-bottom: 1px solid var(--match-panel-border, rgba(255,255,255,.1)); background: linear-gradient(135deg, #0b1724, #132338 65%, #0b1420); }
+.match-player-profile-aura { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 90% 0%, color-mix(in oklab, var(--comp-accent) 28%, transparent), transparent 55%); }
+.match-player-profile-face { display: flex; align-items: center; justify-content: center; width: 5.35rem; height: 5.35rem; flex: 0 0 auto; border: 1px solid rgba(255,255,255,.13); border-radius: 1rem; background: rgba(255,255,255,.04); box-shadow: 0 14px 30px -22px var(--comp-accent); }
+.match-player-overall { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 3.8rem; height: 3.8rem; border: 1px solid rgba(190,242,100,.25); border-radius: .9rem; background: rgba(163,230,53,.09); color: #d9f99d; }
+.match-player-overall > span { font-size: 1.45rem; font-weight: 950; line-height: 1; font-variant-numeric: tabular-nums; }
+.match-player-overall > small { margin-top: .28rem; font-size: .48rem; font-weight: 900; letter-spacing: .13em; }
+.match-player-position-chip { border: 1px solid rgba(255,255,255,.13); border-radius: .4rem; padding: .2rem .38rem; background: rgba(255,255,255,.05); color: rgba(255,255,255,.8); font-size: .58rem; font-weight: 850; }
+.match-player-metric { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .32rem; border: 1px solid var(--match-panel-border, var(--border)); border-radius: .85rem; padding: .65rem; background: color-mix(in oklab, var(--card) 80%, transparent); }
+.match-player-metric > svg { color: var(--comp-accent); }
+.match-player-metric > span { color: var(--muted-foreground); font-size: .54rem; font-weight: 800; letter-spacing: .03em; }
+.match-player-metric > strong { font-size: 1.12rem; font-weight: 950; font-variant-numeric: tabular-nums; }
+.match-player-match-section { margin-top: .3rem; border-top: 1px solid var(--match-panel-border, var(--border)); padding-top: .9rem; }
+.match-player-match-stat { display: flex; min-width: 0; flex-direction: column; gap: .3rem; border-radius: .7rem; padding: .6rem; background: color-mix(in oklab, var(--muted) 42%, transparent); }
+.match-player-match-stat > span { color: var(--muted-foreground); font-size: .55rem; }
+.match-player-match-stat > strong { font-size: 1rem; font-weight: 950; font-variant-numeric: tabular-nums; }
+.match-player-discipline-chip { display: inline-flex; align-items: center; gap: .35rem; border-radius: 999px; padding: .3rem .55rem; font-size: .58rem; font-weight: 850; }
+.match-player-discipline-chip.is-yellow { border: 1px solid rgba(250,204,21,.25); background: rgba(250,204,21,.08); color: #facc15; }
+.match-player-discipline-chip.is-red { border: 1px solid rgba(248,113,113,.25); background: rgba(248,113,113,.08); color: #fca5a5; }
+.match-ratings-panel .match-rating-team-dot { display: inline-block; width: .42rem; height: .42rem; border-radius: 50%; background: var(--comp-accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--comp-accent) 10%, transparent); }
+.match-ratings-panel .match-rating-team-dot.is-away { background: var(--club-2); }
+.match-rating-row { display: flex; min-width: 0; align-items: center; gap: .45rem; border: 1px solid transparent; border-radius: .68rem; padding: .38rem .42rem; transition: background-color 150ms ease, border-color 150ms ease; }
+.match-rating-row:hover { border-color: var(--match-panel-border); background: color-mix(in oklab, var(--background) 38%, transparent); }
+.match-rating-row.is-top-rated { border-color: color-mix(in oklab, var(--comp-accent) 17%, transparent); background: color-mix(in oklab, var(--comp-accent) 5%, transparent); }
+.match-rating-rank { width: 1.25rem; color: var(--muted-foreground); font-size: .54rem; font-weight: 900; font-variant-numeric: tabular-nums; }
+.match-rating-score { min-width: 2.2rem; border: 1px solid transparent; border-radius: .55rem; padding: .35rem .32rem; font-size: .72rem; font-weight: 950; text-align: center; font-variant-numeric: tabular-nums; }
+.match-rating-elite { border-color: rgba(52,211,153,.25); background: rgba(16,185,129,.14); color: #6ee7b7; }
+.match-rating-good { border-color: color-mix(in oklab, var(--primary) 30%, transparent); background: color-mix(in oklab, var(--primary) 12%, transparent); color: var(--primary); }
+.match-rating-mid { border-color: var(--match-panel-border); background: color-mix(in oklab, var(--muted) 60%, transparent); color: var(--foreground); }
+.match-rating-low { border-color: rgba(248,113,113,.2); background: rgba(248,113,113,.1); color: #fca5a5; }
+.match-mvp-card { position: relative; display: flex; align-items: center; gap: .8rem; overflow: hidden; border: 1px solid rgba(163,230,53,.18); border-radius: .95rem; padding: .8rem; background: radial-gradient(ellipse at 0% 0%, rgba(163,230,53,.12), transparent 58%), linear-gradient(120deg, #0c1b25, #10202a); }
+.match-mvp-crown { display: flex; width: 1.6rem; height: 1.6rem; align-items: center; justify-content: center; position: absolute; right: .45rem; top: .35rem; color: #d9f99d; opacity: .75; }
+.match-mvp-rating { min-width: 2.45rem; border: 1px solid rgba(163,230,53,.25); border-radius: .6rem; padding: .42rem .3rem; background: rgba(163,230,53,.1); color: #d9f99d; font-size: 1rem; font-weight: 950; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* Half-time feels like a real broadcast break, with the same match identity. */
+.match-halftime-card { border-radius: 1.4rem; border-color: color-mix(in oklab, var(--comp-accent) 38%, var(--border)); box-shadow: 0 30px 90px -40px color-mix(in oklab, var(--comp-accent) 40%, transparent), 0 20px 70px rgba(0,0,0,.4); }
+.match-halftime-header { background: radial-gradient(ellipse at 50% 0%, color-mix(in oklab, var(--comp-accent) 15%, transparent), transparent 70%), color-mix(in oklab, var(--primary) 4%, var(--card)); }
+.match-halftime-scoreline { min-width: 0; }
+.match-halftime-digits { white-space: nowrap; letter-spacing: -.07em; }
+.match-halftime-momentum { border: 1px solid var(--match-panel-border, var(--border)); border-radius: .85rem; padding: .75rem; background: color-mix(in oklab, var(--background) 40%, transparent); }
+.match-halftime-actions > button { min-height: 4.4rem; border-radius: .95rem; }
+
+/* The existing event cards get tighter hierarchy and a controlled cinematic edge. */
+.match-live-event-card { border-radius: 1.45rem; border-color: rgba(255,255,255,.13); box-shadow: 0 34px 100px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.025); }
+.match-live-event-card img { max-height: min(36vh, 320px); object-fit: cover; }
+.match-live-event-card .rounded-full.border { backdrop-filter: blur(12px); }
+.match-substitution-panel { border-radius: 1.1rem; border-color: var(--match-panel-border); background: linear-gradient(145deg, color-mix(in oklab, var(--card) 94%, transparent), color-mix(in oklab, var(--background) 94%, transparent)); box-shadow: 0 20px 55px -45px black, inset 0 1px 0 color-mix(in oklab, white 4%, transparent); }
+.match-substitution-panel button:focus-visible { outline: 2px solid var(--comp-accent); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+  .match-intro-topline, .match-final-topline { padding: .65rem .8rem; }
+  .match-intro-teams { padding: 1.15rem .75rem; }
+  .match-intro-crest { width: 3.65rem; height: 3.65rem; border-radius: .95rem; }
+  .match-intro-crest img { max-width: 2.75rem; max-height: 2.75rem; }
+  .match-intro-versus > span { width: 2.15rem; height: 2.15rem; font-size: .6rem; }
+  .match-intro-team-name { font-size: .9rem; }
+  .match-intro-footer { padding: .7rem .85rem; }
+  .match-intro-footer > div { font-size: .62rem; }
+  .match-final-score { min-width: 5rem; font-size: 2.45rem; }
+  .match-final-scoreboard { padding: 1.2rem .7rem; }
+  .match-final-details { padding: .85rem; }
+  .match-final-team-name { font-size: .78rem; }
+  .match-player-dialog { padding: 1rem; }
+  .match-player-profile-head { margin: -1rem -1rem .7rem; padding: 1rem; }
+  .match-player-profile-face { width: 4.25rem; height: 4.25rem; }
+  .match-player-profile-face img { max-width: 3.8rem; }
+  .match-player-overall { min-width: 3.1rem; height: 3.2rem; border-radius: .75rem; }
+  .match-player-overall > span { font-size: 1.18rem; }
+  .match-halftime-overlay { padding: .65rem; }
+  .match-halftime-card { border-radius: 1.1rem; }
+  .match-halftime-scoreline { gap: .4rem; }
+  .match-halftime-digits { font-size: 2.3rem; }
+  .match-phase-playing .match-control-dock,
+  .match-phase-extra_time .match-control-dock {
+    position: fixed;
+    z-index: 65;
+    left: 50%;
+    bottom: max(.45rem, env(safe-area-inset-bottom));
+    width: min(calc(100% - .8rem), 48rem);
+    transform: translateX(-50%);
+    margin: 0;
+    padding: .55rem;
+    border: 1px solid color-mix(in oklab, var(--comp-accent) 28%, var(--border));
+    border-radius: 1rem;
+    background: color-mix(in oklab, var(--background) 91%, transparent);
+    box-shadow: 0 16px 48px rgba(0,0,0,.38), inset 0 1px 0 color-mix(in oklab, white 6%, transparent);
+    backdrop-filter: blur(20px) saturate(1.3);
+  }
+  .match-phase-playing .match-control-dock > div { min-width: 0; }
+  .match-phase-playing .match-control-dock > div > div { gap: .35rem; }
+  .match-screen .match-control-dock > button,
+  .match-screen .match-control-dock > div button { min-height: 2.35rem; height: 2.35rem; padding-left: .58rem; padding-right: .58rem; }
+}
+
+@media (min-width: 1280px) {
+  .match-screen .match-main-grid { gap: 1rem; }
+  .match-screen .match-pitch-panel { padding: 1rem; }
+  .match-screen .match-chronicle { padding: 1rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .match-intro-hero,
+  .match-final-hero,
+  .match-player-marker,
+  .match-rating-row { animation: none !important; transition: none !important; }
+}
+
+/* Retransmisión compacta: jerarquía visual de cabina deportiva. */
+.match-commentary-card {
+  background:
+    radial-gradient(ellipse at 0% 0%, color-mix(in oklab, var(--comp-accent) 7%, transparent), transparent 56%),
+    color-mix(in oklab, var(--card) 86%, transparent);
+  box-shadow: 0 12px 32px -28px color-mix(in oklab, var(--comp-accent) 40%, transparent), inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+}
+.match-commentary-live-dot {
+  width: .38rem;
+  height: .38rem;
+  border-radius: 999px;
+  background: #fb7185;
+  box-shadow: 0 0 0 0 color-mix(in oklab, #fb7185 45%, transparent);
+  animation: match-commentary-pulse 1.5s ease-out infinite;
+}
+@keyframes match-commentary-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, #fb7185 38%, transparent); }
+  75%, 100% { box-shadow: 0 0 0 5px transparent; }
+}
+.match-commentary-feature-accent {
+  background: linear-gradient(180deg, var(--comp-accent, var(--primary)), color-mix(in oklab, var(--comp-accent, var(--primary)) 22%, transparent));
+}
+.match-commentary-tone-danger .match-commentary-feature-accent {
+  background: linear-gradient(180deg, #fb7185, #be123c);
+}
+.match-commentary-tone-dramatic .match-commentary-feature-accent {
+  background: linear-gradient(180deg, #fbbf24, #b45309);
+}
+.match-commentary-tone-celebration .match-commentary-feature-accent {
+  background: linear-gradient(180deg, #6ee7b7, #059669);
+}
+.match-commentary-radio { box-shadow: inset 0 1px 0 color-mix(in oklab, white 5%, transparent); }
+.match-commentary-minute { min-width: 3rem; }
+.match-commentary-feed { border-top: 1px solid color-mix(in oklab, var(--border) 55%, transparent); padding-top: .55rem; }
+
+@media (max-width: 420px) {
+  .tv-scorebug { border-radius: .65rem; }
+  .tv-scorebug-comp { padding-left: .38rem; padding-right: .38rem; }
+  .tv-scorebug-score { padding-left: .35rem; padding-right: .35rem; font-size: .8rem; }
+  .tv-scorebug-clock { padding-left: .32rem; padding-right: .32rem; }
+}
+
+
+/* Full-time match report: clearer hierarchy, less duplicated text, true broadcast card layout. */
+.match-final-competition-lockup { min-width: 0; }
+.match-final-competition-icon { display: inline-flex; width: 2.4rem; height: 2.4rem; flex: 0 0 auto; align-items: center; justify-content: center; border: 1px solid rgba(190,242,100,.2); border-radius: .8rem; color: #c8f28c; background: linear-gradient(145deg, rgba(163,230,53,.12), rgba(163,230,53,.025)); }
+.match-final-eyebrow { margin-bottom: .2rem; color: rgba(255,255,255,.42); font-size: .52rem; font-weight: 950; letter-spacing: .18em; }
+.match-final-competition { color: rgba(255,255,255,.92); font-size: .79rem; font-weight: 850; letter-spacing: -.01em; }
+.match-final-scoreboard { background: radial-gradient(ellipse at 50% 48%, rgba(163,230,53,.075), transparent 39%), linear-gradient(180deg, rgba(255,255,255,.015), rgba(0,0,0,.12)); }
+.match-final-team { min-width: 0; }
+.match-final-crest { display: flex; width: 5.1rem; height: 5.1rem; align-items: center; justify-content: center; border: 1px solid color-mix(in oklab, var(--team-accent, #a3e635) 27%, rgba(255,255,255,.1)); border-radius: 1.35rem; background: radial-gradient(circle at 50% 25%, color-mix(in oklab, var(--team-accent, #a3e635) 15%, transparent), rgba(255,255,255,.025) 70%); box-shadow: 0 16px 28px -23px var(--team-accent, #a3e635), inset 0 1px 0 rgba(255,255,255,.07); }
+.match-final-crest img { filter: drop-shadow(0 4px 7px rgba(0,0,0,.28)); }
+.match-final-venue { color: rgba(255,255,255,.4); font-size: .52rem; font-weight: 950; letter-spacing: .2em; }
+.match-final-team-name { color: rgba(255,255,255,.96); letter-spacing: -.025em; line-height: 1.2; }
+.match-final-formation { color: rgba(255,255,255,.42); font-size: .57rem; font-weight: 800; letter-spacing: .08em; }
+.match-final-center { min-width: 8.2rem; }
+.match-final-score-label { color: rgba(255,255,255,.44); font-size: .52rem; font-weight: 950; letter-spacing: .18em; white-space: nowrap; }
+.match-final-scoreline { color: white; font-size: clamp(2.5rem, 5.5vw, 4.5rem); font-weight: 1000; line-height: .92; letter-spacing: -.085em; font-variant-numeric: tabular-nums; text-shadow: 0 8px 28px rgba(0,0,0,.35); }
+.match-final-score-number { display: inline-block; min-width: .8em; text-align: center; }
+.match-final-dash { color: rgba(255,255,255,.25); font-size: .62em; font-weight: 700; }
+.match-final-outcome { color: #d8f99a; font-size: .73rem; font-weight: 900; letter-spacing: -.01em; }
+.match-final-match-meta { color: rgba(255,255,255,.42); font-size: .52rem; font-weight: 900; letter-spacing: .11em; }
+.match-final-match-meta strong { border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: .18rem .42rem; color: rgba(255,255,255,.8); background: rgba(255,255,255,.045); font-size: .6rem; letter-spacing: .02em; }
+.match-final-lower-grid { border-color: rgba(255,255,255,.075); background: rgba(0,0,0,.12); }
+.match-final-goals-card, .match-final-mvp-card { min-width: 0; border: 1px solid rgba(255,255,255,.075); background: linear-gradient(150deg, rgba(255,255,255,.035), rgba(255,255,255,.012)); }
+.match-final-card-heading h3 { color: rgba(255,255,255,.9); font-size: .62rem; font-weight: 950; letter-spacing: .13em; }
+.match-final-card-heading p { margin-top: .18rem; color: rgba(255,255,255,.4); font-size: .58rem; }
+.match-final-section-icon, .match-final-mvp-icon { display: inline-flex; width: 1.9rem; height: 1.9rem; flex: 0 0 auto; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.08); border-radius: .62rem; color: #d4e6bf; background: rgba(255,255,255,.04); }
+.match-final-mvp-icon { color: #fcd34d; border-color: rgba(252,211,77,.16); background: rgba(252,211,77,.055); }
+.match-final-count { display: inline-flex; min-width: 1.65rem; height: 1.65rem; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.1); border-radius: 999px; color: rgba(255,255,255,.78); background: rgba(255,255,255,.04); font-size: .65rem; font-weight: 950; font-variant-numeric: tabular-nums; }
+.match-final-goal { border-color: color-mix(in oklab, var(--team-accent, #a3e635) 22%, rgba(255,255,255,.05)); background: color-mix(in oklab, var(--team-accent, #a3e635) 5%, rgba(255,255,255,.018)); }
+.match-final-ball { display: inline-flex; width: 1.7rem; height: 1.7rem; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: .55rem; color: var(--team-accent, #a3e635); background: color-mix(in oklab, var(--team-accent, #a3e635) 12%, transparent); }
+.match-final-goal-minute { min-width: 2.2rem; color: #d6f99a; font-size: .69rem; font-weight: 950; }
+.match-final-goal-team { color: rgba(255,255,255,.42); font-size: .54rem; font-weight: 950; letter-spacing: .06em; }
+.match-final-goals-empty, .match-final-mvp-empty { border: 1px dashed rgba(255,255,255,.12); background: rgba(0,0,0,.13); }
+.match-final-empty-score { color: rgba(255,255,255,.25); font-size: 1.4rem; font-weight: 950; letter-spacing: -.07em; font-variant-numeric: tabular-nums; }
+.match-final-mvp-badge { border: 1px solid rgba(252,211,77,.2); border-radius: 999px; padding: .26rem .48rem; color: #fcd34d; background: rgba(252,211,77,.07); font-size: .54rem; font-weight: 1000; letter-spacing: .12em; }
+.match-final-mvp-feature { border: 1px solid rgba(252,211,77,.12); background: radial-gradient(ellipse at 5% 50%, rgba(252,211,77,.08), transparent 56%), rgba(0,0,0,.13); }
+.match-final-mvp-face { display: flex; width: 4.2rem; height: 4.2rem; flex: 0 0 auto; align-items: center; justify-content: center; overflow: hidden; border: 1px solid rgba(252,211,77,.2); border-radius: 1rem; background: rgba(255,255,255,.04); }
+.match-final-rating-wrap { display: flex; min-width: 3.4rem; flex: 0 0 auto; flex-direction: column; align-items: center; justify-content: center; gap: .2rem; border: 1px solid rgba(163,230,53,.18); border-radius: .85rem; padding: .45rem .5rem; background: rgba(163,230,53,.055); }
+.match-final-rating-wrap > span { color: rgba(217,249,157,.6); font-size: .48rem; font-weight: 950; letter-spacing: .16em; }
+.match-final-rating-wrap > strong { color: #d9f99d; font-size: 1.2rem; font-weight: 1000; font-variant-numeric: tabular-nums; line-height: 1; }
+.match-rating-participation { display: inline-flex; align-items: center; gap: .12rem; border: 1px solid rgba(255,255,255,.075); border-radius: 999px; padding: .11rem .32rem; background: rgba(255,255,255,.025); font-size: .54rem; font-weight: 800; white-space: nowrap; }
+.match-rating-participation.is-starter { color: #aab8c6; }
+.match-rating-participation.is-substitute { color: #b7e89c; border-color: rgba(163,230,53,.14); background: rgba(163,230,53,.035); }
+@media (max-width: 520px) {
+  .match-final-competition { max-width: 58vw; font-size: .7rem; }
+  .match-final-competition-icon { width: 2rem; height: 2rem; }
+  .match-final-scoreboard { gap: .35rem; padding-left: .35rem; padding-right: .35rem; }
+  .match-final-crest { width: 3.3rem; height: 3.3rem; border-radius: .9rem; }
+  .match-final-crest img { width: 2.4rem !important; height: 2.4rem !important; min-width: 2.4rem !important; min-height: 2.4rem !important; }
+  .match-final-center { min-width: 6rem; }
+  .match-final-scoreline { font-size: 2.35rem; }
+  .match-final-outcome { max-width: 7rem; font-size: .61rem; }
+  .match-final-team-name { font-size: .72rem; }
+  .match-final-formation { font-size: .5rem; }
+  .match-final-lower-grid { padding-left: .5rem; padding-right: .5rem; }
+}
+
+/* Competition-led match showcases: clear identity for the fixture's actual tournament. */
+.match-intro-hero,
+.match-final-hero {
+  --showcase-accent: var(--comp-accent, var(--primary));
+  border-color: color-mix(in oklab, var(--showcase-accent) 48%, rgba(255,255,255,.12));
+}
+.match-intro-hero {
+  background:
+    radial-gradient(ellipse at 8% 0%, color-mix(in oklab, var(--showcase-accent) 24%, transparent), transparent 42%),
+    radial-gradient(ellipse at 92% 92%, color-mix(in oklab, var(--showcase-accent) 15%, transparent), transparent 46%),
+    linear-gradient(128deg, #08111f 0%, #101c2e 48%, #091421 100%);
+  box-shadow: 0 30px 70px -42px color-mix(in oklab, var(--showcase-accent) 72%, transparent), inset 0 1px 0 rgba(255,255,255,.085);
+}
+.match-intro-hero .match-intro-topline,
+.match-final-hero .match-final-topline {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--showcase-accent) 15%, rgba(0,0,0,.24)), rgba(0,0,0,.13) 62%, color-mix(in oklab, var(--showcase-accent) 8%, rgba(0,0,0,.16)));
+  border-bottom-color: color-mix(in oklab, var(--showcase-accent) 26%, rgba(255,255,255,.08));
+}
+.match-intro-hero .match-intro-icon,
+.match-final-hero .match-final-competition-icon {
+  border-color: color-mix(in oklab, var(--showcase-accent) 48%, transparent);
+  color: color-mix(in oklab, var(--showcase-accent) 68%, white);
+  background: linear-gradient(145deg, color-mix(in oklab, var(--showcase-accent) 24%, transparent), color-mix(in oklab, var(--showcase-accent) 6%, transparent));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 10px 22px -18px var(--showcase-accent);
+}
+.match-intro-hero .match-intro-status {
+  border-color: color-mix(in oklab, var(--showcase-accent) 36%, transparent);
+  background: color-mix(in oklab, var(--showcase-accent) 10%, transparent);
+  color: color-mix(in oklab, var(--showcase-accent) 55%, white);
+}
+.match-intro-hero .match-intro-status > span {
+  background: var(--showcase-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--showcase-accent) 17%, transparent), 0 0 12px -3px var(--showcase-accent);
+}
+.match-intro-hero .match-intro-versus > span {
+  border-color: color-mix(in oklab, var(--showcase-accent) 36%, rgba(255,255,255,.12));
+  box-shadow: 0 0 38px -15px var(--showcase-accent), inset 0 1px 0 rgba(255,255,255,.08);
+}
+.match-intro-hero .match-intro-formation {
+  border-color: color-mix(in oklab, var(--showcase-accent) 25%, rgba(255,255,255,.12));
+  background: color-mix(in oklab, var(--showcase-accent) 8%, rgba(255,255,255,.035));
+}
+.match-intro-hero .match-intro-footer {
+  border-top-color: color-mix(in oklab, var(--showcase-accent) 23%, rgba(255,255,255,.065));
+  background: linear-gradient(90deg, color-mix(in oklab, var(--showcase-accent) 8%, rgba(0,0,0,.15)), rgba(0,0,0,.13));
+}
+.match-intro-hero .match-intro-footer svg,
+.match-intro-hero .match-intro-footer > div:last-child {
+  color: color-mix(in oklab, var(--showcase-accent) 64%, white);
+}
+.match-intro-hero .match-intro-summary-button,
+.match-final-hero .match-final-summary-button {
+  border-color: color-mix(in oklab, var(--showcase-accent) 42%, transparent);
+  background: color-mix(in oklab, var(--showcase-accent) 12%, transparent);
+  color: color-mix(in oklab, var(--showcase-accent) 58%, white);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 12px 24px -20px var(--showcase-accent);
+}
+.match-intro-hero .match-intro-summary-button:hover,
+.match-final-hero .match-final-summary-button:hover {
+  border-color: color-mix(in oklab, var(--showcase-accent) 66%, white);
+  background: color-mix(in oklab, var(--showcase-accent) 19%, transparent);
+}
+.match-final-hero {
+  background:
+    radial-gradient(ellipse at 50% 22%, color-mix(in oklab, var(--showcase-accent) 24%, transparent), transparent 46%),
+    radial-gradient(ellipse at 4% 100%, color-mix(in oklab, var(--showcase-accent) 12%, transparent), transparent 45%),
+    linear-gradient(135deg, #091421 0%, #101b2c 52%, #08121e 100%);
+  box-shadow: 0 30px 72px -42px color-mix(in oklab, var(--showcase-accent) 70%, transparent), inset 0 1px 0 rgba(255,255,255,.075);
+}
+.match-final-hero .match-final-scoreboard {
+  background:
+    radial-gradient(ellipse at 50% 42%, color-mix(in oklab, var(--showcase-accent) 17%, transparent), transparent 42%),
+    linear-gradient(180deg, rgba(255,255,255,.018), rgba(0,0,0,.13));
+}
+.match-final-hero .match-final-score-label,
+.match-final-hero .match-final-section-icon {
+  color: color-mix(in oklab, var(--showcase-accent) 58%, white);
+}
+.match-final-hero .match-final-section-icon {
+  border-color: color-mix(in oklab, var(--showcase-accent) 30%, rgba(255,255,255,.08));
+  background: color-mix(in oklab, var(--showcase-accent) 10%, rgba(255,255,255,.03));
+}
+.match-final-hero .match-final-development {
+  border-color: color-mix(in oklab, var(--showcase-accent) 24%, rgba(255,255,255,.075));
+  background: radial-gradient(ellipse at 0% 0%, color-mix(in oklab, var(--showcase-accent) 11%, transparent), transparent 55%);
+}
+.match-final-hero .match-final-lower-grid {
+  border-color: color-mix(in oklab, var(--showcase-accent) 23%, rgba(255,255,255,.075));
+  background: linear-gradient(105deg, color-mix(in oklab, var(--showcase-accent) 6%, transparent), rgba(0,0,0,.12) 55%);
+}
+
+/* Team-owned cards use each club's own kit colour instead of a generic amber/green wash. */
+.match-preview-team-form,
+.match-preview-team-tactical,
+.match-preview-player-run {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: color-mix(in oklab, var(--team-accent, #a3e635) 35%, rgba(255,255,255,.09));
+  background:
+    radial-gradient(ellipse at 0% 0%, color-mix(in oklab, var(--team-accent, #a3e635) 18%, transparent), transparent 65%),
+    linear-gradient(145deg, color-mix(in oklab, var(--team-accent, #a3e635) 6%, #0b1421), rgba(7,14,24,.86) 72%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 16px 34px -29px color-mix(in oklab, var(--team-accent, #a3e635) 76%, transparent);
+}
+.match-preview-team-form::before,
+.match-preview-team-tactical::before,
+.match-preview-player-run::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--team-accent, #a3e635) 65%, white), var(--team-accent, #a3e635) 55%, transparent);
+  opacity: .9;
+  pointer-events: none;
+}
+.match-preview-team-form > *,
+.match-preview-team-tactical > *,
+.match-preview-player-run > * { position: relative; }
+.match-preview-mini-crest {
+  border-color: color-mix(in oklab, var(--team-accent, #a3e635) 40%, rgba(255,255,255,.08)) !important;
+  background: color-mix(in oklab, var(--team-accent, #a3e635) 12%, rgba(255,255,255,.025)) !important;
+  box-shadow: 0 7px 15px -12px var(--team-accent);
+}
+.match-preview-team-form h3,
+.match-preview-team-tactical h3 {
+  text-shadow: 0 2px 15px color-mix(in oklab, var(--team-accent, #a3e635) 28%, transparent);
+}
+.match-preview-team-form > div:first-child > div:last-child > h3,
+.match-preview-team-tactical > div:first-child > div > h3 {
+  color: color-mix(in oklab, var(--team-accent, #a3e635) 25%, white);
+}
+.match-preview-team-tactical > div:first-child > span {
+  border-color: color-mix(in oklab, var(--team-accent, #a3e635) 32%, rgba(255,255,255,.1));
+  background: color-mix(in oklab, var(--team-accent, #a3e635) 10%, rgba(255,255,255,.035));
+  color: color-mix(in oklab, var(--team-accent, #a3e635) 36%, white);
+}
+.match-preview-team-tactical > div:first-child svg {
+  color: color-mix(in oklab, var(--team-accent, #a3e635) 38%, white);
+}
+.match-preview-player-run {
+  border-color: color-mix(in oklab, var(--team-accent, #a3e635) 42%, rgba(255,255,255,.08));
+  background:
+    radial-gradient(ellipse at 100% 0%, color-mix(in oklab, var(--team-accent, #a3e635) 19%, transparent), transparent 58%),
+    linear-gradient(135deg, color-mix(in oklab, var(--team-accent, #a3e635) 9%, #0b1421), rgba(6,13,23,.94) 72%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.055), 0 16px 34px -27px color-mix(in oklab, var(--team-accent, #a3e635) 80%, transparent);
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+.match-preview-player-run:hover {
+  border-color: color-mix(in oklab, var(--team-accent, #a3e635) 65%, white);
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 20px 38px -25px color-mix(in oklab, var(--team-accent, #a3e635) 82%, transparent);
+}
+.match-preview-player-run .match-preview-run-value {
+  border-color: color-mix(in oklab, var(--team-accent, #a3e635) 45%, rgba(255,255,255,.1));
+  background: color-mix(in oklab, var(--team-accent, #a3e635) 13%, rgba(2,8,15,.55));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+.match-preview-player-run .match-preview-run-number {
+  color: color-mix(in oklab, var(--team-accent, #a3e635) 48%, white);
+  text-shadow: 0 3px 14px color-mix(in oklab, var(--team-accent, #a3e635) 25%, transparent);
+}
+.match-preview-player-run h4 {
+  color: color-mix(in oklab, var(--team-accent, #a3e635) 42%, white);
+}
+.match-final-mvp-feature {
+  border-color: color-mix(in oklab, var(--team-accent, #d4af37) 36%, rgba(255,255,255,.09));
+  background:
+    radial-gradient(ellipse at 0% 50%, color-mix(in oklab, var(--team-accent, #d4af37) 19%, transparent), transparent 62%),
+    rgba(0,0,0,.13);
+}
+.match-final-mvp-face {
+  border-color: color-mix(in oklab, var(--team-accent, #d4af37) 40%, rgba(255,255,255,.12));
+  box-shadow: 0 12px 24px -20px var(--team-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .match-preview-player-run { transition: none !important; }
+  .match-preview-player-run:hover { transform: none; }
+}
+
+/* Finish the competition treatment inside the preview, not only around its frame. */
+.match-intro-hero::after {
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--showcase-accent) 86%, white), transparent);
+}
+.match-intro-hero .match-intro-lights {
+  background:
+    radial-gradient(ellipse 22rem 6rem at 9% -5%, color-mix(in oklab, var(--showcase-accent) 22%, white), transparent 72%),
+    radial-gradient(ellipse 22rem 6rem at 91% -5%, color-mix(in oklab, var(--showcase-accent) 16%, white), transparent 72%),
+    radial-gradient(ellipse 28rem 9rem at 50% 110%, color-mix(in oklab, var(--showcase-accent) 18%, transparent), transparent 75%);
+  opacity: .65;
+}
+.match-intro-hero .match-preview-context {
+  border-color: color-mix(in oklab, var(--showcase-accent) 33%, rgba(255,255,255,.08));
+  background:
+    radial-gradient(ellipse at 0% 0%, color-mix(in oklab, var(--showcase-accent) 20%, transparent), transparent 72%),
+    linear-gradient(135deg, color-mix(in oklab, var(--showcase-accent) 8%, rgba(255,255,255,.025)), rgba(0,0,0,.13));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+}
+.match-intro-hero .match-preview-context > div:first-child {
+  color: color-mix(in oklab, var(--showcase-accent) 52%, white);
+}
+.match-intro-hero .match-preview-context > div:first-child svg {
+  color: var(--showcase-accent);
+}
+.match-intro-hero .match-preview-key-battle {
+  border-color: color-mix(in oklab, var(--showcase-accent) 30%, rgba(255,255,255,.08));
+  background:
+    radial-gradient(ellipse at 0% 0%, color-mix(in oklab, var(--showcase-accent) 13%, transparent), transparent 68%),
+    rgba(0,0,0,.14);
+}
+.match-intro-hero .match-preview-key-battle > div:first-child {
+  color: color-mix(in oklab, var(--showcase-accent) 56%, white);
+}
+.match-intro-hero .match-preview-key-battle > div:first-child svg {
+  color: var(--showcase-accent);
+}
+.match-preview-team-form::before,
+.match-preview-team-tactical::before,
+.match-preview-player-run::before { z-index: 0; }
+.match-preview-team-form > *,
+.match-preview-team-tactical > *,
+.match-preview-player-run > * { position: relative; z-index: 1; }
+.match-preview-team-form > div:first-child > div:last-child > h3,
+.match-preview-team-tactical h3 {
+  color: color-mix(in oklab, var(--team-accent, #a3e635) 28%, white);
+}
+
+
+/* Competition logo lockup and branded individual story cards. */
+.match-competition-logo-frame {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 3.2rem;
+  height: 2.45rem;
+  padding: .32rem .42rem;
+  border: 1px solid color-mix(in oklab, var(--showcase-accent, #8cb8ff) 42%, rgba(255,255,255,.12));
+  border-radius: .7rem;
+  background: linear-gradient(145deg, color-mix(in oklab, var(--showcase-accent, #8cb8ff) 15%, rgba(0,0,0,.2)), rgba(0,0,0,.18));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 10px 22px -18px var(--showcase-accent, #8cb8ff);
+}
+.match-competition-logo {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px color-mix(in oklab, var(--showcase-secondary, white) 26%, transparent));
+}
+.match-intro-hero .match-intro-lights {
+  background:
+    radial-gradient(ellipse 22rem 6rem at 9% -5%, color-mix(in oklab, var(--showcase-secondary, white) 17%, transparent), transparent 72%),
+    radial-gradient(ellipse 22rem 6rem at 91% -5%, color-mix(in oklab, var(--showcase-accent, #8cb8ff) 22%, transparent), transparent 72%),
+    radial-gradient(ellipse 28rem 9rem at 50% 110%, color-mix(in oklab, var(--showcase-accent, #8cb8ff) 18%, transparent), transparent 75%);
+}
+.match-intro-hero .match-intro-icon {
+  border-color: color-mix(in oklab, var(--showcase-accent, #8cb8ff) 42%, transparent);
+  color: color-mix(in oklab, var(--showcase-secondary, white) 62%, white);
+  background: color-mix(in oklab, var(--showcase-accent, #8cb8ff) 15%, transparent);
+}
+.match-preview-individual-runs {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: color-mix(in oklab, var(--showcase-accent, #8cb8ff) 32%, rgba(255,255,255,.08));
+  background:
+    radial-gradient(ellipse at 0% 0%, color-mix(in oklab, var(--showcase-accent, #8cb8ff) 11%, transparent), transparent 58%),
+    linear-gradient(130deg, color-mix(in oklab, var(--showcase-accent, #8cb8ff) 5%, #0b1421), rgba(5,12,22,.88) 68%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+.match-preview-individual-icon {
+  border-color: color-mix(in oklab, var(--showcase-accent, #8cb8ff) 40%, rgba(255,255,255,.1));
+  background: color-mix(in oklab, var(--showcase-accent, #8cb8ff) 12%, rgba(255,255,255,.025));
+  color: color-mix(in oklab, var(--showcase-secondary, white) 50%, white);
+}
+.match-preview-individual-runs > div:first-child > div > div > h3 {
+  color: color-mix(in oklab, var(--showcase-secondary, white) 45%, white);
+}
+.match-preview-individual-runs .match-preview-player-run h4 {
+  color: color-mix(in oklab, var(--team-accent, #a3e635) 42%, white);
+}
+.match-intro-hero .match-intro-summary-button,
+.match-final-hero .match-final-summary-button {
+  color: color-mix(in oklab, var(--showcase-secondary, white) 45%, white);
+}
+.match-intro-hero .match-intro-summary-button:focus-visible,
+.match-final-hero .match-final-summary-button:focus-visible {
+  outline-color: var(--showcase-secondary, white);
+}
+@media (max-width: 520px) {
+  .match-competition-logo-frame { width: 2.65rem; height: 2.1rem; padding: .27rem .32rem; }
+}
