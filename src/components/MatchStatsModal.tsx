@@ -1,4 +1,4 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TeamLogo } from "@/components/TeamLogo";
 import { MiniPitch } from "@/components/MiniPitch";
 import { PlayerFace, roleFromPosition } from "@/components/PlayerFace";
@@ -36,13 +36,61 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   const store = usePlayersStore();
   const save = loadSave();
 
-  if (!fixture || !fixture.result) return null;
+  if (!fixture) return null;
 
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
+  if (!home || !away) return null;
+
+  if (!fixture.result) {
+    const roundLabel = fixture.round?.startsWith("Playoff")
+      ? "Play-off"
+      : fixture.round?.startsWith("R16")
+        ? "Octavos de final"
+        : fixture.round?.startsWith("QF")
+          ? "Cuartos de final"
+          : fixture.round?.startsWith("SF")
+            ? "Semifinal"
+            : fixture.round === "Final"
+              ? "Final"
+              : "Champions League";
+    const legLabel = fixture.round?.endsWith("Leg1")
+      ? "Ida"
+      : fixture.round?.endsWith("Leg2")
+        ? "Vuelta"
+        : "Partido único";
+    const formattedDate = fixture.date && /^\d{4}-\d{2}-\d{2}$/.test(fixture.date)
+      ? new Date(`${fixture.date}T12:00:00`).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })
+      : "Fecha por confirmar";
+
+    return (
+      <Dialog open={!!fixture} onOpenChange={onClose}>
+        <DialogContent className="max-w-md border-border/70 bg-background/95 backdrop-blur-xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black">Partido pendiente</DialogTitle>
+            <DialogDescription>{roundLabel} · {legLabel}</DialogDescription>
+          </DialogHeader>
+          <div className="rounded-xl border border-border/70 bg-card/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-1 flex-col items-center gap-2 text-center">
+                <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={48} />
+                <span className="text-sm font-bold">{home.name}</span>
+              </div>
+              <span className="shrink-0 text-xs font-black uppercase tracking-widest text-muted-foreground">vs</span>
+              <div className="flex min-w-0 flex-1 flex-col items-center gap-2 text-center">
+                <TeamLogo teamName={away.name} leagueName={getLeagueName(away.league)} size={48} />
+                <span className="text-sm font-bold">{away.name}</span>
+              </div>
+            </div>
+            <p className="mt-4 border-t border-border/60 pt-3 text-center text-xs text-muted-foreground">{formattedDate}</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   const matchColors = resolveMatchTeamColors(home, away);
   const result = fixture.result;
-  if (!home || !away) return null;
 
   // Generate basic stats if not available
   const stats = result.stats || {

@@ -14,7 +14,7 @@ function kindMeta(notification: MarketNotification) {
     case "bad":
       return { icon: XCircle, label: "Mercado", className: "text-red-300" };
     case "mailbox":
-      return { icon: Mail, label: "Vestuario", className: "text-sky-300" };
+      return { icon: Mail, label: "Chat", className: "text-sky-300" };
     default:
       return { icon: Bell, label: "Mercado", className: "text-amber-300" };
   }

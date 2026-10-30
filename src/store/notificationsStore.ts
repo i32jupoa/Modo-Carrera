@@ -32,7 +32,7 @@ export type MarketNotificationSection = "deals" | "offers" | "mailbox";
 
 interface NotificationsState {
   items: MarketNotification[];
-  /** Novedades sin leer separadas entre negociaciones y ofertas recibidas. */
+  /** Novedades sin leer separadas entre negociaciones, ofertas y mensajes de Chat. */
   counts: Record<MarketNotificationSection, number>;
   add: (events: Array<{ dealId?: string; direction: "in" | "out"; kind: NotificationKind; text: string }>, date: string) => void;
   addMailbox: (playerName: string, date: string, playerId?: string) => void;
@@ -181,7 +181,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     }
     const event: MarketNotification = {
       id: `mailbox-${date}-${playerName}-${Date.now().toString(36)}`,
-      title: "Nuevo mensaje en el buzón",
+      title: "Nuevo mensaje en Chat",
       visual,
       section: "mailbox",
       kind: "mailbox",
@@ -256,14 +256,17 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
       const raw = window.localStorage.getItem(`${STORAGE_PREFIX}:${saveId}`);
       const parsed = raw ? (JSON.parse(raw) as MarketNotification[]) : [];
       const seenGood = new Set<string>();
-      const items = parsed.filter((item) => {
+      const normalized = parsed.map((item) => item.kind === "mailbox" && item.title === "Nuevo mensaje en el buzón"
+        ? { ...item, title: "Nuevo mensaje en Chat" }
+        : item);
+      const items = normalized.filter((item) => {
         if (item.kind !== "good" || !item.dealId) return true;
         const key = item.dealId;
         if (seenGood.has(key)) return false;
         seenGood.add(key);
         return true;
       });
-      if (items.length !== parsed.length) persist(items);
+      if (items.length !== parsed.length || normalized.some((item, index) => item.title !== parsed[index]?.title)) persist(items);
       set({ items, counts: countUnread(items) });
     } catch {
       set({ items: [], counts: emptyCounts() });

@@ -386,8 +386,8 @@ export function expectedGoals(
   // Curva más pronunciada: las plantillas claramente mejores deben crear
   // muchas más ocasiones a lo largo de una temporada. El rival mantiene una
   // posibilidad pequeña pero real de sorprender en un partido aislado.
-  const rawShare = 0.5 + 0.37 * Math.tanh(effectiveDiff / 8.0);
-  const share = Math.max(0.13, Math.min(0.87, rawShare));
+  const rawShare = 0.5 + 0.39 * Math.tanh(effectiveDiff / 7.5);
+  const share = Math.max(0.11, Math.min(0.89, rawShare));
 
   // Unos 2.95 xG de base mantiene una media de goles cercana a la de una liga
   // moderna, antes de presión, estilo, contraataques y creación de ocasiones.

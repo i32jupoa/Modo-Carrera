@@ -44,6 +44,11 @@ export type UCLState = {
     knockoutDone: boolean;
   };
   bracket: UCLBracketSlot[]; // full tree from play-off draw onward
+  /**
+   * Current knockout priority by team. A winner inherits the better
+   * league-phase rank of any opponent it eliminates during this edition.
+   */
+  knockoutSeedRanks?: Record<string, number>;
 };
 
 export function isUCLLeaguePhaseFixture(round: string | undefined): boolean {

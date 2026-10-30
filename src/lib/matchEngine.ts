@@ -54,43 +54,10 @@ export function simulateScheduleFixtureFastDetailed(
     };
   }
 
-  if (homeXI.length === 0 || awayXI.length === 0) {
-    // Un XI vacío ya no debe convertir silenciosamente todos los partidos de
-    // calendario en 0-0. Usamos una estimación por fuerza de equipos como red
-    // de seguridad; cuando hay alineaciones válidas se mantiene el motor normal.
-    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-    const homeXg = clamp(1.25 + (home.att - away.def) * 0.018 + (home.mid - away.mid) * 0.006, 0.25, 3.2);
-    const awayXg = clamp(1.05 + (away.att - home.def) * 0.018 + (away.mid - home.mid) * 0.006, 0.2, 3.0);
-    const poisson = (lambda: number) => {
-      const threshold = Math.exp(-lambda);
-      let product = 1;
-      let goals = 0;
-      do {
-        goals += 1;
-        product *= Math.random();
-      } while (product > threshold && goals < 8);
-      return Math.max(0, goals - 1);
-    };
-    return {
-      homeGoals: poisson(homeXg),
-      awayGoals: poisson(awayXg),
-      events: [],
-      cards: [],
-      injuries: [],
-      xgHome: homeXg,
-      xgAway: awayXg,
-      highlights: [],
-      ratings: [],
-      mvp: null,
-      homeLineup: homeXI,
-      awayLineup: awayXI,
-      homeStartingLineup: homeXI,
-      awayStartingLineup: awayXI,
-      homeFinalLineup: homeXI,
-      awayFinalLineup: awayXI,
-      substitutions: [],
-      energyAtEnd: {},
-    };
+  if (homeXI.length !== 11 || awayXI.length !== 11) {
+    throw new Error(
+      `No se puede simular ${fixture.id} sin dos onces legales de 11 (${homeXI.length}/11 y ${awayXI.length}/11).`,
+    );
   }
 
   return simulateMatchFast(home, away, homeXI, awayXI, matchOptions);
@@ -104,6 +71,11 @@ export function simulateScheduleFixtureDetailed(
   const away = teamById(fixture.awayTeam);
   const homeXI = getXI(fixture.homeTeam, fixture.matchday);
   const awayXI = getXI(fixture.awayTeam, fixture.matchday);
+  if (homeXI.length !== 11 || awayXI.length !== 11) {
+    throw new Error(
+      `No se puede simular ${fixture.id} sin dos onces legales de 11 (${homeXI.length}/11 y ${awayXI.length}/11).`,
+    );
+  }
   return simulateMatch(home, away, homeXI, awayXI);
 }
 

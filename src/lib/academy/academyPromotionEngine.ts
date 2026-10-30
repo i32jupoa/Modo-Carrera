@@ -11,7 +11,8 @@ import type { PositionGroup, SquadNeed } from "@/lib/transfers/types";
 import { DYNAMIC_BY_ID, recordAcademyPromotionEvent } from "./academyRuntime";
 import { academyContract, academyMarketValue, academyPlayerToFcPlayer, academyPlayerToStats } from "./academyAdapters";
 import { ACADEMY_LIMITS, ACADEMY_PROMOTION_LIMITS, ACADEMY_SCORE_WEIGHTS } from "./academyConstants";
-import { generateAcademyState, generateAnnualIntake } from "./academyGenerator";
+import type { PosCode } from "@/lib/positions";
+import { generateAcademyState, generateAnnualIntake, generateEmergencyAcademyProspect } from "./academyGenerator";
 import { advanceAcademyToDate, simulateAcademyLeagueMatchOnDate } from "./academyProgression";
 import type { AcademyPlayer, ClubAcademyState } from "./academyTypes";
 
@@ -199,6 +200,58 @@ function promotePlayer(state: ClubAcademyState, player: AcademyPlayer, reason: s
   void reason;
   void date;
   return { ...player, status: "promoted", contractYearsLeft: contract.yearsLeft, promotedAt: { date, reason } };
+}
+
+/**
+ * Promueve un canterano apto para una demarcación concreta cuando una baja
+ * impide completar un once legal. A diferencia de la promoción ordinaria,
+ * admite jugadores de 16-17 años y prioriza el encaje exacto solicitado.
+ * Nunca convierte posiciones ni coloca al juvenil fuera de sus demarcaciones.
+ */
+export function promoteAcademyPlayerForMatchPosition(
+  teamId: string,
+  date: string,
+  requiredPosition: PosCode,
+): boolean {
+  const saveId = getCurrentSaveId();
+  if (!saveId || !teamId || usePlayersStore.getState().myTeamId === teamId) return false;
+
+  const season = seasonForDate(date);
+  let state = getState(saveId, teamId, season, date);
+  const candidates = state.players
+    .filter((player) =>
+      player.status === "academy" &&
+      player.age >= 16 &&
+      player.positions.includes(requiredPosition) &&
+      !DYNAMIC_BY_ID.has(String(player.id)),
+    )
+    .sort((a, b) => {
+      const score = (player: AcademyPlayer) =>
+        Number(player.internalOvr ?? player.ovr) +
+        Number(player.potential ?? player.ovr) * 0.12 +
+        (player.positions[0] === requiredPosition ? 2 : 0);
+      return score(b) - score(a) || Number(a.id) - Number(b.id);
+    });
+
+  const existingCandidate = candidates[0];
+  const candidate = existingCandidate
+    ?? generateEmergencyAcademyProspect(saveId, teamId, season, requiredPosition, state, DYNAMIC_BY_ID.keys());
+
+  const reason = existingCandidate
+    ? `Convocatoria de emergencia para cubrir ${requiredPosition}`
+    : `Promoción urgente de cantera: no había juveniles disponibles para ${requiredPosition}`;
+  state = {
+    ...state,
+    players: state.players.filter((player) => player.id !== candidate.id),
+  };
+  promotePlayer(state, candidate, reason, date);
+  cacheAcademyState(saveId, teamId, season, state);
+  refreshTeamRating(teamId);
+  console.info(`[academy] promoción urgente de ${candidate.name} (${requiredPosition}) para completar el once de ${teamId}`, {
+    source: existingCandidate ? "academy" : "emergency-intake",
+    date,
+  });
+  return true;
 }
 
 export interface AcademyPromotionBatchResult {

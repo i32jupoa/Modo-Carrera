@@ -284,7 +284,7 @@ function expectedGoals(home, away, random) {
   const homeStrength = homeXIOverall * 0.80 + activeAttack(home.xi) * 0.12 + activeDefense(home.xi) * 0.08;
   const awayStrength = awayXIOverall * 0.80 + activeAttack(away.xi) * 0.12 + activeDefense(away.xi) * 0.08;
   const effectiveDiff = clamp(homeStrength - awayStrength, -30, 30) + 2.0;
-  const share = clamp(0.5 + 0.37 * Math.tanh(effectiveDiff / 8.0), 0.13, 0.87);
+  const share = clamp(0.5 + 0.39 * Math.tanh(effectiveDiff / 7.5), 0.11, 0.89);
   const totalXg = 2.95;
   return {
     lh: clamp(totalXg * share * (0.97 + random() * 0.06), 0.22, 3.65),
@@ -428,12 +428,15 @@ const calendarTeamEnd = storeSource.indexOf('\nfunction isXIPositionallyCoherent
 const calendarTeamSource = storeSource.slice(calendarTeamStart, calendarTeamEnd);
 assert.match(simulationSource, /homeXIOverall \* 0\.80 \+ homeAttack \* 0\.12 \+ homeDefense \* 0\.08/);
 assert.doesNotMatch(simulationSource.slice(simulationSource.indexOf('const homeStrength ='), simulationSource.indexOf('// Las tácticas modifican')), /homeListedOverall|home\.att|home\.mid|home\.def/);
-assert.match(simulationSource, /const rawShare = 0\.5 \+ 0\.37 \* Math\.tanh\(effectiveDiff \/ 8\.0\)/);
+assert.match(simulationSource, /const rawShare = 0\.5 \+ 0\.39 \* Math\.tanh\(effectiveDiff \/ 7\.5\)/);
 assert.match(simulationSource, /const totalXg = 2\.95/);
 assert.match(simulationSource, /export const ASSIST_PROBABILITY = 0\.88/);
 assert.match(storeSource, /Math\.random\(\) > ASSIST_PROBABILITY/);
-assert.match(storeSource, /const rawShare = 0\.5 \+ 0\.37 \* Math\.tanh\(effectiveDiff \/ 8\.0\)/);
+assert.match(storeSource, /const rawShare = 0\.5 \+ 0\.39 \* Math\.tanh\(effectiveDiff \/ 7\.5\)/);
 assert.match(storeSource, /const totalXg = 2\.95/);
+assert.match(storeSource, /if \(!important && context\?\.isCongested\)/, 'La IA no debe rotar titulares solo por ser favorita');
+assert.match(storeSource, /best\.score - preferred\.score <= 4/, 'La formación preferida solo se conserva si el once queda cerca del óptimo');
+assert.match(storeSource, /FIVE_DEFENDER_TEAMS\.has\(team\.name\).*?\? 4 : 0/);
 assert.match(simulationSource, /Math\.pow\(ratingFactor, 2\.90\)/);
 assert.match(simulationSource, /const eliteBoost = 1 \+ eliteRating \* 1\.20 \+ eliteFinishing \* 1\.15/);
 assert.match(lineupSource, /isPlayerInjuredAtDate/);

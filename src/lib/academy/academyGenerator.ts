@@ -219,6 +219,7 @@ function basePlayer(
   usedNames: Set<string>,
   currentCounts: Partial<Record<PosCode, number>>,
   intake: boolean,
+  forcedPrimaryPosition?: PosCode,
 ): AcademyPlayer {
   const seed = `${saveId}|${teamId}|${numericSeason}|${index}|${intake ? "intake" : "initial"}`;
   const national = seededUnit(seed, "nation") >= ACADEMY_LIMITS.foreignNationChance;
@@ -227,7 +228,9 @@ function basePlayer(
   const nationKey = national ? homeCountry : (seededPick(availableCountries, seed, "foreign") ?? homeCountry);
   const nation = academyCountryLabel(nationKey);
   const birth = randomDate(seed, numericSeason, intake ? ACADEMY_LIMITS.intakeMinAge : 16, intake ? ACADEMY_LIMITS.intakeMaxAge : 20);
-  const positions = candidatePositions(seed, currentCounts, intake ? "annual-intake" : "initial-squad");
+  const positions = forcedPrimaryPosition
+    ? [forcedPrimaryPosition]
+    : candidatePositions(seed, currentCounts, intake ? "annual-intake" : "initial-squad");
   const facilityBonus = ACADEMY_FACILITIES.ovrBonusByLevel[facility] ?? 0;
   const ovrLow = intake ? ACADEMY_LIMITS.minOvr : ACADEMY_LIMITS.minOvr;
   const ovrHigh = intake ? 55 : ACADEMY_LIMITS.maxOvr;
@@ -268,6 +271,48 @@ function basePlayer(
     academyCareerSeasons: [],
     value: undefined,
   };
+}
+
+
+/**
+ * Genera una promesa de emergencia con una demarcación primaria exacta. Solo
+ * se usa cuando una IA no tiene ningún canterano disponible para completar un
+ * once legal; la promesa se incorpora inmediatamente a la primera plantilla.
+ */
+export function generateEmergencyAcademyProspect(
+  saveId: string,
+  teamId: string,
+  season: number | string,
+  requiredPosition: PosCode,
+  currentState: ClubAcademyState,
+  unavailableIds: Iterable<string> = [],
+): AcademyPlayer {
+  const numericSeason = seasonNumber(season);
+  const profile = getClubProfile(teamId);
+  const developmentQuality = academyDevelopmentQuality(teamId);
+  const facility = currentState.facilityLevel;
+  const usedNames = new Set(currentState.players.map((player) => player.name));
+  const existingIds = new Set([
+    ...currentState.players.map((player) => String(player.id)),
+    ...Array.from(unavailableIds, (id) => String(id)),
+  ]);
+  const positionCounts: Partial<Record<PosCode, number>> = {};
+  for (const player of currentState.players) {
+    incrementPositionCount(positionCounts, player.positions[0] ?? "MC");
+  }
+
+  // La reserva de IDs del generador evita colisiones dentro de la sesión; la
+  // comprobación adicional cubre canteras hidratadas desde un guardado antiguo.
+  for (let attempt = 0; attempt < 256; attempt += 1) {
+    const index = 100_000 + currentState.players.length + attempt;
+    const candidate = basePlayer(
+      saveId, teamId, numericSeason, index, profile, developmentQuality,
+      facility, usedNames, positionCounts, false, requiredPosition,
+    );
+    if (!existingIds.has(String(candidate.id))) return candidate;
+  }
+
+  throw new Error(`No se pudo generar un canterano de emergencia para ${teamId} (${requiredPosition}).`);
 }
 
 export function generateAcademyState(saveId: string, teamId: string, season: number | string): ClubAcademyState {

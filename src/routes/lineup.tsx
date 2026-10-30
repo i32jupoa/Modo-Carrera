@@ -11,7 +11,7 @@ import {
 } from "@/lib/store";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
-import { defaultLineup, type Player } from "@/data/players";
+import { bestStartingLineup, type Player } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { injuryRemainingDays, isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
 import { FootballPitch, PlayerNode } from "@/components/FootballPitch";
@@ -394,10 +394,17 @@ function LineupPage() {
     // pizarra: no se rellena solo con otro futbolista. El slot se conserva
     // como cadena vacía para no descolocar el resto del dibujo, y el usuario
     // decide a quién pone ahí.
-    const nextXI = startingXI.map((id) => {
+    const formationSlots = Object.keys(FORMATION_COORDINATES[selectedFormation] ?? {});
+    const nextXI = startingXI.map((id, index) => {
       if (!id || !available.has(id)) return "";
       const player = squad.find((p) => p.id === id);
-      return player && !isCurrentlyInjured(player) ? id : "";
+      if (!player || isCurrentlyInjured(player)) return "";
+      const requiredPosition = formationSlots[index]
+        ? slotPosCode(formationSlots[index])
+        : null;
+      // También sanea carreras antiguas: un jugador solo permanece en el
+      // hueco si su posición principal o alternativa coincide exactamente.
+      return requiredPosition && canPlayInSlot(player, requiredPosition) ? id : "";
     });
 
     const inXI = new Set(nextXI.filter((id) => id));
@@ -416,14 +423,15 @@ function LineupPage() {
 
     if (!sameArray(nextXI, startingXI)) setStartingXI(nextXI);
     if (!sameArray(nextBench, bench)) setBench(nextBench);
-  }, [squad, liveMode, save, ready, startingXI, bench]);
+  }, [squad, liveMode, save, ready, startingXI, bench, selectedFormation]);
 
   useEffect(() => {
     if (liveMode) return;
     if (!save || !ready || squad.length === 0) return;
     if (startingXI.length === 0) {
-      const fallbackXI = defaultLineup(squad);
-      setStartingXI(fallbackXI);
+      const fallbackSetup = bestStartingLineup(squad);
+      setSelectedFormation(fallbackSetup.formation);
+      setStartingXI(fallbackSetup.ids);
       return;
     }
 
@@ -658,7 +666,9 @@ function LineupPage() {
   function commitVisibleConvocation(nextXI: string[], nextBench: string[]) {
     if (!save || liveMode || fromMatch || fromSeason) return;
 
-    const cleanXI = nextXI.filter(Boolean).slice(0, 11);
+    // Conservar los huecos vacíos: compactar el array desplaza jugadores a
+    // otras demarcaciones al volver a cargar la formación.
+    const cleanXI = nextXI.slice(0, 11).map((id) => id || "");
     const cleanBench = Array.from(
       new Set(nextBench.filter((id) => id && !cleanXI.includes(id))),
     ).slice(0, 12);

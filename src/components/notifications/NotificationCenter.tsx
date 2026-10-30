@@ -13,7 +13,7 @@ import { NotificationCard } from "./NotificationCard";
 const SECTION_ROUTE: Record<MarketNotificationSection, string> = {
   deals: "/transfers",
   offers: "/transfers",
-  mailbox: "/mailbox",
+  mailbox: "/chat",
 };
 
 /** Campana con la bandeja de notificaciones (escudos, jugadores y banderas). */

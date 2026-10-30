@@ -6,6 +6,8 @@ import { Fixture } from "@/lib/season";
 
 import { uclCalendarForSeason, uclStartForSeason, UCLBracketSlot, UCLPhase } from "@/data/ucl";
 import { addIsoDays } from "@/lib/season/calendarFactory";
+import { PLAYOFF_INDEX_TO_R16_SLOT } from "@/lib/uclBracketLayout";
+export { PLAYOFF_INDEX_TO_R16_SLOT } from "@/lib/uclBracketLayout";
 
 // ============================================================
 
@@ -1009,17 +1011,6 @@ export function advanceUCLBracket(
 export type PlayoffRoute = "A" | "B" | "C" | "D";
 
 /** Play-off tie index (0–7) → R16 bracket slot id */
-export const PLAYOFF_INDEX_TO_R16_SLOT: Record<number, string> = {
-  6: "R16-1",
-  7: "R16-7",
-  4: "R16-3",
-  5: "R16-5",
-  2: "R16-4",
-  3: "R16-6",
-  0: "R16-2",
-  1: "R16-8",
-};
-
 export function r16FixtureIndexFromSlot(slotId: string): number {
   return parseInt(slotId.replace("R16-", ""), 10) - 1;
 }

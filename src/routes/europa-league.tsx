@@ -14,6 +14,7 @@ import { TeamBadge } from "@/components/TeamBadge";
 import { TeamLogo } from "@/components/TeamLogo";
 import { MatchStatsModal } from "@/components/MatchStatsModal";
 import { KnockoutTieList } from "@/components/competition/KnockoutTieList";
+import { EuropeanKnockoutBracket } from "@/components/competition/EuropeanKnockoutBracket";
 import { EuropeanStandingsTable } from "@/components/competition/EuropeanStandingsTable";
 import { UCLBracketSlot } from "@/data/ucl";
 import type { Fixture } from "@/lib/season";
@@ -1952,7 +1953,8 @@ function EuropeanCompetitionPage() {
           })()}
 
         {tab === "bracket" && (
-          <BracketView
+          <EuropeanKnockoutBracket
+            competition="uel"
             bracket={bracket}
             fixtures={fixtures}
             onOpenFixture={setSelectedFixture}

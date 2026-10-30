@@ -60,7 +60,7 @@ import {
   type RatedSquadMember,
 } from "@/lib/teamRating";
 
-import { defaultLineup, type Player, marketValueFor } from "@/data/players";
+import { bestStartingLineup, defaultLineup, type Player, marketValueFor } from "@/data/players";
 import {
   initializeDynamicStats,
   updatePlayerMatchStats,
@@ -124,7 +124,6 @@ import {
   applyDailyMailboxMessages,
   commitCalendarScheduleResults,
   getCalendarMatchTeamData,
-  buildAiMatchSquad,
   simulatePromotionPlayoffsThroughDate,
 } from "@/lib/store";
 import { loadTactics } from "@/lib/teamTactics";
@@ -724,7 +723,7 @@ function simulateCalendarLeagueFixture(
   if (save) {
     const home = getCalendarMatchTeamData(save, fixture.homeTeam, fixture);
     const away = getCalendarMatchTeamData(save, fixture.awayTeam, fixture);
-    if (home.players.length > 0 && away.players.length > 0) {
+    if (home.players.length === 11 && away.players.length === 11) {
       const sim = simulateScheduleFixtureFastDetailed(
         fixture,
         (teamId) => (teamId === fixture.homeTeam ? home.players : away.players),
@@ -739,16 +738,22 @@ function simulateCalendarLeagueFixture(
       );
       return { sim, homeXI: home.players, awayXI: away.players };
     }
+    throw new Error(`No hay un once legal de 11 para ${fixture.id}; el partido queda pendiente.`);
   }
   const xiFor = (teamId: string) => {
     const squad = state.getSimSquad(teamId);
-    const initial = state.getSimXI(teamId, calendarLineupIds(squad), fixture.matchday);
-    // Keep the no-save fallback on the same XI-completion path as every other
-    // AI fixture; legacy startup states must not produce empty/short lineups.
-    return buildAiMatchSquad(teamId, initial, new Set(), squad);
+    const setup = bestStartingLineup(squad);
+    const byId = new Map(squad.map((player) => [player.id, player]));
+    const players = setup.ids.map((id) => byId.get(id)).filter((player): player is Player => !!player);
+    if (players.length !== 11) {
+      throw new Error(`No hay once natural de 11 para ${teamId} en ${fixture.id}; el partido queda pendiente.`);
+    }
+    return { players, formation: setup.formation };
   };
-  const homeXI = xiFor(fixture.homeTeam);
-  const awayXI = xiFor(fixture.awayTeam);
+  const home = xiFor(fixture.homeTeam);
+  const away = xiFor(fixture.awayTeam);
+  const homeXI = home.players;
+  const awayXI = away.players;
   const homeSquad = state.getSimSquad(fixture.homeTeam);
   const awaySquad = state.getSimSquad(fixture.awayTeam);
   const sim = simulateScheduleFixtureFastDetailed(
@@ -759,6 +764,8 @@ function simulateCalendarLeagueFixture(
       awayBench: awaySquad.filter((p) => !awayXI.some((x) => x.id === p.id)).slice(0, 7),
       homeTactics: loadTactics(fixture.homeTeam),
       awayTactics: loadTactics(fixture.awayTeam),
+      homeFormation: home.formation,
+      awayFormation: away.formation,
     },
   );
   return { sim, homeXI, awayXI };
@@ -2118,7 +2125,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             homeXI = calendarSim.homeXI;
             awayXI = calendarSim.awayXI;
             simulated = calendarSim.sim;
-            if (homeXI.length === 0 || awayXI.length === 0) {
+            if (homeXI.length !== 11 || awayXI.length !== 11) {
               throw new Error(
                 `No hay una alineación válida para ${fixture.id} (${fixture.homeTeam}: ${homeXI.length}, ${fixture.awayTeam}: ${awayXI.length}).`,
               );
@@ -2806,7 +2813,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
             const { sim: result, homeXI, awayXI } = measureCalendarJumpPhase("simulation.userLeagueFixture", () =>
               simulateCalendarLeagueFixture(f, get()),
             );
-            if (homeXI.length === 0 || awayXI.length === 0) {
+            if (homeXI.length !== 11 || awayXI.length !== 11) {
               throw new Error(
                 `Alineación vacía en ${f.id} (${f.homeTeam}: ${homeXI.length}, ${f.awayTeam}: ${awayXI.length}).`,
               );

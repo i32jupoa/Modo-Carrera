@@ -138,6 +138,7 @@ function AcademyPage() {
   }, [currentDate, ensureClub, myTeamId]);
 
   const players = academy?.players.filter((player) => ["academy", "loaned", "called-up", "listed"].includes(player.status)) ?? [];
+  const loanReportPlayers = players.filter((player) => player.status === "loaned" && (player.loanReports?.length ?? 0) > 0);
   const filtered = useMemo(() => {
     const visible = players.filter((player) => {
       const matchesQuery = !query.trim() || player.name.toLowerCase().includes(query.trim().toLowerCase());
@@ -362,6 +363,37 @@ function AcademyPage() {
             </div>
           </div>
         </section>
+
+        {loanReportPlayers.length > 0 && (
+          <section className="panel rounded-2xl p-4" aria-label="Informes de seguimiento de cesiones">
+            <div className="mb-3 flex items-center gap-2 text-sm font-black">
+              <BarChart3 className="h-4 w-4 text-primary" /> Informes de cesiones
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {loanReportPlayers.map((player) => {
+                const report = player.loanReports?.at(-1);
+                if (!report) return null;
+                return (
+                  <article key={player.id} className="rounded-xl border border-border/50 bg-card/60 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black">{player.name}</p>
+                        <p className="mt-0.5 text-[0.62rem] text-muted-foreground">Último seguimiento · {report.date}</p>
+                      </div>
+                      <span className={`shrink-0 text-xs font-black ${report.delta >= 0 ? "text-emerald-400" : "text-rose-300"}`}>
+                        {report.delta >= 0 ? "+" : ""}{report.delta.toFixed(2)} OVR
+                      </span>
+                    </div>
+                    <div className="mt-2 text-[0.65rem] text-muted-foreground">
+                      {report.minutes} min. · {report.averageRating.toFixed(2)} de valoración
+                    </div>
+                    <p className="mt-2 text-[0.68rem] leading-5 text-muted-foreground">{report.note}</p>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         <section className="panel rounded-2xl p-4" aria-label="Buscar y filtrar canteranos">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

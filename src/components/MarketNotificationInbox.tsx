@@ -75,7 +75,7 @@ export function MarketNotificationInbox() {
   const openNotification = (notification: MarketNotification) => {
     setOpen(false);
     markNotificationRead(notification.id);
-    if (notification.section === "mailbox") navigate({ to: "/mailbox" });
+    if (notification.section === "mailbox") navigate({ to: "/chat" });
     else navigate({ to: "/transfers", search: { q: "" } });
   };
 
@@ -92,7 +92,7 @@ export function MarketNotificationInbox() {
         <div className="flex items-center justify-between border-b border-border/60 p-4">
           <div>
             <div className="flex items-center gap-2 text-sm font-black"><Bell className="h-4 w-4 text-primary" /> Bandeja</div>
-            <div className="mt-0.5 text-[0.62rem] text-muted-foreground">Mercado y buzón, agrupados por día</div>
+            <div className="mt-0.5 text-[0.62rem] text-muted-foreground">Mercado y mensajes del Chat, agrupados por día</div>
           </div>
           {unread > 0 && <button type="button" className="text-[0.62rem] font-bold text-primary hover:underline" onClick={markAllRead}>Marcar todo leído</button>}
         </div>

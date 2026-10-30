@@ -14,37 +14,44 @@ function player(id: string, positions: string[], rating = 70): Player {
 }
 
 describe("buildAiMatchSquad", () => {
-  const roster = [
+  const xi = [
     player("gk", ["GK"], 80),
-    ...Array.from({ length: 4 }, (_, i) => player(`def-${i}`, ["CB"], 75 - i)),
-    ...Array.from({ length: 4 }, (_, i) => player(`mid-${i}`, ["CM"], 70 - i)),
-    ...Array.from({ length: 4 }, (_, i) => player(`fwd-${i}`, ["ST"], 69 - i)),
+    player("li", ["LI"], 78),
+    player("cb-1", ["DFC"], 77),
+    player("cb-2", ["DFC"], 76),
+    player("ld", ["LD"], 75),
+    player("mc-1", ["MC"], 74),
+    player("mc-2", ["MC"], 73),
+    player("mc-3", ["MC"], 72),
+    player("ei", ["EI"], 71),
+    player("dc", ["DC"], 70),
+    player("ed", ["ED"], 69),
   ];
 
-  it("always completes an XI to eleven unique players and includes a goalkeeper", () => {
-    const xi = buildAiMatchSquad("test-team", roster.slice(0, 5), new Set(), roster);
-    expect(xi).toHaveLength(11);
-    expect(new Set(xi.map((p) => p.id)).size).toBe(11);
-    expect(xi.some((p) => p.positions.includes("GK"))).toBe(true);
+  it("accepts a complete eleven without changing its slot order", () => {
+    const selected = buildAiMatchSquad("test-team", xi, new Set(), xi, "Táctica 4-3-3");
+    expect(selected).toHaveLength(11);
+    expect(selected.map((player) => player.id)).toEqual(xi.map((player) => player.id));
   });
 
-  it("does not select unavailable players while enough eligible players exist", () => {
-    const unavailable = new Set(["gk", "def-0"]);
-    const xi = buildAiMatchSquad("test-team", [], unavailable, roster);
-    expect(xi).toHaveLength(11);
-    expect(xi.some((p) => unavailable.has(p.id))).toBe(false);
+  it("does not complete a partial XI with arbitrary players", () => {
+    expect(buildAiMatchSquad("test-team", xi.slice(0, 5), new Set(), xi)).toEqual([]);
   });
 
-  it("uses emergency cover rather than reducing the XI when the roster is short on eligible players", () => {
-    const unavailable = new Set(roster.slice(0, 5).map((p) => p.id));
-    const xi = buildAiMatchSquad("test-team", [], unavailable, roster);
-    expect(xi).toHaveLength(11);
-    expect(xi.some((p) => unavailable.has(p.id))).toBe(true);
+  it("does not reintroduce injured or suspended players as emergency cover", () => {
+    const unavailable = new Set(["dc"]);
+    expect(buildAiMatchSquad("test-team", xi, unavailable, xi, "Táctica 4-3-3")).toEqual([]);
   });
 
-  it("does not mutate persistent player energy while building an XI", () => {
-    const candidates = roster.map((p) => ({ ...p, energy: 37 }));
-    buildAiMatchSquad("test-team", candidates.slice(0, 5), new Set(), candidates);
-    expect(candidates.every((p) => p.energy === 37)).toBe(true);
+  it("rejects a complete but positionally incoherent XI", () => {
+    const mismatched = [...xi];
+    mismatched[9] = player("defender-up-front", ["DFC"], 99);
+    expect(buildAiMatchSquad("test-team", mismatched, new Set(), mismatched, "Táctica 4-3-3")).toEqual([]);
+  });
+
+  it("does not mutate persistent player energy while validating an XI", () => {
+    const candidates = xi.map((player) => ({ ...player, energy: 37 }));
+    buildAiMatchSquad("test-team", candidates, new Set(), candidates, "Táctica 4-3-3");
+    expect(candidates.every((player) => player.energy === 37)).toBe(true);
   });
 });

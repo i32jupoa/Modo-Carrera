@@ -3,7 +3,6 @@ import playersData from "./playersData";
 import {
   buildPositions,
   canPlayPosition,
-  calculatePositionSimilarity,
   isNaturalFor,
   playerPosCodes,
   toPosCode,
@@ -11,6 +10,7 @@ import {
   type PosCode,
 } from "@/lib/positions";
 import type { DynamicPlayerStats, PlayerAttributeRatings } from "@/types/playerStats";
+import { ALL_FORMATIONS, FORMATION_COORDINATES, slotPosCode, type FormationName } from "@/lib/formations";
 
 /**
  * Estadísticas ofensivas del dataset FC26 usadas por el motor de partido.
@@ -764,6 +764,141 @@ export function generateSquad(team: Team, dynamicStatsMap?: Record<string, any>)
   return all[team.id] || [];
 }
 
+/** Resultado de elegir automáticamente el sistema que mejor encaja con una plantilla. */
+export type BestStartingLineup = {
+  formation: FormationName;
+  ids: string[];
+  filledSlots: number;
+  totalRating: number;
+};
+
+/** Asignación óptima de futbolistas a huecos, sin repetir jugadores. */
+function maximumWeightLineupAssignment(weights: number[][]): number[] {
+  const rowCount = weights.length;
+  if (!rowCount) return [];
+  const columnCount = weights[0]?.length ?? 0;
+  if (columnCount < rowCount) throw new Error("La matriz de alineación debe tener suficientes columnas");
+
+  const u = new Array(rowCount + 1).fill(0);
+  const v = new Array(columnCount + 1).fill(0);
+  const matchedRow = new Array(columnCount + 1).fill(0);
+  const previousColumn = new Array(columnCount + 1).fill(0);
+
+  for (let row = 1; row <= rowCount; row++) {
+    matchedRow[0] = row;
+    let currentColumn = 0;
+    const minimum = new Array(columnCount + 1).fill(Number.POSITIVE_INFINITY);
+    const used = new Array(columnCount + 1).fill(false);
+
+    do {
+      used[currentColumn] = true;
+      const currentRow = matchedRow[currentColumn];
+      let delta = Number.POSITIVE_INFINITY;
+      let nextColumn = 0;
+      for (let column = 1; column <= columnCount; column++) {
+        if (used[column]) continue;
+        const cost = -weights[currentRow - 1][column - 1] - u[currentRow] - v[column];
+        if (cost < minimum[column]) {
+          minimum[column] = cost;
+          previousColumn[column] = currentColumn;
+        }
+        if (minimum[column] < delta) {
+          delta = minimum[column];
+          nextColumn = column;
+        }
+      }
+      for (let column = 0; column <= columnCount; column++) {
+        if (used[column]) {
+          u[matchedRow[column]] += delta;
+          v[column] -= delta;
+        } else {
+          minimum[column] -= delta;
+        }
+      }
+      currentColumn = nextColumn;
+    } while (matchedRow[currentColumn] !== 0);
+
+    do {
+      const previous = previousColumn[currentColumn];
+      matchedRow[currentColumn] = matchedRow[previous];
+      currentColumn = previous;
+    } while (currentColumn !== 0);
+  }
+
+  const assignment = new Array(rowCount).fill(-1);
+  for (let column = 1; column <= columnCount; column++) {
+    if (matchedRow[column] > 0) assignment[matchedRow[column] - 1] = column - 1;
+  }
+  return assignment;
+}
+
+/**
+ * Calcula qué formación permite alinear el mayor número de jugadores y, entre
+ * esas opciones, suma la mayor valoración posible. Solo admite la posición
+ * principal o una alternativa declarada; las columnas ficticias representan
+ * huecos vacíos cuando la plantilla no tiene un especialista.
+ */
+export function bestStartingLineup(
+  squad: Player[],
+  unavailable: Set<string> = new Set(),
+): BestStartingLineup {
+  const available = squad.filter((player) => !unavailable.has(player.id));
+  const candidates: Array<{ setup: BestStartingLineup; positionFit: number }> = [];
+
+  for (const formation of ALL_FORMATIONS) {
+    const coordinates = FORMATION_COORDINATES[formation];
+    const slotKeys = Object.keys(coordinates ?? {});
+    if (slotKeys.length !== 11 || slotKeys.filter((key) => slotPosCode(key) === "GK").length !== 1) continue;
+
+    // Primero se maximiza el número de huecos cubiertos; después, el nivel del
+    // once y la preferencia por la posición principal frente a una alternativa.
+    const weights = slotKeys.map((key) => {
+      const required = slotPosCode(key);
+      const playerWeights = available.map((player) => {
+        const positions = playerPosCodes(player);
+        if (!positions.includes(required)) return -1_000_000_000;
+        const rating = Number(player.rating) || 0;
+        const positionBonus = positions[0] === required ? 4 : 2;
+        return 1_000_000 + rating * 100 + positionBonus;
+      });
+      return [...playerWeights, ...new Array(11).fill(0)];
+    });
+
+    const assignment = maximumWeightLineupAssignment(weights);
+    const ids = slotKeys.map((key, index) => {
+      const playerIndex = assignment[index];
+      if (playerIndex < 0 || playerIndex >= available.length) return "";
+      const player = available[playerIndex];
+      return playerPosCodes(player).includes(slotPosCode(key)) ? player.id : "";
+    });
+    const selected = ids.map((id, index) => ({
+      player: id ? available.find((candidate) => candidate.id === id) : undefined,
+      required: slotPosCode(slotKeys[index]),
+    })).filter((entry): entry is { player: Player; required: PosCode } => !!entry.player);
+    const setup: BestStartingLineup = {
+      formation,
+      ids,
+      filledSlots: selected.length,
+      totalRating: selected.reduce((sum, entry) => sum + (Number(entry.player.rating) || 0), 0),
+    };
+    const positionFit = selected.reduce((sum, entry) =>
+      sum + (playerPosCodes(entry.player)[0] === entry.required ? 4 : 2), 0);
+    candidates.push({ setup, positionFit });
+  }
+
+  return candidates.sort((a, b) =>
+    b.setup.filledSlots - a.setup.filledSlots ||
+    b.setup.totalRating - a.setup.totalRating ||
+    b.positionFit - a.positionFit ||
+    ALL_FORMATIONS.indexOf(a.setup.formation) - ALL_FORMATIONS.indexOf(b.setup.formation),
+  )[0]?.setup ?? {
+    formation: "Táctica 4-3-3",
+    ids: new Array(11).fill(""),
+    filledSlots: 0,
+    totalRating: 0,
+  };
+}
+
 /**
  * Demarcaciones exactas del 4-3-3 por defecto, en el MISMO orden que los
  * huecos de FORMATION_COORDINATES["Táctica 4-3-3"]
@@ -789,18 +924,16 @@ export function defaultLineup(squad: Player[], unavailable: Set<string> = new Se
   const lineup: string[] = DEFAULT_LINEUP_SLOTS.map(() => "");
   const scoreFor = (player: Player, slot: PosCode) => {
     const positions = playerPosCodes(player);
-    if (slot === "GK" && !positions.includes("GK")) return -10000;
-    if (slot !== "GK" && positions.includes("GK")) return -10000;
+    // La valoración o la similitud entre demarcaciones nunca habilitan una
+    // posición que el jugador no tenga declarada. Lautaro (DC), por ejemplo,
+    // no puede ocupar un MC en el once automático.
+    if (!positions.includes(slot)) return -10000;
     const rating = Number(player.rating) || 0;
-    const primary = positions[0] === slot;
-    const secondary = positions.includes(slot);
-    const similarity = positions.reduce((best, p) => Math.max(best, calculatePositionSimilarity(p, slot)), 0);
-    return rating + (primary ? 4 : secondary ? 2 : similarity * 3 - 2);
+    return rating + (positions[0] === slot ? 4 : 2);
   };
 
-  // El portero se asigna primero. Para los jugadores de campo se elige el
-  // mejor encaje disponible con penalizaciones pequeñas: no se dejan huecos
-  // sólo porque la plantilla no declare literalmente la misma demarcación.
+  // El portero se asigna primero. Cada jugador de campo solo puede ocupar
+  // una demarcación que tenga declarada; los huecos sin especialista quedan libres.
   const keeperIndex = DEFAULT_LINEUP_SLOTS.findIndex((slot) => slot === "GK");
   if (keeperIndex >= 0) {
     const keeper = available.filter((p) => !used.has(p.id) && playerPosCodes(p).includes("GK"))
@@ -809,11 +942,14 @@ export function defaultLineup(squad: Player[], unavailable: Set<string> = new Se
   }
   DEFAULT_LINEUP_SLOTS.forEach((slot, i) => {
     if (slot === "GK") return;
-    const pick = available.filter((p) => !used.has(p.id) && !playerPosCodes(p).includes("GK"))
+    const pick = available
+      .filter((p) => !used.has(p.id) && playerPosCodes(p).includes(slot))
       .sort((a, b) => scoreFor(b, slot) - scoreFor(a, slot) || b.rating - a.rating)[0];
     if (pick) { used.add(pick.id); lineup[i] = pick.id; }
   });
-  return lineup.filter(Boolean);
+  // Los huecos sin especialista se dejan vacíos: nunca se completa el once
+  // colocando a un delantero como centrocampista o viceversa.
+  return lineup;
 }
 
 export function avgForm(p: Player): number {

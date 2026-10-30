@@ -16,6 +16,7 @@ import {
   Award,
   Swords,
   MessageCircle,
+  Inbox,
   GraduationCap,
   History,
 } from "lucide-react";
@@ -54,7 +55,8 @@ const MI_EQUIPO: Item[] = [
   { title: "Cantera", url: "/cantera", icon: GraduationCap },
   { title: "Ojeador", url: "/scouting", icon: Radar },
   { title: "Dirección de equipo", url: "/lineup", icon: ClipboardList },
-  { title: "Buzón", url: "/mailbox", icon: MessageCircle },
+  { title: "Chat", url: "/chat", icon: MessageCircle },
+  { title: "Buzón", url: "/mailbox", icon: Inbox },
   { title: "Lesiones", url: "/injuries", icon: Activity },
   { title: "Estadísticas de equipo", url: "/team-stats", icon: BarChart3 },
 ];
@@ -120,8 +122,9 @@ export function AppSidebar() {
 
   const marketNotificationTotal = useNotificationsStore((s) => s.counts.deals + s.counts.offers);
   const markAllMarketNotificationsRead = useNotificationsStore((s) => s.markAllRead);
-  const mailboxNotificationCount = useNotificationsStore((s) => s.counts.mailbox);
-  const markMailboxRead = useNotificationsStore((s) => s.markMailboxRead);
+  const chatNotificationCount = useNotificationsStore((s) => s.counts.mailbox);
+  const markChatRead = useNotificationsStore((s) => s.markMailboxRead);
+  const [seasonInboxUnreadCount, setSeasonInboxUnreadCount] = useState(0);
   const currentDate = usePlayersStore((s) => s.currentDate);
   const scoutingHasNotifications = hasScoutingNotifications(currentDate);
   useEffect(() => {
@@ -143,10 +146,20 @@ export function AppSidebar() {
     if (pathname === "/scouting") {
       markScoutingNotificationsSeen(currentDate);
     }
-    if (pathname === "/mailbox" && mailboxNotificationCount > 0) {
-      markMailboxRead();
+    if (pathname === "/chat" && chatNotificationCount > 0) {
+      markChatRead();
     }
-  }, [pathname, currentDate, mailboxNotificationCount, markMailboxRead]);
+  }, [pathname, currentDate, chatNotificationCount, markChatRead]);
+
+  useEffect(() => {
+    const refreshSeasonInboxCount = () => {
+      const activeSave = loadSave();
+      setSeasonInboxUnreadCount((activeSave?.seasonNotifications ?? []).filter((item) => !item.read).length);
+    };
+    refreshSeasonInboxCount();
+    window.addEventListener("career-season-notifications-updated", refreshSeasonInboxCount);
+    return () => window.removeEventListener("career-season-notifications-updated", refreshSeasonInboxCount);
+  }, [pathname, currentDate]);
 
   const isActive = (url: string) => pathname === url;
 
@@ -194,10 +207,12 @@ export function AppSidebar() {
               isActive={isActive}
               badges={{
                 "/scouting": pathname !== "/scouting" && scoutingHasNotifications,
-                "/mailbox": pathname !== "/mailbox" && mailboxNotificationCount > 0,
+                "/chat": pathname !== "/chat" && chatNotificationCount > 0,
+                "/mailbox": pathname !== "/mailbox" && seasonInboxUnreadCount > 0,
               }}
               badgeCounts={{
-                "/mailbox": mailboxNotificationCount,
+                "/chat": chatNotificationCount,
+                "/mailbox": seasonInboxUnreadCount,
               }}
             />
             <NavGroup

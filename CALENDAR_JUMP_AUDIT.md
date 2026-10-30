@@ -211,3 +211,17 @@ La mejora real de ms/día todavía debe medirse en navegador con la misma partid
 - Si aún queda una jornada de fondo real sin resolver, el error incluye la competición, jornada y fecha de las primeras entradas. Los partidos de liga pendientes muestran los IDs y equipos implicados.
 
 Verificación: `node scripts/calendar-jump-invariants.mjs`, `node scripts/calendar-jump-competition-regression.mjs`, `node scripts/cup-calendar-runtime-regression.mjs`, `node scripts/players-store-startup-regression.mjs`, `node --experimental-strip-types scripts/season-calendar-test.mjs`, `node --experimental-strip-types scripts/player-progression-balance-test.mjs` y `node scripts/season-balance-test.mjs --seasons=20 --seed=20261020`. La sintaxis de los cinco archivos TypeScript/TSX tocados se validó con `typescript.transpileModule`; no equivale a una compilación integral de Vite.
+
+## 12. Corrección de bloqueos por plantillas sin un XI legal (30 de octubre de 2026)
+
+Los logs aportados muestran que el salto del calendario se detenía en `2026-08-25` porque la jornada 2 de `bracksuperleague` no podía encontrar dos onces legales de once jugadores. La cola mantenía correctamente la tarea pendiente, pero el selector no resolvía por sí mismo una plantilla corta.
+
+Cambios de esta revisión:
+- El selector de posiciones comunica solo los puestos realmente vacíos. No interpreta el array `ids: []` de un XI incompleto como si faltaran las once demarcaciones.
+- Antes de aplazar un partido de una liga extranjera o copa, la IA busca un canterano disponible de 16 años o más cuya posición principal o alternativa coincida exactamente con el hueco.
+- Si no existe ningún canterano elegible para esa posición, genera y promociona una promesa de emergencia del club con esa demarcación primaria exacta. La generación evita IDs ya presentes en la cantera y en los jugadores dinámicos.
+- Tras cada promoción, vuelve a calcular la formación y el once completo. Nunca se añade un futbolista de otra posición ni se simula con menos de once.
+- La fecha concreta del fixture se pasa al generador de convocatorias, para que la promoción y la edad del jugador correspondan al día del partido.
+- La tarea de cola solo se retira cuando todos los partidos de esa jornada se han resuelto. Si ocurre un error real de generación, se conserva la tarea y se muestran los clubes y puestos implicados.
+
+Verificaciones ejecutadas: `node scripts/calendar-jump-emergency-squad-regression.mjs`, `node scripts/calendar-jump-invariants.mjs`, `node scripts/calendar-jump-competition-regression.mjs`, `node scripts/cup-calendar-runtime-regression.mjs`, `node scripts/players-store-startup-regression.mjs`, `node --experimental-strip-types scripts/season-calendar-test.mjs`, `node --experimental-strip-types scripts/player-progression-balance-test.mjs` y `node scripts/season-balance-test.mjs --seasons=20 --seed=20261030`. La sintaxis de los tres archivos TypeScript modificados se verificó con `typescript.transpileModule`; no equivale a `tsc --noEmit` ni a una ejecución end-to-end en navegador.

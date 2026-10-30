@@ -430,6 +430,27 @@ function elevenScore(eleven: ElevenSlot[]): number {
 export const FIVE_DEFENDER_TEAMS = new Set(["Getafe CF", "Lombardia FC"]);
 
 /**
+ * Restricción táctica exclusiva de los equipos controlados por la IA:
+ * nunca pueden alinear con tres defensas. Se cuentan los roles reales del
+ * esquema, no el nombre de la formación, para cubrir variantes y futuros
+ * sistemas añadidos al catálogo.
+ */
+export function isAiFormationAllowed(formation: FormationName): boolean {
+  const coordinates = FORMATION_COORDINATES[formation];
+  if (!coordinates) return false;
+
+  const slots = Object.values(coordinates);
+  if (slots.length !== 11) return false;
+
+  const goalkeeperCount = slots.filter((slot) => slot?.role === "GK").length;
+  const defenders = slots.filter((slot) => slot?.role === "DEF").length;
+  const midfielders = slots.filter((slot) => slot?.role === "MID").length;
+  const attackers = slots.filter((slot) => slot?.role === "ATT").length;
+
+  return goalkeeperCount === 1 && defenders >= 4 && midfielders >= 2 && attackers >= 1 && attackers <= 4;
+}
+
+/**
  * Elige, entre las formaciones típicas del estilo del equipo, la que mejor
  * encaja con la plantilla (mejor media en su sitio natural).
  * Usa el estilo específico del equipo del CSV si está disponible, si no usa estimateTactics.
@@ -437,12 +458,17 @@ export const FIVE_DEFENDER_TEAMS = new Set(["Getafe CF", "Lombardia FC"]);
 export function bestFormationForSquad(squad: FcPlayer[], team: Team): FormationName {
   // Usar estilo específico del CSV si existe, si no usar estimateTactics
   const style = TEAM_STYLES[team.name] || estimateTactics(team).style;
-  const candidateFormations = FORMATIONS_BY_STYLE[style];
+  const candidateFormations = FORMATIONS_BY_STYLE[style].filter(isAiFormationAllowed);
 
-  let best: FormationName = candidateFormations[0] || "Táctica 4-2-3-1 (2)";
+  // Todos los estilos tienen varias alternativas con cuatro o cinco defensas.
+  // El fallback también se mantiene dentro de esa restricción.
+  const safeCandidates = candidateFormations.length
+    ? candidateFormations
+    : ALL_FORMATIONS.filter(isAiFormationAllowed);
+  let best: FormationName = safeCandidates[0] || "Táctica 4-4-2";
   let bestScore = -Infinity;
 
-  for (const formation of candidateFormations) {
+  for (const formation of safeCandidates) {
     const fiveBackBonus = FIVE_DEFENDER_TEAMS.has(team.name) && formation.includes("5-") ? 12 : 0;
     const score = elevenScore(estimatedEleven(formation, squad)) + fiveBackBonus;
     if (score > bestScore) {

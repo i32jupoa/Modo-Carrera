@@ -2,6 +2,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Trophy } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { loadSave, saveSave, SaveGame, simulatePendingUCLThroughDay } from "@/lib/store";
 import { uclDayOffset } from "@/data/ucl";
 import { usePlayersStore } from "@/store/playersStore";
@@ -14,6 +15,7 @@ import { EuropeanStandingsTable } from "@/components/competition/EuropeanStandin
 import { UCLBracketSlot, uclStartForSeason } from "@/data/ucl";
 import { getSeasonStartYear } from "@/lib/season/calendarFactory";
 import type { Fixture } from "@/lib/season";
+import { orderPlayoffByR16, orderTieBySecondLegHome, splitUclBracketSides } from "@/lib/uclBracketLayout";
 
 export const Route = createFileRoute("/ucl")({ component: UCLPage });
 
@@ -247,6 +249,32 @@ function isBracketFixture(value: unknown): value is Fixture {
   if (!value || typeof value !== "object") return false;
   const f = value as Partial<Fixture>;
   return typeof f.homeId === "string" && typeof f.awayId === "string" && typeof f.round === "string";
+}
+
+
+function getFixturesForBracketMatchup(matchup: BracketMatchup, fixtures: Fixture[]) {
+  const safeFixtures = Array.isArray(fixtures) ? fixtures.filter(isBracketFixture) : [];
+  if (matchup.round === "final") {
+    return { single: safeFixtures.find((fixture) => fixture.round === "Final") ?? null, leg1: null, leg2: null };
+  }
+
+  if (!matchup.homeTeam || !matchup.awayTeam) {
+    return { single: null, leg1: null, leg2: null };
+  }
+
+  const roundPrefix = matchup.round === "playoff" ? "Playoff" : matchup.round.toUpperCase();
+  const teams = [matchup.homeTeam, matchup.awayTeam].sort().join("|");
+  const tieFixtures = safeFixtures.filter((fixture) =>
+    fixture.round?.startsWith(roundPrefix) &&
+    (fixture.matchday == null || fixture.matchday > 0) &&
+    [fixture.homeId, fixture.awayId].sort().join("|") === teams,
+  );
+
+  return {
+    single: null,
+    leg1: tieFixtures.find((fixture) => fixture.round?.endsWith("-Leg1")) ?? null,
+    leg2: tieFixtures.find((fixture) => fixture.round?.endsWith("-Leg2")) ?? null,
+  };
 }
 
 function buildImmutableBracketState(fixtures: Fixture[]): ImmutableBracketState {
@@ -508,42 +536,60 @@ function BracketView({
   fixtures: Fixture[];
   onOpenFixture?: (fixture: Fixture) => void;
 }) {
+  const [selectedTie, setSelectedTie] = useState<{
+    matchup: BracketMatchup;
+    leg1: Fixture | null;
+    leg2: Fixture | null;
+  } | null>(null);
+
   if (!Array.isArray(bracket) || bracket.length === 0) {
     return (
-      <p className="text-muted-foreground text-sm p-4">
+      <div className="rounded-2xl border border-border/60 bg-card/50 p-5 text-sm text-muted-foreground">
         El cuadro se generará tras el sorteo de play-offs.
-      </p>
-    );
-  }
-
-  // Build immutable bracket state from fixtures. A stale save must never
-  // take down the whole competition route; fall back to an empty bracket UI.
-  let bracketState: ImmutableBracketState;
-  try {
-    bracketState = buildImmutableBracketState(Array.isArray(fixtures) ? fixtures : []);
-  } catch (error) {
-    console.error("[BracketView] Error construyendo cuadro:", error);
-    return (
-      <div className="w-full min-h-[500px] p-8 flex items-center justify-center">
-        <div className="text-center text-muted-foreground space-y-2">
-          <p className="font-semibold text-white">No se pudo cargar el cuadro</p>
-          <p className="text-sm">Los partidos y resultados siguen guardados; el cuadro se reconstruirá con los datos válidos.</p>
-        </div>
       </div>
     );
   }
 
-  // Split into left half (routes A & B) and right half (routes C & D)
-  const playoffLeft = bracketState.playoff.slice(0, 4);
-  const playoffRight = bracketState.playoff.slice(4);
-  const r16Left = bracketState.r16.slice(0, 4);
-  const r16Right = bracketState.r16.slice(4);
-  const qfLeft = bracketState.qf.slice(0, 2);
-  const qfRight = bracketState.qf.slice(2);
-  const sfLeft = bracketState.sf.slice(0, 1);
-  const sfRight = bracketState.sf.slice(1);
+  let bracketState: ImmutableBracketState;
+  try {
+    // Fixtures are authoritative: each displayed tie and its route must match
+    // the real fixture IDs and the persisted competition progression.
+    bracketState = buildImmutableBracketState(Array.isArray(fixtures) ? fixtures : []);
+  } catch (error) {
+    console.error("[BracketView] Error construyendo cuadro:", error);
+    return (
+      <div className="rounded-2xl border border-border/60 bg-card/50 p-6 text-center text-muted-foreground">
+        <p className="font-semibold">No se pudo cargar el cuadro</p>
+        <p className="mt-1 text-sm">Los partidos y resultados siguen guardados; el cuadro se reconstruirá con los datos válidos.</p>
+      </div>
+    );
+  }
 
-  // Safe helpers
+  const withPlaceholders = (items: BracketMatchup[], count: number, round: string, prefix: string) =>
+    Array.from({ length: count }, (_, index) => items[index] ?? ({
+      id: `${prefix}-${index + 1}`,
+      round,
+      homeTeam: null,
+      awayTeam: null,
+      winner: null,
+    } satisfies BracketMatchup));
+
+  const r16 = withPlaceholders(bracketState.r16, 8, "r16", "R16");
+  const playoff = withPlaceholders(bracketState.playoff, 8, "playoff", "PO");
+  const qf = withPlaceholders(bracketState.qf, 4, "qf", "QF");
+  const sf = withPlaceholders(bracketState.sf, 2, "sf", "SF");
+
+  // The playoff order must first match its destination in the R16. Only then
+  // do we split both halves and mirror the right-hand route around the final.
+  const playoffByR16 = orderPlayoffByR16(playoff, r16).map((matchup, index) => matchup ?? ({
+    id: `PO-TBD-${index + 1}`,
+    round: "playoff",
+    homeTeam: null,
+    awayTeam: null,
+    winner: null,
+  } satisfies BracketMatchup));
+  const sides = splitUclBracketSides(playoffByR16, r16, qf, sf);
+
   const safeTeamName = (id: string): string => {
     if (typeof id !== "string" || !id || id.startsWith("winner-")) return "Por definir";
     try {
@@ -579,495 +625,414 @@ function BracketView({
         scottish: "Scottish Prem",
         austrianbundesliga: "Ö. Bundesliga",
       };
-
       const leagueFolder = leagueFolderMap[team.league] || getLeagueName(team.league);
-      const teamName = team.name;
-
-      const svgTeams: Record<string, string> = {
-        juv: "Juventus.svg",
-      };
-
-      if (svgTeams[teamId]) {
-        return `/logos/${leagueFolder}/${svgTeams[teamId]}`;
-      }
-
-      return `/logos/${leagueFolder}/${teamName}.png`;
+      const svgTeams: Record<string, string> = { juv: "Juventus.svg" };
+      return `/logos/${leagueFolder}/${svgTeams[teamId] || `${team.name}.png`}`;
     } catch {
       return "";
     }
   };
 
-  return (
+  const finalMatchup: BracketMatchup = bracketState.final ?? {
+    id: "F",
+    round: "final",
+    homeTeam: null,
+    awayTeam: null,
+    winner: null,
+  };
+
+  const openMatchup = (matchup: BracketMatchup) => {
+    const tie = getFixturesForBracketMatchup(matchup, fixtures);
+    // Finals are single matches and open only after being played. For a
+    // two-legged tie, open the selector even when both legs are pending;
+    // played-only navigation is enforced by each leg button in the dialog.
+    if (matchup.round === "final") {
+      if (tie.single?.result) onOpenFixture?.(tie.single);
+      return;
+    }
+    if (!matchup.homeTeam || !matchup.awayTeam) return;
+    setSelectedTie({ matchup, leg1: tie.leg1, leg2: tie.leg2 });
+  };
+
+  const selectLeg = (fixture: Fixture) => {
+    if (!fixture.result) return;
+    setSelectedTie(null);
+    onOpenFixture?.(fixture);
+  };
+
+  const formatFixtureDate = (date?: string) => {
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return "Fecha por confirmar";
+    return new Date(`${date}T12:00:00`).toLocaleDateString("es-ES", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  };
+
+  const columns = [
+    { title: "Play-off", subtitle: "Acceso a octavos" },
+    { title: "Octavos", subtitle: "16 equipos" },
+    { title: "Cuartos", subtitle: "8 equipos" },
+    { title: "Semifinal", subtitle: "Ida y vuelta" },
+    { title: "Final", subtitle: "Por el título" },
+    { title: "Semifinal", subtitle: "Ida y vuelta" },
+    { title: "Cuartos", subtitle: "8 equipos" },
+    { title: "Octavos", subtitle: "16 equipos" },
+    { title: "Play-off", subtitle: "Acceso a octavos" },
+  ];
+
+  const renderMatchCard = (matchup: BracketMatchup) => (
+    <ImmutableMatchCard
+      matchup={matchup}
+      fixtures={fixtures}
+      safeTeamName={safeTeamName}
+      getTeamLogoPath={getTeamLogoPath}
+      onOpenMatchup={openMatchup}
+    />
+  );
+
+  const renderCell = (
+    matchup: BracketMatchup,
+    column: number,
+    row: string,
+    className = "",
+  ) => (
     <div
-      className="w-full min-h-screen p-8 relative overflow-hidden"
-      style={{
-        background: "radial-gradient(ellipse at center, #1a1f3a 0%, #0a0e27 100%)",
-        backgroundImage: `
-        radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.15) 0%, transparent 40%),
-        radial-gradient(circle at 80% 70%, rgba(147, 51, 234, 0.15) 0%, transparent 40%),
-        radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.05) 0%, transparent 60%)
-      `,
-      }}
+      key={matchup.id}
+      className={`ucl-bracket-cell ${className}`}
+      style={{ gridColumn: column, gridRow: row }}
     >
-      {/* Star pattern overlay */}
-      <div
-        className="absolute inset-0 opacity-5 pointer-events-none"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 5L32 25H52L36 37L42 57L30 45L18 57L24 37L8 25H28L30 5Z' fill='%23ffffff'/%3E%3C/svg%3E")`,
-          backgroundSize: "60px 60px",
-        }}
-      />
+      {renderMatchCard(matchup)}
+    </div>
+  );
 
-      <div className="max-w-7xl mx-auto relative z-10">
-        {/* Bracket with CSS connector lines */}
-        <div className="flex items-center justify-between gap-6 min-h-[900px] py-8">
-          {/* Left Block - Routes A & B */}
-          <div className="flex-1 flex items-center gap-4">
-            {/* Play-off */}
-            <div className="flex-1 flex flex-col justify-around gap-8">
-              <div className="text-center text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">
-                Play-off
-              </div>
-              {playoffLeft.map((matchup, idx) => (
-                <div key={matchup.id} className="relative bracket-match-container">
-                  <ImmutableMatchCard
-                    matchup={matchup}
-                    fixtures={fixtures}
-                    safeTeamName={safeTeamName}
-                    getTeamLogoPath={getTeamLogoPath}
-                    onOpenFixture={onOpenFixture}
-                  />
-                  {/* CSS connector lines */}
-                  {idx < 2 && <div className="bracket-connector-right" />}
-                </div>
-              ))}
-            </div>
+  return (
+    <section className="ucl-bracket-shell overflow-hidden rounded-2xl border border-border/70 bg-card/55 shadow-xl shadow-black/10 backdrop-blur-xl">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-4 py-4 md:px-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--comp-accent)]/30 bg-[var(--comp-accent)]/10 text-[var(--comp-accent)]">
+            <Trophy className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-black tracking-wide text-foreground">Camino a la final</h3>
+            <p className="text-xs text-muted-foreground">Dos caminos simétricos que terminan en la final central</p>
+          </div>
+        </div>
+        <div className="rounded-full border border-border/70 bg-background/50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+          Eliminatorias · Ida y vuelta
+        </div>
+      </div>
 
-            {/* R16 */}
-            <div className="flex-1 flex flex-col justify-around gap-8">
-              <div className="text-center text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">
-                Octavos
-              </div>
-              {r16Left.map((matchup, idx) => (
-                <div key={matchup.id} className="relative bracket-match-container">
-                  <ImmutableMatchCard
-                    matchup={matchup}
-                    fixtures={fixtures}
-                    safeTeamName={safeTeamName}
-                    getTeamLogoPath={getTeamLogoPath}
-                    onOpenFixture={onOpenFixture}
-                  />
-                  {idx === 0 && <div className="bracket-connector-right" />}
+      <div className="overflow-x-auto px-3 py-4 md:px-5 md:py-5">
+        <div className="ucl-bracket-content">
+          <div className="ucl-bracket-headings">
+            {columns.map((column, index) => (
+              <div key={`${column.title}-${index}`} className={`flex min-w-0 items-center gap-2 px-1 ${index === 4 ? "justify-center text-center" : ""}`}>
+                <span className="text-[10px] font-black tabular-nums text-[var(--comp-accent)]">{String(index + 1).padStart(2, "0")}</span>
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-extrabold uppercase tracking-wider text-foreground">{column.title}</div>
+                  <div className="truncate text-[10px] text-muted-foreground">{column.subtitle}</div>
                 </div>
-              ))}
-            </div>
-
-            {/* QF */}
-            <div className="flex-1 flex flex-col justify-around gap-8">
-              <div className="text-center text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">
-                Cuartos
               </div>
-              {qfLeft.map((matchup) => (
-                <div key={matchup.id} className="relative bracket-match-container">
-                  <ImmutableMatchCard
-                    matchup={matchup}
-                    fixtures={fixtures}
-                    safeTeamName={safeTeamName}
-                    getTeamLogoPath={getTeamLogoPath}
-                    onOpenFixture={onOpenFixture}
-                  />
-                  <div className="bracket-connector-right" />
-                </div>
-              ))}
-            </div>
-
-            {/* SF */}
-            <div className="flex-1 flex flex-col justify-center gap-8">
-              <div className="text-center text-sm font-bold text-blue-400 uppercase tracking-wider mb-4">
-                Semifinales
-              </div>
-              {sfLeft.map((matchup) => (
-                <div key={matchup.id} className="relative bracket-match-container">
-                  <ImmutableMatchCard
-                    matchup={matchup}
-                    fixtures={fixtures}
-                    safeTeamName={safeTeamName}
-                    getTeamLogoPath={getTeamLogoPath}
-                    onOpenFixture={onOpenFixture}
-                  />
-                  <div className="bracket-connector-right-long" />
-                </div>
-              ))}
-            </div>
+            ))}
           </div>
 
-          {/* Center Block - Trophy with Finalists */}
-          <div className="w-48 flex flex-col items-center justify-center gap-6">
-            {/* Final Matchup */}
-            {bracketState.final.homeTeam && bracketState.final.awayTeam && (
-              <div className="flex items-center gap-4 mb-4">
-                {/* Finalist 1 */}
-                <div className="relative group">
-                  {getTeamLogoPath(bracketState.final.homeTeam) ? (
-                    <img
-                      src={getTeamLogoPath(bracketState.final.homeTeam)}
-                      alt={safeTeamName(bracketState.final.homeTeam)}
-                      className="w-16 h-16 object-contain"
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-white/5 border border-white/20 flex items-center justify-center">
-                      <div className="text-white/30 text-xs">TBD</div>
-                    </div>
-                  )}
-                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/90 text-white text-xs rounded opacity-0 group-hover:opacity-100 whitespace-nowrap z-20">
-                    {safeTeamName(bracketState.final.homeTeam)}
-                  </div>
-                </div>
+          <div className="ucl-bracket-board" aria-label="Cuadro de eliminatorias de la Champions League con la final en el centro">
+            {sides.left.playoff.map((matchup, index) => renderCell(matchup, 1, `${index * 4 + 1} / span 4`, "ucl-bracket-advance-right"))}
+            {sides.left.r16.map((matchup, index) => renderCell(matchup, 2, `${index * 4 + 1} / span 4`, "ucl-bracket-advance-right"))}
+            {sides.left.qf.map((matchup, index) => renderCell(matchup, 3, `${index * 8 + 1} / span 8`, "ucl-bracket-merge-left ucl-bracket-advance-right"))}
+            {sides.left.sf && renderCell(sides.left.sf, 4, "1 / span 16", "ucl-bracket-merge-left ucl-bracket-advance-right")}
 
-                {/* Trophy */}
-                <div className="relative">
-                  <img
-                    src="/trofeos/Champions.png"
-                    alt="Champions League Trophy"
-                    className="w-20 h-auto object-contain drop-shadow-2xl"
-                    style={{ filter: "drop-shadow(0 0 20px rgba(251, 191, 36, 0.3))" }}
-                    onError={(e) => {
-                      e.currentTarget.src =
-                        "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fbbf24'%3E%3Cpath d='M12 2L15 8H21L16 12L18 18L12 15L6 18L8 12L3 8H9L12 2Z'/%3E%3C/svg%3E";
-                    }}
-                  />
+            <div className="ucl-bracket-cell ucl-bracket-final" style={{ gridColumn: 5, gridRow: "1 / span 16" }}>
+              <div className="w-full rounded-2xl border border-amber-400/30 bg-gradient-to-b from-amber-500/10 to-background/90 p-3 text-center shadow-lg shadow-amber-950/10">
+                <div className="mb-3 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-500">
+                  <Trophy className="h-4 w-4" /> Final
                 </div>
-
-                {/* Finalist 2 */}
-                <div className="relative group">
-                  {getTeamLogoPath(bracketState.final.awayTeam) ? (
-                    <img
-                      src={getTeamLogoPath(bracketState.final.awayTeam)}
-                      alt={safeTeamName(bracketState.final.awayTeam)}
-                      className="w-16 h-16 object-contain"
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-white/5 border border-white/20 flex items-center justify-center">
-                      <div className="text-white/30 text-xs">TBD</div>
-                    </div>
-                  )}
-                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/90 text-white text-xs rounded opacity-0 group-hover:opacity-100 whitespace-nowrap z-20">
-                    {safeTeamName(bracketState.final.awayTeam)}
-                  </div>
-                </div>
+                {renderMatchCard(finalMatchup)}
               </div>
-            )}
-
-            {/* Final Result */}
-            <div className="text-center">
-              <div className="text-xs font-bold text-yellow-400 uppercase tracking-wider mb-2">
-                Final
-              </div>
-              {(() => {
-                const result = getRealMatchResult(bracketState.final, fixtures);
-                return result ? (
-                  <div
-                    className={`inline-flex items-center gap-2 bg-white/10 px-4 py-2 rounded-lg border border-white/20 ${result.lastLeg ? "cursor-pointer hover:bg-white/20 hover:border-white/40 transition-colors" : ""}`}
-                    onClick={() => result.lastLeg && onOpenFixture?.(result.lastLeg)}
-                  >
-                    <span className="text-white font-bold text-lg">{result.homeGoals}</span>
-                    <span className="text-white/40">-</span>
-                    <span className="text-white font-bold text-lg">{result.awayGoals}</span>
-                  </div>
-                ) : (
-                  <div className="inline-flex items-center bg-white/5 px-4 py-2 rounded-lg border border-white/10">
-                    <span className="text-white/40 text-sm">Pendiente</span>
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-
-          {/* Right Block - Routes C & D */}
-          <div className="flex-1 flex items-center gap-4">
-            {/* SF */}
-            <div className="flex-1 flex flex-col justify-center gap-8">
-              <div className="text-center text-sm font-bold text-purple-400 uppercase tracking-wider mb-4">
-                Semifinales
-              </div>
-              {sfRight.map((matchup) => (
-                <div key={matchup.id} className="relative bracket-match-container">
-                  <ImmutableMatchCard
-                    matchup={matchup}
-                    fixtures={fixtures}
-                    safeTeamName={safeTeamName}
-                    getTeamLogoPath={getTeamLogoPath}
-                    onOpenFixture={onOpenFixture}
-                  />
-                  <div className="bracket-connector-left-long" />
-                </div>
-              ))}
             </div>
 
-            {/* QF */}
-            <div className="flex-1 flex flex-col justify-around gap-8">
-              <div className="text-center text-sm font-bold text-purple-400 uppercase tracking-wider mb-4">
-                Cuartos
-              </div>
-              {qfRight.map((matchup) => (
-                <div key={matchup.id} className="relative bracket-match-container">
-                  <ImmutableMatchCard
-                    matchup={matchup}
-                    fixtures={fixtures}
-                    safeTeamName={safeTeamName}
-                    getTeamLogoPath={getTeamLogoPath}
-                    onOpenFixture={onOpenFixture}
-                  />
-                  <div className="bracket-connector-left" />
-                </div>
-              ))}
-            </div>
-
-            {/* R16 */}
-            <div className="flex-1 flex flex-col justify-around gap-8">
-              <div className="text-center text-sm font-bold text-purple-400 uppercase tracking-wider mb-4">
-                Octavos
-              </div>
-              {r16Right.map((matchup, idx) => (
-                <div key={matchup.id} className="relative bracket-match-container">
-                  <ImmutableMatchCard
-                    matchup={matchup}
-                    fixtures={fixtures}
-                    safeTeamName={safeTeamName}
-                    getTeamLogoPath={getTeamLogoPath}
-                    onOpenFixture={onOpenFixture}
-                  />
-                  {idx === 0 && <div className="bracket-connector-left" />}
-                </div>
-              ))}
-            </div>
-
-            {/* Play-off */}
-            <div className="flex-1 flex flex-col justify-around gap-8">
-              <div className="text-center text-sm font-bold text-purple-400 uppercase tracking-wider mb-4">
-                Play-off
-              </div>
-              {playoffRight.map((matchup, idx) => (
-                <div key={matchup.id} className="relative bracket-match-container">
-                  <ImmutableMatchCard
-                    matchup={matchup}
-                    fixtures={fixtures}
-                    safeTeamName={safeTeamName}
-                    getTeamLogoPath={getTeamLogoPath}
-                    onOpenFixture={onOpenFixture}
-                  />
-                  {idx < 2 && <div className="bracket-connector-left" />}
-                </div>
-              ))}
-            </div>
+            {sides.right.sf && renderCell(sides.right.sf, 6, "1 / span 16", "ucl-bracket-merge-right ucl-bracket-advance-left")}
+            {sides.right.qf.map((matchup, index) => renderCell(matchup, 7, `${index * 8 + 1} / span 8`, "ucl-bracket-merge-right ucl-bracket-advance-left"))}
+            {sides.right.r16.map((matchup, index) => renderCell(matchup, 8, `${index * 4 + 1} / span 4`, "ucl-bracket-advance-left"))}
+            {sides.right.playoff.map((matchup, index) => renderCell(matchup, 9, `${index * 4 + 1} / span 4`, "ucl-bracket-advance-left"))}
           </div>
         </div>
       </div>
 
-      {/* CSS for connector lines */}
+      <Dialog open={!!selectedTie} onOpenChange={(open) => !open && setSelectedTie(null)}>
+        <DialogContent className="max-w-2xl border-border/70 bg-background/95 backdrop-blur-xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black">
+              {selectedTie ? `${safeTeamName(selectedTie.leg2?.homeId ?? selectedTie.matchup.awayTeam ?? "")} vs ${safeTeamName(selectedTie.leg2?.awayId ?? selectedTie.matchup.homeTeam ?? "")}` : "Eliminatoria"}
+            </DialogTitle>
+            <DialogDescription>Selecciona la ida o la vuelta para consultar ese partido y su resultado.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              { label: "IDA", fixture: selectedTie?.leg1 },
+              { label: "VUELTA", fixture: selectedTie?.leg2 },
+            ] as const).map(({ label, fixture }) => (
+              fixture ? (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={!fixture.result}
+                  aria-disabled={!fixture.result}
+                  onClick={() => selectLeg(fixture)}
+                  className={`rounded-xl border border-border/70 bg-card/70 p-3 text-left transition ${fixture.result ? "hover:border-[var(--comp-accent)]/60 hover:bg-card" : "cursor-not-allowed opacity-55"}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black tracking-[0.14em] text-[var(--comp-accent)]">{label}</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground">{fixture.result ? "Disputado" : "Pendiente"}</span>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {[fixture.homeId, fixture.awayId].map((teamId, teamIndex) => {
+                      let crest = <TeamBadge teamId={teamId} size={27} />;
+                      try {
+                        const team = teamById(teamId);
+                        crest = <TeamLogo teamName={team.name} leagueName={getLeagueName(team.league)} size={27} />;
+                      } catch {
+                        // Keep the short-name badge when a legacy team has no catalogue entry.
+                      }
+                      const score = teamIndex === 0 ? fixture.result?.homeGoals : fixture.result?.awayGoals;
+                      return (
+                        <div key={`${label}-${teamId}-${teamIndex}`} className="flex min-w-0 items-center gap-2 rounded-lg bg-background/55 px-2 py-1.5">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center">{crest}</span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{safeTeamName(teamId)}</span>
+                          <span className="min-w-5 text-right font-mono text-base font-black tabular-nums">{score ?? "–"}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+                    {formatFixtureDate(fixture.date)} · {fixture.result ? "Ver ficha del partido" : "Pendiente · no disponible hasta jugarse"}
+                  </div>
+                </button>
+              ) : (
+                <div key={label} className="rounded-xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground">
+                  <div className="text-xs font-black tracking-[0.14em]">{label}</div>
+                  <p className="mt-3">Partido aún no generado.</p>
+                </div>
+              )
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <style>{`
-        .bracket-match-container {
+        .ucl-bracket-content {
+          --ucl-bracket-line: color-mix(in oklab, var(--comp-accent, var(--primary)) 62%, transparent);
+          min-width: 1420px;
+        }
+        .ucl-bracket-headings,
+        .ucl-bracket-board {
+          display: grid;
+          grid-template-columns: 138px 148px 148px 148px 176px 148px 148px 148px 138px;
+          column-gap: 10px;
+        }
+        .ucl-bracket-headings {
+          margin-bottom: 16px;
+        }
+        .ucl-bracket-board {
+          grid-template-rows: repeat(16, 30px);
+          align-items: stretch;
+        }
+        .ucl-bracket-cell {
           position: relative;
+          z-index: 1;
+          display: flex;
+          min-width: 0;
+          align-items: center;
         }
-
-        .bracket-connector-right {
+        .ucl-bracket-advance-right::after,
+        .ucl-bracket-advance-left::before {
           position: absolute;
-          right: -16px;
+          z-index: 0;
           top: 50%;
-          transform: translateY(-50%);
-          width: 16px;
+          width: 14px;
           height: 2px;
-          background: rgba(59, 130, 246, 0.6);
-        }
-
-        .bracket-connector-right::after {
-          content: '';
-          position: absolute;
-          right: 0;
-          top: 50%;
+          background: var(--ucl-bracket-line);
+          content: "";
           transform: translateY(-50%);
-          width: 8px;
-          height: 8px;
-          border-top: 2px solid rgba(59, 130, 246, 0.6);
-          border-right: 2px solid rgba(59, 130, 246, 0.6);
-          border-top-right-radius: 4px;
         }
-
-        .bracket-connector-right-long {
+        .ucl-bracket-advance-right::after { right: -14px; }
+        .ucl-bracket-advance-left::before { left: -14px; }
+        .ucl-bracket-merge-left::before,
+        .ucl-bracket-merge-right::after {
           position: absolute;
-          right: -24px;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 24px;
-          height: 2px;
-          background: rgba(59, 130, 246, 0.6);
+          z-index: 0;
+          top: 25%;
+          width: 14px;
+          height: 50%;
+          border-top: 2px solid var(--ucl-bracket-line);
+          border-bottom: 2px solid var(--ucl-bracket-line);
+          content: "";
+          pointer-events: none;
         }
-
-        .bracket-connector-right-long::after {
-          content: '';
-          position: absolute;
-          right: 0;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 8px;
-          height: 8px;
-          border-top: 2px solid rgba(59, 130, 246, 0.6);
-          border-right: 2px solid rgba(59, 130, 246, 0.6);
-          border-top-right-radius: 4px;
+        .ucl-bracket-merge-left::before {
+          left: -14px;
+          border-left: 2px solid var(--ucl-bracket-line);
+          border-radius: 8px 0 0 8px;
         }
-
-        .bracket-connector-left {
-          position: absolute;
-          left: -16px;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 16px;
-          height: 2px;
-          background: rgba(147, 51, 234, 0.6);
+        .ucl-bracket-merge-right::after {
+          right: -14px;
+          border-right: 2px solid var(--ucl-bracket-line);
+          border-radius: 0 8px 8px 0;
         }
-
-        .bracket-connector-left::before {
-          content: '';
-          position: absolute;
-          left: 0;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 8px;
-          height: 8px;
-          border-top: 2px solid rgba(147, 51, 234, 0.6);
-          border-left: 2px solid rgba(147, 51, 234, 0.6);
-          border-top-left-radius: 4px;
+        .ucl-bracket-final { z-index: 2; }
+        .ucl-bracket-card {
+          position: relative;
+          z-index: 2;
+          display: flex;
+          width: 100%;
+          min-width: 0;
+          min-height: 62px;
+          align-items: stretch;
+          gap: 4px;
+          overflow: hidden;
+          border: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
+          border-radius: 12px;
+          background: color-mix(in oklab, var(--background) 92%, transparent);
+          padding: 5px 6px;
+          text-align: left;
+          box-shadow: 0 5px 16px rgb(0 0 0 / 0.08);
+          transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
         }
-
-        .bracket-connector-left-long {
-          position: absolute;
-          left: -24px;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 24px;
-          height: 2px;
-          background: rgba(147, 51, 234, 0.6);
+        .ucl-bracket-card:not(:disabled):hover {
+          border-color: var(--ucl-bracket-line);
+          background: color-mix(in oklab, var(--card) 96%, transparent);
+          transform: translateY(-1px);
         }
-
-        .bracket-connector-left-long::before {
-          content: '';
-          position: absolute;
-          left: 0;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 8px;
-          height: 8px;
-          border-top: 2px solid rgba(147, 51, 234, 0.6);
-          border-left: 2px solid rgba(147, 51, 234, 0.6);
-          border-top-left-radius: 4px;
+        .ucl-bracket-card:disabled { cursor: not-allowed; opacity: 0.72; }
+        .ucl-bracket-team {
+          display: flex;
+          min-width: 0;
+          height: 24px;
+          align-items: center;
+          gap: 5px;
+          border-radius: 6px;
+          padding: 1px 2px;
+          color: var(--foreground);
+        }
+        .ucl-bracket-team.is-winner {
+          background: color-mix(in oklab, var(--comp-accent, var(--primary)) 12%, transparent);
+          color: var(--foreground);
+        }
+        .ucl-bracket-logo {
+          display: flex;
+          width: 18px;
+          height: 18px;
+          flex: 0 0 18px;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+        }
+        .ucl-bracket-logo img { width: 18px; height: 18px; object-fit: contain; }
+        .ucl-bracket-score {
+          min-width: 13px;
+          margin-left: auto;
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+          font-size: 11px;
+          font-weight: 900;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .ucl-bracket-card { transition: none; }
         }
       `}</style>
-    </div>
+    </section>
   );
 }
 
-// Immutable match card component
+// One card represents a full two-legged tie. Pressing it opens an explicit
+// leg selector rather than guessing which fixture the user wanted to inspect.
 function ImmutableMatchCard({
   matchup,
   fixtures,
   safeTeamName,
   getTeamLogoPath,
-  onOpenFixture,
+  onOpenMatchup,
 }: {
   matchup: BracketMatchup;
   fixtures: Fixture[];
   safeTeamName: (id: string) => string;
   getTeamLogoPath: (id: string) => string;
-  onOpenFixture?: (fixture: Fixture) => void;
+  onOpenMatchup?: (matchup: BracketMatchup) => void;
 }) {
   if (!matchup || typeof matchup !== "object") return null;
+
   const home = typeof matchup.homeTeam === "string" ? matchup.homeTeam : null;
   const away = typeof matchup.awayTeam === "string" ? matchup.awayTeam : null;
   const result = getRealMatchResult(matchup, fixtures);
+  const isFinal = matchup.round === "final";
+  const tieFixtures = getFixturesForBracketMatchup(matchup, fixtures);
+  // Open the tie selector as soon as both clubs are known, even when its
+  // fixtures are still pending. Only individual played legs can open details.
+  const canOpen = Boolean(onOpenMatchup && (
+    isFinal
+      ? tieFixtures.single?.result
+      : home && away
+  ));
+  const isTieCompleted = isFinal || Boolean(result?.lastLeg?.round?.includes("Leg2"));
+  // El equipo local en la vuelta siempre aparece arriba. En la final, de partido
+  // único, se mantiene el orden local/visitante normal.
+  const displayOrder = isFinal
+    ? { top: home, bottom: away }
+    : orderTieBySecondLegHome(home, away, tieFixtures.leg2, false);
+  const topTeam = displayOrder.top;
+  const bottomTeam = displayOrder.bottom;
+  const topIsWinner = isTieCompleted && result?.winner === topTeam;
+  const bottomIsWinner = isTieCompleted && result?.winner === bottomTeam;
+  const scoreForTeam = (teamId: string | null) => {
+    if (!result || !teamId) return null;
+    return teamId === home ? result.homeGoals : teamId === away ? result.awayGoals : null;
+  };
 
-  if (!home || !away) {
+  const renderTeam = (teamId: string | null, isWinner: boolean) => {
+    const logoPath = teamId ? getTeamLogoPath(teamId) : "";
+    const score = scoreForTeam(teamId);
+
     return (
-      <div className="bg-white/5 rounded-full w-14 h-14 flex items-center justify-center border border-white/10">
-        <div className="text-white/30 text-xs">TBD</div>
+      <div className={`ucl-bracket-team ${isWinner ? "is-winner" : ""}`}>
+        <span className="ucl-bracket-logo">
+          {logoPath ? (
+            <img src={logoPath} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} />
+          ) : teamId && !teamId.startsWith("winner-") ? (
+            <TeamBadge teamId={teamId} size={18} />
+          ) : (
+            <span className="flex h-5 w-5 items-center justify-center rounded-full border border-border/70 bg-muted/50 text-[9px] font-bold text-muted-foreground">?</span>
+          )}
+        </span>
+        <span className={`min-w-0 flex-1 truncate text-[11px] ${isWinner ? "font-extrabold" : "font-semibold"}`}>
+          {teamId ? safeTeamName(teamId) : "Por definir"}
+        </span>
+        <span className={`ucl-bracket-score ${isWinner ? "text-[var(--comp-accent)]" : "text-muted-foreground"}`}>
+          {score === null ? "·" : score}
+        </span>
       </div>
     );
-  }
+  };
 
-  const homeLogoPath = getTeamLogoPath(home);
-  const awayLogoPath = getTeamLogoPath(away);
+  const status = result
+    ? isFinal ? "FINAL" : isTieCompleted ? "GLOBAL" : "IDA"
+    : "PENDIENTE";
 
   return (
-    <div
-      className={`flex flex-col items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10 backdrop-blur-sm ${result?.lastLeg ? "cursor-pointer hover:bg-white/10 hover:border-white/30 transition-colors" : ""}`}
-      onClick={() => result?.lastLeg && onOpenFixture?.(result.lastLeg)}
+    <button
+      type="button"
+      disabled={!canOpen}
+      aria-disabled={!canOpen}
+      onClick={() => onOpenMatchup?.(matchup)}
+      aria-label={`${safeTeamName(topTeam ?? "")} contra ${safeTeamName(bottomTeam ?? "")}${result ? `, ${status.toLowerCase()} ${scoreForTeam(topTeam) ?? 0} a ${scoreForTeam(bottomTeam) ?? 0}` : ", pendiente"}. ${canOpen ? `Abrir ${isFinal ? "partido" : "ida o vuelta"}` : "No disponible hasta jugarse"}`}
+      className="ucl-bracket-card"
     >
-      {/* Home team */}
-      <div className="relative group">
-        {homeLogoPath ? (
-          <img
-            src={homeLogoPath}
-            alt={safeTeamName(home)}
-            className="w-14 h-14 object-contain"
-            onError={(e) => {
-              e.currentTarget.style.display = "none";
-            }}
-          />
-        ) : (
-          <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
-            <div className="text-white/30 text-xs">TBD</div>
-          </div>
-        )}
-        {/* Tooltip */}
-        {home && (
-          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1.5 bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 whitespace-nowrap z-20 transition-opacity">
-            {safeTeamName(home)}
-          </div>
-        )}
+      <div className="min-w-0 flex-1">
+        {renderTeam(topTeam, topIsWinner)}
+        <div className="mx-1 h-px bg-border/50" />
+        {renderTeam(bottomTeam, bottomIsWinner)}
       </div>
-
-      {/* Result - Constant size pill */}
-      {result ? (
-        <div className="inline-flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg border border-white/20 min-w-[80px] justify-center">
-          <span className="text-white font-bold text-sm">{result.homeGoals}</span>
-          <span className="text-white/40 text-sm">-</span>
-          <span className="text-white font-bold text-sm">{result.awayGoals}</span>
-        </div>
-      ) : (
-        <div className="inline-flex items-center bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 min-w-[80px] justify-center">
-          <span className="text-white/40 text-xs">Pendiente</span>
-        </div>
-      )}
-
-      {/* Away team */}
-      <div className="relative group">
-        {awayLogoPath ? (
-          <img
-            src={awayLogoPath}
-            alt={safeTeamName(away)}
-            className="w-14 h-14 object-contain"
-            onError={(e) => {
-              e.currentTarget.style.display = "none";
-            }}
-          />
-        ) : (
-          <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
-            <div className="text-white/30 text-xs">TBD</div>
-          </div>
-        )}
-        {/* Tooltip */}
-        {away && (
-          <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-3 py-1.5 bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 whitespace-nowrap z-20 transition-opacity">
-            {safeTeamName(away)}
-          </div>
-        )}
-      </div>
-    </div>
+    </button>
   );
 }
 
