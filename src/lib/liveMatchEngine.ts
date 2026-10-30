@@ -554,6 +554,8 @@ export function updateMomentum({
   highlights,
   managerEffects,
   timeline,
+  tacticalSystem,
+  avgUserStamina,
 }: {
   previous: number;
   minute: number;
@@ -566,6 +568,7 @@ export function updateMomentum({
   managerEffects: LiveManagerEffects;
   timeline?: any[];
   avgUserStamina?: number;
+  tacticalSystem?: string;
 }) {
   // Momentum is a reading of the match, not a possession meter. It should
   // normally live in a broad central band and only approach the extremes for
@@ -639,6 +642,47 @@ export function updateMomentum({
   delta -= (managerEffects.defense - 1) * 0.8;
   delta += (managerEffects.risk - 50) * 0.004;
 
+  // La identidad táctica modifica el pulso del equipo, pero su efecto depende
+  // del contexto: no regalamos momentum por seleccionar un sistema en el menú.
+  const userDiff = userSide === "home" ? homeScore - awayScore : awayScore - homeScore;
+  const stamina = avgUserStamina ?? 100;
+  switch (tacticalSystem) {
+    case "gegenpress":
+      delta += minute < 68 && stamina >= 64 ? 0.28 : stamina < 55 ? -0.34 : -0.08;
+      break;
+    case "possession":
+      delta += previous >= 50 ? 0.08 : -0.04;
+      break;
+    case "mid_block_press":
+      delta += stamina >= 62 ? 0.14 : -0.12;
+      break;
+    case "build_up":
+      delta += previous >= 50 ? 0.10 : -0.03;
+      break;
+    case "low_block_counter":
+      delta += userDiff > 0 ? 0.18 : userDiff < 0 ? -0.12 : 0;
+      break;
+    case "vertical_transition":
+      if (userDiff < 0 && minute >= 55) delta += 0.34;
+      break;
+    case "wing_play":
+      if (previous >= 48) delta += 0.1;
+      break;
+    case "direct_play":
+      if (userDiff < 0 && minute >= 60) delta += 0.16;
+      break;
+    case "set_piece":
+      // Los especialistas influyen cuando llegan acciones a balón parado,
+      // ya contabilizadas en eventos y timeline; no alteran el pulso gratis.
+      break;
+    case "close_out":
+      if (userDiff > 0 && minute >= 68) delta += 0.38;
+      else if (userDiff < 0) delta -= 0.2;
+      break;
+    default:
+      break;
+  }
+
   // Clamp each update so one event cannot turn a balanced match into 90/10.
   const step = Math.max(-5.5, Math.min(5.5, delta));
   return Math.max(22, Math.min(78, previous + step));
@@ -667,6 +711,7 @@ export function buildNarrativeCommentary({
   recentSubs,
   decisionApplied,
   recentNarratives = [],
+  tacticalSystem,
 }: {
   minute: number;
   userTeamName: string;
@@ -680,6 +725,7 @@ export function buildNarrativeCommentary({
   recentSubs: any[];
   decisionApplied?: string | null;
   recentNarratives?: NarrativeEntry[];
+  tacticalSystem?: string;
 }): NarrativeEntry {
   const trailing = userSide === "home" ? homeScore < awayScore : awayScore < homeScore;
   const leading = userSide === "home" ? homeScore > awayScore : awayScore > homeScore;
@@ -771,6 +817,30 @@ export function buildNarrativeCommentary({
 
   if (big) {
     const player = big.playerName ? `${big.playerName} ` : "";
+    const tacticalChanceText: Record<string, string[]> = {
+      gegenpress: [`${player}el equipo recupera arriba y dispara antes de que el rival pueda recomponer la defensa.`, `La presión tras pérdida fuerza un error y el ${userTeamName} vuelve a atacar cerca del área.`],
+      possession: [`${player}la circulación paciente atrae al bloque y abre una línea de pase hacia el área.`, `El ${userTeamName} mueve al rival de lado a lado hasta encontrar el espacio interior.`],
+      low_block_counter: [`${player}tras recuperar en bloque bajo, el equipo sale rápido y encuentra metros para correr.`, `El rival se vuelca y el ${userTeamName} aprovecha el espacio que deja a su espalda.`],
+      vertical_transition: [`${player}recuperación y pase vertical: el rival no ha podido replegar antes de la llegada.`, `El primer pase hacia delante rompe líneas y convierte la transición en una ocasión.`],
+      wing_play: [`${player}el equipo gana línea de fondo y carga el área con un centro desde la banda.`, `La amplitud estira la defensa y deja un rematador en buena posición dentro del área.`],
+      direct_play: [`${player}el envío directo supera la primera presión y la segunda jugada termina en remate.`, `El delantero fija a los centrales, gana el duelo y el equipo recoge la segunda pelota.`],
+      mid_block_press: [`${player}la presión en zona media fuerza un pase precipitado y permite recuperar.`, `El equipo cierra los pasillos interiores y roba en el centro del campo.`],
+      build_up: [`${player}la salida desde atrás encuentra un apoyo libre y supera la primera presión.`, `El equipo combina desde la defensa y avanza sin rifar la posesión.`],
+      offside_trap: [`${player}el equipo adelanta la defensa para comprimir el campo.`, `La línea defensiva sale a tiempo y obliga al rival a reiniciar la jugada.`],
+      mid_block_press: [`${player}el equipo roba en medio campo tras cerrar las líneas de pase.`, `La presión en zona media fuerza un error y permite recuperar sin hundirse atrás.`],
+      build_up: [`${player}la salida desde atrás encuentra un apoyo libre y supera la primera presión.`, `El equipo combina desde la defensa y avanza sin rifar la posesión.`],
+      inside_overload: [`${player}el equipo encuentra espacio por dentro y termina la jugada cerca del área.`, `La combinación interior atrae a los centrales y libera espacio para el remate.`],
+      set_piece: [`${player}el equipo carga el área y la jugada ensayada encuentra al rematador.`, `El balón parado genera una segunda jugada peligrosa y el ${userTeamName} vuelve a rematar.`],
+      close_out: [`${player}el bloque roba sin desordenarse y encuentra una salida segura cuando el rival se vuelca.`, `El ${userTeamName} protege la ventaja, espera el momento y sale con pocos toques.`],
+    };
+    if (big.team === userSide && tacticalSystem && tacticalChanceText[tacticalSystem]) {
+      return {
+        id: uid,
+        minute,
+        tone: "dramatic",
+        text: pick(tacticalChanceText[tacticalSystem]),
+      };
+    }
     return {
       id: uid,
       minute,
@@ -1023,7 +1093,13 @@ export function buildGoalPrelude({
   const teamName = event.team === "home" ? homeName : awayName;
   const isFreeKick = event.type === "free_kick_goal";
   const isCorner = event.detail === "A la salida de un córner";
-  const player = event.scorerName || "El lanzador";
+  const scorerName = event.scorerName || "El goleador";
+  const player = isCorner
+    ? event.setPieceTakerName || event.assistName || scorerName
+    : scorerName;
+  const playerId = isCorner
+    ? event.setPieceTakerId || event.assistId || event.scorerId
+    : event.setPieceTakerId || event.scorerId;
 
   if (isFreeKick) {
     const variants = [
@@ -1048,7 +1124,7 @@ export function buildGoalPrelude({
       title: pickNarrativeVariant(["FALTA DIRECTA", "PELIGRO A BALÓN PARADO", "OCASIÓN DE FALTA", "EL BALÓN PIDE DISPARO"], `${event.minute}:${player}:title`),
       body: pickNarrativeVariant(variants, `${event.minute}:${player}`),
       playerName: player,
-      playerId: event.scorerId,
+      playerId,
       teamName,
       choices: dangerChoicesFor("dangerous_free_kick", true),
       actionPrompt: "¿Cómo quieres atacar esta falta?",
@@ -1061,11 +1137,11 @@ export function buildGoalPrelude({
 
   if (isCorner) {
     const variants = [
-      `${teamName} carga el área. El córner cae en una zona caliente y ${player} ya busca el espacio entre los centrales.`,
-      `${player} levanta la cabeza y espera el movimiento de sus compañeros. El área se llena y el primer toque puede ser decisivo.`,
+      `${player} se coloca junto al banderín mientras ${teamName} ocupa el área. El centro puede crear una ocasión clara.`,
+      `${player} espera el movimiento de sus compañeros antes de ejecutar el saque de esquina.`,
       `El envío de ${player} está preparado. Los centrales se empujan y ${teamName} mete hombres en el primer y segundo palo.`,
-      `${player} se prepara para colgarla. La defensa ha cerrado la zona, pero hay varios atacantes esperando el centro.`,
-      `Córner para ${teamName}: ${player} coloca el balón y señala hacia qué zona quiere ponerlo. La marca se ajusta a última hora.`,
+      `${player} coloca el balón en el cuarto de círculo y observa cómo se organizan los rematadores.`,
+      `Córner para ${teamName}: ${player} señala la zona del envío y toma carrerilla.`,
       `El saque de esquina está a punto de ejecutarse. ${player} observa el desmarque y el portero rival ordena a sus centrales.`,
       `${player} se acerca al banderín. Hay centímetros para atacar en el primer palo y espacio libre detrás de la última línea.`,
       `La pelota está en el córner y ${player} prepara el centro. El área parece un embudo de piernas, marcas y carreras.`,
@@ -1079,7 +1155,7 @@ export function buildGoalPrelude({
       title: pickNarrativeVariant(["CENTRO AL ÁREA", "CÓRNER PELIGROSO", "PUEDE CAER EL GOL", "BALÓN AL ÁREA"], `${event.minute}:${player}:corner:title`),
       body: pickNarrativeVariant(variants, `${event.minute}:${player}:corner`),
       playerName: player,
-      playerId: event.scorerId,
+      playerId,
       teamName,
       choices: dangerChoicesFor("dangerous_free_kick", true),
       actionPrompt: "¿Cómo quieres jugar el córner?",
@@ -1099,7 +1175,7 @@ export function buildGoalPrelude({
     `${player} ataca el intervalo entre central y lateral. Si consigue girarse, tendrá la portería de frente.`,
     `El ${teamName} encuentra una transición limpia. ${player} conduce con metros por delante y la defensa corre hacia su propia área.`,
     `${player} aparece en el segundo palo después de una combinación por banda. El centro está a punto de llegar.`,
-    `Un pase filtrado deja a ${player} en el límite del área. El control es bueno y el hueco se abre durante un instante.`,
+    `La combinación encuentra a ${player} en el límite del área. El control es bueno y aparece espacio para el remate.`,
     `${player} gana el uno contra uno y entra en zona de remate. El defensor ya está reculando para impedirle perfilarse.`,
     `El balón cambia de lado y encuentra a ${player} con espacio. Recorta hacia su pierna buena y la portería queda a un toque.`,
     `${player} recibe de espaldas, aguanta el contacto y se gira. La acción termina entrando de lleno en zona de definición.`,
@@ -1306,7 +1382,7 @@ export function buildDangerPreludeFromHighlight({
       emoji: "🚨",
       variants: [
         `${player} recibe solo dentro del área y tiene tiempo para escoger dónde colocar el remate.`,
-        `Pase filtrado a la espalda de la defensa y ${player} entra con ventaja. El guardameta ya sale a achicar.`,
+        `Un balón a la espalda de la defensa deja a ${player} con ventaja. El guardameta ya sale a achicar.`,
         `${player} rompe la línea, controla a un toque y queda frente a la portería con una ocasión enorme.`,
         `El ${teamName} mueve la defensa de lado a lado y encuentra a ${player} en el hueco que estaba buscando.`,
         `${player} aparece entre central y lateral, recibe de cara y levanta la cabeza: hay compañeros y portería esperando.`,
@@ -1526,6 +1602,7 @@ export function buildCoachDecision({
   opponentName,
   momentum,
   avgStamina,
+  tacticalSystem,
   avoidKinds = [],
   lastDecisionKind,
 }: {
@@ -1537,6 +1614,7 @@ export function buildCoachDecision({
   opponentName: string;
   momentum: number;
   avgStamina: number;
+  tacticalSystem?: string;
   avoidKinds?: CoachDecisionKind[];
   lastDecisionKind?: CoachDecisionKind | null;
 }): CoachDecision | null {
@@ -1653,6 +1731,84 @@ export function buildCoachDecision({
             momentumBias: 1,
             immediateStamina: 0.5,
           },
+        },
+      ],
+    });
+  }
+
+  if (tacticalSystem === "gegenpress" && minute >= 55 && avgStamina < 70) {
+    push({
+      id: `tactic-press-${minute}`,
+      kind: "fatigue",
+      minute,
+      title: "La presión empieza a pasar factura",
+      prompt: "El gegenpressing está generando robos, pero el equipo pierde piernas. Podemos modular la presión o sostener el riesgo unos minutos más.",
+      options: [
+        {
+          id: "press-regroup",
+          label: "Reagrupar tras pérdida",
+          description: "Conservamos parte de la presión, pero reducimos carreras y exposición a la contra.",
+          tone: "defense",
+          effects: { defense: 1.025, staminaMultiplier: 0.88, risk: -8, immediateStamina: 1.2, momentumBias: -0.3 },
+        },
+        {
+          id: "press-all-in",
+          label: "Mantener la caza",
+          description: "Buscamos un robo decisivo arriba, a costa de más desgaste y espacios a la espalda.",
+          tone: "intense",
+          effects: { attack: 1.055, counter: 1.06, staminaMultiplier: 1.14, risk: 12, immediateStamina: -2.5, momentumBias: 1.8 },
+        },
+      ],
+    });
+  }
+
+  if (tacticalSystem === "wing_play" && minute >= 45 && momentum < 68) {
+    push({
+      id: `tactic-wing-${minute}`,
+      kind: "width",
+      minute,
+      title: "Hay espacio para insistir por fuera",
+      prompt: "El sistema de bandas puede sacar a los laterales rivales de su zona. ¿Buscamos más centros o protegemos las subidas?",
+      options: [
+        {
+          id: "wing-cross",
+          label: "Cargar el área",
+          description: "Aumentamos la presencia en zona de remate y el volumen de centros.",
+          tone: "attack",
+          effects: { attack: 1.045, width: 1.12, staminaMultiplier: 1.035, risk: 5, immediateStamina: -1.2 },
+        },
+        {
+          id: "wing-cover",
+          label: "Asegurar los laterales",
+          description: "Un extremo guarda la posición para reducir las contras por el costado.",
+          tone: "defense",
+          effects: { defense: 1.035, staminaMultiplier: 0.96, risk: -7, immediateStamina: 0.5 },
+        },
+      ],
+    });
+  }
+
+  if (tacticalSystem === "close_out" && leading && minute >= 68) {
+    push({
+      id: `tactic-close-${minute}`,
+      kind: "protect_lead",
+      minute,
+      title: "Gestionar la ventaja",
+      prompt: "El bloque medio compacto está cerrando el centro. Podemos conservar el balón o proteger unos metros más cerca del área.",
+      options: [
+        {
+          id: "close-possession",
+          label: "Dormir el partido",
+          description: "Más pausa y menos pérdidas, aunque renunciamos a salir con muchos jugadores.",
+          tone: "defense",
+          effects: { attack: 0.975, defense: 1.025, staminaMultiplier: 0.9, risk: -8, immediateStamina: 0.8 },
+        },
+        {
+          id: "close-deep",
+          label: "Proteger el área",
+          description: "Replegamos unos metros y aceptamos conceder territorio.",
+          tone: "risk",
+          effects: { defense: 1.045, attack: 0.95, counter: 0.94, staminaMultiplier: 0.94, risk: -11 },
         },
       ],
     });

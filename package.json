@@ -37,7 +37,9 @@
     "test:calendar-playoff-route": "node scripts/calendar-route-playoff-regression.mjs",
     "test:player-progression-realism": "node --experimental-strip-types scripts/player-progression-realism-test.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:tactics-balance": "vitest run src/lib/teamTactics.test.ts src/lib/teamTactics.balance.test.ts src/lib/simulation.setpiece.test.ts",
+    "test:setpiece": "vitest run src/lib/simulation.setpiece.test.ts"
   },
   "overrides": {
     "rolldown": "1.2.1"

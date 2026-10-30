@@ -11,7 +11,7 @@ import {
 } from "@/lib/store";
 import { teamById, LEAGUES, type LeagueId } from "@/data/teams";
 import { TeamLogo } from "@/components/TeamLogo";
-import { defaultLineup } from "@/data/players";
+import { defaultLineup, type Player } from "@/data/players";
 import { PlayersLoading, usePlayersReady } from "@/components/PlayersLoading";
 import { injuryRemainingDays, isPlayerInjuredAtDate, usePlayersStore } from "@/store/playersStore";
 import { FootballPitch, PlayerNode } from "@/components/FootballPitch";
@@ -44,9 +44,15 @@ import {
   createTacticPlan,
   type TacticPlanState,
   type TeamTactics,
-  type PlayStyle,
-  type Pressure,
-  type DefenseLine,
+  type TacticalSystem,
+  type TacticalMentality,
+  DEFAULT_TACTICS,
+  TACTICAL_SYSTEMS_FOR_UI,
+  TACTICAL_MENTALITIES,
+  TACTICAL_OPTIONS_BY_MENTALITY,
+  TACTICAL_GAME_STYLES,
+  setTacticalSystem,
+  setTacticalGameStyle,
 } from "@/lib/teamTactics";
 import {
   Shield,
@@ -59,9 +65,13 @@ import {
   Goal,
   Flag,
   CornerDownRight,
+  ChevronDown,
   CalendarClock,
   Plus,
   Zap,
+  CircleDot,
+  ArrowUpRight,
+  ArrowLeftRight,
   Ambulance,
 } from "lucide-react";
 import { loadLive, saveLive, subLimits, isFreeWindow, type LiveMatchState } from "@/lib/liveMatch";
@@ -284,7 +294,7 @@ function LineupPage() {
   }, [navigate, getSimSquad, liveMode, fixtureId]);
 
   // Tactical plans are independent presets: each one stores its own XI,
-  // formation, 0-12 substitutes and advanced tactical instructions.
+  // formation, substitutes and match plan.
   useEffect(() => {
     if (liveMode || !save || !ready) return;
     if (initializedPlanTeamRef.current === save.myTeamId) return;
@@ -298,11 +308,16 @@ function LineupPage() {
             plans: [
               createTacticPlan({
                 id: "plan-a",
-                name: "Plan A",
+                name: "Plan equilibrado",
                 formation: save.formations[save.myTeamId] ?? "Táctica 4-3-3",
                 lineup: save.lineups[save.myTeamId] ?? [],
                 substitutes: save.substitutes?.[save.myTeamId] ?? [],
-                tactics: loadTactics(save.myTeamId),
+                tactics: (() => {
+                  const savedTactics = loadTactics(save.myTeamId);
+                  return savedTactics.aiManaged
+                    ? { ...DEFAULT_TACTICS, aiManaged: false }
+                    : { ...savedTactics, aiManaged: false };
+                })(),
               }),
             ],
           };
@@ -348,15 +363,10 @@ function LineupPage() {
     setBench(reconciledActive.substitutes);
     setTactics(reconciledActive.tactics);
 
-    const plansNeedSync =
-      reconciledActive.lineup.some((id, i) => id !== active.lineup[i]) ||
-      reconciledActive.lineup.length !== active.lineup.length ||
-      reconciledActive.substitutes.some((id, i) => id !== active.substitutes[i]) ||
-      reconciledActive.substitutes.length !== active.substitutes.length ||
-      reconciledActive.formation !== active.formation;
-    if (!loaded || plansNeedSync) {
-      saveTacticPlans(save.myTeamId, reconciledState);
-    }
+    // Persistir también la normalización táctica y refrescar la caché de equipo.
+    // Así, la primera entrada ya deja guardado el Plan equilibrado cuando no
+    // había configuración previa y el siguiente partido lee ese mismo plan.
+    saveTacticPlans(save.myTeamId, reconciledState);
 
     initializedPlanTeamRef.current = save.myTeamId;
   }, [save, ready, liveMode]);
@@ -2003,7 +2013,7 @@ function LineupPage() {
                 Planes de juego
               </p>
               <p className="text-xs text-muted-foreground">
-                Cada plan guarda su formación, 11, suplentes y tácticas avanzadas.
+                Cada plan guarda formación, once, suplentes y estilo de juego.
               </p>
             </div>
             <button
@@ -2013,7 +2023,7 @@ function LineupPage() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-xs font-black text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Plus className="h-4 w-4" />
-              Añadir nueva táctica
+              Añadir plan
             </button>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -2860,9 +2870,24 @@ function LineupPage() {
 }
 
 // ============================================================
-// Tactics panel — style, pressure, defense line, set-piece roles
+// Plan de partido: tres mentalidades, nueve tácticas y estilo independiente.
 // ============================================================
-type XiPlayer = { id: string; name: string; position: string; rating: number };
+type XiPlayer = Player & { position?: string };
+
+const TACTIC_ICONS: Record<TacticalSystem, any> = {
+  gegenpress: Zap,
+  possession: CircleDot,
+  low_block_counter: Shield,
+  vertical_transition: ArrowUpRight,
+  wing_play: ArrowLeftRight,
+  direct_play: Goal,
+  offside_trap: Shield,
+  inside_overload: CircleDot,
+  set_piece: Goal,
+  close_out: Shield,
+  mid_block_press: Shield,
+  build_up: CircleDot,
+};
 
 function TacticsPanel({
   tactics,
@@ -2873,254 +2898,186 @@ function TacticsPanel({
   updateTactics: (patch: Partial<TeamTactics>) => void;
   xiPlayers: XiPlayer[];
 }) {
-  const styles: { id: PlayStyle; label: string; icon: any; tone: string; desc: string }[] = [
-    {
-      id: "defensive",
-      label: "Defensivo",
-      icon: Shield,
-      tone: "border-sky-500/40 bg-sky-500/10 text-sky-300",
-      desc: "Bloque bajo, contragolpe",
-    },
-    {
-      id: "balanced",
-      label: "Equilibrado",
-      icon: Scale,
-      tone: "border-primary/40 bg-primary/10 text-primary",
-      desc: "Posesión y control",
-    },
-    {
-      id: "offensive",
-      label: "Ofensivo",
-      icon: Swords,
-      tone: "border-rose-500/40 bg-rose-500/10 text-rose-300",
-      desc: "Presión arriba, ataque directo",
-    },
-  ];
-  const pressureOpts: { id: Pressure; label: string; icon: any }[] = [
-    { id: "low", label: "Baja", icon: ChevronsDown },
-    { id: "medium", label: "Media", icon: Minus },
-    { id: "high", label: "Alta", icon: ChevronsUp },
-  ];
-  const lineOpts: { id: DefenseLine; label: string; icon: any }[] = [
-    { id: "low", label: "Baja", icon: ChevronsDown },
-    { id: "medium", label: "Media", icon: Minus },
-    { id: "high", label: "Alta", icon: ChevronsUp },
-  ];
+  const selected = TACTICAL_SYSTEMS_FOR_UI.find((item) => item.id === tactics.system) ?? TACTICAL_SYSTEMS_FOR_UI.find((item) => item.id === "possession")!;
+  const [expandedMentality, setExpandedMentality] = useState<TacticalMentality | null>(null);
 
   const TakerSelect = ({
-    label,
-    icon: Icon,
-    value,
-    onChange,
-    tone,
+    label, icon: Icon, value, onChange,
   }: {
-    label: string;
-    icon: any;
-    value: string | null;
-    onChange: (id: string | null) => void;
-    tone: string;
+    label: string; icon: any; value: string | null; onChange: (id: string | null) => void;
   }) => (
-    <div className={`rounded-lg border ${tone} p-3`}>
-      <div className="mb-1.5 flex items-center gap-1.5 text-[0.6rem] font-bold uppercase tracking-wider">
-        <Icon className="h-3.5 w-3.5" />
+    <label className="group block min-w-0 rounded-xl border border-border/60 bg-card/45 p-2.5 transition-colors hover:border-primary/30">
+      <span className="mb-2 flex items-center gap-2 text-[0.66rem] font-bold text-muted-foreground">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background/70 text-foreground/75">
+          <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+        </span>
         {label}
-      </div>
-      <select
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value || null)}
-        className="w-full rounded-md border border-border/60 bg-background/60 px-2 py-1.5 text-xs font-semibold"
-      >
-        <option value="">— Sin asignar —</option>
-        {xiPlayers.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name} ({p.position} · {p.rating})
-          </option>
-        ))}
-      </select>
-    </div>
+      </span>
+      <span className="relative block">
+        <select
+          value={value ?? ""}
+          onChange={(event) => onChange(event.target.value || null)}
+          className="h-10 w-full appearance-none rounded-lg border border-border/70 bg-background px-3 pr-9 text-xs font-semibold text-foreground outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+        >
+          <option value="">Elegir jugador</option>
+          {xiPlayers.map((player) => (
+            <option key={player.id} value={player.id}>
+              {player.name} · {player.positions?.[0] ?? player.position ?? "—"}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground transition group-focus-within:text-primary" />
+      </span>
+    </label>
   );
 
   return (
-    <div className="panel-glow mt-6 mb-6 p-5">
-      <div className="mb-4 flex items-center justify-between">
+    <section className="panel-glow mt-6 mb-6 overflow-hidden rounded-2xl border border-border/65 bg-card/70 shadow-[0_18px_55px_-38px_rgba(0,0,0,.85)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-gradient-to-r from-primary/[0.10] via-card/70 to-transparent px-4 py-4 sm:px-5">
         <div>
-          <h2 className="text-sm font-black uppercase tracking-[0.16em]">Tácticas avanzadas</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Define el comportamiento colectivo y los responsables a balón parado.</p>
+          <div className="text-[0.58rem] font-black uppercase tracking-[0.2em] text-primary">Dirección de equipo</div>
+          <h2 className="mt-1 text-base font-black tracking-tight">Plan de partido</h2>
+          <p className="mt-0.5 text-[0.7rem] text-muted-foreground">Define cómo defiendes y cómo atacas.</p>
         </div>
-        <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
-          Auto-guardado
-        </span>
+        <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/[0.08] px-3 py-1.5 text-[0.62rem] font-bold text-primary">Guardado automático</span>
       </div>
-
-      {/* Play style */}
-      <div className="mb-5">
-        <p className="mb-2 text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
-          Estilo de juego
-        </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          {styles.map((s) => {
-            const active = tactics.style === s.id;
+      <div className="space-y-4 p-4 sm:p-5">
+      <div>
+        <div className="mb-2 grid grid-cols-3 gap-2">
+          {TACTICAL_MENTALITIES.map((mentality) => {
+            const open = expandedMentality === mentality.id;
+            const current = tactics.mentality === mentality.id;
             return (
               <button
-                key={s.id}
+                key={mentality.id}
                 type="button"
-                onClick={() => updateTactics({ style: s.id })}
-                className={`flex items-center gap-3 rounded-xl border-2 p-3 text-left transition ${
-                  active
-                    ? `${s.tone} ring-2 ring-current/40`
-                    : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/40"
+                aria-expanded={open}
+                onClick={() => setExpandedMentality(open ? null : mentality.id)}
+                className={`relative flex min-h-12 items-center justify-center gap-2 rounded-xl border px-2.5 py-2 text-[0.72rem] font-black transition-all ${
+                  mentality.id === "defensive"
+                    ? open ? "border-blue-500 bg-blue-600 text-white shadow-[0_8px_24px_-14px_rgba(37,99,235,.65)]" : current ? "border-blue-500/55 bg-blue-500/10 text-blue-300" : "border-blue-500/25 bg-blue-500/[0.045] text-blue-300/85 hover:border-blue-500/55 hover:bg-blue-500/10"
+                    : mentality.id === "balanced"
+                      ? open ? "border-emerald-500 bg-emerald-600 text-white shadow-[0_8px_24px_-14px_rgba(5,150,105,.65)]" : current ? "border-emerald-500/55 bg-emerald-500/10 text-emerald-300" : "border-emerald-500/25 bg-emerald-500/[0.045] text-emerald-300/85 hover:border-emerald-500/55 hover:bg-emerald-500/10"
+                      : open ? "border-red-500 bg-red-600 text-white shadow-[0_8px_24px_-14px_rgba(220,38,38,.65)]" : current ? "border-red-500/55 bg-red-500/10 text-red-300" : "border-red-500/25 bg-red-500/[0.045] text-red-300/85 hover:border-red-500/55 hover:bg-red-500/10"
                 }`}
               >
-                <s.icon className="h-5 w-5" />
-                <div className="min-w-0">
-                  <p className="text-sm font-black">{s.label}</p>
-                  <p className="truncate text-[0.65rem] opacity-80">{s.desc}</p>
-                </div>
+                {mentality.name}
+                {current && <span className={`h-1.5 w-1.5 rounded-full ${open ? "bg-white" : mentality.id === "defensive" ? "bg-blue-400" : mentality.id === "balanced" ? "bg-emerald-400" : "bg-red-400"}`} aria-label="Mentalidad actual" />}
               </button>
             );
           })}
         </div>
+        {expandedMentality ? (
+          <div className="space-y-3 rounded-2xl border border-border/55 bg-background/25 p-3 sm:p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[0.68rem] font-semibold text-muted-foreground">{TACTICAL_MENTALITIES.find((item) => item.id === expandedMentality)?.description}</p>
+              <span className="text-[0.56rem] font-black uppercase tracking-[0.14em] text-muted-foreground">Elige un sistema</span>
+            </div>
+            <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
+              {TACTICAL_OPTIONS_BY_MENTALITY[expandedMentality].map((system) => {
+                const active = tactics.system === system.id;
+                const Icon = TACTIC_ICONS[system.id];
+                return (
+                  <button
+                    key={system.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => updateTactics(setTacticalSystem(tactics, system.id))}
+                    className={`group min-w-0 rounded-2xl border p-3.5 text-left transition-all ${active ? "border-primary/70 bg-gradient-to-br from-primary/[0.14] via-card/90 to-card/65 shadow-[0_0_0_1px_hsl(var(--primary)/.16),0_14px_32px_-24px_hsl(var(--primary)/.7)]" : "border-border/65 bg-card/55 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card/90"}`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${active ? "border-primary/35 bg-primary/15 text-primary" : "border-border/70 bg-background/70 text-muted-foreground group-hover:text-foreground"}`}>
+                        <Icon className="h-4 w-4" strokeWidth={2.1} />
+                      </span>
+                      <span className="min-w-0 flex-1 text-[0.82rem] font-extrabold leading-tight">{system.name}</span>
+                      {active && <span className="shrink-0 rounded-full border border-primary/25 bg-primary/10 px-2 py-1 text-[0.52rem] font-black uppercase tracking-wider text-primary">Activa</span>}
+                    </div>
+                    <p className="mt-3 min-h-[2.15rem] text-[0.67rem] leading-relaxed text-muted-foreground">{system.description}</p>
+                    <div className="mt-3 grid grid-cols-1 gap-1.5 border-t border-border/55 pt-3">
+                      <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/[0.055] px-2.5 py-2">
+                        <span className="block text-[0.5rem] font-black uppercase tracking-[0.15em] text-emerald-400/90">A favor</span>
+                        <span className="mt-0.5 block text-[0.62rem] font-semibold leading-snug text-foreground/90">{system.advantages[0]}</span>
+                      </div>
+                      <div className="rounded-lg border border-rose-500/15 bg-rose-500/[0.045] px-2.5 py-2">
+                        <span className="block text-[0.5rem] font-black uppercase tracking-[0.15em] text-rose-400/90">A cambio</span>
+                        <span className="mt-0.5 block text-[0.62rem] font-semibold leading-snug text-foreground/85">{system.risks[0]}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/55 bg-background/30 px-3.5 py-3">
+            <span className="text-[0.65rem] text-muted-foreground">Sistema seleccionado</span>
+            <span className="rounded-full border border-primary/25 bg-primary/[0.08] px-3 py-1 text-[0.68rem] font-extrabold text-primary">{selected.name}</span>
+            <span className="w-full text-[0.58rem] text-muted-foreground sm:w-auto">Selecciona una mentalidad para ver sus opciones.</span>
+          </div>
+        )}
       </div>
 
-      {/* Pressure + Defense line */}
-      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <p className="mb-2 text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
-            Presión
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            {pressureOpts.map((o) => {
-              const active = tactics.pressure === o.id;
-              return (
-                <button
-                  key={o.id}
-                  type="button"
-                  onClick={() => updateTactics({ pressure: o.id })}
-                  className={`flex flex-col items-center gap-1 rounded-lg border-2 py-2 text-xs font-bold transition ${
-                    active
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/40"
-                  }`}
-                >
-                  <o.icon className="h-4 w-4" />
-                  {o.label}
-                </button>
-              );
-            })}
+      <div className="border-t border-border/60 pt-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-[0.74rem] font-black uppercase tracking-[0.13em]">Estilo de juego</h3>
+            <p className="mt-0.5 text-[0.61rem] text-muted-foreground">Cómo quieres mover el balón y atacar.</p>
+          </div>
+          <span className="rounded-full border border-border/60 bg-background/40 px-2.5 py-1 text-[0.56rem] font-semibold text-muted-foreground">Selección independiente</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          {TACTICAL_GAME_STYLES.map((style) => {
+            const active = tactics.gameStyle === style.id;
+            const Icon = style.id === "possession" ? CircleDot
+              : style.id === "counter" ? ArrowUpRight
+                : style.id === "wide" ? ArrowLeftRight
+                  : style.id === "direct" ? Goal : Scale;
+            return (
+              <button
+                key={style.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => updateTactics(setTacticalGameStyle(tactics, style.id))}
+                className={`min-w-0 rounded-xl border p-3 text-left transition-all ${active ? "border-primary/65 bg-gradient-to-br from-primary/[0.12] to-card/70 shadow-[0_8px_24px_-18px_hsl(var(--primary)/.7)]" : "border-border/60 bg-background/30 hover:border-primary/35 hover:bg-card/70"}`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${active ? "bg-primary/15 text-primary" : "bg-muted/60 text-muted-foreground"}`}>
+                    <Icon className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1 text-[0.68rem] font-extrabold leading-tight">{style.name}</span>
+                  {active && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                </span>
+                <span className="mt-2 block min-h-[2rem] text-[0.59rem] leading-relaxed text-muted-foreground">{style.description}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.055] px-3 py-2.5">
+            <span className="block text-[0.5rem] font-black uppercase tracking-[0.15em] text-emerald-400/90">A favor</span>
+            <span className="mt-0.5 block text-[0.62rem] font-semibold leading-snug text-foreground/90">{TACTICAL_GAME_STYLES.find((item) => item.id === tactics.gameStyle)?.advantage}</span>
+          </div>
+          <div className="rounded-xl border border-rose-500/15 bg-rose-500/[0.045] px-3 py-2.5">
+            <span className="block text-[0.5rem] font-black uppercase tracking-[0.15em] text-rose-400/90">A cambio</span>
+            <span className="mt-0.5 block text-[0.62rem] font-semibold leading-snug text-foreground/85">{TACTICAL_GAME_STYLES.find((item) => item.id === tactics.gameStyle)?.risk}</span>
           </div>
         </div>
-        <div>
-          <p className="mb-2 text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
-            Línea defensiva
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            {lineOpts.map((o) => {
-              const active = tactics.defenseLine === o.id;
-              return (
-                <button
-                  key={o.id}
-                  type="button"
-                  onClick={() => updateTactics({ defenseLine: o.id })}
-                  className={`flex flex-col items-center gap-1 rounded-lg border-2 py-2 text-xs font-bold transition ${
-                    active
-                      ? "border-accent bg-accent/10 text-accent"
-                      : "border-border/60 bg-card/60 text-muted-foreground hover:border-accent/40"
-                  }`}
-                >
-                  <o.icon className="h-4 w-4" />
-                  {o.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </div>
 
-      {/* Instrucciones avanzadas con ventajas y costes reales en el motor */}
-      <div className="mb-5 rounded-xl border border-border/60 bg-background/40 p-3">
-        <div className="mb-3">
-          <p className="text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">Plan de partido</p>
-          <p className="mt-1 text-[0.65rem] text-muted-foreground">Cada ajuste cambia posesión, xG, fatiga, riesgo defensivo o disciplina; no hay una opción sin contrapartidas.</p>
+      <div className="mt-4 border-t border-border/50 pt-3">
+        <div className="mb-2.5 flex items-center justify-between gap-2">
+          <h3 className="text-[0.7rem] font-extrabold uppercase tracking-[0.1em]">Capitán y lanzadores</h3>
+          <span className="text-[0.6rem] text-muted-foreground">Elige quién se encarga de cada acción</span>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Ritmo
-            <select value={tactics.tempo} onChange={(e) => updateTactics({ tempo: e.target.value as TeamTactics["tempo"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
-              <option value="slow">Pausado</option><option value="normal">Normal</option><option value="high">Alto</option>
-            </select>
-          </label>
-          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Anchura del equipo
-            <select value={tactics.width} onChange={(e) => updateTactics({ width: e.target.value as TeamTactics["width"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
-              <option value="narrow">Estrecha</option><option value="normal">Equilibrada</option><option value="wide">Ancha</option>
-            </select>
-          </label>
-          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Amplitud ofensiva
-            <select value={tactics.attackingWidth} onChange={(e) => updateTactics({ attackingWidth: e.target.value as TeamTactics["attackingWidth"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
-              <option value="narrow">Por dentro</option><option value="normal">Mixta</option><option value="wide">Abrir el campo</option>
-            </select>
-          </label>
-          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Estilo de pase
-            <select value={tactics.passingStyle} onChange={(e) => updateTactics({ passingStyle: e.target.value as TeamTactics["passingStyle"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
-              <option value="short">Corto</option><option value="mixed">Mixto</option><option value="direct">Directo</option>
-            </select>
-          </label>
-          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Marcaje
-            <select value={tactics.marking} onChange={(e) => updateTactics({ marking: e.target.value as TeamTactics["marking"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
-              <option value="zonal">Zonal</option><option value="man">Al hombre</option><option value="intense">Agresivo</option>
-            </select>
-          </label>
-          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Agresividad
-            <select value={tactics.aggressionLevel} onChange={(e) => updateTactics({ aggressionLevel: e.target.value as TeamTactics["aggressionLevel"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
-              <option value="low">Contenida</option><option value="normal">Normal</option><option value="high">Alta</option>
-            </select>
-          </label>
-          <label className="rounded-lg border border-border/50 bg-card/50 p-2 text-xs font-bold">Pérdida de tiempo
-            <select value={tactics.timeWasting} onChange={(e) => updateTactics({ timeWasting: e.target.value as TeamTactics["timeWasting"] })} className="mt-1 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs font-semibold">
-              <option value="low">Nunca</option><option value="normal">Situacional</option><option value="high">Frecuente</option>
-            </select>
-          </label>
-          <button type="button" aria-pressed={tactics.counterAttack} onClick={() => updateTactics({ counterAttack: !tactics.counterAttack })} className={`flex items-center justify-between gap-2 rounded-lg border p-3 text-left text-xs font-bold transition ${tactics.counterAttack ? "border-primary bg-primary/10 text-primary" : "border-border/50 bg-card/50 text-muted-foreground hover:border-primary/40"}`}>
-            <span><span className="block">Contraataque</span><span className="mt-1 block text-[0.6rem] font-medium opacity-80">Castiga al rival adelantado</span></span>
-            <span className={`h-4 w-7 rounded-full p-0.5 ${tactics.counterAttack ? "bg-primary" : "bg-muted"}`}><span className={`block h-3 w-3 rounded-full bg-background transition-transform ${tactics.counterAttack ? "translate-x-3" : "translate-x-0"}`} /></span>
-          </button>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <TakerSelect label="Capitán" icon={Crown} value={tactics.captainId} onChange={(id) => updateTactics({ captainId: id })} />
+          <TakerSelect label="Penaltis" icon={Goal} value={tactics.penaltyTakerId} onChange={(id) => updateTactics({ penaltyTakerId: id })} />
+          <TakerSelect label="Faltas" icon={Flag} value={tactics.freekickTakerId} onChange={(id) => updateTactics({ freekickTakerId: id })} />
+          <TakerSelect label="Córners" icon={CornerDownRight} value={tactics.cornerTakerId} onChange={(id) => updateTactics({ cornerTakerId: id })} />
         </div>
       </div>
-
-      {/* Captain & set-piece takers */}
-      <div>
-        <p className="mb-2 text-[0.6rem] font-bold uppercase tracking-wider text-muted-foreground">
-          Capitán y lanzadores
-        </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <TakerSelect
-            label="Capitán"
-            icon={Crown}
-            value={tactics.captainId}
-            onChange={(id) => updateTactics({ captainId: id })}
-            tone="border-amber-500/40 bg-amber-500/10 text-amber-300"
-          />
-          <TakerSelect
-            label="Penaltis"
-            icon={Goal}
-            value={tactics.penaltyTakerId}
-            onChange={(id) => updateTactics({ penaltyTakerId: id })}
-            tone="border-rose-500/40 bg-rose-500/10 text-rose-300"
-          />
-          <TakerSelect
-            label="Faltas"
-            icon={Flag}
-            value={tactics.freekickTakerId}
-            onChange={(id) => updateTactics({ freekickTakerId: id })}
-            tone="border-primary/40 bg-primary/10 text-primary"
-          />
-          <TakerSelect
-            label="Córners"
-            icon={CornerDownRight}
-            value={tactics.cornerTakerId}
-            onChange={(id) => updateTactics({ cornerTakerId: id })}
-            tone="border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-          />
-        </div>
       </div>
-    </div>
+    </section>
   );
 }
+

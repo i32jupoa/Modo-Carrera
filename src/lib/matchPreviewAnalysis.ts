@@ -4,7 +4,7 @@ import type { SaveGame } from "@/lib/store";
 import { teamById, type Team } from "@/data/teams";
 import { getAllPlayedFixtures, type TeamFormResult } from "@/lib/teamForm";
 import { getLeaguePositionZones, type LeagueZoneKind } from "@/lib/season/leaguePositionZones";
-import { loadTactics } from "@/lib/teamTactics";
+import { loadTactics, resolveMatchTactics, tacticalMatchupMultiplier, TACTICAL_SYSTEMS } from "@/lib/teamTactics";
 
 type ResultChip = {
   code: TeamFormResult;
@@ -26,7 +26,11 @@ type TacticalAnalysis = {
   formation: string;
   body: string;
   tags: string[];
-  strength: string;
+  system: string;
+  mentality: string;
+  gameStyle: string;
+  matchup: string;
+  matchupStatus: "favorable" | "complicado" | "equilibrado";
 };
 
 export type IndividualRunHighlight = {
@@ -205,44 +209,32 @@ function teamMatchesById(teamId: string): string {
   return teamById(teamId).name;
 }
 
-function tacticPlan(team: Team, formation: string): TacticalAnalysis {
-  const tactics = loadTactics(team.id);
-  const styleText = tactics.style === "offensive"
-    ? "buscará instalarse arriba, sumar efectivos al ataque y forzar al rival a defender cerca de su área"
-    : tactics.style === "defensive"
-      ? "priorizará el orden, cerrar líneas interiores y elegir con cuidado cuándo salir"
-      : "intentará alternar fases de control con ataques más verticales según encuentre espacios";
-  const pressureText = tactics.pressure === "high"
-    ? "La presión alta puede forzar errores cerca del área, aunque exige coordinación para proteger la espalda."
-    : tactics.pressure === "low"
-      ? "Con un bloque de presión más contenido, la prioridad será mantener las distancias y cerrar pasillos antes de acelerar la transición."
-      : "La presión de intensidad media permite saltar sobre el poseedor sin desordenar constantemente la estructura.";
-  const passingText = tactics.passingStyle === "short"
-    ? "La salida de pase corto debe ayudarle a conservar el balón y progresar mediante apoyos cercanos."
-    : tactics.passingStyle === "direct"
-      ? "El pase directo puede reducir toques y atacar cuanto antes los espacios a la espalda."
-      : "El juego mixto le permite alternar circulación y envíos verticales según la altura del bloque rival.";
-  const transitionText = tactics.counterAttack
-    ? "Tras recuperar, el contraataque será una vía importante para sorprender antes de que el rival se reorganice."
-    : "Tras pérdida, las coberturas serán importantes para impedir que el rival convierta una recuperación en una ocasión clara.";
-  const traits = [
-    { label: "ataque", value: Number(team.att) || 0 },
-    { label: "centro del campo", value: Number(team.mid) || 0 },
-    { label: "defensa", value: Number(team.def) || 0 },
-  ].sort((a, b) => b.value - a.value);
-  const best = traits[0];
-  const weakest = traits[traits.length - 1];
-  const strength = best.value > 0 ? `En el perfil colectivo destaca el ${best.label} (${Math.round(best.value)}); el punto que más deberá proteger es la ${weakest.label}.` : "El once y su colocación inicial serán las referencias para leer el plan de partido.";
+function tacticPlan(
+  team: Team,
+  formation: string,
+  xi: any[] = [],
+  opponent: Team,
+  opponentXi: any[] = [],
+): TacticalAnalysis {
+  const tactics = resolveMatchTactics(loadTactics(team.id), xi as any, team.id);
+  const opponentTactics = resolveMatchTactics(loadTactics(opponent.id), opponentXi as any, opponent.id);
+  const definition = TACTICAL_SYSTEMS.find((item) => item.id === tactics.system) ?? TACTICAL_SYSTEMS.find((item) => item.id === "possession")!;
+  const opponentDefinition = TACTICAL_SYSTEMS.find((item) => item.id === opponentTactics.system) ?? TACTICAL_SYSTEMS.find((item) => item.id === "possession")!;
+  const matchup = tacticalMatchupMultiplier(tactics.system, opponentTactics.system);
+  const matchupStatus = matchup > 1.005 ? "favorable" : matchup < 0.995 ? "complicado" : "equilibrado";
   return {
-    heading: `Qué puede buscar ${team.name}`,
+    heading: definition.name,
     formation: String(formation || "Táctica 4-4-2").replace("Táctica ", ""),
-    body: `Con un ${String(formation || "Táctica 4-4-2").replace("Táctica ", "")} como estructura de partida, ${team.name} ${styleText}. ${pressureText} ${passingText} ${transitionText}`,
-    tags: [
-      tactics.style === "offensive" ? "Enfoque ofensivo" : tactics.style === "defensive" ? "Bloque conservador" : "Plan equilibrado",
-      tactics.pressure === "high" ? "Presión alta" : tactics.pressure === "low" ? "Bloque bajo" : "Presión media",
-      tactics.counterAttack ? "Transición rápida" : tactics.passingStyle === "short" ? "Pase corto" : tactics.passingStyle === "direct" ? "Juego directo" : "Juego mixto",
-    ],
-    strength,
+    body: definition.description,
+    tags: [definition.name],
+    system: definition.name,
+    mentality: tactics.mentality === "defensive" ? "Defensiva" : tactics.mentality === "offensive" ? "Ofensiva" : "Equilibrada",
+    gameStyle: tactics.gameStyle === "possession" ? "Pases cortos"
+      : tactics.gameStyle === "counter" ? "Transiciones rápidas"
+        : tactics.gameStyle === "wide" ? "Centros laterales"
+          : tactics.gameStyle === "direct" ? "Balón largo" : "Mixto",
+    matchup: opponentDefinition.name,
+    matchupStatus,
   };
 }
 
@@ -795,8 +787,8 @@ export function buildMatchPreviewAnalysis(input: {
   const competition = competitionContext(fixture, competitionLabel);
   const table = standingsContext(save, fixture, home, away);
   const context = fixture.competition === "league" && !fixture.europeanCompetition ? table : competition;
-  const homePlan = tacticPlan(home, homeFormation);
-  const awayPlan = tacticPlan(away, awayFormation);
+  const homePlan = tacticPlan(home, homeFormation, homePlayers as any[], away, awayPlayers as any[]);
+  const awayPlan = tacticPlan(away, awayFormation, awayPlayers as any[], home, homePlayers as any[]);
   const homeAttackVsAwayDefence = (Number(home.att) || 0) - (Number(away.def) || 0);
   const awayAttackVsHomeDefence = (Number(away.att) || 0) - (Number(home.def) || 0);
   const midfieldGap = (Number(home.mid) || 0) - (Number(away.mid) || 0);

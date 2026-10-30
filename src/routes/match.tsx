@@ -41,6 +41,8 @@ import {
   isExpulsionCard,
   simulateExtraTime,
   simulatePenaltyShootout,
+  selectDeadBallTaker,
+  selectPenaltyTaker,
   type HighlightEvent,
 } from "@/lib/simulation";
 import { accumulateStats, computePlayerRatings, type MatchStats } from "@/lib/matchStats";
@@ -74,7 +76,25 @@ import {
   type LiveMatchState,
   type LivePhase,
 } from "@/lib/liveMatch";
-import { loadTactics, tacticsModifiers } from "@/lib/teamTactics";
+import {
+  loadTactics,
+  saveTactics,
+  DEFAULT_TACTICS,
+  normalizeTactics,
+  tacticsModifiers,
+  tacticalMatchupMultiplier,
+  resolveMatchTactics,
+  setTacticalSystem,
+  TACTICAL_SYSTEMS,
+  TACTICAL_MENTALITIES,
+  TACTICAL_OPTIONS_BY_MENTALITY,
+  TACTICAL_GAME_STYLES,
+  setTacticalGameStyle,
+  type TeamTactics,
+  type TacticalSystem,
+  type TacticalMentality,
+  type GameStyle,
+} from "@/lib/teamTactics";
 import {
   btnPrimary,
   btnSecondary,
@@ -83,7 +103,7 @@ import {
   segmentBase,
   segmentItem,
 } from "@/components/match/matchUi";
-import { Pause, Play, FastForward, ClipboardList, Trophy } from "lucide-react";
+import { Pause, Play, FastForward, ClipboardList, Trophy, ArrowLeftRight, ArrowUpRight, CircleDot, Shield, Zap, Goal, ChevronUp, ChevronDown } from "lucide-react";
 import { isPlayerInjuredAtDate, usePlayersStore, withPlayerStatsBatch } from "@/store/playersStore";
 import { addDaysToIso } from "@/lib/transferWindows";
 import { getPlayerShootingStats } from "@/data/players";
@@ -111,6 +131,7 @@ import {
   buildNarrativeCommentary,
   buildSyntheticMoment,
   updateMomentum,
+  buildCoachDecision,
   type LiveManagerEffects,
   type LiveMoment,
 } from "@/lib/liveMatchEngine";
@@ -200,6 +221,21 @@ function promotionAggregateTiedAtScores(
 
 export const Route = createFileRoute("/match")({ component: MatchPage });
 
+const TACTIC_ICONS: Record<TacticalSystem, any> = {
+  gegenpress: Zap,
+  possession: CircleDot,
+  low_block_counter: Shield,
+  vertical_transition: ArrowUpRight,
+  wing_play: ArrowLeftRight,
+  direct_play: Goal,
+  offside_trap: Shield,
+  inside_overload: CircleDot,
+  set_piece: Goal,
+  close_out: Shield,
+  mid_block_press: Shield,
+  build_up: CircleDot,
+};
+
 function getEuropeanFixtureList(save: any, competition?: string): any[] {
   if (competition === "uel") return Array.isArray(save?.uelFixtures) ? save.uelFixtures : [];
   if (competition === "uecl") return Array.isArray(save?.ueclFixtures) ? save.ueclFixtures : [];
@@ -281,7 +317,7 @@ function normalizeLiveResult(rawResult: any): any {
   return r;
 }
 
-type Phase = "preview" | "playing" | "done" | "extra_time" | "penalties";
+type Phase = "preview" | "playing" | "done" | "extra_time" | "penalty_order" | "penalties";
 
 function MatchPage() {
   const navigate = useNavigate();
@@ -328,6 +364,8 @@ function MatchPage() {
   const [returningFromLineupEdit, setReturningFromLineupEdit] = useState(false);
   const [penaltyShootoutIndex, setPenaltyShootoutIndex] = useState(0);
   const [penaltyShootoutData, setPenaltyShootoutData] = useState<any[]>([]);
+  const [penaltyOrderIds, setPenaltyOrderIds] = useState<string[]>([]);
+  const [pendingPenaltyShootout, setPendingPenaltyShootout] = useState<{ homeXI: any[]; awayXI: any[]; userIsHome: boolean; injuries: any[] } | null>(null);
   const [highlightFeed, setHighlightFeed] = useState<HighlightEvent[]>([]);
   const allHighlightsRef = useRef<HighlightEvent[]>([]);
   const [isPaused, setIsPaused] = useState(false);
@@ -344,6 +382,11 @@ function MatchPage() {
   const momentTimerRef = useRef<number | null>(null);
   const [managerEffects, setManagerEffects] = useState<LiveManagerEffects>(DEFAULT_MANAGER_EFFECTS);
   const managerEffectsRef = useRef<LiveManagerEffects>({ ...DEFAULT_MANAGER_EFFECTS });
+  const [activeTactics, setActiveTactics] = useState<TeamTactics>(() => loadTactics(""));
+  const [expandedTacticMentality, setExpandedTacticMentality] = useState<TacticalMentality | null>(null);
+  const activeTacticsRef = useRef<TeamTactics>(activeTactics);
+  const lastTacticChangeMinuteRef = useRef(-99);
+  const lastCoachDecisionRef = useRef<{ id: string; minute: number; kind?: string } | null>(null);
   const [commentaryEntries, setCommentaryEntries] = useState<CommentaryEntry[]>([]);
   const commentaryEntriesRef = useRef<CommentaryEntry[]>([]);
   const lastNarrativeMinuteRef = useRef(-99);
@@ -551,6 +594,23 @@ function MatchPage() {
       fixtureRef.current = { ...fx, result: restoredResult };
       setSave(s);
       myTeamIdRef.current = s.myTeamId;
+      const savedTactics = normalizeTactics(loadTactics(s.myTeamId));
+      const snapshotTactics = normalizeTactics(st.activeTactics ?? savedTactics);
+      const lineupEditorChangedTactic = resumeLive && (
+        snapshotTactics.system !== savedTactics.system ||
+        snapshotTactics.secondaryInstructions.join("|") !== savedTactics.secondaryInstructions.join("|")
+      );
+      const restoredTactics = resolveMatchTactics(
+        lineupEditorChangedTactic ? savedTactics : snapshotTactics,
+        finalXI.map((id: string) => playerById(id)).filter(Boolean) as any[],
+        s.myTeamId,
+        { minute: Number(st.minute ?? 0) },
+      );
+      activeTacticsRef.current = restoredTactics;
+      setActiveTactics(restoredTactics);
+      lastTacticChangeMinuteRef.current = lineupEditorChangedTactic
+        ? Number(st.minute ?? 0)
+        : Number(st.lastTacticChangeMinute ?? -99);
 
       allEventsRef.current = restoredResult.events;
       allCardsRef.current = restoredResult.cards;
@@ -629,8 +689,14 @@ function MatchPage() {
       setMyXI(finalXI);
       myBenchRef.current = finalBench;
       setMyBench(finalBench);
-      staminaRef.current = safeStamina;
-      setStamina(safeStamina);
+      const resumedStamina = { ...safeStamina };
+      if (lineupEditorChangedTactic) {
+        const changeCost = ["halftime", "et_halftime", "et_break"].includes(String(st.phase)) ? 1.7 : 2.6;
+        for (const id of finalXI) resumedStamina[id] = Math.max(0, (resumedStamina[id] ?? STAMINA_START) - changeCost);
+        toast.info(`Ajuste táctico aplicado: -${changeCost.toFixed(1)} de energía al once.`);
+      }
+      staminaRef.current = resumedStamina;
+      setStamina(resumedStamina);
 
       const restoredMomentum = Number(st.momentum ?? 50);
       momentumRef.current = restoredMomentum;
@@ -1241,19 +1307,52 @@ function MatchPage() {
     const awayXI = userIsHome
       ? oppXIRef.current.filter(Boolean)
       : (myXIRef.current.length ? myXIRef.current.map((id) => id ? playerById(id) : null).filter(Boolean) : getSimSquad(fixture.awayId));
-
-    // Store XIs in refs for use in skipPenaltyShootoutToEnd
+    const injuries = fixture.result?.injuries ?? [];
     homeXIRef.current = homeXI as any[];
     awayXIRef.current = awayXI as any[];
+    setPendingPenaltyShootout({ homeXI: homeXI as any[], awayXI: awayXI as any[], userIsHome, injuries });
 
-    // Simulate penalty shootout data
+    const userXI = (userIsHome ? homeXI : awayXI) as any[];
+    const injuredIds = new Set(injuries.filter((injury: any) => injury.team === (userIsHome ? "home" : "away")).map((injury: any) => injury.playerId));
+    const tactics = activeTacticsRef.current;
+    const designatedId = tactics.penaltyTakerId;
+    const available = userXI.filter((player) => player?.id && !injuredIds.has(player.id));
+    const ordered = [...available].sort((a, b) => {
+      if (a.id === designatedId) return -1;
+      if (b.id === designatedId) return 1;
+      return Number(b.attributes?.SHO ?? b.rating ?? 0) - Number(a.attributes?.SHO ?? a.rating ?? 0);
+    });
+    setPenaltyOrderIds(ordered.map((player) => player.id));
+    setPhase("penalty_order");
+  }
+
+  function movePenaltyTaker(index: number, direction: -1 | 1) {
+    setPenaltyOrderIds((current) => {
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.length) return current;
+      const next = [...current];
+      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+      return next;
+    });
+  }
+
+  function confirmPenaltyOrder() {
+    if (!pendingPenaltyShootout) return;
+    const { homeXI, awayXI, userIsHome, injuries } = pendingPenaltyShootout;
+    const userId = myTeamIdRef.current || save?.myTeamId;
+    const fixture = fixtureRef.current;
+    if (!fixture) return;
+    const userOrder = penaltyOrderIds;
     const penaltyResult = simulatePenaltyShootout(homeXI, awayXI, {
-      injuries: fixture.result?.injuries ?? [],
+      injuries,
+      homePenaltyTakerId: fixture.homeId === userId ? activeTacticsRef.current.penaltyTakerId : loadTactics(fixture.homeId).penaltyTakerId,
+      awayPenaltyTakerId: fixture.awayId === userId ? activeTacticsRef.current.penaltyTakerId : loadTactics(fixture.awayId).penaltyTakerId,
+      homePenaltyOrderIds: userIsHome ? userOrder : undefined,
+      awayPenaltyOrderIds: userIsHome ? undefined : userOrder,
     });
     setPenaltyShootoutData(penaltyResult.shootout);
     setPenaltyShootoutIndex(0);
-
-    // Start visual penalty shootout
+    setPendingPenaltyShootout(null);
     setPhase("penalties");
     runPenaltyShootoutClock(penaltyResult.shootout, homeXI, awayXI);
   }
@@ -2152,6 +2251,12 @@ function MatchPage() {
     myTeamIdRef.current = s.myTeamId;
     const squad = getSimSquad(s.myTeamId);
     const ids = (matchLineup || s.lineups?.[s.myTeamId] || []).filter(Boolean).slice(0, 11);
+    const initialXIPlayers = ids.map((id) => squad.find((player: any) => player.id === id)).filter(Boolean) as any[];
+    const initialTactics = resolveMatchTactics(loadTactics(s.myTeamId), initialXIPlayers, s.myTeamId);
+    activeTacticsRef.current = initialTactics;
+    setActiveTactics(initialTactics);
+    lastTacticChangeMinuteRef.current = -99;
+    lastCoachDecisionRef.current = null;
 
     // IMPORTANT: only players explicitly registered as substitutes can enter
     // during this match. Everyone else remains in "Reservas" and is never
@@ -2350,6 +2455,8 @@ function MatchPage() {
       momentumHistory: momentumHistoryRef.current,
       managerEffects: managerEffectsRef.current,
       outcomeBias: outcomeBiasRef.current,
+      activeTactics: activeTacticsRef.current,
+      lastTacticChangeMinute: lastTacticChangeMinuteRef.current,
       narrative: commentaryEntries.slice(0, 12),
       keyMoments: keyMomentsRef.current.slice(-200),
       playedEvents: playedEventsRef.current.slice(),
@@ -2432,10 +2539,16 @@ function MatchPage() {
 
   /*** Drain energy of the players currently on the pitch. */
   function drainStamina() {
-    const tactics = myTeamIdRef.current ? loadTactics(myTeamIdRef.current) : null;
+    const tactics = activeTacticsRef.current;
     const pressure = (tactics?.pressure ?? "medium") as "low" | "medium" | "high";
-    // Play style / defensive line also decide how hard the team runs.
-    const staminaMult = tacticsModifiers(tactics).stamina;
+    const xi = myXIRef.current.map((id) => playerById(id)).filter(Boolean) as any[];
+    // El sistema principal y sus instrucciones modifican el desgaste minuto a minuto.
+    const staminaMult = tacticsModifiers(tactics, xi, {
+      minute: minuteRef.current,
+      scoreDiff: homeScoreRef.current === awayScoreRef.current ? 0 :
+        (mySideOf(fixtureRef.current) === "home" ? homeScoreRef.current - awayScoreRef.current : awayScoreRef.current - homeScoreRef.current),
+      averageStamina: currentAvgStamina(),
+    }).stamina;
     const next = { ...staminaRef.current };
     for (const id of myXIRef.current) {
       const p = playerById(id);
@@ -2691,6 +2804,42 @@ function MatchPage() {
       next = repl
         ? { ...next, assistId: repl.id, assistName: repl.name }
         : { ...next, assistId: undefined, assistName: undefined };
+    }
+    if (next.type === "free_kick_goal") {
+      // Mantener al especialista designado; si ya no está, elegir al mejor
+      // lanzador disponible para que el cambio de alineación no lo sustituya
+      // por un jugador aleatorio.
+      const taker = selectDeadBallTaker(
+        activePool as any[],
+        ev.setPieceTakerId ?? ev.scorerId,
+        "freekick",
+      );
+      if (taker) {
+        next.scorerId = taker.id;
+        next.scorerName = taker.name;
+        next.setPieceTakerId = taker.id;
+        next.setPieceTakerName = taker.name;
+      }
+    } else if (next.detail === "A la salida de un córner") {
+      // El lanzador del córner es quien pone el balón en juego; el goleador
+      // sigue siendo el rematador y recibe el crédito del gol.
+      const takerPool = activePool.filter((player: any) => player.id !== next.scorerId);
+      const taker = selectDeadBallTaker(
+        takerPool as any[],
+        ev.setPieceTakerId ?? ev.assistId,
+        "corner",
+      );
+      if (taker) {
+        next.assistId = taker.id;
+        next.assistName = taker.name;
+        next.setPieceTakerId = taker.id;
+        next.setPieceTakerName = taker.name;
+      } else {
+        next.assistId = undefined;
+        next.assistName = undefined;
+        next.setPieceTakerId = undefined;
+        next.setPieceTakerName = undefined;
+      }
     }
     return next;
   }
@@ -3096,9 +3245,21 @@ function MatchPage() {
             playerInId: sub.inId ?? sub.playerInId,
           })),
       ].sort((a, b) => a.minute - b.minute);
-      const opponentTactics = loadTactics(opponentTeamId) || {};
+      const opponentScoreDiff = opponentSide === "home"
+        ? homeScoreRef.current - awayScoreRef.current
+        : awayScoreRef.current - homeScoreRef.current;
+      const opponentStartingXI = opponentInitial.slice(0, 11) as any[];
+      const opponentTactics = resolveMatchTactics(
+        loadTactics(opponentTeamId),
+        opponentStartingXI,
+        opponentTeamId,
+        { minute: 90, scoreDiff: opponentScoreDiff },
+      );
       const opponentPressure = opponentTactics.pressure || "medium";
-      const opponentStaminaMultiplier = tacticsModifiers(opponentTactics).stamina;
+      const opponentStaminaMultiplier = tacticsModifiers(opponentTactics, opponentStartingXI, {
+        minute: 90,
+        scoreDiff: opponentScoreDiff,
+      }).stamina;
 
       const opponentEnergy: Record<string, number> = {};
       for (const player of opponentInitial) {
@@ -3470,6 +3631,116 @@ function MatchPage() {
     const next = [entry, ...commentaryEntriesRef.current].slice(0, 12);
     commentaryEntriesRef.current = next;
     setCommentaryEntries(next);
+  }
+
+  function updateLiveTacticalImpact(tactics: TeamTactics, mods: ReturnType<typeof tacticsModifiers>) {
+    const fx = fixtureRef.current;
+    if (!fx?.result) return;
+    const side = mySideOf(fx);
+    const previous = fx.result.tacticalImpact ?? {};
+    const current = previous[side] ?? {};
+    const commentary = TACTICAL_SYSTEMS.find((item) => item.id === tactics.system)?.description
+      ?? "El equipo mantiene su plan de partido.";
+    const nextImpact = {
+      ...current,
+      system: tactics.system,
+      mentality: tactics.mentality,
+      gameStyle: tactics.gameStyle,
+      highRecoveries: Math.max(0, Math.round(4 + mods.highRecoveries * 18)),
+      counterAttacks: Math.max(0, Math.round(1.5 + mods.counterThreat * 16)),
+      crosses: Math.max(0, Math.round(4 + mods.crossThreat * 19)),
+      setPieceThreat: Math.round(mods.setPieceThreat * 100),
+      commentary: [commentary, ...(current.commentary ?? [])].slice(0, 2),
+    };
+    // La tarjeta de estadísticas finales y la instantánea reanudable leen el
+    // mismo resultado; no se depende de un estado React obsoleto.
+    fixtureRef.current = {
+      ...fx,
+      result: { ...fx.result, tacticalImpact: { ...previous, [side]: nextImpact } },
+    } as any;
+  }
+
+  function changeActiveTactic(change: { system?: TacticalSystem; gameStyle?: GameStyle }) {
+    const myId = myTeamIdRef.current || save?.myTeamId;
+    if (!myId) return;
+    const currentMinute = minuteRef.current;
+    const elapsed = currentMinute - lastTacticChangeMinuteRef.current;
+    const isHalfTime = ["halftime", "et_break", "et_halftime"].includes(String(pauseReasonRef.current ?? pauseReason));
+    if (elapsed < 14 && !isHalfTime) {
+      toast.info(`Podrás ajustar el plan en ${14 - elapsed} min.`);
+      return;
+    }
+    const current = activeTacticsRef.current;
+    let next = current;
+    if (change.system) next = setTacticalSystem(next, change.system);
+    if (change.gameStyle) next = setTacticalGameStyle(next, change.gameStyle);
+    if (current.system === next.system && current.gameStyle === next.gameStyle) return;
+
+    const xi = myXIRef.current.map((id) => playerById(id)).filter(Boolean) as any[];
+    const oldMods = tacticsModifiers(current, xi, { minute: currentMinute, averageStamina: currentAvgStamina() });
+    const nextMods = tacticsModifiers(next, xi, { minute: currentMinute, averageStamina: currentAvgStamina() });
+    activeTacticsRef.current = next;
+    setActiveTactics(next);
+    if (change.system) setExpandedTacticMentality(next.mentality);
+    saveTactics(myId, next);
+    lastTacticChangeMinuteRef.current = currentMinute;
+
+    // Ajustar una decisión táctica tiene un pequeño coste físico para el once.
+    const cost = isHalfTime ? 1.7 : 2.6;
+    const nextStamina = { ...staminaRef.current };
+    for (const id of myXIRef.current) nextStamina[id] = Math.max(0, (nextStamina[id] ?? STAMINA_START) - cost);
+    staminaRef.current = nextStamina;
+    setStamina(nextStamina);
+
+    applyDecisionToUpcomingFootball({
+      attack: Math.max(0.92, Math.min(1.08, nextMods.attack / Math.max(0.01, oldMods.attack))),
+      defense: Math.max(0.92, Math.min(1.08, nextMods.defense / Math.max(0.01, oldMods.defense))),
+      counter: Math.max(0.92, Math.min(1.08, (1 + nextMods.counterThreat) / Math.max(0.01, 1 + oldMods.counterThreat))),
+      staminaMultiplier: nextMods.stamina / Math.max(0.01, oldMods.stamina),
+      risk: (nextMods.defensiveRisk - oldMods.defensiveRisk) * 100,
+      width: Math.max(0.92, Math.min(1.08, (1 + nextMods.crossThreat) / Math.max(0.01, 1 + oldMods.crossThreat))),
+      central: Math.max(0.92, Math.min(1.08, (1 + nextMods.centralThreat) / Math.max(0.01, 1 + oldMods.centralThreat))),
+      longBall: Math.max(0.92, Math.min(1.08, (1 + nextMods.longBallThreat) / Math.max(0.01, 1 + oldMods.longBallThreat))),
+    });
+    updateLiveTacticalImpact(next, nextMods);
+    const definition = TACTICAL_SYSTEMS.find((item) => item.id === next.system);
+    const style = TACTICAL_GAME_STYLES.find((item) => item.id === next.gameStyle);
+    const changedLabel = change.system ? definition?.name : style?.name;
+    const adjustmentNarrative = change.system
+      ? definition?.commentary[0]
+      : style?.description;
+    pushCommentary({
+      id: `tactic-change-${currentMinute}-${next.system}-${next.gameStyle}`,
+      minute: currentMinute,
+      tone: "dramatic",
+      text: `Ajuste táctico: ${changedLabel ?? "nuevo plan"}. ${adjustmentNarrative ?? "El equipo ajusta su forma de jugar."}`,
+    });
+    toast.success(`Ajuste aplicado. Coste: -${cost.toFixed(1)} de energía al once.`);
+    persistLive();
+  }
+
+  function applyCoachOption(option: any, decision: any) {
+    const effects = option?.effects ?? {};
+    const current = { ...managerEffectsRef.current };
+    for (const key of ["attack", "defense", "staminaMultiplier", "counter", "width", "central"] as const) {
+      if (Number.isFinite(Number(effects[key]))) current[key] = Number(current[key] ?? 1) * Number(effects[key]);
+    }
+    current.risk = Math.max(0, Math.min(100, Number(current.risk ?? 50) + Number(effects.risk ?? 0)));
+    current.momentumBias = Number(current.momentumBias ?? 0) + Number(effects.momentumBias ?? 0);
+    managerEffectsRef.current = current;
+    setManagerEffects(current);
+    const immediate = Number(effects.immediateStamina ?? 0);
+    if (immediate) {
+      const next = { ...staminaRef.current };
+      for (const id of myXIRef.current) next[id] = Math.max(0, Math.min(100, (next[id] ?? STAMINA_START) + immediate));
+      staminaRef.current = next;
+      setStamina(next);
+    }
+    applyDecisionToUpcomingFootball(effects);
+    lastCoachDecisionRef.current = { id: decision.id, minute: minuteRef.current, kind: decision.kind };
+    pushCommentary({ id: `coach-${decision.id}-${option.id}`, minute: minuteRef.current, tone: "normal", text: `Decisión del banquillo: ${option.label}. ${option.description}` });
+    toast.success(`Decisión aplicada: ${option.label}`);
+    persistLive();
   }
 
   function showLiveMoment(moment: LiveMoment, _duration = 2200, recordKeyMoment = true) {
@@ -3848,6 +4119,26 @@ function MatchPage() {
     return averageNumbers(values);
   }
 
+  function liveManagerEffectsWithTactics(minuteValue = minuteRef.current): LiveManagerEffects {
+    const xi = myXIRef.current.map((id) => playerById(id)).filter(Boolean) as any[];
+    const diff = mySideOf(fixtureRef.current) === "home"
+      ? homeScoreRef.current - awayScoreRef.current
+      : awayScoreRef.current - homeScoreRef.current;
+    const mods = tacticsModifiers(activeTacticsRef.current, xi, {
+      minute: minuteValue,
+      scoreDiff: diff,
+      averageStamina: currentAvgStamina(),
+    });
+    return {
+      ...managerEffectsRef.current,
+      attack: managerEffectsRef.current.attack * mods.attack,
+      defense: managerEffectsRef.current.defense * mods.defense,
+      staminaMultiplier: managerEffectsRef.current.staminaMultiplier * mods.stamina,
+      counter: managerEffectsRef.current.counter * (1 + mods.counterThreat * 0.18),
+      risk: Math.max(0, Math.min(100, managerEffectsRef.current.risk + (mods.defensiveRisk - 1) * 24)),
+    };
+  }
+
   function pushContextualNarrative(m: number, decisionApplied: string | null = null) {
     const fx = fixtureRef.current;
     if (!fx) return;
@@ -3879,6 +4170,7 @@ function MatchPage() {
       recentSubs,
       decisionApplied,
       recentNarratives: commentaryEntriesRef.current,
+      tacticalSystem: activeTacticsRef.current.system,
     });
     // Generic tactical narration is not tied to a footballer. Do not attach a
     // random face merely because another event happened in the same time window.
@@ -3929,25 +4221,15 @@ function MatchPage() {
     if (!fx) return;
     const myId = myTeamIdRef.current || save?.myTeamId;
     const mySide: "home" | "away" = fx.homeId === myId ? "home" : "away";
-    const attackingPlayers = (getCurrentPitchPlayers(source.team) as any[]).filter(
-      (p) => p && !isGoalkeeperForDanger(p),
+    const attackingPlayers = (getCurrentPitchPlayers(source.team) as any[]).filter(Boolean);
+    const kickingTeamId = source.team === "home" ? fx.homeId : fx.awayId;
+    const tactics = source.team === mySide ? activeTacticsRef.current : loadTactics(kickingTeamId);
+    const designatedId = tactics.penaltyTakerId;
+    const eventTakerId = source.scorerId ?? source.playerId;
+    const preferred = selectPenaltyTaker(
+      attackingPlayers as any[],
+      designatedId ?? eventTakerId,
     );
-    const tactics = loadTactics(myId || "");
-    const designatedId = source.team === mySide ? tactics.penaltyTakerId : null;
-    const shootingScore = (p: any) => {
-      const s = getPlayerShootingStats(p?.id, p?.attributes);
-      const penalties = Number(p?.penaltyRating ?? p?.penalties ?? s.penalties ?? 0);
-      return (penalties * 0.45) + (s.finishing * 0.22) + (s.shooting * 0.13) +
-        (s.composure * 0.10) + (s.shotPower * 0.05) + (s.volleys * 0.03) +
-        (s.longShots * 0.02);
-    };
-    const bestPenaltyTaker = attackingPlayers
-      .slice()
-      .sort((a, b) => shootingScore(b) - shootingScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0))[0];
-    const preferred =
-      attackingPlayers.find((p) => p.id === designatedId) ??
-      (source.team === mySide ? attackingPlayers.find((p) => p.id === source.scorerId) : null) ??
-      bestPenaltyTaker;
     const defendingPlayers = getCurrentPitchPlayers(
       source.team === "home" ? "away" : "home",
     ) as any[];
@@ -4278,9 +4560,14 @@ function MatchPage() {
     const defensePush = Number(effects.defense ?? 1) - 1;
     const staminaCost = Number(effects.staminaMultiplier ?? 1) - 1;
     const riskPush = Number(effects.risk ?? 0) / 100;
+    const widthPush = Number(effects.width ?? 1) - 1;
+    const centralPush = Number(effects.central ?? 1) - 1;
+    const longBallPush = Number(effects.longBall ?? 1) - 1;
+    const actionProfilePush = widthPush * 0.35 + centralPush * 0.3 + longBallPush * 0.35;
     const delta =
       attackPush * 1.15 +
-      counterPush * 0.65 -
+      counterPush * 0.65 +
+      actionProfilePush * 0.45 -
       defensePush * 0.95 +
       riskPush * 0.35 -
       staminaCost * 0.45;
@@ -4600,18 +4887,26 @@ function MatchPage() {
   }
 
   function projectedOpponentStamina(side: "home" | "away", minute: number) {
-    const teamId = side === "home" ? fixtureRef.current?.homeId : fixtureRef.current?.awayId;
-    const tactics = teamId ? loadTactics(teamId) : null;
-    const pressure = tactics?.pressure ?? "medium";
-    const staminaMultiplier = tacticsModifiers(tactics).stamina;
+    const fx = fixtureRef.current;
+    const teamId = side === "home" ? fx?.homeId : fx?.awayId;
     const squad = getCurrentPitchPlayers(side) as any[];
     if (!squad.length) return STAMINA_START;
+    const scoreDiff = fx
+      ? side === "home"
+        ? homeScoreRef.current - awayScoreRef.current
+        : awayScoreRef.current - homeScoreRef.current
+      : 0;
+    const tactics = teamId
+      ? resolveMatchTactics(loadTactics(teamId), squad, teamId, { minute, scoreDiff })
+      : DEFAULT_TACTICS;
+    const mods = tacticsModifiers(tactics, squad, { minute, scoreDiff });
+    const pressure = tactics.pressure ?? "medium";
     return averageNumbers(
       squad.map((p) =>
         Math.max(
           0,
           STAMINA_START -
-            minute * drainPerMinute(p?.positions?.[0] ?? "MC", pressure, staminaMultiplier),
+            minute * drainPerMinute(p?.positions?.[0] ?? "MC", pressure, mods.stamina),
         ),
       ),
     );
@@ -4651,9 +4946,20 @@ function MatchPage() {
     const mySide = mySideOf(fx);
     const teamMomentum = team === mySide ? momentumRef.current : 100 - momentumRef.current;
     const teamId = team === "home" ? fx.homeId : fx.awayId;
-    const tactics = loadTactics(teamId);
-    const mods = tacticsModifiers(tactics);
-    const styleEdge = (mods.attack - mods.defense) * 0.8;
+    const attackingScoreDiff = team === "home"
+      ? homeScoreRef.current - awayScoreRef.current
+      : awayScoreRef.current - homeScoreRef.current;
+    const defendingScoreDiff = -attackingScoreDiff;
+    const attackingTactics = team === mySide
+      ? activeTacticsRef.current
+      : resolveMatchTactics(loadTactics(teamId), attackingPlayers as any[], teamId, { minute, scoreDiff: attackingScoreDiff });
+    const defendingTactics = defending === mySide
+      ? activeTacticsRef.current
+      : resolveMatchTactics(loadTactics(defending === "home" ? fx.homeId : fx.awayId), defendingPlayers as any[], defending === "home" ? fx.homeId : fx.awayId, { minute, scoreDiff: defendingScoreDiff });
+    const mods = tacticsModifiers(attackingTactics, attackingPlayers as any[], { minute, averageStamina: attackEnergy });
+    const rivalMods = tacticsModifiers(defendingTactics, defendingPlayers as any[], { minute, averageStamina: defenseEnergy });
+    const styleEdge = (mods.attack - rivalMods.defense) * 0.8 +
+      (attackingTactics.system ? (tacticalMatchupMultiplier(attackingTactics.system, defendingTactics.system) - 1) * 1.5 : 0);
     const ratingEdge = (attackRating - defenseRating) * 0.004;
     const energyEdge = (attackEnergy - defenseEnergy) * 0.0025;
     const momentumEdge = (teamMomentum - 50) * 0.0028;
@@ -4682,9 +4988,10 @@ function MatchPage() {
       events: events as any,
       cards: cards as any,
       highlights: highlights as any,
-      managerEffects: managerEffectsRef.current,
+      managerEffects: liveManagerEffectsWithTactics(minute),
       timeline: fx.result?.stats?.timeline ?? [],
       avgUserStamina: currentAvgStamina(),
+      tacticalSystem: activeTacticsRef.current.system,
     });
     registerMomentum(nextMomentum, minute);
   }
@@ -5348,9 +5655,10 @@ function MatchPage() {
         events,
         cards,
         highlights: hls,
-        managerEffects: managerEffectsRef.current,
+        managerEffects: liveManagerEffectsWithTactics(m),
         timeline: fx?.result?.stats?.timeline ?? [],
         avgUserStamina: currentAvgStamina(),
+        tacticalSystem: activeTacticsRef.current.system,
       });
       const momentumShift = Math.abs(nextMomentum - momentumRef.current);
       registerMomentum(nextMomentum, m);
@@ -6417,7 +6725,7 @@ function MatchPage() {
   };
 
   const liveMinuteLabel =
-    phase === "preview" ? "" : phase === "penalties" ? "PEN" : phase === "done" ? "FINAL" : (clockLabelOverride ?? `${minute}'`);
+    phase === "preview" ? "" : phase === "penalty_order" ? "PEN" : phase === "penalties" ? "PEN" : phase === "done" ? "FINAL" : (clockLabelOverride ?? `${minute}'`);
   const matchScorebug = (() => {
     if (phase === "preview") return "– : –";
     const result = fixtureRef.current?.result;
@@ -6465,6 +6773,31 @@ function MatchPage() {
         competitionLabel: headerText,
         homePlayers: homeLineup.filter(Boolean),
         awayPlayers: awayLineup.filter(Boolean),
+      })
+    : null;
+
+  const currentXIForTactics = myXIRef.current.map((id) => playerById(id)).filter(Boolean) as any[];
+  const liveTacticalMods = tacticsModifiers(activeTactics, currentXIForTactics, {
+    minute,
+    scoreDiff: (isHome ? homeScore - awayScore : awayScore - homeScore),
+    averageStamina: currentAvgStamina(),
+  });
+  const liveTacticDefinition = TACTICAL_SYSTEMS.find((item) => item.id === activeTactics.system);
+  const liveGameStyleDefinition = TACTICAL_GAME_STYLES.find((item) => item.id === activeTactics.gameStyle);
+  const liveTacticIntensity = liveTacticalMods.stamina > 1.08 ? "Desgaste alto" : liveTacticalMods.stamina < 0.95 ? "Desgaste bajo" : "Desgaste normal";
+  const coachDiff = isHome ? homeScore - awayScore : awayScore - homeScore;
+  const liveCoachDecision = (phase === "playing" || phase === "extra_time")
+    ? buildCoachDecision({
+        minute,
+        homeScore,
+        awayScore,
+        userSide: isHome ? "home" : "away",
+        userTeamName: home && away ? (isHome ? home.name : away.name) : "Tu equipo",
+        opponentName: home && away ? (isHome ? away.name : home.name) : "el rival",
+        momentum,
+        avgStamina: currentAvgStamina(),
+        tacticalSystem: activeTactics.system,
+        lastDecisionKind: lastCoachDecisionRef.current?.kind as any,
       })
     : null;
 
@@ -6561,6 +6894,40 @@ function MatchPage() {
         </div>
       )}
 
+      {phase === "penalty_order" && pendingPenaltyShootout && (
+        <section className="mx-auto mb-5 w-full max-w-2xl rounded-2xl border border-border/70 bg-card/90 p-4 shadow-xl sm:p-6">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[0.65rem] font-bold uppercase tracking-[0.16em] text-muted-foreground">Tanda de penaltis</p>
+              <h2 className="mt-1 text-xl font-black">Elige el orden de los lanzadores</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Organiza quién lanzará cada penalti. Puedes cambiar el orden antes de empezar.</p>
+            </div>
+            <span className="rounded-lg bg-muted px-2.5 py-1 text-xs font-bold">{penaltyOrderIds.length} jugadores</span>
+          </div>
+          <div className="space-y-2">
+            {penaltyOrderIds.map((id, index) => {
+              const player = pendingPenaltyShootout.userIsHome ? pendingPenaltyShootout.homeXI.find((p) => p.id === id) : pendingPenaltyShootout.awayXI.find((p) => p.id === id);
+              if (!player) return null;
+              return (
+                <div key={id} className="flex items-center gap-3 rounded-xl border border-border/60 bg-background/70 px-3 py-2">
+                  <span className="w-7 text-center text-sm font-black tabular-nums text-muted-foreground">{index + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-bold">{player.name}</div>
+                    <div className="text-[0.68rem] text-muted-foreground">{Array.isArray(player.positions) ? player.positions.slice(0, 2).join(" / ") : "Jugador"}</div>
+                  </div>
+                  <span className="text-xs font-semibold text-muted-foreground">{player.attributes?.SHO ?? player.rating ?? "—"}</span>
+                  <button type="button" aria-label={`Subir a ${player.name}`} disabled={index === 0} onClick={() => movePenaltyTaker(index, -1)} className="rounded-lg border border-border p-2 text-muted-foreground transition hover:bg-muted disabled:opacity-25"><ChevronUp className="h-4 w-4" /></button>
+                  <button type="button" aria-label={`Bajar a ${player.name}`} disabled={index === penaltyOrderIds.length - 1} onClick={() => movePenaltyTaker(index, 1)} className="rounded-lg border border-border p-2 text-muted-foreground transition hover:bg-muted disabled:opacity-25"><ChevronDown className="h-4 w-4" /></button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-5 flex justify-end">
+            <button type="button" onClick={confirmPenaltyOrder} disabled={penaltyOrderIds.length === 0} className={btnPrimary}>Comenzar tanda</button>
+          </div>
+        </section>
+      )}
+
       <div className="match-main-grid grid items-start gap-3.5 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.88fr)] 2xl:gap-4">
         <div className="min-w-0 space-y-3">
           <div className="match-pitch-panel panel-glow p-3 sm:p-4 xl:p-4">
@@ -6573,7 +6940,7 @@ function MatchPage() {
               <div className="flex shrink-0 items-center gap-2">
                 <span className="chip hidden sm:inline-flex">FORMACIONES</span>
                 <span className={`match-phase-pill ${phase === "playing" || phase === "extra_time" ? "is-live" : phase === "done" ? "is-done" : ""}`}>
-                  {phase === "preview" ? "PREVIA" : phase === "playing" ? "EN JUEGO" : phase === "extra_time" ? "PRÓRROGA" : phase === "penalties" ? "PENALTIS" : "FINAL"}
+                  {phase === "preview" ? "PREVIA" : phase === "playing" ? "EN JUEGO" : phase === "extra_time" ? "PRÓRROGA" : phase === "penalty_order" || phase === "penalties" ? "PENALTIS" : "FINAL"}
                 </span>
               </div>
             </div>
@@ -6700,6 +7067,119 @@ function MatchPage() {
               )}
               {phase === "playing" && (
                 <div className="w-full space-y-2">
+                  <div className="rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/[0.08] via-card/80 to-background/50 p-3.5 text-left panel-glow shadow-[0_16px_45px_-34px_hsl(var(--primary)/.65)]">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        {(() => {
+                          const Icon = TACTIC_ICONS[activeTactics.system];
+                          return <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span>;
+                        })()}
+                        <div className="min-w-0">
+                          <div className="text-[0.57rem] font-black uppercase tracking-[0.14em] text-primary">Plan activo</div>
+                          <div className="truncate text-sm font-black">{liveTacticDefinition?.name ?? "Plan de partido"}</div>
+                          <div className="mt-0.5 text-[0.64rem] text-muted-foreground">Mentalidad {activeTactics.mentality === "defensive" ? "defensiva" : activeTactics.mentality === "offensive" ? "ofensiva" : "equilibrada"} · {liveGameStyleDefinition?.name ?? "Mixto"} · {liveTacticIntensity}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-3 border-t border-border/60 pt-3">
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {TACTICAL_MENTALITIES.map((mentality) => {
+                              const open = expandedTacticMentality === mentality.id;
+                              const current = activeTactics.mentality === mentality.id;
+                              return (
+                                <button
+                                  key={mentality.id}
+                                  aria-expanded={open}
+                                  onClick={() => setExpandedTacticMentality(open ? null : mentality.id)}
+                                  className={`rounded-lg border px-2 py-2 text-[0.62rem] font-black transition ${
+                                    mentality.id === "defensive"
+                                      ? open ? "border-blue-500 bg-blue-600 text-white" : current ? "border-blue-500/50 bg-blue-500/10 text-blue-300" : "border-blue-500/25 bg-blue-500/[0.045] text-blue-300/85 hover:border-blue-500/55"
+                                      : mentality.id === "balanced"
+                                        ? open ? "border-emerald-500 bg-emerald-600 text-white" : current ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300" : "border-emerald-500/25 bg-emerald-500/[0.045] text-emerald-300/85 hover:border-emerald-500/55"
+                                        : open ? "border-red-500 bg-red-600 text-white" : current ? "border-red-500/50 bg-red-500/10 text-red-300" : "border-red-500/25 bg-red-500/[0.045] text-red-300/85 hover:border-red-500/55"
+                                  }`}
+                                >
+                                  {mentality.name}
+                                  {current && <span className={`ml-1 inline-block h-1.5 w-1.5 rounded-full ${open ? "bg-white" : mentality.id === "defensive" ? "bg-blue-400" : mentality.id === "balanced" ? "bg-emerald-400" : "bg-red-400"} align-middle`} />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {expandedTacticMentality ? (
+                            <div>
+                              <div className="mb-1.5 text-[0.56rem] text-muted-foreground">{TACTICAL_MENTALITIES.find((item) => item.id === expandedTacticMentality)?.description}</div>
+                              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                                {TACTICAL_OPTIONS_BY_MENTALITY[expandedTacticMentality].map((system) => {
+                                  const selected = activeTactics.system === system.id;
+                                  const remaining = lastTacticChangeMinuteRef.current <= -90 || ["halftime", "et_break", "et_halftime"].includes(String(pauseReasonRef.current ?? pauseReason)) ? 0 : Math.max(0, 14 - (minute - lastTacticChangeMinuteRef.current));
+                                  const Icon = TACTIC_ICONS[system.id];
+                                  return (
+                                    <button key={system.id} disabled={(!selected && remaining > 0)} onClick={() => changeActiveTactic({ system: system.id })} className={`rounded-xl border p-2.5 text-left transition-all ${selected ? "border-primary/60 bg-gradient-to-br from-primary/[0.12] to-card/80 shadow-[0_8px_22px_-17px_hsl(var(--primary)/.75)]" : "border-border/70 bg-background/45 hover:border-primary/45 hover:bg-card/70"} disabled:cursor-not-allowed disabled:opacity-60`}>
+                                      <span className="flex items-center gap-1.5">
+                                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${selected ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}><Icon className="h-3 w-3" /></span>
+                                        <span className="min-w-0 flex-1 text-[0.66rem] font-extrabold">{system.name}</span>
+                                        {selected && <span className="text-[0.5rem] font-black uppercase text-primary">Activa</span>}
+                                      </span>
+                                      <span className="mt-1.5 block text-[0.58rem] leading-snug text-muted-foreground">{system.description}</span>
+                                      <span className="mt-2 grid grid-cols-1 gap-1.5 border-t border-border/50 pt-2">
+                                        <span className="rounded-md border border-emerald-500/15 bg-emerald-500/[0.055] px-2 py-1.5">
+                                          <span className="block text-[0.46rem] font-black uppercase tracking-wider text-emerald-400/90">A favor</span>
+                                          <span className="mt-0.5 block text-[0.55rem] leading-snug text-foreground/90">{system.advantages[0]}</span>
+                                        </span>
+                                        <span className="rounded-md border border-rose-500/15 bg-rose-500/[0.045] px-2 py-1.5">
+                                          <span className="block text-[0.46rem] font-black uppercase tracking-wider text-rose-400/90">A cambio</span>
+                                          <span className="mt-0.5 block text-[0.55rem] leading-snug text-foreground/85">{system.risks[0]}</span>
+                                        </span>
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-lg border border-border/50 bg-background/25 px-2.5 py-2 text-[0.58rem] text-muted-foreground">
+                              Plan actual: <span className="font-bold text-foreground">{liveTacticDefinition?.name ?? "Plan equilibrado"}</span>. Elige una mentalidad para ver sus opciones.
+                            </div>
+                          )}
+                          <div className="border-t border-border/60 pt-2">
+                            <div className="mb-1.5 text-[0.58rem] font-black uppercase tracking-[0.12em] text-muted-foreground">Estilo de juego</div>
+                            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+                              {TACTICAL_GAME_STYLES.map((style) => {
+                                const selected = activeTactics.gameStyle === style.id;
+                                const remaining = lastTacticChangeMinuteRef.current <= -90 || ["halftime", "et_break", "et_halftime"].includes(String(pauseReasonRef.current ?? pauseReason)) ? 0 : Math.max(0, 14 - (minute - lastTacticChangeMinuteRef.current));
+                                return (
+                                  <button key={style.id} disabled={(!selected && remaining > 0)} onClick={() => changeActiveTactic({ gameStyle: style.id })} className={`rounded-lg border px-2 py-2 text-left transition ${selected ? "border-primary/60 bg-primary/10 text-primary" : "border-border/70 bg-background/50 hover:border-primary/50"} disabled:cursor-not-allowed disabled:opacity-60`}>
+                                    <span className="block text-[0.62rem] font-extrabold">{style.name}</span>
+                                    <span className="mt-1 block text-[0.54rem] leading-snug text-muted-foreground">{style.description}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                              <div className="rounded-md border border-emerald-500/15 bg-emerald-500/[0.055] px-2.5 py-2">
+                                <span className="block text-[0.46rem] font-black uppercase tracking-wider text-emerald-400/90">A favor</span>
+                                <span className="mt-0.5 block text-[0.55rem] leading-snug text-foreground/90">{liveGameStyleDefinition?.advantage}</span>
+                              </div>
+                              <div className="rounded-md border border-rose-500/15 bg-rose-500/[0.045] px-2.5 py-2">
+                                <span className="block text-[0.46rem] font-black uppercase tracking-wider text-rose-400/90">A cambio</span>
+                                <span className="mt-0.5 block text-[0.55rem] leading-snug text-foreground/85">{liveGameStyleDefinition?.risk}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        {liveCoachDecision && lastCoachDecisionRef.current?.id !== liveCoachDecision.id && (
+                          <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-2.5">
+                            <div className="text-[0.62rem] font-black uppercase tracking-wider text-amber-500">{liveCoachDecision.title}</div>
+                            <p className="mt-1 text-xs text-muted-foreground">{liveCoachDecision.prompt}</p>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {liveCoachDecision.options.map((option) => <button key={option.id} onClick={() => applyCoachOption(option, liveCoachDecision)} className={`${btnSecondary} h-8 px-2.5 text-[0.65rem]`}>{option.label}</button>)}
+                            </div>
+                          </div>
+                        )}
+                      <p className="text-[0.61rem] text-muted-foreground">Cada ajuste cuesta 2,6 de energía (1,7 en el descanso). Puedes ajustar táctica o estilo cada 14 minutos; en el descanso no hay espera.</p>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap items-center justify-center gap-1.5">
                     <div className={segmentBase}>
                       {[1, 2, 4].map((value) => (
@@ -6908,6 +7388,30 @@ function MatchPage() {
                   const acc = accumulateStats(fixture.result.stats, phase === "done" ? 90 : minute);
                   return <MatchStatsPanel home={acc.home} away={acc.away} homeColor={matchTeamColors.homeColor} awayColor={matchTeamColors.awayColor} />;
                 })()}
+              {phase === "done" && (fixtureRef.current?.result?.tacticalImpact ?? fixture?.result?.tacticalImpact) && (
+                <div className="rounded-xl border border-border/70 bg-card/70 p-3 panel-glow">
+                  <div className="mb-1 text-xs font-black uppercase tracking-[0.14em]">Lo que dejó tu plan</div>
+                  <p className="mb-2 text-[0.6rem] text-muted-foreground">Acciones generadas durante el encuentro.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {(["home", "away"] as const).map((side) => {
+                      const impact = (fixtureRef.current?.result?.tacticalImpact ?? fixture.result.tacticalImpact)[side];
+                      const label = side === "home" ? (home.name ?? "Local") : (away.name ?? "Visitante");
+                      const definition = TACTICAL_SYSTEMS.find((item) => item.id === impact.system);
+                      return <div key={side} className="rounded-lg bg-background/60 p-2">
+                        <div className="truncate text-xs font-bold">{label}</div>
+                        <div className="mt-0.5 text-xs font-black text-primary">{definition?.name ?? impact.system}</div>
+                        <div className="mt-0.5 text-[0.6rem] font-semibold text-muted-foreground">{impact.mentality === "defensive" ? "Mentalidad defensiva" : impact.mentality === "offensive" ? "Mentalidad ofensiva" : "Mentalidad equilibrada"} · {TACTICAL_GAME_STYLES.find((item) => item.id === impact.gameStyle)?.name ?? "Mixto"}</div>
+                        <div className="mt-2 grid grid-cols-2 gap-1 text-[0.65rem] text-muted-foreground">
+                          <span>Robos altos <b className="text-foreground">{impact.highRecoveries}</b></span>
+                          <span>Contras <b className="text-foreground">{impact.counterAttacks}</b></span>
+                          <span>Centros <b className="text-foreground">{impact.crosses}</b></span>
+                          <span>Contras recibidas <b className="text-foreground">{impact.counterAttacksConceded}</b></span>
+                        </div>
+                      </div>;
+                    })}
+                  </div>
+                </div>
+              )}
               {phase === "done" && fixture?.result && (
                 <PlayerRatingsPanel
                   ratings={fixture.result.ratings ?? []}

@@ -6,7 +6,7 @@ import {
   type MatchStats,
   type PlayerRating,
 } from "@/lib/matchStats";
-import { tacticsModifiers, type TeamTactics } from "@/lib/teamTactics";
+import { tacticsModifiers, resolveMatchTactics, tacticalMatchupMultiplier, TACTICAL_SYSTEMS, type TeamTactics } from "@/lib/teamTactics";
 import { type PosCode } from "@/lib/positions";
 import { type FormationName } from "@/lib/formations";
 import { drainPerMinute, fatigueInjuryRisk, staminaPerformanceMultiplier } from "@/lib/liveMatch";
@@ -85,6 +85,38 @@ function penaltyTakerScore(player: Player): number {
   return (penalties * 0.45) + (stats.finishing * 0.22) +
     (stats.shooting * 0.13) + (stats.composure * 0.10) +
     (stats.shotPower * 0.05) + (stats.volleys * 0.03) + (stats.longShots * 0.02);
+}
+
+/** Devuelve siempre al lanzador designado si sigue disponible en el campo. */
+export function selectPenaltyTaker(xi: Player[], designatedId?: string | null): Player | undefined {
+  if (!xi.length) return undefined;
+  const designated = designatedId ? xi.find((player) => player.id === designatedId) : undefined;
+  if (designated) return designated;
+  const outfield = xi.filter((player) => !isGoalkeeper(player.positions ?? []));
+  return outfield.slice().sort((a, b) =>
+    penaltyTakerScore(b) - penaltyTakerScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0),
+  )[0] ?? xi[0];
+}
+
+/** Selecciona al especialista de faltas o córners, con alternativa si ya no está en el campo. */
+export function selectDeadBallTaker(
+  xi: Player[],
+  designatedId?: string | null,
+  kind: "freekick" | "corner" = "freekick",
+): Player | undefined {
+  const designated = designatedId ? xi.find((player) => player.id === designatedId) : undefined;
+  if (designated) return designated;
+  const outfield = xi.filter((player) => !isGoalkeeper(player.positions ?? []));
+  if (!outfield.length) return undefined;
+  const score = (player: Player) => {
+    const creative = getPlayerCreativeStats(player.id, player.attributes);
+    return kind === "corner"
+      ? creative.crossing * 0.55 + creative.shortPassing * 0.25 + creative.longPassing * 0.20
+      : creative.shortPassing * 0.35 + creative.longPassing * 0.45 + creative.crossing * 0.20;
+  };
+  return outfield.slice().sort((a, b) =>
+    score(b) - score(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0),
+  )[0];
 }
 
 export function scorerGoalThreat(player: Player): number {
@@ -271,6 +303,34 @@ function calculateDefenseStrength(xi: Player[]): number {
   return defAvg * 0.6 + gkAvg * 0.25 + midAvg * 0.15;
 }
 
+function tacticalImpactSummary(
+  homeTactics: SimTactics | null,
+  awayTactics: SimTactics | null,
+  homeXI: Player[],
+  awayXI: Player[],
+) {
+  const home = tacticsModifiers(homeTactics, homeXI);
+  const away = tacticsModifiers(awayTactics, awayXI);
+  const impact = (tactics: SimTactics | null, own: ReturnType<typeof tacticsModifiers>, rival: ReturnType<typeof tacticsModifiers>) => {
+    const system = tactics?.system ?? "possession";
+    return {
+      system,
+      mentality: tactics?.mentality ?? tactics?.style ?? "balanced",
+      gameStyle: tactics?.gameStyle ?? "balanced",
+      highRecoveries: Math.max(0, Math.round(4 + own.highRecoveries * 18)),
+      counterAttacks: Math.max(0, Math.round(1.5 + own.counterThreat * 16)),
+      crosses: Math.max(0, Math.round(4 + own.crossThreat * 19)),
+      setPieceThreat: Math.round(own.setPieceThreat * 100),
+      counterAttacksConceded: Math.max(0, Math.round(1 + rival.counterThreat * Math.max(0.5, own.defensiveRisk) * 15)),
+      commentary: [TACTICAL_SYSTEMS.find((item) => item.id === system)?.description ?? "El equipo mantiene su plan de partido."],
+    };
+  };
+  return {
+    home: impact(homeTactics, home, away),
+    away: impact(awayTactics, away, home),
+  };
+}
+
 export function expectedGoals(
   home: Team,
   away: Team,
@@ -284,8 +344,10 @@ export function expectedGoals(
   // favorito. La versión anterior daba demasiado peso a pequeñas diferencias
   // aleatorias de xG y eso podía permitir demasiados equipos inferiores arriba
   // de la clasificación después de pocas jornadas.
-  const hMod = tacticsModifiers(homeTactics ?? null);
-  const aMod = tacticsModifiers(awayTactics ?? null);
+  const resolvedHomeTactics = resolveMatchTactics(homeTactics ?? null, homeXI, home.id);
+  const resolvedAwayTactics = resolveMatchTactics(awayTactics ?? null, awayXI, away.id);
+  const hMod = tacticsModifiers(resolvedHomeTactics, homeXI);
+  const aMod = tacticsModifiers(resolvedAwayTactics, awayXI);
 
   const homeAttack = calculateAttackStrength(homeXI) || 65;
   const homeDefense = calculateDefenseStrength(homeXI) || 65;
@@ -341,8 +403,28 @@ export function expectedGoals(
   lh *= (1 + (styleGoalFactorHome - 1) * 0.35) * hMod.chanceCreation;
   la *= (1 + (styleGoalFactorAway - 1) * 0.35) * aMod.chanceCreation;
 
-  const homeStyle = homeTactics ?? {};
-  const awayStyle = awayTactics ?? {};
+  const homeStyle = resolvedHomeTactics;
+  const awayStyle = resolvedAwayTactics;
+
+  // Piedra-papel-tijera suave: el emparejamiento altera el reparto de ocasiones,
+  // nunca garantiza un resultado y se limita a una oscilación de pocos puntos.
+  lh *= tacticalMatchupMultiplier(homeStyle.system, awayStyle.system);
+  la *= tacticalMatchupMultiplier(awayStyle.system, homeStyle.system);
+
+  // El sistema también cambia QUÉ tipo de ataque se fabrica: centros, rupturas,
+  // combinaciones centrales, segundas jugadas y balón parado.
+  const homeChanceProfile = 1 + hMod.crossThreat * 0.045 + hMod.throughThreat * 0.055 +
+    hMod.centralThreat * 0.045 + hMod.longBallThreat * 0.025 + hMod.setPieceThreat * 0.045 + hMod.highRecoveries * 0.035;
+  const awayChanceProfile = 1 + aMod.crossThreat * 0.045 + aMod.throughThreat * 0.055 +
+    aMod.centralThreat * 0.045 + aMod.longBallThreat * 0.025 + aMod.setPieceThreat * 0.045 + aMod.highRecoveries * 0.035;
+  lh *= Math.max(0.94, Math.min(1.065, homeChanceProfile));
+  la *= Math.max(0.94, Math.min(1.065, awayChanceProfile));
+
+  // Una transición rápida es mucho más peligrosa cuando el rival arriesga con
+  // línea alta o presión mal encajada. La misma táctica deja huecos al perderla.
+  la *= 1 + Math.max(0, aMod.counterThreat) * Math.max(0, hMod.defensiveRisk - 0.92) * 0.22;
+  lh *= 1 + Math.max(0, hMod.counterThreat) * Math.max(0, aMod.defensiveRisk - 0.92) * 0.22;
+
   // Interacciones entre los dos planes. La presión alta puede forzar pérdidas
   // ante salida corta, pero el juego directo/contraataque castiga una línea alta.
   if (homeStyle.pressure === "high" && awayStyle.passingStyle === "short") {
@@ -363,6 +445,16 @@ export function expectedGoals(
   if (awayStyle.attackingWidth === "wide" && homeStyle.width === "narrow") la *= 1.025;
   lh *= 1 + (hMod.defensiveRisk - 1) * 0.38;
   la *= 1 + (aMod.defensiveRisk - 1) * 0.38;
+
+  // Los sistemas redistribuyen el peligro entre equipos; el volumen total se
+  // mantiene cerca del objetivo histórico (≈2,95 xG) y evita tácticas dominantes.
+  const tacticalTotal = Math.max(0.1, lh + la);
+  const targetTotal = totalXg * Math.max(0.97, Math.min(1.03,
+    1 + ((hMod.setPieceThreat + aMod.setPieceThreat) * 0.012) +
+    ((hMod.highRecoveries + aMod.highRecoveries) * 0.006),
+  ));
+  lh *= targetTotal / tacticalTotal;
+  la *= targetTotal / tacticalTotal;
 
   // Un toque pequeño de variación por partido evita que el mismo emparejamiento
   // se repita siempre con el mismo xG, pero la aleatoriedad ya no domina el
@@ -395,6 +487,9 @@ export type MatchEvent = {
   scorerName: string;
   assistId?: string;
   assistName?: string;
+  /** Lanzador real de una falta directa o del córner que originó el gol. */
+  setPieceTakerId?: string;
+  setPieceTakerName?: string;
   /**
    * Extra context shown in the chronicle, e.g. which rival player conceded the
    * penalty. Lets a penalty produce a SINGLE chronicle line instead of two.
@@ -500,6 +595,19 @@ export type SimResult = {
   homeFormation?: FormationName;
   awayFormation?: FormationName;
   substitutions?: SubstitutionEvent[];
+  /** Resumen de impacto táctico del encuentro para paneles y crónica. */
+  tacticalImpact?: Record<"home" | "away", {
+    system: string;
+    mentality?: string;
+    gameStyle?: string;
+    fit: number;
+    highRecoveries: number;
+    counterAttacks: number;
+    crosses: number;
+    setPieceThreat: number;
+    counterAttacksConceded: number;
+    commentary: string[];
+  }>;
   /** Final physical energy by player id. */
   energyAtEnd?: Record<string, number>;
   /** Guard for the user-team post-match satisfaction/mailbox hook. */
@@ -599,7 +707,8 @@ function maybeInjury(
   if (active.length === 0) return null;
 
   const pressure = (tactics?.pressure ?? "medium") as "low" | "medium" | "high";
-  const staminaMult = tacticsModifiers(tactics).stamina;
+  const baseTacticMods = tacticsModifiers(tactics, xi);
+  const staminaMult = baseTacticMods.stamina;
   const candidates = active.map((player) => {
     const priorSub = plannedSubs
       .filter((sub) => sub.team === team && sub.playerInId === player.id && sub.minute <= minute)
@@ -616,17 +725,25 @@ function maybeInjury(
       fatigueRisk: fatigueInjuryRisk(estimatedStamina),
     };
   });
+  const projectedAverageStamina = candidates.length
+    ? candidates.reduce((sum, candidate) => sum + candidate.estimatedStamina, 0) / candidates.length
+    : 100;
+  const tacticMods = tacticsModifiers(tactics, xi, { minute, averageStamina: projectedAverageStamina });
+  const fatigueAdjustedCandidates = candidates.map((candidate) => ({
+    ...candidate,
+    fatigueRisk: candidate.fatigueRisk * tacticMods.injuryRisk,
+  }));
 
   // A typical match injury is still uncommon, but slightly more likely than before.
   // Once a player is below 40% energy, the match-level risk rises sharply.
-  const anyVeryTired = candidates.some((c) => c.estimatedStamina < 40);
+  const anyVeryTired = fatigueAdjustedCandidates.some((c) => c.estimatedStamina < 40);
   const baseChance = injuryChanceForLeague(leagueTeamCount);
-  const matchInjuryChance = Math.min(0.55, baseChance * (anyVeryTired ? 2.2 : 1));
+  const matchInjuryChance = Math.min(0.55, baseChance * (anyVeryTired ? 2.2 : 1) * tacticMods.injuryRisk);
   if (rand() > matchInjuryChance) return null;
 
   // Fatigue also makes the low-energy players more likely to be the one who
   // actually suffers the injury.
-  const weighted = candidates.map((c) => ({
+  const weighted = fatigueAdjustedCandidates.map((c) => ({
     player: c.player,
     weight: Math.max(0.25, c.fatigueRisk),
   }));
@@ -1206,7 +1323,23 @@ export function calculateEnergyAtEnd(
   }
   const all = [...xi, ...bench];
   const result: Record<string, number> = {};
-  const staminaMultiplier = tacticsModifiers(tactics ?? null).stamina;
+  const pressure = (tactics?.pressure ?? "medium") as "low" | "medium" | "high";
+  const baseStaminaMultiplier = tacticsModifiers(tactics ?? null, xi).stamina;
+  const projectedEnergy = all
+    .filter((player) => Number(minutes[player.id] ?? 0) > 0)
+    .map((player) => {
+      const mins = Number(minutes[player.id] ?? 0);
+      const startEnergy = enteredAt.has(player.id) ? 100 : (player.energy ?? 100);
+      const drain = drainPerMinute(player.positions?.[0] ?? "MC", pressure, baseStaminaMultiplier);
+      return Math.max(0, Math.min(100, startEnergy - mins * drain));
+    });
+  const projectedAverageStamina = projectedEnergy.length
+    ? projectedEnergy.reduce((sum, energy) => sum + energy, 0) / projectedEnergy.length
+    : 100;
+  const staminaMultiplier = tacticsModifiers(tactics ?? null, xi, {
+    minute: matchDuration,
+    averageStamina: projectedAverageStamina,
+  }).stamina;
   for (const player of all) {
     const mins = Number(minutes[player.id] ?? 0);
     if (mins <= 0) {
@@ -1214,7 +1347,7 @@ export function calculateEnergyAtEnd(
       continue;
     }
     const startEnergy = enteredAt.has(player.id) ? 100 : (player.energy ?? 100);
-    const drain = drainPerMinute(player.positions?.[0] ?? "MC", (tactics?.pressure ?? "medium") as "low" | "medium" | "high", staminaMultiplier);
+    const drain = drainPerMinute(player.positions?.[0] ?? "MC", pressure, staminaMultiplier);
     result[player.id] = Math.round(Math.max(0, Math.min(100, startEnergy - mins * drain)) * 10) / 10;
   }
   return result;
@@ -1284,8 +1417,8 @@ export function simulateMatchFast(
 ): SimResult {
   const homeBench = opts.homeBench ?? [];
   const awayBench = opts.awayBench ?? [];
-  const homeTactics = opts.homeTactics ?? null;
-  const awayTactics = opts.awayTactics ?? null;
+  const homeTactics = resolveMatchTactics(opts.homeTactics ?? null, homeXI, home.id);
+  const awayTactics = resolveMatchTactics(opts.awayTactics ?? null, awayXI, away.id);
   const homeFormation = opts.homeFormation ?? "Táctica 4-4-2";
   const awayFormation = opts.awayFormation ?? "Táctica 4-4-2";
 
@@ -1397,7 +1530,7 @@ export function simulateMatchFast(
   const RED_REASONS = ["entrada muy dura", "mano en el área", "última falta", "conducta violenta"];
 
   function simulateTeamCardsFast(xi: Player[], bench: Player[], team: "home" | "away") {
-    const mods = tacticsModifiers(team === "home" ? homeTactics : awayTactics);
+    const mods = tacticsModifiers(team === "home" ? homeTactics : awayTactics, xi);
     const aggression = mods.aggression * mods.foulRisk;
 
     for (const player of [...xi, ...bench]) {
@@ -1795,6 +1928,7 @@ export function simulateMatchFast(
     injuries,
     xgHome: lh,
     xgAway: la,
+    tacticalImpact: tacticalImpactSummary(homeTactics, awayTactics, homeXI, awayXI),
     highlights,
     ratings,
     mvp,
@@ -1832,12 +1966,12 @@ export function simulateMatch(
 ): SimResult {
   const homeBench = opts.homeBench ?? [];
   const awayBench = opts.awayBench ?? [];
-  const homeTactics = opts.homeTactics ?? null;
-  const awayTactics = opts.awayTactics ?? null;
+  const homeTactics = resolveMatchTactics(opts.homeTactics ?? null, homeXI, home.id);
+  const awayTactics = resolveMatchTactics(opts.awayTactics ?? null, awayXI, away.id);
   const homeFormation = opts.homeFormation ?? "Táctica 4-4-2";
   const awayFormation = opts.awayFormation ?? "Táctica 4-4-2";
-  const homeMods = tacticsModifiers(homeTactics);
-  const awayMods = tacticsModifiers(awayTactics);
+  const homeMods = tacticsModifiers(homeTactics, homeXI);
+  const awayMods = tacticsModifiers(awayTactics, awayXI);
 
   // Planned CPU substitutions are created before any match events. This makes
   // the match timeline authoritative: once a player leaves, he is no longer
@@ -1858,17 +1992,6 @@ export function simulateMatch(
       seed: `away:${home.name}:${away.name}:${homeXI.map((p) => p.id).join(",")}:${awayXI.map((p) => p.id).join(",")}`,
     }),
   ].sort((a, b) => a.minute - b.minute);
-
-  /** Designated taker from the tactics screen, if he is on the pitch. */
-  const designated = (
-    xi: Player[],
-    tactics: SimTactics | null,
-    role: "penaltyTakerId" | "freekickTakerId" | "cornerTakerId",
-  ): Player | null => {
-    const id = tactics?.[role];
-    if (!id) return null;
-    return xi.find((p) => p.id === id) ?? null;
-  };
 
   // -------------------------------------------------------------------------
   // 1. Cards. Rates are per-player and per-match, calibrated so a typical game
@@ -2215,6 +2338,8 @@ export function simulateMatch(
         type: "free_kick_goal",
         scorerId: shooter.id,
         scorerName: shooter.name,
+        setPieceTakerId: shooter.id,
+        setPieceTakerName: shooter.name,
         detail: "Falta directa",
       });
       return true;
@@ -2234,6 +2359,8 @@ export function simulateMatch(
       scorerName: scorer.name,
       assistId: assister?.id,
       assistName: assister?.name,
+      setPieceTakerId: fromCorner ? cornerTaker?.id : undefined,
+      setPieceTakerName: fromCorner ? cornerTaker?.name : undefined,
       detail: fromCorner ? "A la salida de un córner" : undefined,
     });
 
@@ -2267,30 +2394,18 @@ export function simulateMatch(
       (stats.longShots * 0.02);
   };
 
-  const passingRating = (player: Player): number =>
-    Number((player as any).shortPassing ?? 0) * 0.55 + Number((player as any).longPassing ?? 0) * 0.45;
-
   const pickDeadBallTaker = (
     xi: Player[],
     tactics: SimTactics | null,
     key: "freekickTakerId" | "cornerTakerId",
-  ): Player | undefined => {
-    const active = xi.filter((p) => !isGoalkeeper(p.positions));
-    if (!active.length) return undefined;
-    const designatedPlayer = designated(xi, tactics, key);
-    return (
-      designatedPlayer ??
-      active.slice().sort((a, b) => passingRating(b) - passingRating(a) || b.rating - a.rating)[0]
-    );
-  };
+  ): Player | undefined => selectDeadBallTaker(
+    xi,
+    tactics?.[key],
+    key === "cornerTakerId" ? "corner" : "freekick",
+  );
 
-  const pickPenaltyTaker = (xi: Player[], tactics: SimTactics | null): Player | undefined => {
-    const active = xi.filter((p) => !isGoalkeeper(p.positions));
-    if (!active.length) return undefined;
-    const named = designated(xi, tactics, "penaltyTakerId");
-    return (named && active.some((p) => p.id === named.id) ? named : undefined) ??
-      active.slice().sort((a, b) => penaltyTakerScore(b) - penaltyTakerScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0))[0];
-  };
+  const pickPenaltyTaker = (xi: Player[], tactics: SimTactics | null): Player | undefined =>
+    selectPenaltyTaker(xi, tactics?.penaltyTakerId);
 
   const pickAvailableMinute = (team: "home" | "away") => {
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -2508,6 +2623,7 @@ export function simulateMatch(
     injuries,
     xgHome: lh,
     xgAway: la,
+    tacticalImpact: tacticalImpactSummary(homeTactics, awayTactics, homeXI, awayXI),
     highlights,
     stats,
     ratings,
@@ -2583,13 +2699,15 @@ export function simulateExtraTime(
     ? activeAway90.reduce((s, p) => s + p.rating, 0) / activeAway90.length
     : 60;
 
+  const extraTimeHomeTactics = resolveMatchTactics(opts.homeTactics ?? null, activeHome90, home.id, { minute: 90 });
+  const extraTimeAwayTactics = resolveMatchTactics(opts.awayTactics ?? null, activeAway90, away.id, { minute: 90 });
   const { lh, la } = expectedGoals(
     home,
     away,
     activeHome90.map((p) => ({ ...p, rating: p.rating * 0.96 })),
     activeAway90.map((p) => ({ ...p, rating: p.rating * 0.96 })),
-    opts.homeTactics ?? null,
-    opts.awayTactics ?? null,
+    extraTimeHomeTactics,
+    extraTimeAwayTactics,
   );
   const etXGHome = Math.max(0.03, lh * (0.34 + Math.min(0.10, activeHome90.length * 0.005) + Math.max(0, etHomeAvg - 75) * 0.001));
   const etXGAway = Math.max(0.03, la * (0.34 + Math.min(0.10, activeAway90.length * 0.005) + Math.max(0, etAwayAvg - 75) * 0.001));
@@ -2636,7 +2754,13 @@ export function simulateExtraTime(
 export function simulatePenaltyShootout(
   homeXI: Player[],
   awayXI: Player[],
-  options: { injuries?: readonly InjuryEvent[] } = {},
+  options: {
+    injuries?: readonly InjuryEvent[];
+    homePenaltyTakerId?: string | null;
+    awayPenaltyTakerId?: string | null;
+    homePenaltyOrderIds?: readonly string[];
+    awayPenaltyOrderIds?: readonly string[];
+  } = {},
 ): {
   homeGoals: number;
   awayGoals: number;
@@ -2648,23 +2772,34 @@ export function simulatePenaltyShootout(
   // Solo participan jugadores que llegaron al final del encuentro sin haber
   // sufrido una lesión durante ese partido. Las sustituciones/expulsiones ya
   // deben venir reflejadas en las alineaciones recibidas.
-  const eligibleTakers = (xi: Player[], team: "home" | "away") => {
+  const eligibleTakers = (
+    xi: Player[],
+    team: "home" | "away",
+    designatedId?: string | null,
+    orderedIds: readonly string[] = [],
+  ) => {
     const injuredIds = new Set(
       matchInjuries.filter((injury) => injury.team === team && injury.playerId).map((injury) => injury.playerId),
     );
     const seen = new Set<string>();
-    return xi.filter((player: any) => {
+    const available = xi.filter((player: any) => {
       if (!player?.id || seen.has(player.id) || injuredIds.has(player.id)) return false;
       seen.add(player.id);
       return true;
     });
+    const preferred = designatedId ? available.find((player) => player.id === designatedId) : undefined;
+    const ranked = available
+      .filter((player) => player.id !== preferred?.id)
+      .sort((a, b) => penaltyTakerScore(b) - penaltyTakerScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0));
+    const fallbackOrder = preferred ? [preferred, ...ranked] : ranked;
+    if (!orderedIds.length) return fallbackOrder;
+    const byId = new Map(fallbackOrder.map((player) => [player.id, player]));
+    const ordered = orderedIds.map((id) => byId.get(id)).filter((player): player is Player => Boolean(player));
+    for (const player of fallbackOrder) if (!ordered.some((entry) => entry.id === player.id)) ordered.push(player);
+    return ordered;
   };
-  const homeTakers = eligibleTakers(homeXI, "home").sort((a, b) =>
-    penaltyTakerScore(b) - penaltyTakerScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0),
-  );
-  const awayTakers = eligibleTakers(awayXI, "away").sort((a, b) =>
-    penaltyTakerScore(b) - penaltyTakerScore(a) || Number(b.rating ?? 0) - Number(a.rating ?? 0),
-  );
+  const homeTakers = eligibleTakers(homeXI, "home", options.homePenaltyTakerId, options.homePenaltyOrderIds);
+  const awayTakers = eligibleTakers(awayXI, "away", options.awayPenaltyTakerId, options.awayPenaltyOrderIds);
 
   // If one side has fewer eligible players (e.g. a dismissal), the other side
   // must reduce its taker pool to the same size before the first kick.
@@ -2798,6 +2933,8 @@ export function simulateCupMatch(
     if (totalHome === totalAway) {
       const penaltyResult = simulatePenaltyShootout(finalHomeLineup120, finalAwayLineup120, {
         injuries: [...(regularResult.injuries ?? []), ...((extraTimeResult as any).injuries ?? [])],
+        homePenaltyTakerId: opts.homeTactics?.penaltyTakerId,
+        awayPenaltyTakerId: opts.awayTactics?.penaltyTakerId,
       });
 
       // Combine all results, preserving lineups/formation/ratings/mvp from regular time

@@ -924,6 +924,8 @@ export function fixCupDraws(save: SaveGame): SaveGame {
           );
           const penaltyResult = simulatePenaltyShootout(finalHome, finalAway, {
             injuries: mutableResult.injuries ?? [],
+            homePenaltyTakerId: loadTactics(f.homeId).penaltyTakerId,
+            awayPenaltyTakerId: loadTactics(f.awayId).penaltyTakerId,
           });
 
           mutableResult.penalties = {
@@ -4339,7 +4341,11 @@ export function simulatePromotionPlayoffsThroughDate(
           if (aggregateAfterET) {
             const finalHome = getActivePlayersAtMinute(homeXI, homeBench, result.substitutions ?? [], result.cards ?? [], "home", 120, result.injuries ?? []);
             const finalAway = getActivePlayersAtMinute(awayXI, awayBench, result.substitutions ?? [], result.cards ?? [], "away", 120, result.injuries ?? []);
-            const penalties = simulatePenaltyShootout(finalHome, finalAway, { injuries: result.injuries ?? [] });
+            const penalties = simulatePenaltyShootout(finalHome, finalAway, {
+              injuries: result.injuries ?? [],
+              homePenaltyTakerId: loadTactics(fixture.homeId).penaltyTakerId,
+              awayPenaltyTakerId: loadTactics(fixture.awayId).penaltyTakerId,
+            });
             result.penalties = { homeGoals: penalties.homeGoals, awayGoals: penalties.awayGoals, shootout: penalties.shootout };
           }
         }
@@ -5035,6 +5041,8 @@ export async function simulateCupMatchdayLayered(
             );
             const penaltyResult = simulatePenaltyShootout(finalHome, finalAway, {
               injuries: result.injuries ?? [],
+              homePenaltyTakerId: loadTactics(fixture.homeId).penaltyTakerId,
+              awayPenaltyTakerId: loadTactics(fixture.awayId).penaltyTakerId,
             });
             result.penalties = {
               homeGoals: penaltyResult.homeGoals,
@@ -5332,6 +5340,8 @@ export async function simulateRemainingCupMatches(
               );
               const penaltyResult = simulatePenaltyShootout(finalHome, finalAway, {
                 injuries: result.injuries ?? [],
+                homePenaltyTakerId: getCachedCupTactics(f.homeId).penaltyTakerId,
+                awayPenaltyTakerId: getCachedCupTactics(f.awayId).penaltyTakerId,
               });
 
               result.penalties = {
@@ -5417,6 +5427,8 @@ export async function simulateRemainingCupMatches(
             );
             const penaltyResult = simulatePenaltyShootout(finalHome, finalAway, {
               injuries: result.injuries ?? [],
+              homePenaltyTakerId: getCachedCupTactics(f.homeId).penaltyTakerId,
+              awayPenaltyTakerId: getCachedCupTactics(f.awayId).penaltyTakerId,
             });
 
             result.penalties = {
@@ -7635,6 +7647,8 @@ function processScheduledBackgroundSimsImpl(
               );
               const penaltyResult = simulatePenaltyShootout(penaltyHome, penaltyAway, {
                 injuries: result.injuries ?? [],
+                homePenaltyTakerId: getScheduledCupTactics(f.homeId).penaltyTakerId,
+                awayPenaltyTakerId: getScheduledCupTactics(f.awayId).penaltyTakerId,
               });
               result.penalties = {
                 homeGoals: penaltyResult.homeGoals,
@@ -9559,6 +9573,8 @@ export function simulateUCLKnockoutMatchday(save: SaveGame, matchday: number): S
             );
             const penResult = simulatePenaltyShootout(finalHome, finalAway, {
               injuries: simmed.result.injuries ?? [],
+              homePenaltyTakerId: loadTactics(simmed.homeId).penaltyTakerId,
+              awayPenaltyTakerId: loadTactics(simmed.awayId).penaltyTakerId,
             });
             simmed.result.penalties = {
               homeGoals: penResult.homeGoals,
@@ -9790,6 +9806,8 @@ function simulateEuropeanFixtureFast(
       );
       const penResult = simulatePenaltyShootout(finalHome, finalAway, {
         injuries: result.injuries ?? [],
+        homePenaltyTakerId: loadTactics(fixture.homeId).penaltyTakerId,
+        awayPenaltyTakerId: loadTactics(fixture.awayId).penaltyTakerId,
       });
       result.penalties = {
         homeGoals: penResult.homeGoals,

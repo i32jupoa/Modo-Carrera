@@ -158,19 +158,19 @@ export function MatchIntroPanel({
   );
 
   const renderTacticalPanel = (plan: MatchPreviewAnalysis["homePlan"], accent: string) => (
-    <section className="match-preview-team-tactical match-preview-tactical min-w-0 rounded-xl border border-white/[0.09] bg-white/[0.025] p-3 sm:p-4" style={{ ["--team-accent" as string]: accent } as CSSProperties}>
-      <div className="flex items-start justify-between gap-3">
+    <section className="match-preview-team-tactical match-preview-tactical min-w-0 rounded-xl border border-white/[0.09] bg-white/[0.025] p-3 sm:p-3.5" style={{ ["--team-accent" as string]: accent } as CSSProperties}>
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-[0.56rem] font-black uppercase tracking-[0.16em] text-lime-200/70"><Target className="h-3.5 w-3.5" /> Lectura táctica</div>
-          <h3 className="mt-1.5 text-sm font-extrabold leading-snug text-white sm:text-base">{plan.heading}</h3>
+          <div className="flex items-center gap-1.5 text-[0.55rem] font-black uppercase tracking-[0.15em] text-lime-200/65"><Target className="h-3 w-3" /> Plan de partido</div>
+          <h3 className="mt-1 truncate text-sm font-extrabold text-white sm:text-base">{plan.heading}</h3>
+          <p className="mt-1 text-[0.59rem] font-semibold text-white/60">Mentalidad {plan.mentality} · {plan.gameStyle}</p>
         </div>
-        <span className="shrink-0 rounded-lg border border-white/10 bg-white/[0.045] px-2 py-1.5 text-[0.66rem] font-black text-white/70">{plan.formation}</span>
+        <span className="shrink-0 rounded-md border border-white/10 bg-white/[0.045] px-2 py-1 text-[0.62rem] font-bold text-white/65">{plan.formation}</span>
       </div>
-      <p className="mt-2 text-[0.68rem] leading-relaxed text-white/65 sm:text-[0.74rem]">{plan.body}</p>
-      <p className="mt-2 rounded-lg border border-white/[0.07] bg-black/15 px-2.5 py-2 text-[0.64rem] leading-relaxed text-white/55">{plan.strength}</p>
-      <div className="mt-2.5 flex flex-wrap gap-1.5">
-        {plan.tags.map((tag) => <span key={tag} className="rounded-full border border-white/10 bg-white/[0.045] px-2 py-1 text-[0.55rem] font-bold text-white/55">{tag}</span>)}
-      </div>
+      <p className="mt-1.5 text-[0.66rem] leading-snug text-white/65 sm:text-[0.7rem]">{plan.body}</p>
+      <p className={`mt-2 rounded-md border px-2 py-1.5 text-[0.62rem] font-semibold ${plan.matchupStatus === "favorable" ? "border-emerald-300/15 bg-emerald-300/[0.05] text-emerald-100/75" : plan.matchupStatus === "complicado" ? "border-amber-300/15 bg-amber-300/[0.05] text-amber-100/75" : "border-white/[0.07] bg-black/15 text-white/55"}`}>
+        {plan.matchupStatus === "favorable" ? "Buen cruce" : plan.matchupStatus === "complicado" ? "Ojo con" : "Duelo equilibrado"} · {plan.matchup}
+      </p>
     </section>
   );
 

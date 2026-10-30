@@ -66,6 +66,9 @@ export type LiveMatchState = {
   opponentSubsDone?: any[];
   /** Small tactical bias carried by the live layer into upcoming events. */
   outcomeBias?: number;
+  /** Sistema e instante del último cambio, persistidos para reanudar el partido. */
+  activeTactics?: any;
+  lastTacticChangeMinute?: number;
   scene?: {
     kind: "prelude" | "resolution" | "var" | "penalty_intro";
     moment?: any;
@@ -74,7 +77,7 @@ export type LiveMatchState = {
   } | null;
 };
 
-export const LIVE_VERSION = 8;
+export const LIVE_VERSION = 9;
 const KEY = "mc:live-match";
 
 export function saveLive(state: LiveMatchState) {
@@ -203,6 +206,8 @@ function sanitizeLoadedLiveState(raw: any): LiveMatchState {
     opponentPlan: safeArray(raw?.opponentPlan),
     opponentSubsDone: safeArray(raw?.opponentSubsDone),
     outcomeBias: Number.isFinite(Number(raw?.outcomeBias)) ? Number(raw.outcomeBias) : 0,
+    activeTactics: raw?.activeTactics && typeof raw.activeTactics === "object" ? raw.activeTactics : undefined,
+    lastTacticChangeMinute: Number.isFinite(Number(raw?.lastTacticChangeMinute)) ? Number(raw.lastTacticChangeMinute) : -99,
     scene: raw?.scene && typeof raw.scene === "object" ? raw.scene : null,
   } as LiveMatchState;
 }
@@ -212,7 +217,7 @@ export function loadLive(fixtureId?: string): LiveMatchState | null {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as any;
-    if (parsed?.v !== LIVE_VERSION && parsed?.v !== 5 && parsed?.v !== 4 && parsed?.v !== 3) return null;
+    if (parsed?.v !== LIVE_VERSION && parsed?.v !== 8 && parsed?.v !== 5 && parsed?.v !== 4 && parsed?.v !== 3) return null;
     if (fixtureId && parsed.fixtureId !== fixtureId) return null;
     return sanitizeLoadedLiveState(parsed);
   } catch {
