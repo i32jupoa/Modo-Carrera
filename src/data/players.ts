@@ -1,4 +1,4 @@
-import { Team, TEAMS, teamById, findTeamStrict } from "./teams";
+import { TEAMS, teamById, findTeamStrict, type Team } from "./teams";
 import playersData from "./playersData";
 import {
   buildPositions,

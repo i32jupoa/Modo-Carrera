@@ -28,7 +28,7 @@ export type Fixture = {
   europeanCompetition?: EuropeanCompetition;
   /** Real, scheduled promotion/relegation playoff tie identity. */
   promotionPlayoff?: {
-    country: "España" | "Francia" | "Alemania";
+    country: "España" | "Inglaterra" | "Francia" | "Alemania";
     seasonStartYear: number;
     tieId: string;
     stage: "semifinal" | "final" | "survival";
@@ -55,22 +55,18 @@ export function generateLeagueFixtures(
   options: SeasonCalendarOptions = {},
 ): Fixture[] {
   const seasonStartYear = options.seasonStartYear ?? INITIAL_SEASON_START_YEAR;
-  const legacyInitialSeason = seasonStartYear === INITIAL_SEASON_START_YEAR;
   const teamContext = options.teamLeagueOverrides === undefined
     ? undefined
     : { teamLeagueOverrides: options.teamLeagueOverrides };
   const teams = teamsByLeague(league, teamContext);
   let ids = teams.map((t) => t.id);
 
-  // Preserve the original 2026/27 fixture IDs and order for existing saves.
-  // Later seasons use a stable, season-scoped shuffle so the order changes
-  // between campaigns without making saves depend on runtime randomness.
+  // Every campaign, including 2026/27, uses a career-seeded order so the
+  // circle method does not permanently pin the highest-rated club to round one.
   const scheduleScope = `league-fixtures:${league}`;
   const scheduleSeed = scopedCalendarSeed(options.seed, seasonStartYear, scheduleScope);
   const random = createSeededRandom(scheduleSeed);
-  if (!legacyInitialSeason) {
-    ids = createSeasonTeamOrder(ids, seasonStartYear, options.seed, scheduleScope);
-  }
+  ids = createSeasonTeamOrder(ids, seasonStartYear, options.seed, scheduleScope);
 
   // Handle odd number of teams by adding a bye.
   if (ids.length % 2 !== 0) ids.push("__BYE__");
@@ -91,27 +87,23 @@ export function generateLeagueFixtures(
       pairings.push({ team1, team2 });
     }
 
-    // In the first season retain the exact historic home/away algorithm. In
-    // future seasons choose the round orientation that minimises repeated
-    // home/away runs; a seeded tie-break keeps the result reproducible.
-    let invertRound = round % 2 !== 0;
-    if (!legacyInitialSeason) {
-      const orientationCost = (invert: boolean): number => {
-        let cost = 0;
-        for (const pair of pairings) {
-          const home = invert ? pair.team2 : pair.team1;
-          const away = invert ? pair.team1 : pair.team2;
-          for (const [teamId, side] of [[home, "home"], [away, "away"]] as const) {
-            const previous = lastHomeAway.get(teamId);
-            if (previous?.side === side) cost += previous.streak >= 2 ? 6 : 2;
-          }
+    // Choose each round's home/away orientation to minimise repeated runs;
+    // a seeded tie-break keeps this reproducible in every campaign.
+    const orientationCost = (invert: boolean): number => {
+      let cost = 0;
+      for (const pair of pairings) {
+        const home = invert ? pair.team2 : pair.team1;
+        const away = invert ? pair.team1 : pair.team2;
+        for (const [teamId, side] of [[home, "home"], [away, "away"]] as const) {
+          const previous = lastHomeAway.get(teamId);
+          if (previous?.side === side) cost += previous.streak >= 2 ? 6 : 2;
         }
-        return cost;
-      };
-      const normalCost = orientationCost(false);
-      const invertedCost = orientationCost(true);
-      invertRound = invertedCost < normalCost || (invertedCost === normalCost && random() < 0.5);
-    }
+      }
+      return cost;
+    };
+    const normalCost = orientationCost(false);
+    const invertedCost = orientationCost(true);
+    const invertRound = invertedCost < normalCost || (invertedCost === normalCost && random() < 0.5);
 
     for (const pair of pairings) {
       const home = invertRound ? pair.team2 : pair.team1;
@@ -124,14 +116,12 @@ export function generateLeagueFixtures(
         homeId: home,
         awayId: away,
       });
-      if (!legacyInitialSeason) {
-        for (const [teamId, side] of [[home, "home"], [away, "away"]] as const) {
-          const previous = lastHomeAway.get(teamId);
-          lastHomeAway.set(teamId, {
-            side,
-            streak: previous?.side === side ? previous.streak + 1 : 1,
-          });
-        }
+      for (const [teamId, side] of [[home, "home"], [away, "away"]] as const) {
+        const previous = lastHomeAway.get(teamId);
+        lastHomeAway.set(teamId, {
+          side,
+          streak: previous?.side === side ? previous.streak + 1 : 1,
+        });
       }
     }
 

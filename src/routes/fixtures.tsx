@@ -6,7 +6,7 @@ import { ALL_LEAGUES, loadSave, SaveGame, getMatchdayFixtures } from "@/lib/stor
 
 import { LEAGUES, teamById, type LeagueId } from "@/data/teams";
 
-import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
+import { usePlayersStore } from "@/store/playersStore";
 
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
@@ -93,13 +93,6 @@ function FixturesPage() {
     setShowPlayoffs(false);
   }, [navigate, leagueParam]);
 
-  // Generate stats on-demand when league changes
-
-  useEffect(() => {
-    if (league) {
-      ensureStatsForLeague(league);
-    }
-  }, [league]);
 
   if (!save) return null;
 

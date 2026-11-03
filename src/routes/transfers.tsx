@@ -895,7 +895,7 @@ function TransfersPage() {
                           </span>
                         </div>
                         {!canPlayerMoveAgain(id, market.currentDate) && (
-                          <p className="text-[0.6rem] text-amber-400 mt-1">
+                          <p className="text-[0.6rem] text-yellow-400 mt-1">
                             Ya cambió de club este año o temporada
                           </p>
                         )}
@@ -1038,7 +1038,7 @@ function TransfersPage() {
                           </span>
                         </div>
                         {!canPlayerMoveAgain(id, market.currentDate) && (
-                          <p className="text-[0.6rem] text-amber-400 mt-1">
+                          <p className="text-[0.6rem] text-yellow-400 mt-1">
                             Ya cambió de club este año o temporada
                           </p>
                         )}

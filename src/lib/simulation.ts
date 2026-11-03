@@ -1,5 +1,5 @@
-import { Team, teamsByLeague } from "@/data/teams";
-import { Player, getPlayerShootingStats, getPlayerCreativeStats } from "@/data/players";
+import { getLeagueTier, teamsByLeague, type Team } from "@/data/teams";
+import { type Player, getPlayerShootingStats, getPlayerCreativeStats } from "@/data/players";
 import {
   buildMatchStats,
   computePlayerRatings,
@@ -37,33 +37,34 @@ function isAttacking(positions: PosCode[]): boolean {
  */
 export type SimTactics = Partial<TeamTactics>;
 
-// Divisiones en las que suele haber más igualdad de recursos y rendimiento.
-// La varianza extra solo se aplica entre equipos de la misma categoría; no
-// permite que un gran salto de calidad entre divisiones desaparezca.
-const LOWER_TIER_LEAGUES = new Set([
-  "laliga2",
-  "championship",
-  "leagueone",
-  "leaguetwo",
-  "serieb",
-  "bundesliga2",
-  "liga3",
-  "ligue2",
-]);
+export type MatchCompetitionProfile = "ucl" | "uel" | "uecl";
 
-function isLowerTierFixture(home: Team, away: Team): boolean {
-  return home.league === away.league && LOWER_TIER_LEAGUES.has(String(home.league));
+/** All modeled 2nd, 3rd and 4th divisions receive the same parity treatment. */
+export function isLowerTierFixture(home: Team, away: Team): boolean {
+  return home.league === away.league && getLeagueTier(home.league) >= 2;
 }
 
-/** Reduce moderate gaps between lower-division sides, but retain large gaps. */
-function moderateLowerTierGap(diff: number): number {
+/**
+ * Reduces the influence of XI quality on lower-division matches. The curve is
+ * deliberately gentler for big talent gaps so a club with a clearly superior
+ * squad still remains the most likely league winner over a full season.
+ */
+export function moderateLowerTierGap(diff: number): number {
   const magnitude = Math.abs(diff);
   const factor = magnitude <= 10
-    ? 0.58
-    : magnitude < 18
-      ? 0.58 + ((magnitude - 10) / 8) * 0.42
-      : 1;
+    ? 0.48
+    : magnitude <= 20
+      ? 0.48 + ((magnitude - 10) / 10) * 0.32
+      : 0.80 + Math.min(0.08, (magnitude - 20) * 0.004);
   return Math.sign(diff) * magnitude * factor;
+}
+
+/** Champions League ties should separate elite squads a little more clearly. */
+export function applyCompetitionQualityProfile(
+  diff: number,
+  competitionProfile?: MatchCompetitionProfile | null,
+): number {
+  return competitionProfile === "ucl" ? diff * 1.2 : diff;
 }
 
 function rand(): number {
@@ -338,6 +339,7 @@ export function expectedGoals(
   awayXI: Player[] = [],
   homeTactics?: SimTactics | null,
   awayTactics?: SimTactics | null,
+  competitionProfile?: MatchCompetitionProfile | null,
 ): { lh: number; la: number } {
   // El resultado de una liga debe depender de forma clara de la calidad de los
   // onces, pero sin convertir cada partido en una victoria automática del
@@ -379,7 +381,8 @@ export function expectedGoals(
   const moderatedQualityDiff = isLowerTierFixture(home, away)
     ? moderateLowerTierGap(rawQualityDiff)
     : rawQualityDiff;
-  const qualityDiff = Math.max(-30, Math.min(30, moderatedQualityDiff));
+  const competitionAdjustedDiff = applyCompetitionQualityProfile(moderatedQualityDiff, competitionProfile);
+  const qualityDiff = Math.max(-30, Math.min(30, competitionAdjustedDiff));
   const HOME_MATCH_ADVANTAGE = 2.0;
   const effectiveDiff = qualityDiff + HOME_MATCH_ADVANTAGE;
 
@@ -460,8 +463,9 @@ export function expectedGoals(
   // se repita siempre con el mismo xG, pero la aleatoriedad ya no domina el
   // resultado.
   const lowerTierFixture = isLowerTierFixture(home, away);
-  const noiseBase = lowerTierFixture ? 0.90 : 0.97;
-  const noiseRange = lowerTierFixture ? 0.20 : 0.06;
+  const championsFixture = competitionProfile === "ucl";
+  const noiseBase = lowerTierFixture ? 0.90 : championsFixture ? 0.985 : 0.97;
+  const noiseRange = lowerTierFixture ? 0.20 : championsFixture ? 0.03 : 0.06;
   lh *= noiseBase + rand() * noiseRange;
   la *= noiseBase + rand() * noiseRange;
 
@@ -1413,6 +1417,7 @@ export function simulateMatchFast(
     awayTactics?: SimTactics | null;
     homeFormation?: FormationName;
     awayFormation?: FormationName;
+    competitionProfile?: MatchCompetitionProfile;
   } = {},
 ): SimResult {
   const homeBench = opts.homeBench ?? [];
@@ -1668,7 +1673,7 @@ export function simulateMatchFast(
 
 
   const { lh: baseHomeLambda, la: baseAwayLambda } = expectedGoals(
-    home, away, homeXI, awayXI, homeTactics, awayTactics,
+    home, away, homeXI, awayXI, homeTactics, awayTactics, opts.competitionProfile,
   );
 
   // A dismissal changes the probability of later scoring in fast/background
@@ -1962,6 +1967,7 @@ export function simulateMatch(
     awayTactics?: SimTactics | null;
     homeFormation?: FormationName;
     awayFormation?: FormationName;
+    competitionProfile?: MatchCompetitionProfile;
   } = {},
 ): SimResult {
   const homeBench = opts.homeBench ?? [];
@@ -2153,6 +2159,7 @@ export function simulateMatch(
     adjustedAwayXI,
     homeTactics,
     awayTactics,
+    opts.competitionProfile,
   );
 
   // Reduce the scoring output for the minutes played a man down, while
@@ -2658,6 +2665,7 @@ export function simulateExtraTime(
     regularInjuries?: InjuryEvent[];
     homeTactics?: SimTactics | null;
     awayTactics?: SimTactics | null;
+    competitionProfile?: MatchCompetitionProfile;
   } = {},
 ): { homeGoals: number; awayGoals: number; events: MatchEvent[]; substitutions: SubstitutionEvent[] } {
   const homeBench = opts.homeBench ?? [];
@@ -2708,6 +2716,7 @@ export function simulateExtraTime(
     activeAway90.map((p) => ({ ...p, rating: p.rating * 0.96 })),
     extraTimeHomeTactics,
     extraTimeAwayTactics,
+    opts.competitionProfile,
   );
   const etXGHome = Math.max(0.03, lh * (0.34 + Math.min(0.10, activeHome90.length * 0.005) + Math.max(0, etHomeAvg - 75) * 0.001));
   const etXGAway = Math.max(0.03, la * (0.34 + Math.min(0.10, activeAway90.length * 0.005) + Math.max(0, etAwayAvg - 75) * 0.001));
@@ -2898,6 +2907,7 @@ export function simulateCupMatch(
     awayTactics?: SimTactics | null;
     homeFormation?: FormationName;
     awayFormation?: FormationName;
+    competitionProfile?: MatchCompetitionProfile;
   } = {},
 ): SimResult {
   // Simulate regular time (90 minutes)
@@ -2914,6 +2924,7 @@ export function simulateCupMatch(
       regularInjuries: regularResult.injuries ?? [],
       homeTactics: opts.homeTactics ?? null,
       awayTactics: opts.awayTactics ?? null,
+      competitionProfile: opts.competitionProfile,
     });
     const totalHome = regularResult.homeGoals + extraTimeResult.homeGoals;
     const combinedSubstitutions = [...regularSubstitutions, ...(extraTimeResult.substitutions ?? [])].sort((a, b) => a.minute - b.minute);

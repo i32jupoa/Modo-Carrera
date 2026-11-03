@@ -86,7 +86,8 @@ import {
   mergeScheduleWithPlayed,
   type ScheduleFixture,
 } from "@/lib/leagueSchedule";
-import { getSeasonStartYear } from "@/lib/season/calendarFactory";
+import { rescheduleLeagueAroundSpecialFixtures } from "@/lib/fixtureScheduler";
+import { deriveCareerCalendarSeed, getSeasonStartYear } from "@/lib/season/calendarFactory";
 
 import { getCupFixtureDateIso, getEuropeanFixtureDateIso } from "@/lib/fixtureDates";
 import type { Fixture } from "@/lib/season";
@@ -103,7 +104,6 @@ import {
 import {
   loadSave,
   saveSave,
-  generateRealisticStatsForO1Leagues,
   autoDrawForeignCups,
   simulateCupMatchdayLayered,
   simulateBackgroundLeaguesOnly,
@@ -236,112 +236,6 @@ function queueActiveAcademySync(
       if (fastForward) calendarJumpBackgroundErrors.push({ task: "canteras de la IA", error });
       console.warn("[advanceTime] AI academy simulation failed:", error);
     });
-}
-
-// Track which matchdays have already generated stats to avoid duplicates
-
-const GENERATED_STATS_KEY_PREFIX = "fcsim:generated_stats:";
-
-function generatedStatsKey(): string | null {
-  if (typeof window === "undefined") return null;
-  const saveId = window.localStorage.getItem("fcsim:save:current");
-  return saveId ? `${GENERATED_STATS_KEY_PREFIX}${saveId}` : null;
-}
-
-function getGeneratedMatchdays(): Record<string, number> {
-  const key = generatedStatsKey();
-  if (!key) return {};
-  try {
-    return JSON.parse(localStorage.getItem(key) || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function setGeneratedMatchday(leagueId: LeagueId, matchday: number) {
-  const key = generatedStatsKey();
-  if (!key) return;
-  const current = getGeneratedMatchdays();
-
-  current[leagueId] = Math.max(current[leagueId] || 0, matchday);
-
-  localStorage.setItem(key, JSON.stringify(current));
-}
-
-function hasGeneratedMatchday(leagueId: LeagueId, matchday: number): boolean {
-  const current = getGeneratedMatchdays();
-
-  return (current[leagueId] || 0) >= matchday;
-}
-
-// Clear the tracker for the active career to force regeneration
-
-export function clearGeneratedStatsTracker() {
-  const key = generatedStatsKey();
-  if (key) localStorage.removeItem(key);
-}
-
-// Generate stats on-demand for a specific league if it's O(1
-
-export function ensureStatsForLeague(leagueId: LeagueId) {
-  const save = loadSave();
-
-  if (!save) return;
-
-  if (!isVIPLeague(leagueId, save.myLeague)) {
-    const currentMatchday = save.currentMatchday[leagueId] - 1;
-
-    if (currentMatchday < 1) return;
-
-    // Get the last matchday we generated stats for
-
-    const lastGenerated = getGeneratedMatchdays()[leagueId] || 0;
-
-    // Only generate stats for matchdays we haven't processed yet
-
-    if (lastGenerated < currentMatchday) {
-      // Clear existing stats for this league's players to avoid accumulation
-
-      const store = usePlayersStore.getState();
-
-      const leagueTeams = teamsByLeague(leagueId);
-
-      for (const team of leagueTeams) {
-        const squad = store.getSimSquad(team.id);
-
-        for (const player of squad) {
-          // Reset stats for this player
-
-          const currentStats = store.stats[player.id];
-
-          if (currentStats) {
-            store.stats = {
-              ...store.stats,
-
-              [player.id]: {
-                ...currentStats,
-
-                appearances: 0,
-
-                goals: 0,
-
-                assists: 0,
-              },
-            };
-          }
-        }
-      }
-
-      generateRealisticStatsForO1Leagues(
-        save,
-        [leagueId],
-        save.currentMatchday[save.myLeague],
-        lastGenerated + 1,
-      );
-
-      setGeneratedMatchday(leagueId, currentMatchday);
-    }
-  }
 }
 
 // ...
@@ -1398,7 +1292,7 @@ export type PlayersState = {
 
   isMarketOpen: () => boolean;
 
-  generateLeagueSchedule: (myTeamId: string, league: LeagueId) => void;
+  generateLeagueSchedule: (myTeamId: string, league: LeagueId, calendarSeed?: number) => void;
 
   ensureLeagueSchedule: () => void;
 
@@ -1653,15 +1547,16 @@ function buildProtectedCompetitionDates(
   const uclCalendar = uclCalendarForSeason(seasonStartYear);
   const uclStart = uclStartForSeason(seasonStartYear);
   const add = (teamId: string, dateIso: string) => {
-    const team = teamById(teamId);
-    if (!team || team.league !== league) return;
+    const team = teamById(teamId, { teamLeagueOverrides: save?.teamLeagueOverrides });
+    const effectiveLeague = save?.teamLeagueOverrides?.[teamId] ?? team?.league;
+    if (!team || effectiveLeague !== league) return;
     const set = protectedDates.get(teamId) ?? new Set<string>();
     set.add(dateIso);
     protectedDates.set(teamId, set);
   };
 
   const addAllLeagueTeams = (dateIso: string) => {
-    for (const team of teamsByLeague(league)) add(team.id, dateIso);
+    for (const team of teamsByLeague(league, { teamLeagueOverrides: save?.teamLeagueOverrides })) add(team.id, dateIso);
   };
 
   // National cup dates are fixed by the cup structure. Reserve them for the
@@ -1925,15 +1820,23 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
       dismissedMatchIds: [],
 
-      generateLeagueSchedule: (_myTeamId, league) => {
-        const save = loadSave();
+      generateLeagueSchedule: (_myTeamId, league, calendarSeed) => {
+        // An explicit seed means a new career is being created; do not inherit
+        // cup reservations from whichever career happened to be active before.
+        const save = calendarSeed === undefined ? loadSave() : null;
+        const seasonStartYear = getSeasonStartYear(save?.season);
+        const seed = calendarSeed ?? save?.calendarSeed ?? deriveCareerCalendarSeed(_myTeamId, seasonStartYear);
         const protectedDates = buildProtectedCompetitionDates(save, league);
         set({
           fixtures: buildFullLeagueSchedule(league, protectedDates, {
-            seasonStartYear: getSeasonStartYear(save?.season),
-            seed: save?.calendarSeed,
+            seasonStartYear,
+            seed,
+            teamLeagueOverrides: save?.teamLeagueOverrides,
+            europeanTeamIds: (['ucl', 'uel', 'uecl'] as const).flatMap((comp) =>
+              getEuropeanParticipantsForSave((save ?? {}) as any, comp),
+            ),
           }),
-          leagueScheduleVersion: 3,
+          leagueScheduleVersion: 7,
           pendingUserMatch: null,
           lastUserMatchResult: null,
         });
@@ -1946,45 +1849,56 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         const team = teamById(myTeamId);
         const league = team.league;
 
-        // Version 2+ is frozen. Do not rebuild the complete calendar on every
-        // day: that is unnecessary work and makes accidental re-dating much
-        // easier. Existing fixtures are the source of truth once migrated.
-        if ((leagueScheduleVersion ?? 0) >= 3 && fixtures.length > 0) return;
+        // Version 7 schedules matchdays backwards so future fixtures reserve
+        // their dates before earlier rounds are placed. This prevents European
+        // congestion from cascading into the season deadline. The migration
+        // preserves completed results while re-dating pending fixtures.
+        if ((leagueScheduleVersion ?? 0) >= 7 && fixtures.length > 0) return;
 
         const save = loadSave();
         const protectedDates = buildProtectedCompetitionDates(save, league);
-        const full = buildFullLeagueSchedule(league, protectedDates, {
-          seasonStartYear: getSeasonStartYear(save?.season),
-          seed: save?.calendarSeed,
-        });
+        const seasonStartYear = getSeasonStartYear(save?.season);
+        const calendarOptions = {
+          seasonStartYear,
+          seed: save?.calendarSeed ?? deriveCareerCalendarSeed(myTeamId, seasonStartYear),
+          teamLeagueOverrides: save?.teamLeagueOverrides,
+          europeanTeamIds: (['ucl', 'uel', 'uecl'] as const).flatMap((comp) =>
+            getEuropeanParticipantsForSave((save ?? {}) as any, comp),
+          ),
+          notBeforeDate: save?.currentDate,
+        };
+        const full = buildFullLeagueSchedule(league, protectedDates, calendarOptions);
 
         if (fixtures.length === 0) {
-          set({ fixtures: full, leagueScheduleVersion: 3 });
+          const migrated = rescheduleLeagueAroundSpecialFixtures(full, protectedDates, calendarOptions);
+          set({ fixtures: migrated, leagueScheduleVersion: 7 });
           return;
         }
 
         if (fixtures.length < full.length) {
           const merged = mergeScheduleWithPlayed(full, fixtures, league);
-          set({ fixtures: merged, leagueScheduleVersion: 3 });
+          const migrated = rescheduleLeagueAroundSpecialFixtures(merged, protectedDates, calendarOptions);
+          set({ fixtures: migrated, leagueScheduleVersion: 7 });
           return;
         }
 
+        let migrated = fixtures;
         if ((leagueScheduleVersion ?? 0) < 3) {
-          // One-time migration for saves generated by the old dynamic scheduler:
-          // rebuild only the unplayed dates from the protected fixed calendar,
-          // preserve every played result/date, then freeze the schedule.
-          const canonicalById = new Map(full.map((f) => [f.id, f]));
-          const migrated = fixtures.map((fixture) => {
+          // Preserve historical pairings/results while adopting canonical dates
+          // wherever a fixture ID still exists in the generated schedule.
+          const canonicalById = new Map(full.map((fixture) => [fixture.id, fixture]));
+          migrated = migrated.map((fixture) => {
             if (fixture.isPlayed) return fixture;
             const canonical = canonicalById.get(fixture.id);
             return canonical ? { ...fixture, date: canonical.date } : fixture;
           });
-          set({ fixtures: migrated, leagueScheduleVersion: 3 });
-          return;
         }
 
-        // Version 2+ is immutable. No later cup/European change is allowed to
-        // move an existing league fixture.
+        // Older calendars had no season-end deadline and some background
+        // rounds were undated. Re-slot only pending fixtures; played dates,
+        // scores and fixture IDs remain untouched.
+        migrated = rescheduleLeagueAroundSpecialFixtures(migrated, protectedDates, calendarOptions);
+        set({ fixtures: migrated, leagueScheduleVersion: 7 });
       },
 
       clearPendingMatch: () => set({ pendingUserMatch: null, lastUserMatchResult: null }),

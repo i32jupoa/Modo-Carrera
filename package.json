@@ -26,6 +26,7 @@
     "test:startup-regression": "node scripts/players-store-startup-regression.mjs",
     "test:cup-calendar-runtime": "node scripts/cup-calendar-runtime-regression.mjs",
     "test:calendar-jump-competitions": "node scripts/calendar-jump-competition-regression.mjs",
+    "test:background-league-schedule": "node --experimental-strip-types scripts/background-league-schedule-regression.mjs",
     "test:calendar-jump-emergency-squad": "node scripts/calendar-jump-emergency-squad-regression.mjs",
     "test:season-boundary-rollover": "node --experimental-strip-types scripts/season-boundary-rollover-test.mjs",
     "test:simulation-stats-repair": "node scripts/simulation-stats-repair-regression.mjs",
@@ -43,7 +44,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:tactics-balance": "vitest run src/lib/teamTactics.test.ts src/lib/teamTactics.balance.test.ts src/lib/simulation.setpiece.test.ts",
-    "test:setpiece": "vitest run src/lib/simulation.setpiece.test.ts"
+    "test:setpiece": "vitest run src/lib/simulation.setpiece.test.ts",
+    "test:fixture-scheduler": "node --experimental-strip-types scripts/fixture-scheduler-regression.mjs",
+    "test:season-end-calendar": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/season-end-calendar-regression.mjs",
+    "test:promotion-playoff-calendar": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/promotion-playoff-calendar-regression.mjs",
+    "test:career-calendar-creation": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/career-calendar-creation-regression.mjs",
+    "test:season-inbox": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/season-inbox-lifecycle-test.mjs",
+    "test:season-inbox-visual": "node scripts/season-inbox-visual-regression.mjs"
   },
   "overrides": {
     "rolldown": "1.2.1"

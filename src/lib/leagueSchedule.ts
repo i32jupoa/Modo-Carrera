@@ -1,4 +1,6 @@
-import { teamById, type LeagueId } from "@/data/teams";
+import { teamById, teamsByLeague, LEAGUES, type LeagueId, type TeamLeagueContext } from "@/data/teams";
+import { getCupStructureForCountry } from "@/lib/cups";
+import { nationalCupDateForSeason } from "@/lib/calendarRules";
 import { generateLeagueFixtures } from "@/lib/season";
 import {
   getSeasonCalendarAnchors,
@@ -40,6 +42,48 @@ export type ScheduleFixture = {
   promotionPlayoff?: boolean;
 };
 
+/**
+ * Reserve the national-cup dates for every club in a division. The cup belongs
+ * to the association, but every team in the domestic league can be drawn into
+ * it, so the reservation must be applied before league dates are assigned.
+ */
+export function getLeagueCupProtectedDates(
+  league: LeagueId,
+  seasonStartYear = INITIAL_SEASON_START_YEAR,
+  teamContext?: TeamLeagueContext,
+): Map<string, Set<string>> {
+  const protectedDates = new Map<string, Set<string>>();
+  const country = LEAGUES[league]?.country;
+  if (!country) return protectedDates;
+  const teams = teamsByLeague(league, teamContext);
+  const structure = getCupStructureForCountry(country, seasonStartYear, teamContext);
+  for (const step of structure.schedule ?? []) {
+    if (typeof step.matchday !== "number") continue;
+    const date = nationalCupDateForSeason(step.matchday, seasonStartYear);
+    for (const team of teams) {
+      const dates = protectedDates.get(team.id) ?? new Set<string>();
+      dates.add(date);
+      protectedDates.set(team.id, dates);
+    }
+  }
+  return protectedDates;
+}
+
+function mergeProtectedDates(
+  first: Map<string, Set<string>>,
+  second: Map<string, Set<string>>,
+): Map<string, Set<string>> {
+  const merged = new Map<string, Set<string>>();
+  for (const source of [first, second]) {
+    for (const [teamId, dates] of source) {
+      const existing = merged.get(teamId) ?? new Set<string>();
+      for (const date of dates) existing.add(date);
+      merged.set(teamId, existing);
+    }
+  }
+  return merged;
+}
+
 /** Full league calendar with realistic weekday spread + 72h rest. */
 export function buildFullLeagueSchedule(
   league: LeagueId,
@@ -47,7 +91,9 @@ export function buildFullLeagueSchedule(
   options: SeasonCalendarOptions = {},
 ): ScheduleFixture[] {
   const raw = generateLeagueFixtures(league, options);
-  const dates = assignFixtureDates(raw, protectedDates, options);
+  const cupDates = getLeagueCupProtectedDates(league, options.seasonStartYear ?? INITIAL_SEASON_START_YEAR,
+    options.teamLeagueOverrides ? { teamLeagueOverrides: options.teamLeagueOverrides } : undefined);
+  const dates = assignFixtureDates(raw, mergeProtectedDates(protectedDates ?? new Map(), cupDates), options);
   return rawToSchedule(raw, dates, options);
 }
 

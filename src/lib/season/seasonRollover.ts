@@ -665,8 +665,8 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       .slice(0, 12)
       .map(({ id, date, playerId, playerName, fromClubId, toClubId, fee, type }) => ({ id, date, playerId, playerName, fromClubId, toClubId, fee, type }));
     const movement = calculateSavePromotionRelegation(current);
-    const domestic = prepareNextSeasonDomesticState(current, movement);
     const european = prepareEuropeanQualificationForNextSeason(current);
+    const domestic = prepareNextSeasonDomesticState(current, movement, european.europeanQualification);
 
     emitProgress(options, "archive", 12, "Archivando clasificaciones, premios y goleadores…");
     const archiveBase = buildSeasonArchive({

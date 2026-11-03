@@ -1,6 +1,6 @@
 import { type LeagueId } from "@/data/teams";
 import { getInitialEuropeanParticipants, selectEuropeanParticipants } from "@/lib/season/europeanQualification";
-import { addIsoDays, getDateOffset, shiftReferenceDateToSeason } from "@/lib/season/calendarFactory";
+import { addIsoDays, getDateOffset, getChampionsLeagueFinalDate, shiftReferenceDateToSeason } from "@/lib/season/calendarFactory";
 
 // ============================================================
 //  UCL SWISS FORMAT — 36 teams, 8 matchdays, single table
@@ -101,7 +101,7 @@ export function selectUCLParticipants(
 //   - League phase: late August → late January
 //   - Play-off round: mid-February
 //   - Round of 16: March · Quarter-finals: April
-//   - Semi-finals: late April / early May · Final: late May
+//   - Semi-finals: late April / early May · Final: first Saturday in June
 //
 //  Anchored on Tuesdays/Wednesdays so they never collide with the
 //  Spanish league (Saturdays) or the national cup (Wednesdays on cup
@@ -128,7 +128,7 @@ export const UCL_CALENDAR = {
   qfLeg2: 286, // Tue Apr 13 2027
   sfLeg1: 300, // Tue Apr 27 2027
   sfLeg2: 307, // Tue May  4 2027
-  final: 329, // Wed May 26 2027 – single-leg final
+  final: 339, // Sat Jun 5 2027 – fixed first Saturday in June
 };
 
 export function uclStartForSeason(seasonStartYear = 2026): string {
@@ -142,7 +142,10 @@ export function uclStartForSeason(seasonStartYear = 2026): string {
  * The existing UCL_CALENDAR remains the exact 2026/27 compatibility baseline.
  */
 export function uclCalendarForSeason(seasonStartYear = 2026) {
-  if (seasonStartYear === 2026) return UCL_CALENDAR;
+  if (seasonStartYear === 2026) return {
+    ...UCL_CALENDAR,
+    final: getDateOffset(uclStartForSeason(seasonStartYear), getChampionsLeagueFinalDate(seasonStartYear)),
+  };
   const start = uclStartForSeason(seasonStartYear);
   const offset = (referenceOffset: number) => {
     const referenceIso = addIsoDays(UCL_START, referenceOffset);
@@ -162,7 +165,7 @@ export function uclCalendarForSeason(seasonStartYear = 2026) {
     qfLeg2: offset(UCL_CALENDAR.qfLeg2),
     sfLeg1: offset(UCL_CALENDAR.sfLeg1),
     sfLeg2: offset(UCL_CALENDAR.sfLeg2),
-    final: offset(UCL_CALENDAR.final),
+    final: getDateOffset(start, getChampionsLeagueFinalDate(seasonStartYear)),
   };
 }
 

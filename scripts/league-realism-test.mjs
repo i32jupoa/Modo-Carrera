@@ -431,7 +431,7 @@ assert.doesNotMatch(simulationSource.slice(simulationSource.indexOf('const homeS
 assert.match(simulationSource, /const rawShare = 0\.5 \+ 0\.39 \* Math\.tanh\(effectiveDiff \/ 7\.5\)/);
 assert.match(simulationSource, /const totalXg = 2\.95/);
 assert.match(simulationSource, /export const ASSIST_PROBABILITY = 0\.88/);
-assert.match(storeSource, /Math\.random\(\) > ASSIST_PROBABILITY/);
+assert.match(storeSource, /Math\.random\(\) <= ASSIST_PROBABILITY/);
 assert.match(storeSource, /const rawShare = 0\.5 \+ 0\.39 \* Math\.tanh\(effectiveDiff \/ 7\.5\)/);
 assert.match(storeSource, /const totalXg = 2\.95/);
 assert.match(storeSource, /if \(!important && context\?\.isCongested\)/, 'La IA no debe rotar titulares solo por ser favorita');

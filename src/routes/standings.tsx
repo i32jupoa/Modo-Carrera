@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { ALL_LEAGUES, loadSave, SaveGame, getSortedStandings } from "@/lib/store";
 import { LEAGUES, teamById, teamsByLeague, type LeagueId } from "@/data/teams";
-import { usePlayersStore, ensureStatsForLeague } from "@/store/playersStore";
+import { usePlayersStore } from "@/store/playersStore";
 import { TeamLogo } from "@/components/TeamLogo";
 import { TeamForm } from "@/components/TeamForm";
 import { getTeamFormsForCompetition } from "@/lib/teamForm";
@@ -51,12 +51,6 @@ function StandingsPage() {
     setViewLeague(leagueParam || s.myLeague);
   }, [navigate, leagueParam]);
 
-  // Generate stats on-demand when league changes
-  useEffect(() => {
-    if (viewLeague) {
-      ensureStatsForLeague(viewLeague);
-    }
-  }, [viewLeague]);
 
   if (!save) return null;
 

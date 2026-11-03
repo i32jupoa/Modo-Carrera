@@ -1,10 +1,9 @@
 import type { LeagueId } from "@/data/teams";
 import { sortStandings, type Fixture } from "@/lib/season";
-import { getSeasonStartYear } from "@/lib/season/calendarFactory";
-import { addDaysToIso } from "@/lib/transferWindows";
+import { getDomesticPlayoffCalendar, getSeasonStartYear } from "@/lib/season/calendarFactory";
 import type { SaveGame } from "@/lib/store";
 
-export type PromotionPlayoffCountry = "España" | "Francia" | "Alemania";
+export type PromotionPlayoffCountry = "España" | "Inglaterra" | "Francia" | "Alemania";
 export type PromotionPlayoffStage = "semifinal" | "final" | "survival";
 export type PromotionPlayoffMeta = {
   country: PromotionPlayoffCountry;
@@ -17,6 +16,7 @@ export type PromotionPlayoffMeta = {
 };
 
 const SPANISH_LEAGUE: LeagueId = "laliga2";
+const ENGLISH_LOWER: LeagueId = "championship";
 const FRENCH_LOWER: LeagueId = "ligue2";
 const FRENCH_UPPER: LeagueId = "ligue1";
 const GERMAN_LOWER: LeagueId = "bundesliga2";
@@ -35,24 +35,6 @@ function rankedTeamIds(save: SaveGame, league: LeagueId): string[] {
 function existingPlayoffs(save: Pick<SaveGame, "cupFixtures">, league: LeagueId): Fixture[] {
   const fixtures = save.cupFixtures?.[league];
   return Array.isArray(fixtures) ? fixtures.filter((fixture) => Boolean(fixture.promotionPlayoff)) : [];
-}
-
-function latestRegularFixtureDate(save: SaveGame, leagues: LeagueId[]): string | null {
-  const dates = leagues.flatMap((league) => (save.fixtures?.[league] ?? [])
-    .map((fixture) => typeof fixture.date === "string" ? fixture.date.slice(0, 10) : "")
-    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)));
-  return dates.sort().at(-1) ?? null;
-}
-
-function laterDate(a: string, b: string): string {
-  return a >= b ? a : b;
-}
-
-function playoffStartDate(save: SaveGame, leagues: LeagueId[], currentDate?: string): string {
-  const latest = latestRegularFixtureDate(save, leagues) ?? `${getSeasonStartYear(save.season) + 1}-05-25`;
-  const afterSeason = addDaysToIso(latest, 3);
-  const afterToday = addDaysToIso(currentDate || save.currentDate || latest, 2);
-  return laterDate(afterSeason, afterToday);
 }
 
 function makeLeg(
@@ -89,14 +71,15 @@ function ensureCupList(save: SaveGame, league: LeagueId): Fixture[] {
   return Array.isArray(list) ? list : [];
 }
 
-function generateSpanishSemifinals(save: SaveGame, currentDate?: string): SaveGame {
+function generateSpanishSemifinals(save: SaveGame): SaveGame {
   if (!regularSeasonIsComplete(save, SPANISH_LEAGUE)) return save;
   const existing = existingPlayoffs(save, SPANISH_LEAGUE);
   if (existing.some((fixture) => fixture.promotionPlayoff?.stage === "semifinal")) return save;
   const ranked = rankedTeamIds(save, SPANISH_LEAGUE);
   if (ranked.length < 6) return save;
-  const start = playoffStartDate(save, [SPANISH_LEAGUE], currentDate);
-  const leg2Date = addDaysToIso(start, 3);
+  const playoffCalendar = getDomesticPlayoffCalendar(getSeasonStartYear(save.season));
+  const start = playoffCalendar.semifinalLeg1;
+  const leg2Date = playoffCalendar.semifinalLeg2;
   const seasonStartYear = getSeasonStartYear(save.season);
   const fixtures: Fixture[] = [
     // 3.º vs 6.º: ida en casa del 6.º, vuelta en casa del 3.º.
@@ -113,6 +96,21 @@ function generateSpanishSemifinals(save: SaveGame, currentDate?: string): SaveGa
 }
 
 function winnerOfTie(fixtures: Fixture[]): string | null {
+  const singleLegFinal = fixtures.find((fixture) =>
+    fixture.promotionPlayoff?.country === "Inglaterra" &&
+    fixture.promotionPlayoff.stage === "final" &&
+    fixture.promotionPlayoff.leg === 1,
+  );
+  if (singleLegFinal?.result) {
+    const homeGoals = singleLegFinal.result.homeGoals + (singleLegFinal.result.extraTime?.homeGoals ?? 0);
+    const awayGoals = singleLegFinal.result.awayGoals + (singleLegFinal.result.extraTime?.awayGoals ?? 0);
+    if (homeGoals > awayGoals) return singleLegFinal.homeId;
+    if (awayGoals > homeGoals) return singleLegFinal.awayId;
+    const penalties = singleLegFinal.result.penalties;
+    if (!penalties || penalties.homeGoals === penalties.awayGoals) return null;
+    return penalties.homeGoals > penalties.awayGoals ? singleLegFinal.homeId : singleLegFinal.awayId;
+  }
+
   const leg1 = fixtures.find((fixture) => fixture.promotionPlayoff?.leg === 1);
   const leg2 = fixtures.find((fixture) => fixture.promotionPlayoff?.leg === 2);
   if (!leg1?.result || !leg2?.result) return null;
@@ -130,7 +128,7 @@ function winnerOfTie(fixtures: Fixture[]): string | null {
   return penalties.homeGoals > penalties.awayGoals ? leg2.homeId : leg2.awayId;
 }
 
-function generateSpanishFinal(save: SaveGame, currentDate?: string): SaveGame {
+function generateSpanishFinal(save: SaveGame): SaveGame {
   const list = ensureCupList(save, SPANISH_LEAGUE);
   const playoff = list.filter((fixture) => fixture.promotionPlayoff?.country === "España");
   if (playoff.some((fixture) => fixture.promotionPlayoff?.stage === "final")) return save;
@@ -149,9 +147,9 @@ function generateSpanishFinal(save: SaveGame, currentDate?: string): SaveGame {
   if (winners.length !== 2) return save;
   const betterSeed = winners.slice().sort((a, b) => a.seed - b.seed)[0];
   const lowerSeed = winners.find((winner) => winner.id !== betterSeed.id)!;
-  const start = playoffStartDate(save, [SPANISH_LEAGUE], currentDate);
-  const finalLeg1Date = addDaysToIso(start, 4);
-  const finalLeg2Date = addDaysToIso(finalLeg1Date, 3);
+  const playoffCalendar = getDomesticPlayoffCalendar(getSeasonStartYear(save.season));
+  const finalLeg1Date = playoffCalendar.finalLeg1;
+  const finalLeg2Date = playoffCalendar.finalLeg2;
   const seasonStartYear = getSeasonStartYear(save.season);
   const fixtures = [
     makeLeg("España", SPANISH_LEAGUE, seasonStartYear, 903, "Playoff ascenso · Final-Leg1", "es-laliga2-final", "final", 1, finalLeg1Date, lowerSeed.id, betterSeed.id, lowerSeed.seed, betterSeed.seed),
@@ -160,7 +158,68 @@ function generateSpanishFinal(save: SaveGame, currentDate?: string): SaveGame {
   return { ...save, cupFixtures: { ...save.cupFixtures, [SPANISH_LEAGUE]: [...list, ...fixtures] } };
 }
 
-function generateFrenchSurvivalTie(save: SaveGame, currentDate?: string): SaveGame {
+function generateEnglishSemifinals(save: SaveGame): SaveGame {
+  if (!regularSeasonIsComplete(save, ENGLISH_LOWER)) return save;
+  const existing = existingPlayoffs(save, ENGLISH_LOWER);
+  if (existing.some((fixture) => fixture.promotionPlayoff?.country === "Inglaterra" && fixture.promotionPlayoff.stage === "semifinal")) return save;
+  const ranked = rankedTeamIds(save, ENGLISH_LOWER);
+  if (ranked.length < 6) return save;
+  const playoffCalendar = getDomesticPlayoffCalendar(getSeasonStartYear(save.season));
+  const start = playoffCalendar.semifinalLeg1;
+  const leg2Date = playoffCalendar.semifinalLeg2;
+  const seasonStartYear = getSeasonStartYear(save.season);
+  const fixtures: Fixture[] = [
+    makeLeg("Inglaterra", ENGLISH_LOWER, seasonStartYear, 931, "Playoff ascenso Championship · Semifinal 3.º-6.º-Leg1", "en-championship-sf-3-6", "semifinal", 1, start, ranked[5], ranked[2], 6, 3),
+    makeLeg("Inglaterra", ENGLISH_LOWER, seasonStartYear, 932, "Playoff ascenso Championship · Semifinal 3.º-6.º-Leg2", "en-championship-sf-3-6", "semifinal", 2, leg2Date, ranked[2], ranked[5], 3, 6),
+    makeLeg("Inglaterra", ENGLISH_LOWER, seasonStartYear, 931, "Playoff ascenso Championship · Semifinal 4.º-5.º-Leg1", "en-championship-sf-4-5", "semifinal", 1, start, ranked[4], ranked[3], 5, 4),
+    makeLeg("Inglaterra", ENGLISH_LOWER, seasonStartYear, 932, "Playoff ascenso Championship · Semifinal 4.º-5.º-Leg2", "en-championship-sf-4-5", "semifinal", 2, leg2Date, ranked[3], ranked[4], 4, 5),
+  ];
+  return {
+    ...save,
+    cupFixtures: { ...save.cupFixtures, [ENGLISH_LOWER]: [...ensureCupList(save, ENGLISH_LOWER), ...fixtures] },
+  };
+}
+
+function generateEnglishFinal(save: SaveGame): SaveGame {
+  const list = ensureCupList(save, ENGLISH_LOWER);
+  const playoff = list.filter((fixture) => fixture.promotionPlayoff?.country === "Inglaterra");
+  if (playoff.some((fixture) => fixture.promotionPlayoff?.stage === "final")) return save;
+  const semifinalTies = ["en-championship-sf-3-6", "en-championship-sf-4-5"];
+  const winners: Array<{ id: string; seed: number }> = [];
+  for (const tieId of semifinalTies) {
+    const tieFixtures = playoff.filter((fixture) => fixture.promotionPlayoff?.tieId === tieId);
+    if (tieFixtures.length !== 2 || tieFixtures.some((fixture) => !fixture.result)) return save;
+    const winnerId = winnerOfTie(tieFixtures);
+    if (!winnerId) return save;
+    const winnerFixture = tieFixtures.find((fixture) => fixture.homeId === winnerId || fixture.awayId === winnerId)!;
+    const meta = winnerFixture.promotionPlayoff!;
+    const seed = winnerFixture.homeId === winnerId ? meta.homeSeed : meta.awaySeed;
+    winners.push({ id: winnerId, seed });
+  }
+  if (winners.length !== 2) return save;
+  const finalists = winners.slice().sort((a, b) => a.seed - b.seed);
+  const finalDate = getDomesticPlayoffCalendar(getSeasonStartYear(save.season)).singleLegFinal;
+  const seasonStartYear = getSeasonStartYear(save.season);
+  const [betterSeed, lowerSeed] = finalists;
+  const fixture = makeLeg(
+    "Inglaterra",
+    ENGLISH_LOWER,
+    seasonStartYear,
+    933,
+    "Playoff ascenso Championship · Final",
+    "en-championship-final",
+    "final",
+    1,
+    finalDate,
+    betterSeed.id,
+    lowerSeed.id,
+    betterSeed.seed,
+    lowerSeed.seed,
+  );
+  return { ...save, cupFixtures: { ...save.cupFixtures, [ENGLISH_LOWER]: [...list, fixture] } };
+}
+
+function generateFrenchSurvivalTie(save: SaveGame): SaveGame {
   if (!regularSeasonIsComplete(save, FRENCH_UPPER) || !regularSeasonIsComplete(save, FRENCH_LOWER)) return save;
   const existing = existingPlayoffs(save, FRENCH_LOWER);
   if (existing.some((fixture) => fixture.promotionPlayoff?.country === "Francia")) return save;
@@ -170,8 +229,9 @@ function generateFrenchSurvivalTie(save: SaveGame, currentDate?: string): SaveGa
   // In a 18-team Ligue 1, third from bottom is 16th.
   const ligue1Candidate = upper[upper.length - 3];
   const ligue2Candidate = lower[2];
-  const start = playoffStartDate(save, [FRENCH_UPPER, FRENCH_LOWER], currentDate);
-  const returnDate = addDaysToIso(start, 3);
+  const playoffCalendar = getDomesticPlayoffCalendar(getSeasonStartYear(save.season));
+  const start = playoffCalendar.survivalLeg1;
+  const returnDate = playoffCalendar.survivalLeg2;
   const seasonStartYear = getSeasonStartYear(save.season);
   const fixtures = [
     makeLeg("Francia", FRENCH_LOWER, seasonStartYear, 911, "Playoff permanencia Ligue 1-Ligue 2-Leg1", "fr-ligue1-ligue2-survival", "survival", 1, start, ligue2Candidate, ligue1Candidate, 3, 16),
@@ -181,7 +241,7 @@ function generateFrenchSurvivalTie(save: SaveGame, currentDate?: string): SaveGa
 }
 
 
-function generateGermanSurvivalTie(save: SaveGame, currentDate?: string): SaveGame {
+function generateGermanSurvivalTie(save: SaveGame): SaveGame {
   if (!regularSeasonIsComplete(save, GERMAN_UPPER) || !regularSeasonIsComplete(save, GERMAN_LOWER)) return save;
   const existing = existingPlayoffs(save, GERMAN_LOWER);
   if (existing.some((fixture) => fixture.promotionPlayoff?.country === "Alemania")) return save;
@@ -192,8 +252,9 @@ function generateGermanSurvivalTie(save: SaveGame, currentDate?: string): SaveGa
   // La ida se juega en casa del equipo de segunda; la vuelta, en casa del de primera.
   const bundesligaCandidate = upper[upper.length - 3];
   const bundesliga2Candidate = lower[2];
-  const start = playoffStartDate(save, [GERMAN_UPPER, GERMAN_LOWER], currentDate);
-  const returnDate = addDaysToIso(start, 3);
+  const playoffCalendar = getDomesticPlayoffCalendar(getSeasonStartYear(save.season));
+  const start = playoffCalendar.survivalLeg1;
+  const returnDate = playoffCalendar.survivalLeg2;
   const seasonStartYear = getSeasonStartYear(save.season);
   const fixtures = [
     makeLeg("Alemania", GERMAN_LOWER, seasonStartYear, 921, "Playoff permanencia Bundesliga-2. Bundesliga-Leg1", "de-bundesliga-bundesliga2-survival", "survival", 1, start, bundesliga2Candidate, bundesligaCandidate, 3, 16),
@@ -202,26 +263,72 @@ function generateGermanSurvivalTie(save: SaveGame, currentDate?: string): SaveGa
   return { ...save, cupFixtures: { ...save.cupFixtures, [GERMAN_LOWER]: [...ensureCupList(save, GERMAN_LOWER), ...fixtures] } };
 }
 
-/** Generate real, dated playoff legs only after all involved regular leagues have finished. */
-export function ensurePromotionPlayoffFixtures(save: SaveGame, currentDate?: string): SaveGame {
-  let next = generateSpanishSemifinals(save, currentDate);
-  next = generateSpanishFinal(next, currentDate);
-  next = generateFrenchSurvivalTie(next, currentDate);
-  next = generateGermanSurvivalTie(next, currentDate);
-  return next;
+function scheduledPromotionPlayoffDate(
+  meta: PromotionPlayoffMeta,
+  calendar: ReturnType<typeof getDomesticPlayoffCalendar>,
+): string {
+  if (meta.country === "España" || meta.country === "Inglaterra") {
+    if (meta.stage === "semifinal") return meta.leg === 1 ? calendar.semifinalLeg1 : calendar.semifinalLeg2;
+    if (meta.stage === "final") {
+      if (meta.country === "Inglaterra") return calendar.singleLegFinal;
+      return meta.leg === 1 ? calendar.finalLeg1 : calendar.finalLeg2;
+    }
+  }
+  if ((meta.country === "Francia" || meta.country === "Alemania") && meta.stage === "survival") {
+    return meta.leg === 1 ? calendar.survivalLeg1 : calendar.survivalLeg2;
+  }
+  return "";
+}
+
+/**
+ * Generate dated playoff legs after the regular seasons finish, and migrate
+ * pending fixtures from older saves to the current country-specific windows.
+ * Played results and their historical dates are never changed.
+ */
+export function ensurePromotionPlayoffFixtures(save: SaveGame, _currentDate?: string): SaveGame {
+  let next = generateSpanishSemifinals(save);
+  next = generateSpanishFinal(next);
+  next = generateEnglishSemifinals(next);
+  next = generateEnglishFinal(next);
+  next = generateFrenchSurvivalTie(next);
+  next = generateGermanSurvivalTie(next);
+
+  let fixturesChanged = false;
+  const cupFixtures = { ...next.cupFixtures };
+  for (const [leagueId, fixtures] of Object.entries(cupFixtures)) {
+    if (!Array.isArray(fixtures)) continue;
+    let leagueChanged = false;
+    const updated = fixtures.map((fixture) => {
+      const meta = fixture.promotionPlayoff;
+      if (!meta || fixture.result) return fixture;
+      const calendar = getDomesticPlayoffCalendar(meta.seasonStartYear || getSeasonStartYear(next.season));
+      const date = scheduledPromotionPlayoffDate(meta, calendar);
+      if (!date || fixture.date === date) return fixture;
+      leagueChanged = true;
+      return { ...fixture, date };
+    });
+    if (leagueChanged) {
+      cupFixtures[leagueId as LeagueId] = updated;
+      fixturesChanged = true;
+    }
+  }
+
+  return fixturesChanged ? { ...next, cupFixtures } : next;
 }
 
 /** Winner IDs from the completed, played ties; used by the season rollover instead of random re-draws. */
 export function getPlayedPromotionPlayoffWinners(save: Pick<SaveGame, "cupFixtures">): Partial<Record<PromotionPlayoffCountry, string>> {
   const winners: Partial<Record<PromotionPlayoffCountry, string>> = {};
-  for (const country of ["España", "Francia", "Alemania"] as const) {
+  for (const country of ["España", "Inglaterra", "Francia", "Alemania"] as const) {
     const league = country === "España"
       ? SPANISH_LEAGUE
-      : country === "Francia"
-        ? FRENCH_LOWER
-        : GERMAN_LOWER;
+      : country === "Inglaterra"
+        ? ENGLISH_LOWER
+        : country === "Francia"
+          ? FRENCH_LOWER
+          : GERMAN_LOWER;
     const list = existingPlayoffs(save, league).filter((fixture) => fixture.promotionPlayoff?.country === country);
-    const finalStage = country === "España" ? "final" : "survival";
+    const finalStage = country === "España" || country === "Inglaterra" ? "final" : "survival";
     const tie = list.filter((fixture) => fixture.promotionPlayoff?.stage === finalStage);
     const winner = winnerOfTie(tie);
     if (winner) winners[country] = winner;

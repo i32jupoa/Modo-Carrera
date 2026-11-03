@@ -68,6 +68,48 @@ describe("squad roles", () => {
     expect(midfieldCore).toHaveLength(4);
   });
 
+
+  it("keeps a reserve striker in rotation instead of promoting him to starter", () => {
+    const squad = [
+      player("gk1", 88, 88, 29, "GK"),
+      player("gk2", 79, 80, 27, "GK"),
+      ...Array.from({ length: 4 }, (_, index) => player(`def${index + 1}`, 84 - index, 85, 25, "DFC")),
+      player("def5", 78, 80, 24, "DFC"),
+      ...Array.from({ length: 3 }, (_, index) => player(`mid${index + 1}`, 86 - index, 88, 25, "MC")),
+      player("mid4", 78, 82, 23, "MC"),
+      player("wing1", 88, 90, 25, "LW"),
+      player("wing2", 80, 84, 24, "RW"),
+      player("wing3", 77, 80, 23, "LW"),
+      player("st1", 91, 93, 27, "DC"),
+      player("st2", 80, 87, 20, "DC"),
+      player("carlos-espi", 77, 86, 20, "DC"),
+    ];
+    const typicalXI = new Set([
+      "gk1", "def1", "def2", "def3", "def4", "mid1", "mid2", "mid3", "wing1", "wing2", "st1",
+    ]);
+    const roles = assignSquadRoles(squad, typicalXI);
+
+    expect(roles["carlos-espi"]).toBe("rotation");
+    expect(roles["carlos-espi"]).not.toBe("starter");
+    expect(roles["st2"]).toBe("rotation");
+  });
+
+  it("does not classify an established 77-OVR young striker as a prospect", () => {
+    const squad = [
+      player("gk", 84, 85, 28, "GK"),
+      ...Array.from({ length: 4 }, (_, index) => player(`d${index}`, 82 - index, 84, 26, "DFC")),
+      ...Array.from({ length: 3 }, (_, index) => player(`m${index}`, 82 - index, 85, 25, "MC")),
+      player("lw", 86, 88, 25, "LW"),
+      player("rw", 80, 84, 24, "RW"),
+      player("st", 90, 92, 27, "DC"),
+      player("carlos", 77, 86, 20, "DC"),
+    ];
+    const typicalXI = new Set(squad.slice(0, 11).map((p) => p.id));
+    const roles = assignSquadRoles(squad, typicalXI);
+
+    expect(roles.carlos).toBe("rotation");
+  });
+
   it("uses the negotiated role even when it conflicts with the automatic positional ranking", () => {
     const squad = [
       player("best", 90, 92, 27, "DC"),

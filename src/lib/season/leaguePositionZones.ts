@@ -6,6 +6,7 @@ import {
 import type { SaveGame } from "@/lib/store";
 import { selectEuropeanParticipants } from "./europeanQualification";
 import { DEFAULT_PROMOTION_PYRAMIDS } from "./promotionRelegationCore";
+import { getPlayedPromotionPlayoffWinners } from "./promotionPlayoffs";
 
 export type LeagueZoneKind =
   | "champions"
@@ -13,6 +14,7 @@ export type LeagueZoneKind =
   | "conference"
   | "promotion"
   | "promotion-playoff"
+  | "promotion-playoff-winner"
   | "relegation"
   | "relegation-playoff";
 
@@ -58,6 +60,13 @@ export const LEAGUE_ZONE_PRESENTATION: Record<LeagueZoneKind, {
     badgeClass: "bg-lime-500/15 text-lime-300",
     dotClass: "bg-lime-500",
   },
+  "promotion-playoff-winner": {
+    label: "Ascendido por playoff",
+    shortLabel: "↑ PO",
+    borderClass: "border-l-emerald-400",
+    badgeClass: "bg-emerald-500/20 text-emerald-300",
+    dotClass: "bg-emerald-400",
+  },
   relegation: {
     label: "Descenso directo",
     shortLabel: "↓",
@@ -80,6 +89,7 @@ const ZONE_ORDER: LeagueZoneKind[] = [
   "conference",
   "promotion",
   "promotion-playoff",
+  "promotion-playoff-winner",
   "relegation-playoff",
   "relegation",
 ];
@@ -159,6 +169,23 @@ export function getLeaguePositionZones(
     for (let index = directPromotionCount; index < directPromotionCount + playoffCount; index += 1) {
       addZone(zones, rankedIds[index], "promotion-playoff");
     }
+
+    // A played promotion/survival playoff overrides the projected zone: the
+    // team that actually won the tie must remain visibly promoted in the
+    // final league table, even though it finished outside the top two.
+    const playoffCountryByLowerLeague: Record<string, "España" | "Inglaterra" | "Francia" | "Alemania"> = {
+      laliga2: "España",
+      championship: "Inglaterra",
+      ligue2: "Francia",
+      bundesliga2: "Alemania",
+    };
+    const playoffCountry = playoffCountryByLowerLeague[leagueId];
+    if (playoffCountry) {
+      const playoffWinnerId = getPlayedPromotionPlayoffWinners(save)[playoffCountry];
+      if (playoffWinnerId && rankedIds.includes(playoffWinnerId)) {
+        addZone(zones, playoffWinnerId, "promotion-playoff-winner");
+      }
+    }
   }
 
   // For divisions that feed a lower tier, mirror the configured actual movement
@@ -189,6 +216,7 @@ export function primaryLeagueZone(kinds: readonly LeagueZoneKind[]): LeagueZoneK
   const priority: LeagueZoneKind[] = [
     "relegation",
     "relegation-playoff",
+    "promotion-playoff-winner",
     "promotion",
     "promotion-playoff",
     "champions",

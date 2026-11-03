@@ -39,6 +39,14 @@ function nextThursdayOffset(offset: number, seasonStartYear: number): number {
   return offset + (delta === 0 ? 7 : delta);
 }
 
+/** The Europa/Conference finals are played on the Thursday immediately before the UCL final. */
+function previousThursdayOffset(offset: number, seasonStartYear: number): number {
+  const iso = dateAtOffset(uclStartForSeason(seasonStartYear), offset);
+  const day = weekday(iso);
+  const delta = (day - 4 + 7) % 7;
+  return offset - (delta === 0 ? 7 : delta);
+}
+
 /** All Tuesday/Wednesday dates from the Champions calendar. */
 export function getChampionsMatchDateOffsets(seasonStartYear = INITIAL_SEASON_START_YEAR): number[] {
   const calendar = uclCalendarForSeason(seasonStartYear);
@@ -58,9 +66,12 @@ export function getChampionsMatchDateOffsets(seasonStartYear = INITIAL_SEASON_ST
 
 /** Europa League and Conference League use the Thursday of the UEFA match week. */
 export function getEuropeanThursdayOffsets(seasonStartYear = INITIAL_SEASON_START_YEAR): number[] {
-  return [...new Set(getChampionsMatchDateOffsets(seasonStartYear).map((offset) => nextThursdayOffset(offset, seasonStartYear)))].sort(
-    (a, b) => a - b,
-  );
+  const calendar = uclCalendarForSeason(seasonStartYear);
+  return [...new Set(getChampionsMatchDateOffsets(seasonStartYear).map((offset) =>
+    offset === calendar.final
+      ? previousThursdayOffset(offset, seasonStartYear)
+      : nextThursdayOffset(offset, seasonStartYear),
+  ))].sort((a, b) => a - b);
 }
 
 /** Weeks containing a European fixture are protected from national-cup matches. */

@@ -1,6 +1,6 @@
 /** Transfer windows + date helpers (local calendar, no UTC drift). */
 
-import { getSeasonCalendarAnchors, INITIAL_SEASON_START_YEAR } from "@/lib/season/calendarFactory";
+import { getSeasonCalendarAnchors, INITIAL_SEASON_START_YEAR } from "./season/calendarFactory.ts";
 
 /** Legacy initial-career anchor; new season-aware code should call gameStartDateForSeason. */
 export const GAME_START_DATE = "2026-07-01";

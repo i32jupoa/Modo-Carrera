@@ -9,6 +9,8 @@ import {
 import { initCup } from "@/lib/cups";
 import { emptyStandings, generateLeagueFixtures, type Fixture, type Standing } from "@/lib/season";
 import { getSeasonStartYear } from "@/lib/season/calendarFactory";
+import { assignFixtureDates } from "@/lib/fixtureScheduler";
+import { getLeagueCupProtectedDates } from "@/lib/leagueSchedule";
 import type { SaveGame } from "@/lib/store";
 import {
   calculatePromotionRelegation,
@@ -94,6 +96,7 @@ export type NextSeasonDomesticState = {
 export function prepareNextSeasonDomesticState(
   save: Pick<SaveGame, "season" | "calendarSeed" | "standings" | "teamLeagueOverrides" | "myTeamId">,
   movementResult: PromotionRelegationResult = calculateSavePromotionRelegation(save),
+  europeanQualification?: { ucl?: string[]; uel?: string[]; uecl?: string[] },
 ): NextSeasonDomesticState {
   const teamLeagueOverrides = applyPromotionRelegationAssignments(save, movementResult);
   const teamContext: TeamLeagueContext = { teamLeagueOverrides };
@@ -107,12 +110,26 @@ export function prepareNextSeasonDomesticState(
   const standings: Record<LeagueId, Standing[]> = {} as Record<LeagueId, Standing[]>;
   const currentMatchday: Record<LeagueId, number> = {} as Record<LeagueId, number>;
 
+  const europeanTeamIds = [...new Set([
+    ...(europeanQualification?.ucl ?? []),
+    ...(europeanQualification?.uel ?? []),
+    ...(europeanQualification?.uecl ?? []),
+  ])];
+
   for (const leagueId of leagueIds) {
-    fixtures[leagueId] = generateLeagueFixtures(leagueId, {
+    const rawFixtures = generateLeagueFixtures(leagueId, {
       seasonStartYear,
       seed,
       teamLeagueOverrides,
     });
+    const cupReservations = getLeagueCupProtectedDates(leagueId, seasonStartYear, teamContext);
+    const dateMap = assignFixtureDates(rawFixtures, cupReservations, {
+      seasonStartYear,
+      seed,
+      teamLeagueOverrides,
+      europeanTeamIds,
+    });
+    fixtures[leagueId] = rawFixtures.map((fixture) => ({ ...fixture, date: dateMap.get(fixture.id) }));
     standings[leagueId] = emptyStandings(leagueId, teamContext as never);
     currentMatchday[leagueId] = 1;
   }

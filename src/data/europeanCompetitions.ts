@@ -148,6 +148,14 @@ function nextThursdayOffset(offset: number, seasonStartYear = INITIAL_SEASON_STA
   return offset + (delta === 0 ? 7 : delta);
 }
 
+function previousThursdayOffset(offset: number, seasonStartYear = INITIAL_SEASON_START_YEAR): number {
+  const start = new Date(`${uclStartForSeason(seasonStartYear)}T00:00:00Z`);
+  const date = new Date(start.getTime() + offset * 86400000);
+  const day = date.getUTCDay();
+  const delta = (day - 4 + 7) % 7;
+  return offset - (delta === 0 ? 7 : delta);
+}
+
 // Champions stays on Tuesday/Wednesday. Europa League and Conference League
 // always use the Thursday of the same UEFA match week. 2026/27 stays byte-for-
 // byte compatible; subsequent seasons derive weekdays from their real year.
@@ -170,7 +178,9 @@ export function europeanCalendar(seasonStartYear = INITIAL_SEASON_START_YEAR) {
     qfLeg2: nextThursdayOffset(champions.qfLeg2, seasonStartYear),
     sfLeg1: nextThursdayOffset(champions.sfLeg1, seasonStartYear),
     sfLeg2: nextThursdayOffset(champions.sfLeg2, seasonStartYear),
-    final: nextThursdayOffset(champions.final, seasonStartYear),
+    // Europa and Conference League finals must precede the Saturday UCL final,
+    // so they are scheduled on the Thursday in the same first-June week.
+    final: previousThursdayOffset(champions.final, seasonStartYear),
   };
 }
 

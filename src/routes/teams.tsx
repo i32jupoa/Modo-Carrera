@@ -14,7 +14,6 @@ import {
 } from "@/data/teams";
 import {
   usePlayersStore,
-  ensureStatsForLeague,
   squadForTeam,
   syncSquadFromRoster,
   clubOfPlayer,
@@ -297,16 +296,6 @@ function TeamsPage() {
     setSelectedLeague(s.myLeague);
   }, [navigate]);
 
-  // Generate stats on-demand when league changes
-  useEffect(() => {
-    if (selectedLeague) {
-      try {
-        ensureStatsForLeague(selectedLeague);
-      } catch (error) {
-        console.error("No se pudieron preparar las estadísticas de la liga; se muestran los datos disponibles.", error);
-      }
-    }
-  }, [selectedLeague]);
 
   // Scroll a la sección de equipos solo cuando el usuario cambia de liga,
   // nunca en el primer render (antes la página saltaba sola al entrar).

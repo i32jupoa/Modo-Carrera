@@ -50,7 +50,7 @@ import {
   primaryLeagueZone,
 } from "@/lib/season/leaguePositionZones";
 
-import { usePlayersStore, ensureStatsForLeague, useCurrentDate } from "@/store/playersStore";
+import { usePlayersStore, useCurrentDate } from "@/store/playersStore";
 
 import { TeamLogo } from "@/components/TeamLogo";
 import { LeagueLogo } from "@/components/LeagueLogo";
@@ -192,13 +192,6 @@ function SeasonPage() {
     };
   }, []);
 
-  // Generate stats on-demand when league changes
-
-  useEffect(() => {
-    if (viewLeague) {
-      ensureStatsForLeague(viewLeague);
-    }
-  }, [viewLeague]);
 
   const currentDate = useCurrentDate();
 

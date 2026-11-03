@@ -80,6 +80,7 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
               const rowZones = zones.get(row.teamId) ?? [];
               const primaryZone = primaryLeagueZone(rowZones);
               const zone = primaryZone ? LEAGUE_ZONE_PRESENTATION[primaryZone] : null;
+              const promotedByPlayoff = rowZones.includes("promotion-playoff-winner");
 
               return (
                 <tr
@@ -109,6 +110,14 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
                       <span className={`font-semibold truncate ${isMe ? "text-primary" : ""}`}>
                         {team.name}
                       </span>
+                      {promotedByPlayoff && (
+                        <span
+                          title="Ascendido a la división superior tras ganar el playoff"
+                          className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wide text-emerald-300"
+                        >
+                          Ascendido · playoff
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="py-2 text-center tabular-nums text-muted-foreground">
@@ -140,6 +149,10 @@ export function LeagueTable({ league, className = "" }: LeagueTableProps) {
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-emerald-500/80" />
           Plazas europeas
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+          Ascenso por playoff
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-sky-500/80" />

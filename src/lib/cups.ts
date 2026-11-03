@@ -1,16 +1,16 @@
 // @ts-nocheck
 import {
-  LeagueId,
   TEAMS,
   teamById,
   teamsByLeague,
   LEAGUES,
   LEAGUES_BY_COUNTRY,
   getAllTeams,
+  type LeagueId,
   type Team,
   type TeamLeagueContext,
 } from "@/data/teams";
-import { Fixture } from "@/lib/season";
+import type { Fixture } from "@/lib/season";
 import { uclCalendarForSeason, uclStartForSeason } from "@/data/ucl";
 import { findSafeNationalCupDateOnOrBefore, nationalCupStartForSeason } from "@/lib/calendarRules";
 import { INITIAL_SEASON_START_YEAR } from "@/lib/season/calendarFactory";

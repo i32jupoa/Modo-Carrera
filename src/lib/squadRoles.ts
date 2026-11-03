@@ -18,7 +18,7 @@ export const SQUAD_ROLE_CONFIG = {
   minStarOvrLead: 2,
   prospectMaxAge: 21,
   prospectPotentialGap: 6,
-  prospectRelativeOvrMax: -3,
+  prospectRelativeOvrMax: 0,
 } as const;
 
 type PositionGroup = "GK" | "DEF" | "MID" | "ATT";
@@ -171,29 +171,6 @@ function normalizeStartingShape(
   return shape;
 }
 
-function countNegotiatedCore(
-  squad: readonly Player[],
-  negotiatedRoles: ReadonlyMap<string, SquadRole>,
-): Record<PositionGroup, number> {
-  const counts: Record<PositionGroup, number> = { GK: 0, DEF: 0, MID: 0, ATT: 0 };
-  for (const player of squad) {
-    const role = negotiatedRoles.get(player.id);
-    if (role === "star" || role === "starter") counts[groupOf(player)] += 1;
-  }
-  return counts;
-}
-
-function countNegotiatedRotation(
-  squad: readonly Player[],
-  negotiatedRoles: ReadonlyMap<string, SquadRole>,
-): Record<PositionGroup, number> {
-  const counts: Record<PositionGroup, number> = { GK: 0, DEF: 0, MID: 0, ATT: 0 };
-  for (const player of squad) {
-    if (negotiatedRoles.get(player.id) === "rotation") counts[groupOf(player)] += 1;
-  }
-  return counts;
-}
-
 function rankedByGroup(
   squad: readonly Player[],
   typicalXIIds: ReadonlySet<string>,
@@ -220,6 +197,7 @@ function isYoungProspect(player: Player, squad: readonly Player[]): boolean {
   const potentialGap = player.potential - player.rating;
   return (
     player.age <= SQUAD_ROLE_CONFIG.prospectMaxAge &&
+    player.rating < 75 &&
     potentialGap >= SQUAD_ROLE_CONFIG.prospectPotentialGap &&
     relativeOvr <= SQUAD_ROLE_CONFIG.prospectRelativeOvrMax
   );
@@ -243,6 +221,17 @@ export function computeSquadRole(
   return roles[player.id] ?? "secondary";
 }
 
+type RotationPositionGroup = Exclude<PositionGroup, "ATT"> | "WING" | "ST";
+
+function rotationGroupOf(player: Player): RotationPositionGroup {
+  const broadGroup = groupOf(player);
+  if (broadGroup !== "ATT") return broadGroup;
+  const positions = player.positions ?? [];
+  return positions.some((position) => ["ST", "DC", "CF", "FW", "SD", "DEL"].includes(position))
+    ? "ST"
+    : "WING";
+}
+
 function assignSquadRolesInternal(
   squad: readonly Player[],
   typicalXIIds: ReadonlySet<string>,
@@ -255,102 +244,139 @@ function assignSquadRolesInternal(
   }
 
   const groups = rankedByGroup(squad, typicalXIIds);
-  const startingShape = normalizeStartingShape(typicalXIIds, squad);
-  const negotiatedCore = countNegotiatedCore(squad, negotiatedRoles);
-  const negotiatedRotation = countNegotiatedRotation(squad, negotiatedRoles);
-  const assignedCore: Record<PositionGroup, number> = { ...negotiatedCore };
+  const validTypicalXI = squad.filter((player) => typicalXIIds.has(player.id));
+  let startingPlayers = validTypicalXI.length > 0
+    ? validTypicalXI
+    : [];
 
-  // Las estrellas se eligen entre los mejores de cada demarcación. Nunca se
-  // permite que una sola línea consuma todas las estrellas si existen otras
-  // líneas con capacidad real de titulares.
-  const targetStars = Math.min(
-    starCountForSquad(squad),
-    squad.filter((player) => !negotiatedRoles.has(player.id)).length,
-  );
-  const starCandidates = squad
-    .filter((player) => !negotiatedRoles.has(player.id))
-    .sort((a, b) => score(b, squad, typicalXIIds) - score(a, squad, typicalXIIds) || b.rating - a.rating || a.id.localeCompare(b.id));
-
-  const starGroupCount: Record<PositionGroup, number> = { GK: 0, DEF: 0, MID: 0, ATT: 0 };
-  for (let index = 0; index < starCandidates.length && Object.keys(roles).length < squad.length && Object.values(starGroupCount).reduce((s, n) => s + n, 0) < targetStars; index += 1) {
-    const player = starCandidates[index];
-    const group = groupOf(player);
-    const freeStartingSpace = startingShape[group] - assignedCore[group];
-    const canBeExtraStar = freeStartingSpace > 0 || Object.values(starGroupCount).reduce((s, n) => s + n, 0) === 0;
-    if (!canBeExtraStar) continue;
-
-    const bestInGroup = groups[group]?.[0];
-    const topLead = !!bestInGroup && player.rating >= bestInGroup.rating - SQUAD_ROLE_CONFIG.minStarOvrLead;
-    if (!topLead && Object.values(starGroupCount).reduce((s, n) => s + n, 0) > 0) continue;
-
-    roles[player.id] = "star";
-    starGroupCount[group] += 1;
-    assignedCore[group] += 1;
-  }
-
-  // Una plantilla siempre tiene al menos una estrella automática cuando hay
-  // jugadores libres de rol negociado. Este fallback solo se usa si la forma
-  // táctica o los roles pactados dejaron bloqueadas todas las plazas normales.
-  if (!Object.values(roles).some((role) => role === "star")) {
-    const fallback = starCandidates[0];
-    if (fallback) {
-      roles[fallback.id] = "star";
-      assignedCore[groupOf(fallback)] += 1;
-    }
-  }
-
-  // Titulares: se reparten por línea según el once esperado. Un equipo con un
-  // centro del campo débil podrá tener menos titulares de esa línea, pero nunca
-  // convierte automáticamente a casi todos los delanteros en titulares.
-  for (const group of ["GK", "DEF", "MID", "ATT"] as const) {
-    const targetCore = Math.max(startingShape[group], assignedCore[group]);
-    let remaining = targetCore - assignedCore[group];
-    for (const player of groups[group]) {
-      if (remaining <= 0) break;
-      if (roles[player.id]) continue;
-      roles[player.id] = "starter";
-      assignedCore[group] += 1;
-      remaining -= 1;
-    }
-  }
-
-  // Rotación: un cupo de banquillo por línea, proporcional a las plazas del
-  // once y a la profundidad real de esa posición. Si una línea está corta, no
-  // gastamos sus plazas de rotación en delanteros sobrecargados.
-  const rotationTarget = Math.min(
-    Math.max(5, Math.round(squad.length * SQUAD_ROLE_CONFIG.rotationFraction)),
-    Math.max(0, squad.length - Object.values(roles).filter((role) => role === "star" || role === "starter").length),
-  );
-  const rotationQuotas: Record<PositionGroup, number> = { GK: 1, DEF: 2, MID: 2, ATT: 1 };
-  let remainingRotation = Math.max(0, rotationTarget - Object.values(roles).filter((role) => role === "rotation").length);
-  const availableAfterCore = (group: PositionGroup) => groups[group].filter((player) => !roles[player.id]).length;
-
-  for (const group of ["GK", "DEF", "MID", "ATT"] as const) {
-    rotationQuotas[group] = Math.min(rotationQuotas[group], Math.max(0, availableAfterCore(group)));
-  }
-
-  for (const group of ["GK", "DEF", "MID", "ATT"] as const) {
-    let quota = rotationQuotas[group];
-    for (const player of groups[group]) {
-      if (!quota || !remainingRotation) break;
-      if (roles[player.id]) continue;
-      roles[player.id] = "rotation";
-      quota -= 1;
-      remainingRotation -= 1;
-    }
-  }
-
-  // Si una demarcación tiene poco fondo, redistribuimos las plazas de rotación
-  // sobrantes, pero seguimos recorriendo grupos, no toda la plantilla mezclada.
-  if (remainingRotation > 0) {
-    for (const group of ["DEF", "MID", "ATT", "GK"] as const) {
-      for (const player of groups[group]) {
-        if (!remainingRotation) break;
-        if (roles[player.id]) continue;
-        roles[player.id] = "rotation";
-        remainingRotation -= 1;
+  // Para partidas antiguas o plantillas sin un once guardado, reconstruimos
+  // un once equilibrado. En una partida normal se respeta exactamente el XI
+  // óptimo creado/guardado, por lo que un suplente no asciende a titular solo
+  // porque mejore su media durante la temporada.
+  if (startingPlayers.length === 0) {
+    const fallbackShape = normalizeStartingShape(typicalXIIds, squad);
+    const selected = new Set<string>();
+    const targetStartingCount = Math.min(
+      11,
+      Math.min(squad.length, Math.max(3, Math.round(squad.length * 0.48))),
+    );
+    const orderedGroups: PositionGroup[] = ["GK", "DEF", "MID", "ATT"];
+    for (const group of orderedGroups) {
+      const limit = Math.min(fallbackShape[group], targetStartingCount - selected.size);
+      for (const player of groups[group].slice(0, Math.max(0, limit))) {
+        selected.add(player.id);
       }
     }
+    if (selected.size < targetStartingCount) {
+      const remaining = squad
+        .filter((player) => !selected.has(player.id))
+        .sort((a, b) => score(b, squad, typicalXIIds) - score(a, squad, typicalXIIds) || b.rating - a.rating);
+      for (const player of remaining) {
+        if (selected.size >= targetStartingCount) break;
+        selected.add(player.id);
+      }
+    }
+    startingPlayers = squad.filter((player) => selected.has(player.id));
+  }
+
+  // Las estrellas salen exclusivamente del once inicial. Los jugadores del
+  // banquillo nunca pasan a estrella/titular por una subida de media.
+  const targetStars = Math.min(
+    starCountForSquad(squad),
+    Math.max(0, startingPlayers.length - 8),
+  );
+  const existingStars = Object.values(roles).filter((role) => role === "star").length;
+  const starCandidates = startingPlayers
+    .filter((player) => !roles[player.id])
+    .sort((a, b) => score(b, squad, typicalXIIds) - score(a, squad, typicalXIIds) || b.rating - a.rating || a.id.localeCompare(b.id));
+
+  for (const player of starCandidates.slice(0, Math.max(0, targetStars - existingStars))) {
+    roles[player.id] = "star";
+  }
+
+  // El resto del once se etiqueta como titular. Las promesas pactadas en una
+  // renovación/fichaje prevalecen siempre sobre esta clasificación automática.
+  for (const player of startingPlayers) {
+    if (!roles[player.id]) roles[player.id] = "starter";
+  }
+
+  // La rotación se reparte por puesto específico, no solo por una línea
+  // genérica. Así el segundo delantero puede ser rotación aunque haya varios
+  // extremos de mayor media, y lo mismo sucede con los laterales/centrales.
+  const rotationOrder: RotationPositionGroup[] = ["GK", "DEF", "MID", "WING", "ST"];
+  const rotationCaps: Record<RotationPositionGroup, number> = {
+    GK: 1,
+    DEF: 2,
+    MID: 2,
+    WING: 2,
+    ST: 2,
+  };
+  const rotationCounts: Record<RotationPositionGroup, number> = {
+    GK: 0,
+    DEF: 0,
+    MID: 0,
+    WING: 0,
+    ST: 0,
+  };
+  for (const player of squad) {
+    if (roles[player.id] === "rotation") rotationCounts[rotationGroupOf(player)] += 1;
+  }
+
+  const rotationTarget = Math.min(
+    8,
+    Math.max(6, Math.round(squad.length * 0.24)),
+    Math.max(0, squad.length - Object.keys(roles).length),
+  );
+  let remainingRotation = Math.max(
+    0,
+    rotationTarget - Object.values(roles).filter((role) => role === "rotation").length,
+  );
+
+  const candidatesByRotationGroup = new Map<RotationPositionGroup, Player[]>();
+  for (const group of rotationOrder) {
+    candidatesByRotationGroup.set(
+      group,
+      squad
+        .filter((player) => rotationGroupOf(player) === group && !roles[player.id] && !isYoungProspect(player, squad))
+        .sort((a, b) => score(b, squad, typicalXIIds) - score(a, squad, typicalXIIds) || b.rating - a.rating || a.id.localeCompare(b.id)),
+    );
+  }
+
+  // Primero reservamos una alternativa por línea/puesto cuando existe.
+  for (const group of rotationOrder) {
+    if (!remainingRotation || rotationCounts[group] >= rotationCaps[group]) continue;
+    const candidate = candidatesByRotationGroup.get(group)?.shift();
+    if (!candidate) continue;
+    roles[candidate.id] = "rotation";
+    rotationCounts[group] += 1;
+    remainingRotation -= 1;
+  }
+
+  // La segunda plaza prioriza los delanteros centro y los extremos para evitar
+  // que todos los atacantes suplentes se conviertan en secundarios/promesas.
+  const secondChoiceOrder: RotationPositionGroup[] = ["ST", "WING", "DEF", "MID", "GK"];
+  while (remainingRotation > 0) {
+    let assigned = false;
+    for (const group of secondChoiceOrder) {
+      if (!remainingRotation) break;
+      if (rotationCounts[group] >= rotationCaps[group]) continue;
+      const candidate = candidatesByRotationGroup.get(group)?.shift();
+      if (!candidate) continue;
+      roles[candidate.id] = "rotation";
+      rotationCounts[group] += 1;
+      remainingRotation -= 1;
+      assigned = true;
+    }
+    if (!assigned) break;
+  }
+
+  // En plantillas con una demarcación muy corta redistribuimos las plazas que
+  // sobren sin alterar los roles que ya estaban pactados.
+  if (remainingRotation > 0) {
+    const remaining = squad
+      .filter((player) => !roles[player.id] && !isYoungProspect(player, squad))
+      .sort((a, b) => score(b, squad, typicalXIIds) - score(a, squad, typicalXIIds) || b.rating - a.rating);
+    for (const player of remaining.slice(0, remainingRotation)) roles[player.id] = "rotation";
   }
 
   for (const player of squad) {

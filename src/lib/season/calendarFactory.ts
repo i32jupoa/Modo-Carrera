@@ -1,9 +1,8 @@
 /**
  * Pure calendar helpers shared by every season-aware calendar generator.
  *
- * Existing 2026/27 careers keep their original calendar and fixture IDs. From
- * 2027/28 onwards, a persisted career seed combined with the season year and
- * league produces a stable but different round-robin order each season.
+ * Every season, including 2026/27, uses the persisted career seed to create a
+ * stable round-robin order. Consecutive seasons cannot reuse the same order.
  */
 export const INITIAL_SEASON_START_YEAR = 2026;
 
@@ -12,6 +11,10 @@ export type SeasonCalendarOptions = {
   seed?: number;
   /** Career-specific club divisions. Empty/absent means the original static leagues. */
   teamLeagueOverrides?: Readonly<Record<string, string>>;
+  /** Clubs whose league fixtures must avoid any week containing UEFA matches. */
+  europeanTeamIds?: readonly string[];
+  /** Earliest allowed date when migrating an already-started season. */
+  notBeforeDate?: string;
 };
 
 export type SeasonCalendarAnchors = {
@@ -107,10 +110,9 @@ export function seededShuffle<T>(values: readonly T[], seed: number): T[] {
 }
 
 /**
- * Stable team order for a season. For a fixed club set, consecutive years are
- * guaranteed not to reuse the same ordering; this avoids the tiny-but-possible
- * collision of two independent pseudo-random permutations. The first campaign
- * is deliberately left untouched for compatibility with existing saves.
+ * Stable team order for a season. The first campaign is shuffled too, so the
+ * strongest club is not permanently pinned to the first circle-method slot.
+ * For a fixed club set, consecutive years cannot reuse the same ordering.
  */
 export function createSeasonTeamOrder<T>(
   values: readonly T[],
@@ -118,9 +120,18 @@ export function createSeasonTeamOrder<T>(
   seed: number | undefined,
   scope: string,
 ): T[] {
-  if (seasonStartYear <= INITIAL_SEASON_START_YEAR || values.length < 2) return values.slice();
+  if (values.length < 2) return values.slice();
 
-  let previousOrder = values.slice();
+  const initialOrder = seededShuffle(
+    values,
+    scopedCalendarSeed(seed, INITIAL_SEASON_START_YEAR, scope),
+  );
+  if (initialOrder.every((value, index) => value === values[index])) {
+    [initialOrder[0], initialOrder[1]] = [initialOrder[1], initialOrder[0]];
+  }
+  if (seasonStartYear <= INITIAL_SEASON_START_YEAR) return initialOrder;
+
+  let previousOrder = initialOrder;
   for (let year = INITIAL_SEASON_START_YEAR + 1; year < seasonStartYear; year += 1) {
     const candidate = seededShuffle(values, scopedCalendarSeed(seed, year, scope));
     if (candidate.every((value, index) => value === previousOrder[index])) {
@@ -147,6 +158,46 @@ export function getLeagueKickoffSaturday(seasonStartYear: number): string {
   const previousDistance = Math.abs(previousSaturday.getTime() - target.getTime());
   const nextDistance = Math.abs(nextSaturday.getTime() - target.getTime());
   return isoFromUtcDate(previousDistance <= nextDistance ? previousSaturday : nextSaturday);
+}
+
+
+/** First Saturday in June, the fixed season-ending Champions League final date. */
+export function getChampionsLeagueFinalDate(seasonStartYear = INITIAL_SEASON_START_YEAR): string {
+  const date = new Date(Date.UTC(seasonStartYear + 1, 5, 1, 12));
+  while (date.getUTCDay() !== 6) date.setUTCDate(date.getUTCDate() + 1);
+  return isoFromUtcDate(date);
+}
+
+/** Domestic leagues and promotion play-offs must finish seven days before the UCL final. */
+export function getDomesticSeasonEndDate(seasonStartYear = INITIAL_SEASON_START_YEAR): string {
+  return addIsoDays(getChampionsLeagueFinalDate(seasonStartYear), -7);
+}
+
+/**
+ * Post-season windows are split by competition type:
+ * - Regular domestic leagues finish no later than one week before the UCL final.
+ * - Spain/England promotion play-offs can continue through the Saturday one week
+ *   after the UCL final. Their semi-finals are played Tue/Fri before the UCL final,
+ *   followed by the Spanish two-leg final Tue/Sat or the English single-leg final
+ *   on the following Saturday.
+ * - France/Germany survival play-offs remain in the earlier domestic window.
+ */
+export function getDomesticPlayoffCalendar(seasonStartYear = INITIAL_SEASON_START_YEAR) {
+  const leagueEnd = getDomesticSeasonEndDate(seasonStartYear);
+  const championsFinal = getChampionsLeagueFinalDate(seasonStartYear);
+  const extendedPlayoffEnd = addIsoDays(championsFinal, 7);
+  return {
+    semifinalLeg1: addIsoDays(championsFinal, -4),
+    semifinalLeg2: addIsoDays(championsFinal, -1),
+    finalLeg1: addIsoDays(championsFinal, 3),
+    finalLeg2: extendedPlayoffEnd,
+    singleLegFinal: extendedPlayoffEnd,
+    survivalLeg1: addIsoDays(leagueEnd, -5),
+    survivalLeg2: addIsoDays(leagueEnd, -2),
+    latestLeagueFixture: leagueEnd,
+    latestEarlyPlayoffFixture: leagueEnd,
+    latestDomesticFixture: extendedPlayoffEnd,
+  };
 }
 
 export function getSeasonCalendarAnchors(seasonStartYear = INITIAL_SEASON_START_YEAR): SeasonCalendarAnchors {

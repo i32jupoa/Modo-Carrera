@@ -6,6 +6,8 @@ import {
   deriveCareerCalendarSeed,
   formatSeasonLabel,
   getDateOffset,
+  getChampionsLeagueFinalDate,
+  getDomesticSeasonEndDate,
   getLeagueKickoffSaturday,
   getSeasonCalendarAnchors,
   getSeasonStartYear,
@@ -25,6 +27,8 @@ assert.equal(addIsoDays("2028-02-28", 1), "2028-02-29");
 assert.equal(addIsoDays("2028-02-29", 1), "2028-03-01");
 assert.equal(shiftReferenceDateToSeason("2028-02-29", 2028, false), "2029-03-01");
 assert.equal(getDateOffset("2028-02-28", "2028-03-01"), 2);
+assert.equal(getChampionsLeagueFinalDate(2026), "2027-06-05");
+assert.equal(getDomesticSeasonEndDate(2026), "2027-05-29");
 
 const firstSeason = getSeasonCalendarAnchors(2026);
 assert.equal(firstSeason.gameStartDate, "2026-07-01");
@@ -41,6 +45,12 @@ for (const year of [2026, 2027, 2028, 2030, 2099, 2100]) {
   assert.equal(addIsoDays(anchors.leagueMatchday1Friday, 1), anchors.leagueKickoffSaturday,
     `Matchday 1 Friday must directly precede kickoff for season ${year}`);
   assert.ok(anchors.winterWindowStart.startsWith(`${year + 1}-01-`));
+  const finalDate = getChampionsLeagueFinalDate(year);
+  assert.equal(new Date(`${finalDate}T12:00:00Z`).getUTCDay(), 6,
+    `Champions League final must be Saturday for season ${year}`);
+  assert.equal(finalDate.slice(5, 7), "06", `Champions League final must be in June for season ${year}`);
+  assert.equal(getDomesticSeasonEndDate(year), addIsoDays(finalDate, -7),
+    `Domestic leagues must finish one week before the UCL final for season ${year}`);
 }
 
 const teams = Array.from({ length: 36 }, (_, index) => `club-${index + 1}`);
@@ -62,8 +72,15 @@ assert.notDeepEqual(
 const order2026 = createSeasonTeamOrder(teams, 2026, 1234, "laliga");
 const order2027 = createSeasonTeamOrder(teams, 2027, 1234, "laliga");
 const order2028 = createSeasonTeamOrder(teams, 2028, 1234, "laliga");
-assert.deepEqual(order2026, teams, "The initial season keeps the existing canonical team order");
+assert.notDeepEqual(order2026, teams, "The initial season must also shuffle the club order");
+assert.deepEqual(order2026, createSeasonTeamOrder(teams, 2026, 1234, "laliga"), "Initial season order is reproducible");
+assert.notDeepEqual(
+  order2026,
+  createSeasonTeamOrder(teams, 2026, 9876, "laliga"),
+  "Different careers must get different first-season orders",
+);
 assert.deepEqual(order2027, createSeasonTeamOrder(teams, 2027, 1234, "laliga"), "Season order is reproducible");
+assert.notDeepEqual(order2026, order2027, "The first and second seasons must not reuse the exact order");
 assert.notDeepEqual(order2027, order2028, "Consecutive seasons are guaranteed not to reuse the exact order");
 
 const reference = "2027-02-16"; // Tuesday
