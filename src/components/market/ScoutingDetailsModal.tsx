@@ -161,7 +161,7 @@ function Stat({ label, value, icon: Icon }: { label: string; value: string | num
 }
 
 function ScoutStarsInline({ rating }: { rating: number }) {
-  return <span className="text-xs font-black tracking-tight text-amber-300">{safeNumber(rating, 0.5).toLocaleString("es-ES")}★</span>;
+  return <span className="text-xs font-black tracking-tight text-orange-300">{safeNumber(rating, 0.5).toLocaleString("es-ES")}★</span>;
 }
 
 class ReportModalBoundary extends Component<

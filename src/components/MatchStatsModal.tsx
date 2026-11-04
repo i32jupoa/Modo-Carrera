@@ -26,6 +26,10 @@ import type { Player } from "@/data/players";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { loadSave, getStartersWithFormation } from "@/lib/store";
 import type { FormationName } from "@/lib/formations";
+import { MatchFinalSummary } from "@/components/match/MatchShowcase";
+import { MatchChronicle } from "@/components/match/MatchChronicle";
+import { buildMatchChronicleItems } from "@/lib/matchChronicle";
+import { formatMatchMinuteWithMark, getMatchMinuteElapsedValue, getMatchMinuteSortValue, markExtraTimeEvent } from "@/lib/matchTime";
 
 interface MatchStatsModalProps {
   fixture: Fixture | null;
@@ -41,6 +45,12 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   const home = teamById(fixture.homeId);
   const away = teamById(fixture.awayId);
   if (!home || !away) return null;
+
+  const getLeagueName = (leagueId: string): string => LEAGUES[leagueId]?.name || leagueId;
+  const percentagePart = (value: number, other: number): number => {
+    const total = Number(value || 0) + Number(other || 0);
+    return total > 0 ? (Number(value || 0) / total) * 100 : 50;
+  };
 
   if (!fixture.result) {
     const roundLabel = fixture.round?.startsWith("Playoff")
@@ -92,33 +102,48 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   const matchColors = resolveMatchTeamColors(home, away);
   const result = fixture.result;
 
-  // Generate basic stats if not available
-  const stats = result.stats || {
+  // Older career saves may not contain aggregate stats. Keep the fallback
+  // stable (never random on render) and visibly mark those figures as an
+  // estimate in the tab below.
+  const stableSeed = `${fixture.id}|${fixture.homeId}|${fixture.awayId}`;
+  let statsHash = 2166136261;
+  for (let index = 0; index < stableSeed.length; index += 1) {
+    statsHash ^= stableSeed.charCodeAt(index);
+    statsHash = Math.imul(statsHash, 16777619);
+  }
+  const stableValue = (offset: number, span: number) => ((statsHash >>> (offset % 24)) + offset * 31) % span;
+  const homeXg = Number(result.xgHome) || Number(result.homeGoals) * 0.72;
+  const awayXg = Number(result.xgAway) || Number(result.awayGoals) * 0.72;
+  const xgTotal = Math.max(0.1, homeXg + awayXg);
+  const homePossession = Math.max(30, Math.min(70, Math.round(50 + ((homeXg - awayXg) / xgTotal) * 12)));
+  const fallbackHomeGoals = (result.events || []).filter((event) => event.team === "home" && ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(event.type)).length;
+  const fallbackAwayGoals = (result.events || []).filter((event) => event.team === "away" && ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(event.type)).length;
+  const savedStatsFallback = {
     home: {
-      possession: 50,
-      shots: result.events?.filter((e) => e.team === "home" && e.type === "goal").length * 3 || 0,
-      shotsOnTarget:
-        result.events?.filter((e) => e.team === "home" && e.type === "goal").length || 0,
-      corners: Math.floor(Math.random() * 8) + 2,
-      fouls: Math.floor(Math.random() * 15) + 5,
-      offsides: Math.floor(Math.random() * 5) + 1,
-      passAccuracy: 75 + Math.floor(Math.random() * 20),
-      saves: Math.floor(Math.random() * 5) + 1,
-      xg: result.xgHome || 0,
+      possession: homePossession,
+      shots: Math.max(fallbackHomeGoals, Math.round(homeXg * 3.1) + 4 + stableValue(3, 4)),
+      shotsOnTarget: Math.max(fallbackHomeGoals, Math.round(homeXg * 1.6) + stableValue(7, 2)),
+      corners: 2 + stableValue(11, 8),
+      fouls: 7 + stableValue(13, 11),
+      offsides: stableValue(17, 5),
+      passAccuracy: 76 + stableValue(19, 15),
+      saves: (result.highlights || []).filter((event: any) => event.type === "save" && event.team === "home").length,
+      xg: homeXg,
     },
     away: {
-      possession: 50,
-      shots: result.events?.filter((e) => e.team === "away" && e.type === "goal").length * 3 || 0,
-      shotsOnTarget:
-        result.events?.filter((e) => e.team === "away" && e.type === "goal").length || 0,
-      corners: Math.floor(Math.random() * 8) + 2,
-      fouls: Math.floor(Math.random() * 15) + 5,
-      offsides: Math.floor(Math.random() * 5) + 1,
-      passAccuracy: 75 + Math.floor(Math.random() * 20),
-      saves: Math.floor(Math.random() * 5) + 1,
-      xg: result.xgAway || 0,
+      possession: 100 - homePossession,
+      shots: Math.max(fallbackAwayGoals, Math.round(awayXg * 3.1) + 4 + stableValue(5, 4)),
+      shotsOnTarget: Math.max(fallbackAwayGoals, Math.round(awayXg * 1.6) + stableValue(9, 2)),
+      corners: 2 + stableValue(15, 8),
+      fouls: 7 + stableValue(21, 11),
+      offsides: stableValue(23, 5),
+      passAccuracy: 76 + stableValue(25, 15),
+      saves: (result.highlights || []).filter((event: any) => event.type === "save" && event.team === "away").length,
+      xg: awayXg,
     },
   };
+  const hasStoredStats = Boolean(result.stats?.home && result.stats?.away);
+  const stats = result.stats || savedStatsFallback;
 
   // Get player ratings - generate basic ratings if not available
   const generateBasicRatings = (players: Player[], teamId: string) => {
@@ -317,26 +342,184 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
 
   // Los eventos y highlights de la prórroga se fusionan con los del partido
   // (evitando duplicados cuando el motor ya los guardó juntos).
-  const baseEvents: any[] = (result.events || []) as any[];
+  const extraTimeEvents: any[] = (extraTime?.events || []) as any[];
   const sameEvent = (a: any, b: any) =>
-    a.minute === b.minute &&
+    getMatchMinuteSortValue(a.minute, a) === getMatchMinuteSortValue(b.minute, b) &&
     a.team === b.team &&
     (a.scorerId ?? a.playerName) === (b.scorerId ?? b.playerName) &&
     a.type === b.type;
+  // Some simulation paths store extra-time goals both in result.events and in
+  // result.extraTime.events. Tag both representations before merging so a
+  // 94th-minute goal in extra time stays 94', while a regular-time 94 is 90+4'.
+  const baseEvents: any[] = ((result.events || []) as any[]).map((event) =>
+    extraTimeEvents.some((extraEvent) => sameEvent(event, extraEvent))
+      ? markExtraTimeEvent(event)
+      : event,
+  );
   const mergedEvents: any[] = [
     ...baseEvents,
-    ...((extraTime?.events || []) as any[]).filter((e) => !baseEvents.some((b) => sameEvent(b, e))),
+    ...extraTimeEvents
+      .filter((e) => !baseEvents.some((b) => sameEvent(b, e)))
+      .map((event) => markExtraTimeEvent(event)),
   ];
   const baseHighlights: any[] = (result.highlights || []) as any[];
+  const extraTimeHighlights: any[] = (extraTime?.highlights || []) as any[];
   const mergedHighlights: any[] = [
-    ...baseHighlights,
+    ...baseHighlights.map((highlight) =>
+      extraTimeHighlights.some((extraHighlight) =>
+        extraHighlight.minute === highlight.minute &&
+        extraHighlight.team === highlight.team &&
+        extraHighlight.type === highlight.type,
+      )
+        ? markExtraTimeEvent(highlight)
+        : highlight,
+    ),
     ...((extraTime?.highlights || []) as any[]).filter(
       (h) =>
         !baseHighlights.some(
           (b) => b.minute === h.minute && b.team === h.team && b.type === h.type,
         ),
-    ),
+    ).map((highlight) => markExtraTimeEvent(highlight)),
   ];
+  const extraTimeSubstitutions: any[] = (result.extraTime?.substitutions || []) as any[];
+  const isSameSubstitution = (a: any, b: any) =>
+    Number(a.minute) === Number(b.minute) &&
+    a.team === b.team &&
+    (a.playerInId ?? a.inId) === (b.playerInId ?? b.inId) &&
+    (a.playerOutId ?? a.outId) === (b.playerOutId ?? b.outId);
+  const matchSubstitutions = [
+    ...(result.substitutions || []).map((substitution: any) =>
+      extraTimeSubstitutions.some((extraSubstitution) => isSameSubstitution(substitution, extraSubstitution))
+        ? markExtraTimeEvent(substitution)
+        : substitution,
+    ),
+    ...extraTimeSubstitutions
+      .filter((sub: any) => !(result.substitutions || []).some((base: any) => isSameSubstitution(base, sub)))
+      .map((substitution) => markExtraTimeEvent(substitution)),
+  ].filter(Boolean).filter((sub: any, index: number, all: any[]) =>
+    all.findIndex((candidate: any) =>
+      isSameSubstitution(candidate, sub),
+    ) === index,
+  );
+
+  // The Moments tab is built from the persisted match report. Keep the five
+  // lists local to this fixture and sort each from the first to the last minute.
+  const byMinuteAscending = (a: any, b: any) =>
+    getMatchMinuteSortValue(a.minute, a) - getMatchMinuteSortValue(b.minute, b);
+  const goalMoments = mergedEvents
+    .filter((event: any) => ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(event.type))
+    .slice()
+    .sort(byMinuteAscending);
+  const woodworkMoments = mergedHighlights
+    .filter((event: any) => event.type === "woodwork")
+    .slice()
+    .sort(byMinuteAscending);
+  const extraTimeCards: any[] = ((extraTime as any)?.cards || []) as any[];
+  const mergedCards = [
+    ...(result.cards || []).map((card: any) =>
+      extraTimeCards.some((extraCard) =>
+        getMatchMinuteSortValue(extraCard.minute, extraCard) === getMatchMinuteSortValue(card.minute, card) &&
+        extraCard.team === card.team &&
+        extraCard.playerId === card.playerId &&
+        extraCard.cardType === card.cardType,
+      )
+        ? markExtraTimeEvent(card)
+        : card,
+    ),
+    ...extraTimeCards
+      .filter((card: any) => !(result.cards || []).some((base: any) =>
+        getMatchMinuteSortValue(base.minute, base) === getMatchMinuteSortValue(card.minute, card) &&
+        base.team === card.team &&
+        base.playerId === card.playerId &&
+        base.cardType === card.cardType,
+      ))
+      .map((card: any) => markExtraTimeEvent(card)),
+  ];
+  const cardMoments = mergedCards
+    .slice()
+    .sort(byMinuteAscending);
+
+  const rawKeyMoments: any[] = Array.isArray((result as any).keyMoments) ? (result as any).keyMoments : [];
+  const mergedKeyMoments = rawKeyMoments.map((moment: any) => {
+    if (moment.matchPeriod || moment.phase || moment.isExtraTime) return moment;
+    const minute = getMatchMinuteSortValue(moment.minute, moment);
+    const momentTeam = moment.teamSide ?? moment.team;
+    const hasExtraTimeMatch = [...extraTimeEvents, ...extraTimeHighlights, ...extraTimeCards, ...extraTimeSubstitutions].some((candidate: any) => {
+      if (getMatchMinuteSortValue(candidate.minute, candidate) !== minute) return false;
+      if (momentTeam && candidate.team && momentTeam !== candidate.team) return false;
+      const candidatePlayer = candidate.playerId ?? candidate.scorerId ?? candidate.playerInId ?? candidate.inId;
+      if (moment.playerId && candidatePlayer && String(moment.playerId) !== String(candidatePlayer)) return false;
+      return Boolean(moment.playerId && candidatePlayer) || Boolean(momentTeam && candidate.team);
+    });
+    return hasExtraTimeMatch ? markExtraTimeEvent(moment) : moment;
+  });
+  const substitutionMoments = matchSubstitutions
+    .slice()
+    .sort(byMinuteAscending);
+
+  // Prefer the structured injury records (they include diagnosis and recovery
+  // time). Use highlight records only when the save has no matching injury, so
+  // the same incident is never shown twice.
+  const storedInjuries = (result.injuries || []).map((injury: any) => ({
+    ...injury,
+    type: "injury",
+    minute: getMatchMinuteElapsedValue(injury.minute, injury) ?? 0,
+    detail: injury.reason || injury.diagnosis || injury.injuryType || "Lesión",
+  }));
+  const storedInjuryKeys = new Set(
+    storedInjuries.map((injury: any) => `${injury.team}:${injury.playerId || injury.playerName}`),
+  );
+  const injuryHighlights = mergedHighlights
+    .filter((event: any) => ["injury", "injury_substitution"].includes(event.type))
+    .filter((event: any) => !storedInjuryKeys.has(`${event.team}:${event.playerId || event.playerName}`))
+    .map((event: any) => ({ ...event, type: "injury" }));
+
+  const foulVerbs = ["derriba", "hace falta sobre", "agarra a", "pisa a", "comete mano ante"];
+  const getPenaltyOffender = (detail?: string) => {
+    const text = String(detail || "").replace(/^Penalti:\s*/i, "");
+    const verb = foulVerbs.find((candidate) => text.toLowerCase().includes(` ${candidate} `));
+    if (!verb) return "";
+    return text.slice(0, text.toLowerCase().indexOf(` ${verb} `)).trim();
+  };
+  const penaltyIncidents = [
+    ...mergedEvents
+      .filter((event: any) => event.type === "penalty_goal" && /^Penalti:/i.test(String(event.detail || "")))
+      .map((event: any) => ({
+        ...event,
+        team: event.team === "home" ? "away" : "home",
+        type: "penalty_conceded",
+        playerName: getPenaltyOffender(event.detail) || "Jugador rival",
+      })),
+    ...mergedHighlights
+      .filter((event: any) => event.type === "penalty_missed" && /^Penalti:/i.test(String(event.detail || "")))
+      .map((event: any) => ({
+        ...event,
+        team: event.team === "home" ? "away" : "home",
+        type: "penalty_conceded",
+        playerName: getPenaltyOffender(event.detail) || "Jugador rival",
+      })),
+  ];
+  const otherIncidentHighlights = mergedHighlights
+    .filter((event: any) => ["var_disallowed", "penalty_awarded"].includes(event.type))
+    .map((event: any) => ({ ...event, type: event.type === "penalty_awarded" ? "penalty_conceded" : event.type }));
+  const incidentMoments = [
+    ...storedInjuries,
+    ...injuryHighlights,
+    ...penaltyIncidents,
+    ...otherIncidentHighlights,
+  ].sort(byMinuteAscending);
+
+  const matchCompetitionLabel = (() => {
+    const competitionCode = String(fixture.europeanCompetition ?? fixture.competition ?? "").toLowerCase();
+    if (competitionCode === "ucl") return `Champions League · ${fixture.round || "Fase de liga"}`;
+    if (competitionCode === "uel") return `Europa League · ${fixture.round || "Competición"}`;
+    if (competitionCode === "uecl") return `Conference League · ${fixture.round || "Competición"}`;
+    if (fixture.promotionPlayoff) {
+      return `${fixture.promotionPlayoff.stage === "survival" ? "Playoff de permanencia" : "Playoff de ascenso"} · ${fixture.round || "Eliminatoria"}`;
+    }
+    if (fixture.competition === "cup") return `Copa Nacional · ${fixture.round || "Eliminatoria"}`;
+    return `${getLeagueName(fixture.league)} · Jornada ${fixture.matchday ?? "—"}`;
+  })();
 
   // Get goals by team
   const homeGoals = mergedEvents.filter((e) => e.type === "goal" && e.team === "home");
@@ -352,16 +535,13 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   const homeInjuries = (result.injuries || []).filter((i) => i.team === "home");
   const awayInjuries = (result.injuries || []).filter((i) => i.team === "away");
 
-  const getLeagueName = (leagueId: string): string => {
-    return LEAGUES[leagueId]?.name || leagueId;
-  };
-
   // Highlight types to keep in chronicle (like match.tsx)
   const KEEP: Record<string, { icon: string; label: string }> = {
     woodwork: { icon: "🥅", label: "Al palo" },
     penalty_missed: { icon: "❌", label: "Penalti fallado" },
     var_disallowed: { icon: "📺", label: "Gol anulado (VAR)" },
     injury: { icon: "🚑", label: "Lesión" },
+    penalty_conceded: { icon: "⚖️", label: "Penalti cometido" },
     forced_sub: { icon: "🔁", label: "Cambio forzado" },
     save: { icon: "🧤", label: "Parada" },
   };
@@ -379,7 +559,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
     });
 
     const items = [
-      ...(result.cards || []).map((c: any) => ({
+      ...mergedCards.map((c: any) => ({
         kind: "card" as const,
         minute: c.minute,
         data: c,
@@ -404,92 +584,54 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
         minute: s.minute,
         data: s,
       })),
-    ].sort((a, b) => b.minute - a.minute);
+    ].sort((a, b) => getMatchMinuteSortValue(b.minute, b.data) - getMatchMinuteSortValue(a.minute, a.data));
 
     return items;
   })();
 
-  // Generate basic events for chronicle if no events exist (for old simulated matches)
-  const generateBasicEvents = () => {
-    if (mergedEvents.length > 0) return chronicleEvents;
+  // Never invent scorers, cards or minutes for historical fixtures. Older saves
+  // can lack event-level data; those matches show only what was actually stored.
+  const finalChronicleEvents = chronicleEvents;
 
-    const basicEvents = [];
-    const goals = result.homeGoals + result.awayGoals;
-
-    // Generate goal events based on score
-    for (let i = 0; i < displayHomeGoals; i++) {
-      const minute = Math.floor(Math.random() * 90) + 1;
-      const scorer = homePlayers[Math.floor(Math.random() * Math.min(11, homePlayers.length))];
-      basicEvents.push({
-        kind: "goal" as const,
-        minute,
-        data: {
-          minute,
-          team: "home",
-          type: "goal",
-          scorerId: scorer?.id,
-          scorerName: scorer?.name || "Jugador",
-          assistName: null,
-        },
-      });
-    }
-
-    for (let i = 0; i < displayAwayGoals; i++) {
-      const minute = Math.floor(Math.random() * 90) + 1;
-      const scorer = awayPlayers[Math.floor(Math.random() * Math.min(11, awayPlayers.length))];
-      basicEvents.push({
-        kind: "goal" as const,
-        minute,
-        data: {
-          minute,
-          team: "away",
-          type: "goal",
-          scorerId: scorer?.id,
-          scorerName: scorer?.name || "Jugador",
-          assistName: null,
-        },
-      });
-    }
-
-    // Generate random cards (2-4 per match)
-    const numCards = Math.floor(Math.random() * 3) + 2;
-    for (let i = 0; i < numCards; i++) {
-      const team = Math.random() > 0.5 ? "home" : "away";
-      const players = team === "home" ? homePlayers : awayPlayers;
-      const player = players[Math.floor(Math.random() * Math.min(11, players.length))];
-      const minute = Math.floor(Math.random() * 90) + 1;
-      const isYellow = Math.random() > 0.2; // 80% yellow, 20% red
-
-      basicEvents.push({
-        kind: "card" as const,
-        minute,
-        data: {
-          minute,
-          team,
-          playerId: player?.id,
-          playerName: player?.name || "Jugador",
-          cardType: isYellow ? "yellow" : "red",
-          isSecondYellow: false,
-        },
-      });
-    }
-
-    // Never invent substitutions here. Modern match results persist the real
-    // substitutions generated by the simulation engine.
-
-    return basicEvents.sort((a, b) => b.minute - a.minute);
-  };
-
-  const finalChronicleEvents = chronicleEvents.length > 0 ? chronicleEvents : generateBasicEvents();
-
-  // Events used to draw goal ⚽ / assist 👟 icons on the mini pitch. For
-  // matches from other leagues (fast-simulated, no individual events saved)
-  // we fall back to the same generated goal events used in the chronicle,
-  // instead of leaving the pitch without any icons.
+  // Events used to draw goal ⚽ / assist 👟 icons on the mini pitch. If an older
+  // save has no individual events, leave the pitch without invented scorers.
   const displayEvents =
     mergedEvents.length > 0
       ? mergedEvents
       : finalChronicleEvents.filter((e) => e.kind === "goal").map((e) => e.data);
+
+  const summaryMvpPlayer = displayMvp?.playerId
+    ? resolveChroniclePlayer(displayMvp.playerId, displayMvp.playerName)
+    : undefined;
+  const summaryMvp = displayMvp
+    ? {
+        ...displayMvp,
+        playerName: displayMvp.playerName || summaryMvpPlayer?.name || "Jugador destacado",
+        team: displayMvp.team || (displayMvp.teamId === fixture.awayId || awayPlayers.some((player) => player.id === displayMvp.playerId) ? "away" : "home"),
+      }
+    : null;
+  const summaryGoalEvents = mergedEvents.length > 0
+    ? mergedEvents
+    : finalChronicleEvents.filter((item) => item.kind === "goal").map((item) => item.data);
+  const modalChronicleItems = buildMatchChronicleItems({
+    events: mergedEvents,
+    cards: mergedCards,
+    highlights: mergedHighlights,
+    substitutions: matchSubstitutions,
+    moments: mergedKeyMoments,
+  });
+  const summaryTimelineEvents = modalChronicleItems.map(({ kind, minute, data }: any) => ({
+    ...data,
+    kind: kind === "sub" ? "substitution" : kind,
+    type: kind === "card"
+      ? (data.cardType === "red" || data.isSecondYellow ? "red_card" : "yellow_card")
+      : data.type || kind,
+    minute,
+    team: data.team ?? data.teamSide,
+    playerName: data.scorerName || data.playerName,
+    playerInName: data.playerInName || data.inName,
+    playerOutName: data.playerOutName || data.outName,
+  }));
 
   // Las alineaciones guardadas contienen el XI inicial. Los ratings, en cambio,
   // también incluyen a los jugadores que entraron desde el banquillo. Separamos
@@ -501,11 +643,6 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
   // addition to the top-level list in newer saves. Always merge both sources
   // here so a player who entered in minutes 91-120 is treated exactly like a
   // normal substitute in the match notes.
-  const matchSubstitutions = [
-    ...(result.substitutions || []),
-    ...(result.extraTime?.substitutions || []),
-  ].filter(Boolean);
-
   const getSubstituteIds = (team: "home" | "away", starterIds: Set<string>) => {
     const ids = new Set<string>(
       matchSubstitutions
@@ -577,7 +714,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
 
   return (
     <Dialog open={!!fixture} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-1rem)] min-w-0 max-w-4xl max-h-[90vh] overflow-x-hidden overflow-y-auto sm:w-[calc(100vw-2rem)]">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-3">
             <TeamLogo teamName={home.name} leagueName={getLeagueName(home.league)} size={40} />
@@ -595,11 +732,19 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
           </DialogTitle>
         </DialogHeader>
 
-        <Tabs defaultValue="stats" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="stats">Estadísticas</TabsTrigger>
-            <TabsTrigger value="chronicle">Crónica</TabsTrigger>
-            <TabsTrigger value="lineups">Alineaciones</TabsTrigger>
+        <Tabs defaultValue="stats" className="w-full min-w-0">
+          <TabsList className="grid h-10 w-full min-w-0 grid-cols-5 items-stretch gap-1 overflow-hidden p-1">
+            <TabsTrigger value="stats" className="h-full min-h-8 w-full min-w-0 whitespace-nowrap px-0.5 py-1 text-[10px] leading-none sm:px-2 sm:text-xs">
+              <span className="sm:hidden">Estad.</span>
+              <span className="hidden sm:inline">Estadísticas</span>
+            </TabsTrigger>
+            <TabsTrigger value="summary" className="h-full min-h-8 w-full min-w-0 whitespace-nowrap px-0.5 py-1 text-[10px] leading-none sm:px-2 sm:text-xs">Resumen</TabsTrigger>
+            <TabsTrigger value="moments" className="h-full min-h-8 w-full min-w-0 whitespace-nowrap px-0.5 py-1 text-[10px] leading-none sm:px-2 sm:text-xs">Momentos</TabsTrigger>
+            <TabsTrigger value="chronicle" className="h-full min-h-8 w-full min-w-0 whitespace-nowrap px-0.5 py-1 text-[10px] leading-none sm:px-2 sm:text-xs">Crónica</TabsTrigger>
+            <TabsTrigger value="lineups" className="h-full min-h-8 w-full min-w-0 whitespace-nowrap px-0.5 py-1 text-[10px] leading-none sm:px-2 sm:text-xs">
+              <span className="sm:hidden">Alineac.</span>
+              <span className="hidden sm:inline">Alineaciones</span>
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="stats" className="space-y-6">
@@ -618,6 +763,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
             {/* Detailed Stats */}
             {stats ? (
               <div className="space-y-4">
+                {!hasStoredStats && (
+                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
+                    Este partido pertenece a un guardado antiguo sin estadísticas completas. Se muestran estimaciones estables a partir del resultado y los datos conservados.
+                  </p>
+                )}
                 {/* Possession */}
                 <div className="bg-card border border-border rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
@@ -682,14 +832,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.home.shots / (stats.home.shots + stats.away.shots)) * 100}%`,
+                        width: `${percentagePart(stats.home.shots, stats.away.shots)}%`,
                         backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.away.shots / (stats.home.shots + stats.away.shots)) * 100}%`,
+                        width: `${percentagePart(stats.away.shots, stats.home.shots)}%`,
                         backgroundColor: matchColors.awayColor,
                       }}
                     />
@@ -723,14 +873,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.home.shotsOnTarget / (stats.home.shotsOnTarget + stats.away.shotsOnTarget)) * 100}%`,
+                        width: `${percentagePart(stats.home.shotsOnTarget, stats.away.shotsOnTarget)}%`,
                         backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.away.shotsOnTarget / (stats.home.shotsOnTarget + stats.away.shotsOnTarget)) * 100}%`,
+                        width: `${percentagePart(stats.away.shotsOnTarget, stats.home.shotsOnTarget)}%`,
                         backgroundColor: matchColors.awayColor,
                       }}
                     />
@@ -762,14 +912,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.home.corners / (stats.home.corners + stats.away.corners)) * 100}%`,
+                        width: `${percentagePart(stats.home.corners, stats.away.corners)}%`,
                         backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.away.corners / (stats.home.corners + stats.away.corners)) * 100}%`,
+                        width: `${percentagePart(stats.away.corners, stats.home.corners)}%`,
                         backgroundColor: matchColors.awayColor,
                       }}
                     />
@@ -801,14 +951,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.home.fouls / (stats.home.fouls + stats.away.fouls)) * 100}%`,
+                        width: `${percentagePart(stats.home.fouls, stats.away.fouls)}%`,
                         backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.away.fouls / (stats.home.fouls + stats.away.fouls)) * 100}%`,
+                        width: `${percentagePart(stats.away.fouls, stats.home.fouls)}%`,
                         backgroundColor: matchColors.awayColor,
                       }}
                     />
@@ -842,14 +992,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.home.offsides / (stats.home.offsides + stats.away.offsides)) * 100}%`,
+                        width: `${percentagePart(stats.home.offsides, stats.away.offsides)}%`,
                         backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.away.offsides / (stats.home.offsides + stats.away.offsides)) * 100}%`,
+                        width: `${percentagePart(stats.away.offsides, stats.home.offsides)}%`,
                         backgroundColor: matchColors.awayColor,
                       }}
                     />
@@ -922,14 +1072,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.home.saves / (stats.home.saves + stats.away.saves)) * 100}%`,
+                        width: `${percentagePart(stats.home.saves, stats.away.saves)}%`,
                         backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.away.saves / (stats.home.saves + stats.away.saves)) * 100}%`,
+                        width: `${percentagePart(stats.away.saves, stats.home.saves)}%`,
                         backgroundColor: matchColors.awayColor,
                       }}
                     />
@@ -961,14 +1111,14 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.home.xg / (stats.home.xg + stats.away.xg)) * 100}%`,
+                        width: `${percentagePart(stats.home.xg, stats.away.xg)}%`,
                         backgroundColor: matchColors.homeColor,
                       }}
                     />
                     <div
                       className="h-full"
                       style={{
-                        width: `${(stats.away.xg / (stats.home.xg + stats.away.xg)) * 100}%`,
+                        width: `${percentagePart(stats.away.xg, stats.home.xg)}%`,
                         backgroundColor: matchColors.awayColor,
                       }}
                     />
@@ -982,7 +1132,92 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
             )}
           </TabsContent>
 
-          <TabsContent value="chronicle" className="space-y-6">
+          <TabsContent value="summary" className="space-y-5">
+            <MatchFinalSummary
+              competition={matchCompetitionLabel}
+              home={{
+                id: fixture.homeId,
+                name: home.name,
+                short: home.short,
+                leagueName: getLeagueName(home.league),
+                formation: homeFormation,
+              }}
+              away={{
+                id: fixture.awayId,
+                name: away.name,
+                short: away.short,
+                leagueName: getLeagueName(away.league),
+                formation: awayFormation,
+              }}
+              homeScore={displayHomeGoals}
+              awayScore={displayAwayGoals}
+              homeColor={matchColors.homeColor}
+              awayColor={matchColors.awayColor}
+              result={{ ...result, mvp: summaryMvp }}
+              goalEvents={summaryGoalEvents}
+              timelineEvents={summaryTimelineEvents}
+            />
+          </TabsContent>
+
+          <TabsContent value="moments" className="space-y-5">
+            <div className="border-b border-border/60 pb-3">
+              <h3 className="font-black">Momentos destacados</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Cada apartado está ordenado cronológicamente, del primer al último minuto.</p>
+            </div>
+
+            <section className="space-y-2">
+              <h4 className="flex items-center gap-2 text-sm font-black"><span>⚽</span> Goles</h4>
+              {goalMoments.length ? goalMoments.map((event: any, index: number) => {
+                const scoringTeam = event.team === "home" ? home : away;
+                const kind = event.type === "own_goal" ? "Gol en propia puerta" : event.type === "penalty_goal" ? "Gol de penalti" : event.type === "free_kick_goal" ? "Gol de falta directa" : "Gol";
+                return <div key={`goal-moment-${index}`} className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2">
+                  <span className="w-10 shrink-0 text-sm font-black text-primary">{formatMatchMinuteWithMark(event.minute, event)}</span>
+                  <PlayerChronicleFace playerId={event.scorerId} playerName={event.scorerName} size={30} />
+                  <TeamLogo teamName={scoringTeam.name} leagueName={getLeagueName(scoringTeam.league)} size={22} />
+                  <div className="min-w-0 text-sm"><span className="font-bold">{event.scorerName || "Autor no registrado"}</span><span className="text-muted-foreground"> · {kind} · {scoringTeam.short}</span>{event.assistName && <div className="text-xs text-muted-foreground">Asistencia: {event.assistName}</div>}</div>
+                </div>;
+              }) : (displayHomeGoals + displayAwayGoals > 0
+                ? <p className="rounded-lg border border-border/50 px-3 py-2 text-xs text-muted-foreground">El marcador refleja {displayHomeGoals + displayAwayGoals} gol(es), pero este registro antiguo no conserva sus autores ni minutos.</p>
+                : <p className="text-xs text-muted-foreground">No hubo goles.</p>)}
+            </section>
+
+            <section className="space-y-2">
+              <h4 className="flex items-center gap-2 text-sm font-black"><span>🥅</span> Al palo</h4>
+              {woodworkMoments.length ? woodworkMoments.map((event: any, index: number) => {
+                const eventTeam = event.team === "home" ? home : away;
+                return <div key={`woodwork-${index}`} className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2"><span className="w-10 shrink-0 text-sm font-black text-primary">{formatMatchMinuteWithMark(event.minute, event)}</span><PlayerChronicleFace playerId={event.playerId} playerName={event.playerName} size={28}/><TeamLogo teamName={eventTeam.name} leagueName={getLeagueName(eventTeam.league)} size={22}/><div className="min-w-0 text-sm"><span className="font-bold">{event.playerName || "Jugador"}</span><span className="text-muted-foreground"> · {event.detail || "Remate al palo"} ({eventTeam.short})</span></div></div>;
+              }) : <p className="text-xs text-muted-foreground">No se registraron remates al palo.</p>}
+            </section>
+
+            <section className="space-y-2">
+              <h4 className="flex items-center gap-2 text-sm font-black"><span>🟨</span> Tarjetas</h4>
+              {cardMoments.length ? cardMoments.map((card: any, index: number) => {
+                const cardTeam = card.team === "home" ? home : away;
+                const label = card.isSecondYellow ? "Segunda amarilla y expulsión" : card.cardType === "yellow" ? "Tarjeta amarilla" : "Tarjeta roja";
+                return <div key={`card-moment-${index}`} className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2"><span className="w-10 shrink-0 text-sm font-black text-primary">{formatMatchMinuteWithMark(card.minute, card)}</span><span className={`h-4 w-3 shrink-0 rounded-sm ${card.cardType === "yellow" ? "bg-yellow-400" : "bg-red-500"}`}/><PlayerChronicleFace playerId={card.playerId} playerName={card.playerName} size={28}/><TeamLogo teamName={cardTeam.name} leagueName={getLeagueName(cardTeam.league)} size={22}/><div className="min-w-0 text-sm"><span className="font-bold">{card.playerName}</span><span className="text-muted-foreground"> · {label} ({cardTeam.short})</span>{card.reason && <div className="text-xs text-muted-foreground">{card.reason}</div>}</div></div>;
+              }) : <p className="text-xs text-muted-foreground">No se mostraron tarjetas.</p>}
+            </section>
+
+            <section className="space-y-2">
+              <h4 className="flex items-center gap-2 text-sm font-black"><span>🔄</span> Sustituciones</h4>
+              {substitutionMoments.length ? substitutionMoments.map((sub: any, index: number) => {
+                const subTeam = sub.team === "home" ? home : away;
+                return <div key={`sub-moment-${index}`} className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2"><span className="w-10 shrink-0 text-sm font-black text-primary">{formatMatchMinuteWithMark(sub.minute, sub)}</span><div className="flex shrink-0 -space-x-2"><PlayerChronicleFace playerId={sub.playerInId ?? sub.inId} playerName={sub.playerInName ?? sub.inName} size={28}/><PlayerChronicleFace playerId={sub.playerOutId ?? sub.outId} playerName={sub.playerOutName ?? sub.outName} size={26}/></div><TeamLogo teamName={subTeam.name} leagueName={getLeagueName(subTeam.league)} size={22}/><div className="min-w-0 text-sm"><span className="font-bold text-primary">{sub.playerInName ?? sub.inName ?? "Entra"}</span><span className="text-muted-foreground"> por </span><span className="font-semibold text-destructive">{sub.playerOutName ?? sub.outName ?? "Sale"}</span><span className="text-muted-foreground"> ({subTeam.short})</span></div></div>;
+              }) : <p className="text-xs text-muted-foreground">No se registraron sustituciones.</p>}
+            </section>
+
+            <section className="space-y-2">
+              <h4 className="flex items-center gap-2 text-sm font-black"><span>🚑</span> Incidencias</h4>
+              {incidentMoments.length ? incidentMoments.map((event: any, index: number) => {
+                const eventTeam = event.team === "home" ? home : away;
+                const meta = KEEP[event.type] || { icon: "⚠️", label: "Incidencia" };
+                const label = event.type === "penalty_conceded" ? "Penalti cometido" : meta.label;
+                return <div key={`incident-${index}`} className="flex items-center gap-3 rounded-lg border border-border/50 px-3 py-2"><span className="w-10 shrink-0 text-sm font-black text-primary">{formatMatchMinuteWithMark(event.minute, event)}</span><span className="w-6 shrink-0 text-center">{meta.icon}</span>{event.playerId && <PlayerChronicleFace playerId={event.playerId} playerName={event.playerName} size={28}/>}<TeamLogo teamName={eventTeam.name} leagueName={getLeagueName(eventTeam.league)} size={22}/><div className="min-w-0 text-sm"><span className="font-bold">{event.playerName || label}</span><span className="text-muted-foreground"> · {event.detail || label} ({eventTeam.short})</span>{event.weeks && <div className="text-xs text-muted-foreground">Baja estimada: {event.weeks} semana(s)</div>}</div></div>;
+              }) : <p className="text-xs text-muted-foreground">No se registraron lesiones, penaltis cometidos ni otras incidencias.</p>}
+            </section>
+          </TabsContent>
+
+          <TabsContent value="chronicle" className="mt-2 w-full min-w-0 max-w-full space-y-6 overflow-x-hidden">
             {/* Match Info */}
             <div className="flex items-center justify-between text-sm text-muted-foreground border-b pb-4">
               <div>
@@ -995,147 +1230,25 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
               </div>
             </div>
 
-            {/* Match Chronicle */}
+            {/* La misma crónica compartida con el partido en directo */}
             <div className="space-y-4">
               <h3 className="font-bold flex items-center gap-2">
                 <Clock className="w-4 h-4" />
                 Crónica del partido
               </h3>
-              {finalChronicleEvents.length === 0 ? (
-                <div className="text-sm text-muted-foreground">Sin eventos registrados</div>
-              ) : (
-                <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
-                  {finalChronicleEvents.map((item, i) => {
-                    const teamOf = (t: string) => (t === "home" ? home : away);
-                    if (item.kind === "card") {
-                      const card = item.data;
-                      const cardTeam = teamOf(card.team);
-                      const cardText = card.isSecondYellow
-                        ? "2ª amarilla → roja"
-                        : card.cardType === "yellow"
-                          ? "Tarjeta amarilla"
-                          : "Tarjeta roja";
-                      return (
-                        <div
-                          key={`card-${i}`}
-                          className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
-                        >
-                          <span className="text-sm text-primary font-bold w-10">
-                            {card.minute}'
-                          </span>
-                          <span
-                            className={`w-5 h-3 rounded-sm shrink-0 ${card.cardType === "yellow" ? "bg-yellow-400" : "bg-red-500"}`}
-                          />
-                          <PlayerChronicleFace playerId={card.playerId} playerName={card.playerName} size={30} />
-                          <TeamLogo
-                            teamName={cardTeam.name}
-                            leagueName={getLeagueName(cardTeam.league)}
-                            size={22}
-                          />
-                          <div className="text-sm min-w-0">
-                            <span className="font-bold">{card.playerName}</span>
-                            <span className="text-muted-foreground"> · {cardText}</span>
-                            <span className="text-muted-foreground"> ({cardTeam.short})</span>
-                          </div>
-                        </div>
-                      );
-                    }
-                    if (item.kind === "sub") {
-                      const s = item.data;
-                      const subTeam = teamOf(s.team);
-                      return (
-                        <div
-                          key={`sub-${i}`}
-                          className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
-                        >
-                          <span className="text-sm text-primary font-bold w-10">{s.minute}'</span>
-                          <span className="text-base w-5 text-center shrink-0">🔄</span>
-                          <div className="flex items-center -space-x-2 shrink-0">
-                            <PlayerChronicleFace playerId={s.playerInId} playerName={s.playerInName} size={30} />
-                            <PlayerChronicleFace playerId={s.playerOutId} playerName={s.playerOutName} size={26} />
-                          </div>
-                          <TeamLogo
-                            teamName={subTeam.name}
-                            leagueName={getLeagueName(subTeam.league)}
-                            size={22}
-                          />
-                          <div className="text-sm min-w-0 truncate">
-                            <span className="text-primary font-bold">{s.playerInName}</span>
-                            <span className="text-muted-foreground"> por </span>
-                            <span className="text-destructive">{s.playerOutName}</span>
-                            <span className="text-muted-foreground"> ({subTeam.short})</span>
-                          </div>
-                        </div>
-                      );
-                    }
-                    if (item.kind === "highlight") {
-                      const h = item.data;
-                      const hTeam = teamOf(h.team);
-                      const meta = KEEP[h.type];
-                      return (
-                        <div
-                          key={`hl-${i}`}
-                          className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
-                        >
-                          <span className="text-sm text-muted-foreground font-bold w-10">
-                            {h.minute}'
-                          </span>
-                          <span className="text-base w-5 text-center shrink-0">{meta.icon}</span>
-                          <PlayerChronicleFace playerId={h.playerId} playerName={h.playerName} size={30} />
-                          <TeamLogo
-                            teamName={hTeam.name}
-                            leagueName={getLeagueName(hTeam.league)}
-                            size={22}
-                          />
-                          <div className="text-sm min-w-0 truncate">
-                            <span className="font-semibold">{h.playerName}</span>
-                            <span className="text-muted-foreground">
-                              {" "}
-                              · {h.detail || meta.label}
-                            </span>
-                            <span className="text-muted-foreground"> ({hTeam.short})</span>
-                          </div>
-                        </div>
-                      );
-                    }
-                    const e = item.data;
-                    const scoringTeam = teamOf(e.team);
-                    const isPenalty = e.type === "penalty" || e.type === "penalty_goal";
-                    const isFreeKick = e.type === "free_kick_goal";
-                    const isOwnGoal = e.type === "own_goal";
-                    return (
-                      <div
-                        key={`goal-${i}`}
-                        className="flex items-center gap-3 py-2 border-b border-border/40 last:border-0"
-                      >
-                        <span className="text-sm text-primary font-bold w-10">{e.minute}'</span>
-                        <span className="text-lg">
-                          {isPenalty ? (
-                            <span className="px-1.5 py-0.5 text-[0.8rem] font-bold rounded bg-white/6">
-                              P
-                            </span>
-                          ) : (
-                            <span className="w-3 h-3 inline-block rounded-full bg-white/80" />
-                          )}
-                        </span>
-                        <PlayerChronicleFace playerId={e.scorerId} playerName={e.scorerName} size={32} />
-                        <TeamLogo
-                          teamName={scoringTeam.name}
-                          leagueName={getLeagueName(scoringTeam.league)}
-                          size={22}
-                        />
-                        <div className="text-sm min-w-0">
-                          <span className="font-bold">{e.scorerName}</span>
-                          {e.assistName && (
-                            <span className="text-muted-foreground"> (asist: {e.assistName})</span>
-                          )}
-                          <span className="text-muted-foreground"> ({scoringTeam.short})</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <MatchChronicle
+                home={home}
+                away={away}
+                events={mergedEvents}
+                cards={[
+                  ...mergedCards,
+                ]}
+                highlights={mergedHighlights}
+                substitutions={matchSubstitutions}
+                moments={mergedKeyMoments}
+                className="w-full min-w-0 max-w-full space-y-0.5 max-h-96 overflow-x-hidden overflow-y-auto pr-1"
+                emptyMessage="Sin eventos registrados"
+              />
             </div>
 
             {/* Tanda de penaltis */}
@@ -1298,7 +1411,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                                   </span>
                                   {substitution && (
                                     <span className="text-xs text-muted-foreground">
-                                      (salida {substitution.minute}')
+                                      (salida {formatMatchMinuteWithMark(substitution.minute, substitution)})
                                     </span>
                                   )}
                                 </div>
@@ -1344,7 +1457,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                                   </span>
                                   {substitution && (
                                     <span className="text-xs text-muted-foreground">
-                                      ({substitution.minute}')
+                                      ({formatMatchMinuteWithMark(substitution.minute, substitution)})
                                     </span>
                                   )}
                                 </div>
@@ -1422,7 +1535,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                                   </span>
                                   {substitution && (
                                     <span className="text-xs text-muted-foreground">
-                                      (salida {substitution.minute}')
+                                      (salida {formatMatchMinuteWithMark(substitution.minute, substitution)})
                                     </span>
                                   )}
                                 </div>
@@ -1468,7 +1581,7 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
                                   </span>
                                   {substitution && (
                                     <span className="text-xs text-muted-foreground">
-                                      ({substitution.minute}')
+                                      ({formatMatchMinuteWithMark(substitution.minute, substitution)})
                                     </span>
                                   )}
                                 </div>

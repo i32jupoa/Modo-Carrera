@@ -124,6 +124,7 @@ export function describeTransfer(record: TransferRecord): string {
   const to = teamById(record.toClubId)?.name ?? record.toClubId;
   const from = record.fromClubId ? (teamById(record.fromClubId)?.name ?? record.fromClubId) : null;
   const fee = formatFee(record.fee, record.type);
+  if (record.isReleaseClause && from) return `El ${to} ha pagado al ${from} la cláusula de ${record.playerName} (${fee})`;
   if (!from) return `${record.playerName} firma por el ${to} como agente libre.`;
   if (record.type.startsWith("loan"))
     return `${record.playerName} sale cedido del ${from} al ${to}.`;

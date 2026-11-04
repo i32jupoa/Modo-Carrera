@@ -13,6 +13,7 @@ import {
   Trophy,
   ChevronRight,
   CheckCheck,
+  Coins,
 } from "lucide-react";
 import { loadSave, saveSaveWithRetry, type SaveGame } from "@/lib/store";
 import { TeamLogo } from "@/components/TeamLogo";
@@ -48,7 +49,13 @@ const META: Record<SeasonNotification["type"], MessageMeta> = {
   player_of_round: { label: "Jugador de la jornada", icon: Trophy, tone: "text-yellow-300 bg-yellow-400/10 border-yellow-400/25", accent: "#eab308", wash: "from-yellow-500/12 via-transparent to-transparent", kicker: "MEJOR DE LA LIGA" },
   player_of_month: { label: "Jugador del mes", icon: Trophy, tone: "text-amber-300 bg-amber-400/10 border-amber-400/25", accent: "#f59e0b", wash: "from-amber-500/12 via-transparent to-transparent", kicker: "PREMIO MENSUAL" },
   player_of_european_round: { label: "Jugador de la jornada europea", icon: Trophy, tone: "text-sky-300 bg-sky-400/10 border-sky-400/25", accent: "#38bdf8", wash: "from-sky-500/12 via-transparent to-transparent", kicker: "COMPETICIONES UEFA" },
+  release_clause_paid: { label: "Clausulazo", icon: Bell, tone: "text-amber-300 bg-amber-400/10 border-amber-400/25", accent: "#f59e0b", wash: "from-amber-500/12 via-transparent to-transparent", kicker: "SALIDA POR CLÁUSULA" },
+  financial_income: { label: "Ingreso del club", icon: Coins, tone: "text-emerald-300 bg-emerald-400/10 border-emerald-400/25", accent: "#34d399", wash: "from-emerald-500/12 via-transparent to-transparent", kicker: "INGRESOS Y PREMIOS" },
 };
+
+function formatEuro(amount: number): string {
+  return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(amount);
+}
 
 function formatDate(date: string): string {
   const parsed = new Date(`${date}T12:00:00Z`);
@@ -153,7 +160,7 @@ function SeasonInboxPage() {
         <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-border/60 bg-card/40 px-6 text-center text-muted-foreground">
           <div className="grid h-16 w-16 place-items-center rounded-2xl border border-border/50 bg-background/60"><Bell className="h-7 w-7 opacity-50" /></div>
           <p className="mt-4 font-bold text-foreground">No hay comunicados todavía</p>
-          <p className="mt-1 max-w-md text-xs">Aquí aparecerán las noticias del equipo durante toda la temporada: lesiones, actuaciones destacadas y novedades del club.</p>
+          <p className="mt-1 max-w-md text-xs">Aquí aparecerán las noticias del equipo, los premios deportivos y todos los ingresos del club que no procedan de fichajes.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -188,7 +195,10 @@ function SeasonInboxPage() {
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-2">
                           <h2 className="text-sm font-black leading-tight sm:text-[0.95rem]">{hasPlayer ? playerName : meta.label}</h2>
-                          <span className={`rounded-md border px-2 py-0.5 text-[0.55rem] font-bold ${meta.tone}`}>{meta.label}</span>
+                          <span className={`rounded-md border px-2 py-0.5 text-[0.55rem] font-bold ${meta.tone}`}>{item.category ?? meta.label}</span>
+                          {Number.isFinite(Number(item.amount)) && Number(item.amount) > 0 && (
+                            <span className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-black tabular-nums text-emerald-300">+{formatEuro(Number(item.amount))}</span>
+                          )}
                         </div>
                         <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-muted-foreground sm:text-[0.8rem]">{item.message}</p>
                         <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.61rem] text-muted-foreground/80">

@@ -21,8 +21,8 @@ import {
   FcPlayer,
   fcPlayerById,
 } from "@/store/playersStore";
-import { getPlayerAnnualWage, getPlayer, isPlayerSettled, canPlayerMoveAgain, hasRejectedDealFor } from "@/lib/transfers";
-import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Radar, Eye, Clock3, Trash2, LockKeyhole } from "lucide-react";
+import { getPlayerAnnualWage, getPlayer, isPlayerSettled, canPlayerMoveAgain, hasRejectedDealFor, releaseClauseCanBePaid } from "@/lib/transfers";
+import { Search, Wallet, UserPlus, Filter, X, Banknote, Coins, Handshake, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Radar, Eye, Clock3, Trash2, LockKeyhole, Pin } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useTransferMarket } from "@/hooks/useTransferMarket";
 import { MarketStatusBanner } from "@/components/MarketStatusBanner";
@@ -37,6 +37,7 @@ import { ScoutingDetailsModal } from "@/components/market/ScoutingDetailsModal";
 import { useNotificationsStore } from "@/store/notificationsStore";
 import { getClubScout } from "@/lib/transfers";
 import { FREE_AGENT_IMPORTANT_OVR } from "@/lib/transfers/constants";
+import { userWageBudgetBounds } from "@/lib/transfers/SalaryBudget";
 import { resolveCurrentPlayerClub } from "@/lib/playerClub";
 import { PlayerClubCrest } from "@/components/PlayerClubCrest";
 import { windowForDate } from "@/lib/transferWindows";
@@ -253,6 +254,16 @@ const TABS: { value: MarketTab; label: string }[] = [
   { value: "feed", label: "Rumores y traspasos" },
 ];
 
+const ACTIVE_TAB_TONE: Record<MarketTab, string> = {
+  market: "border-green-300 bg-green-400 text-slate-950 shadow-lg shadow-green-950/20",
+  scouted: "border-orange-300 bg-orange-400 text-slate-950 shadow-lg shadow-orange-950/20",
+  deals: "border-orange-300 bg-orange-400 text-slate-950 shadow-lg shadow-orange-950/20",
+  offers: "border-yellow-300 bg-yellow-400 text-slate-950 shadow-lg shadow-yellow-950/20",
+  entries: "border-green-300 bg-green-400 text-slate-950 shadow-lg shadow-green-950/20",
+  exits: "border-orange-300 bg-orange-400 text-slate-950 shadow-lg shadow-orange-950/20",
+  feed: "border-yellow-300 bg-yellow-400 text-slate-950 shadow-lg shadow-yellow-950/20",
+};
+
 const LOAN_OFFER_TYPES = new Set<UserDeal["offer"]["type"]>([
   "loan",
   "loan-option",
@@ -276,6 +287,17 @@ function groupIncomingOffersByPlayer(deals: UserDeal[]): Array<[string, UserDeal
 
 function TransfersPage() {
   const navigate = useNavigate();
+
+  // Marca la ruta activa para aplicar la paleta del mercado y retirarla al salir.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute("data-game-route", "transfers");
+    return () => {
+      if (root.getAttribute("data-game-route") === "transfers") {
+        root.removeAttribute("data-game-route");
+      }
+    };
+  }, []);
   const { q: initialQuery, player: initialPlayerId } = Route.useSearch();
   const { loading, ready } = usePlayersReady();
   const budget = usePlayersStore((s) => s.budget);
@@ -288,19 +310,31 @@ function TransfersPage() {
   const playerStats = usePlayersStore((s) => s.stats);
   const effectiveEconomicBudget = totalEconomicBudget;
   const transferBudget = Math.max(0, totalEconomicBudget - wageBudget);
+  const wageBudgetRange = userWageBudgetBounds(totalEconomicBudget, wageBill, wageBudget);
   const rawPlayers = useMemo(() => usePlayersStore.getState().getRawPlayers?.() || [], [playerStats, currentDate]);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const rosterIds = usePlayersStore((s) => s.rosterIds);
   const { isMarketOpen } = useTransferMarket();
   const market = useUserMarket(ready);
 
-  const incomingTransferGroups = useMemo(
-    () => groupIncomingOffersByPlayer(market.incoming.filter((deal) => !isLoanOffer(deal))),
+  const pinnedIncomingDeals = useMemo(
+    () => market.incoming
+      .filter((deal) => deal.pinnedAt !== undefined)
+      .slice()
+      .sort((a, b) => (a.pinnedAt ?? 0) - (b.pinnedAt ?? 0) || a.id.localeCompare(b.id)),
     [market.incoming],
   );
-  const incomingLoanGroups = useMemo(
-    () => groupIncomingOffersByPlayer(market.incoming.filter((deal) => isLoanOffer(deal))),
+  const unpinnedIncomingDeals = useMemo(
+    () => market.incoming.filter((deal) => deal.pinnedAt === undefined),
     [market.incoming],
+  );
+  const incomingTransferGroups = useMemo(
+    () => groupIncomingOffersByPlayer(unpinnedIncomingDeals.filter((deal) => !isLoanOffer(deal))),
+    [unpinnedIncomingDeals],
+  );
+  const incomingLoanGroups = useMemo(
+    () => groupIncomingOffersByPlayer(unpinnedIncomingDeals.filter((deal) => isLoanOffer(deal))),
+    [unpinnedIncomingDeals],
   );
 
   const [save, setSave] = useState<SaveGame | null>(null);
@@ -323,6 +357,10 @@ function TransfersPage() {
   const [removeScoutingId, setRemoveScoutingId] = useState<string | null>(null);
   const [detailsRecord, setDetailsRecord] = useState<import("@/lib/transfers").TransferRecord | null>(null);
   const [detailsDirection, setDetailsDirection] = useState<"in" | "out">("in");
+  const selectedMarketPlayer = target ? getPlayer(String(target.ID)) : null;
+  const selectedClauseEligibility = selectedMarketPlayer && myTeamId
+    ? releaseClauseCanBePaid(String(target?.ID), myTeamId, market.currentDate)
+    : null;
 
   const [filters, setFilters] = useState<FilterState>({
     positions: [],
@@ -527,22 +565,22 @@ function TransfersPage() {
   if (!save) return null;
   if (loading) {
     return (
-      <div className="p-4 md:p-6 max-w-6xl mx-auto">
+      <div className="market-page p-4 md:p-6 max-w-6xl mx-auto">
         <PlayersLoading message="Cargando mercado de fichajes…" />
       </div>
     );
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto">
+    <div className="market-page p-4 md:p-6 max-w-6xl mx-auto">
       <MarketStatusBanner className="mb-6" />
 
-      <div className="mb-6 rounded-2xl border border-border bg-card/70 p-4 md:p-5 shadow-sm">
+      <div className="market-budget-panel mb-6 rounded-2xl border border-border bg-card/70 p-4 md:p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground font-bold">Presupuesto del club</p>
             <h2 className="text-lg font-black mt-1">Fichajes y salarios</h2>
-            <p className="text-xs text-muted-foreground mt-1">Reparte el presupuesto total según tu estrategia. La masa salarial actual es un mínimo obligatorio.</p>
+            <p className="text-xs text-muted-foreground mt-1">Reparte el presupuesto total según tu estrategia. La masa salarial real se muestra aparte.</p>
           </div>
           <div className="text-right">
             <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Presupuesto total</p>
@@ -550,21 +588,21 @@ function TransfersPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 mb-4 md:grid-cols-3">
-          <div className="rounded-xl border border-border/50 bg-secondary/60 p-3 flex items-center gap-3">
+          <div className="market-budget-metric market-budget-metric--transfers rounded-xl border border-border/50 bg-secondary/60 p-3 flex items-center gap-3">
             <Banknote className="h-5 w-5 text-primary" />
             <div>
               <p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Fichajes</p>
               <p className="font-black text-lg">{formatEuro(transferBudget)}</p>
             </div>
           </div>
-          <div className="rounded-xl border border-border/50 bg-secondary/60 p-3 flex items-center gap-3">
+          <div className="market-budget-metric market-budget-metric--wages rounded-xl border border-border/50 bg-secondary/60 p-3 flex items-center gap-3">
             <Coins className="h-5 w-5 text-primary" />
             <div>
               <p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Presupuesto salarial</p>
               <p className="font-black text-lg">{formatEuro(wageBudget)}</p>
             </div>
           </div>
-          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <div className="market-budget-metric market-budget-metric--bill rounded-xl border border-primary/20 bg-primary/5 p-3">
             <p className="text-[0.65rem] uppercase text-muted-foreground font-bold">Masa real</p>
             <p className="font-black text-lg">{formatEuro(wageBill)}<span className="text-xs font-normal text-muted-foreground">/año</span></p>
           </div>
@@ -574,13 +612,13 @@ function TransfersPage() {
           <span className="text-primary">{effectiveEconomicBudget > 0 ? ((Math.min(wageBudget, effectiveEconomicBudget) / effectiveEconomicBudget) * 100).toFixed(1) : "0.0"}% salarios · del presupuesto total</span>
         </div>
         <Slider
-          value={[Math.min(Math.max(Math.min(Math.ceil(totalEconomicBudget * 0.05), effectiveEconomicBudget), wageBudget), Math.min(Math.floor(totalEconomicBudget * 0.30), effectiveEconomicBudget))]}
-          min={Math.min(Math.ceil(totalEconomicBudget * 0.05), effectiveEconomicBudget)}
-          max={Math.min(Math.floor(totalEconomicBudget * 0.30), effectiveEconomicBudget)}
+          value={[Math.min(wageBudgetRange.max, Math.max(wageBudgetRange.min, wageBudget))]}
+          min={wageBudgetRange.min}
+          max={wageBudgetRange.max}
           step={250_000}
           onValueChange={(values) => setWageBudget(Math.min(values[0] ?? wageBudget, effectiveEconomicBudget))}
           aria-label="Distribución del presupuesto entre salarios y fichajes, entre 5% y 30% para salarios"
-          className="mt-3"
+          className="market-budget-slider mt-3"
         />
         <div className="flex justify-between mt-2 text-[0.7rem] text-muted-foreground">
           <span>Más dinero para fichajes</span>
@@ -601,7 +639,7 @@ function TransfersPage() {
           <Wallet className="h-5 w-5 text-primary shrink-0" />
           <div>
             <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
-              Presupuesto
+              Presupuesto total
             </p>
             <p className="text-xl font-black scoreline text-primary">{formatEuro(budget)}</p>
           </div>
@@ -629,17 +667,19 @@ function TransfersPage() {
               onClick={() => setTab(option.value)}
               className={`px-3 py-2 rounded-lg text-sm font-bold border transition ${
                 tab === option.value
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card border-border hover:border-primary/50"
+                  ? ACTIVE_TAB_TONE[option.value]
+                  : "bg-card/80 border-border/70 text-muted-foreground hover:text-foreground hover:border-primary/60"
               }`}
             >
               {option.label}
               {count > 0 && (
                 <span
-                  className={`ml-2 rounded-full px-2 py-0.5 text-xs font-black ${
-                    option.value === "scouted" || option.value === "deals" || option.value === "offers"
-                      ? "bg-yellow-400 text-black"
-                      : "bg-secondary text-foreground"
+                  className={`ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 py-0.5 text-[0.6rem] font-black ${
+                    option.value === "offers"
+                      ? "market-tab-notification-badge border border-yellow-400 bg-yellow-400 text-slate-950"
+                      : option.value === "deals" || option.value === "scouted"
+                        ? "market-tab-notification-badge border border-orange-400 bg-orange-400 text-slate-950"
+                        : "bg-secondary text-foreground"
                   }`}
                 >
                   {count}
@@ -895,7 +935,7 @@ function TransfersPage() {
                           </span>
                         </div>
                         {!canPlayerMoveAgain(id, market.currentDate) && (
-                          <p className="text-[0.6rem] text-yellow-400 mt-1">
+                          <p className="text-[0.6rem] text-cyan-400 mt-1">
                             Ya cambió de club este año o temporada
                           </p>
                         )}
@@ -922,7 +962,7 @@ function TransfersPage() {
                                 disabled={disabled}
                                 title={noScout ? "Contrata primero un ojeador en Mi equipo → Ojeador" : atCapacity ? "Has alcanzado la capacidad de tu ojeador" : pending ? "El informe aún está en preparación" : "Abrir o solicitar informe de ojeador"}
                                 onClick={() => startOrOpenScouting(p)}
-                                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition disabled:opacity-45 disabled:cursor-not-allowed ${completed ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15" : "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"}`}
+                                className="market-action-button inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition disabled:opacity-45 disabled:cursor-not-allowed"
                               >
                                 {pending ? <Clock3 className="h-3.5 w-3.5 animate-pulse" /> : completed ? <Eye className="h-3.5 w-3.5" /> : noScout || atCapacity ? <LockKeyhole className="h-3.5 w-3.5" /> : <Radar className="h-3.5 w-3.5" />}
                                 {pending ? "Ojeando..." : completed ? "Ver informe" : "Ojear"}
@@ -945,7 +985,7 @@ function TransfersPage() {
                           type="button"
                           disabled={!isMarketOpen || negotiating || !market.ready || blockedThisWindow}
                           onClick={() => openNegotiation(p)}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
+                          className="market-action-button inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
                         >
                           <UserPlus className="h-3.5 w-3.5" />
                           {blockedThisWindow ? "Bloqueado" : negotiating ? "Negociando" : "Negociar"}
@@ -1038,7 +1078,7 @@ function TransfersPage() {
                           </span>
                         </div>
                         {!canPlayerMoveAgain(id, market.currentDate) && (
-                          <p className="text-[0.6rem] text-yellow-400 mt-1">
+                          <p className="text-[0.6rem] text-cyan-400 mt-1">
                             Ya cambió de club este año o temporada
                           </p>
                         )}
@@ -1056,7 +1096,7 @@ function TransfersPage() {
                           disabled={pending}
                           title={pending ? "El informe aún está en preparación" : "Abrir informe de ojeador"}
                           onClick={() => startOrOpenScouting(p)}
-                          className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition disabled:opacity-45 disabled:cursor-not-allowed ${completed ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15" : "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"}`}
+                          className="market-action-button inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition disabled:opacity-45 disabled:cursor-not-allowed"
                         >
                           {pending ? <Clock3 className="h-3.5 w-3.5 animate-pulse" /> : <Eye className="h-3.5 w-3.5" />}
                           {pending ? "Ojeando..." : "Ver informe"}
@@ -1074,7 +1114,7 @@ function TransfersPage() {
                           type="button"
                           disabled={!isMarketOpen || negotiating || !market.ready || blockedThisWindow}
                           onClick={() => openNegotiation(p)}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
+                          className="market-action-button inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
                         >
                           <UserPlus className="h-3.5 w-3.5" />
                           {blockedThisWindow ? "Bloqueado" : negotiating ? "Negociando" : "Negociar"}
@@ -1091,6 +1131,13 @@ function TransfersPage() {
 
       {tab === "deals" && (
         <div className="space-y-3">
+          <div className="rounded-2xl border border-violet-400/25 bg-gradient-to-r from-violet-500/10 via-card to-blue-500/5 p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl border border-violet-400/20 bg-violet-400/10 text-violet-300"><Handshake className="h-5 w-5" /></div>
+              <div className="min-w-0"><h3 className="text-base font-black">Tus negociaciones</h3><p className="mt-0.5 text-xs text-muted-foreground">Sigue las respuestas de los clubes y ajusta las condiciones de cada operación.</p></div>
+              <span className="ml-auto rounded-full border border-violet-400/25 bg-violet-400/10 px-3 py-1 text-xs font-black text-violet-200">{market.outgoing.length}</span>
+            </div>
+          </div>
           {market.outgoing.length === 0 ? (
             <div className="panel p-10 text-center text-sm text-muted-foreground">
               No tienes negociaciones abiertas. Busca un jugador y envía una oferta.
@@ -1117,16 +1164,58 @@ function TransfersPage() {
 
       {tab === "offers" && (
         <div className="space-y-6">
+          {pinnedIncomingDeals.length > 0 && (
+            <section className="space-y-3">
+              <div className="rounded-2xl border border-cyan-400/30 bg-gradient-to-r from-cyan-400/10 via-card to-card p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-200">
+                    <Pin className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-black text-lg">Ofertas fijadas</h3>
+                      <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2.5 py-1 text-xs font-black text-cyan-200">
+                        {pinnedIncomingDeals.length}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Permanecen aquí, en el mismo orden, hasta que las desfijes o desaparezcan del mercado.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="grid gap-3">
+                {pinnedIncomingDeals.map((deal) => (
+                  <DealCard
+                    key={deal.id}
+                    deal={deal}
+                    pinned
+                    onTogglePin={market.setOfferPinned}
+                    onImprove={market.improveOffer}
+                    onAcceptDemand={market.acceptDemand}
+                    onImproveWage={market.improveWage}
+                    onConfirm={market.confirmDeal}
+                    onAbandon={market.abandonDeal}
+                    onAcceptIncoming={market.acceptIncoming}
+                    onCounterIncoming={market.counterIncoming}
+                    onCounterOutgoing={market.counterOutgoing}
+                    onRejectIncoming={market.rejectIncoming}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="space-y-3">
-            <div className="rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 via-card to-card p-5 shadow-sm">
+            <div className="rounded-2xl border border-orange-400/25 bg-gradient-to-r from-orange-400/10 via-card to-card p-5 shadow-sm">
               <div className="flex flex-wrap items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary/15 text-primary">
+                <div className="grid h-11 w-11 place-items-center rounded-xl bg-orange-400/15 text-orange-300">
                   <Banknote className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h3 className="font-black text-lg">Traspasos recibidos</h3>
-                    <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-black text-primary">
+                    <span className="rounded-full border border-orange-400/30 bg-orange-400 px-2.5 py-1 text-xs font-black text-black">
                       {market.incoming.filter((deal) => !isLoanOffer(deal)).length}
                     </span>
                   </div>
@@ -1151,7 +1240,7 @@ function TransfersPage() {
                     key={`transfer-group-${playerId}`}
                     className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm"
                   >
-                    <div className="flex items-center gap-3 border-b border-border/60 bg-gradient-to-r from-secondary/70 via-card to-primary/5 px-4 py-3.5">
+                    <div className="flex items-center gap-3 border-b border-orange-400/15 bg-gradient-to-r from-secondary/70 via-card to-orange-400/5 px-4 py-3.5">
                       <PlayerFace
                         name={playerName}
                         image={player?.card}
@@ -1163,7 +1252,7 @@ function TransfersPage() {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <h4 className="truncate text-base font-black uppercase tracking-tight">{playerName}</h4>
-                          <span className="rounded-full bg-secondary px-2 py-0.5 text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">
+                          <span className="rounded-full border border-orange-400/30 bg-orange-400 px-2 py-0.5 text-[0.62rem] font-black uppercase tracking-wider text-slate-950">
                             {deals.length} {deals.length === 1 ? "oferta" : "ofertas"}
                           </span>
                         </div>
@@ -1181,6 +1270,8 @@ function TransfersPage() {
                           key={deal.id}
                           deal={deal}
                           compactHeader
+                          pinned={Boolean(deal.pinnedAt)}
+                          onTogglePin={market.setOfferPinned}
                           onImprove={market.improveOffer}
                           onAcceptDemand={market.acceptDemand}
                           onImproveWage={market.improveWage}
@@ -1200,15 +1291,15 @@ function TransfersPage() {
           </section>
 
           <section className="space-y-3">
-            <div className="rounded-2xl border border-sky-500/20 bg-gradient-to-r from-sky-500/10 via-card to-card p-5 shadow-sm">
+            <div className="market-loan-tone rounded-2xl border border-blue-500/30 bg-gradient-to-r from-blue-500/15 via-card to-card p-5 shadow-sm">
               <div className="flex flex-wrap items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-xl bg-sky-500/15 text-sky-300">
+                <div className="grid h-11 w-11 place-items-center rounded-xl border border-blue-400/25 bg-blue-500/15 text-blue-300">
                   <UserPlus className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h3 className="font-black text-lg">Cesiones recibidas</h3>
-                    <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-xs font-black text-sky-300">
+                    <span className="rounded-full border border-blue-400/30 bg-blue-500/10 px-2.5 py-1 text-xs font-black text-blue-300">
                       {market.incoming.filter((deal) => isLoanOffer(deal)).length}
                     </span>
                   </div>
@@ -1231,9 +1322,9 @@ function TransfersPage() {
                 return (
                   <section
                     key={`loan-group-${playerId}`}
-                    className="overflow-hidden rounded-2xl border border-sky-500/20 bg-card shadow-sm"
+                    className="market-loan-tone overflow-hidden rounded-2xl border border-blue-500/30 bg-card shadow-sm"
                   >
-                    <div className="flex items-center gap-3 border-b border-sky-500/15 bg-gradient-to-r from-sky-500/10 via-card to-card px-4 py-3.5">
+                    <div className="flex items-center gap-3 border-b border-blue-500/25 bg-gradient-to-r from-blue-500/15 via-card to-card px-4 py-3.5">
                       <PlayerFace
                         name={playerName}
                         image={player?.card}
@@ -1245,7 +1336,7 @@ function TransfersPage() {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <h4 className="truncate text-base font-black uppercase tracking-tight">{playerName}</h4>
-                          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[0.62rem] font-black uppercase tracking-wider text-sky-300">
+                          <span className="rounded-full border border-blue-400/30 bg-blue-500/10 px-2 py-0.5 text-[0.62rem] font-black uppercase tracking-wider text-blue-300">
                             {deals.length} {deals.length === 1 ? "oferta" : "ofertas"}
                           </span>
                         </div>
@@ -1263,6 +1354,8 @@ function TransfersPage() {
                           key={deal.id}
                           deal={deal}
                           compactHeader
+                          pinned={Boolean(deal.pinnedAt)}
+                          onTogglePin={market.setOfferPinned}
                           onImprove={market.improveOffer}
                           onAcceptDemand={market.acceptDemand}
                           onImproveWage={market.improveWage}
@@ -1451,6 +1544,16 @@ function TransfersPage() {
           transferLocked={target ? isPlayerSettled(String(target.ID)) : false}
           movementBlocked={target ? !canPlayerMoveAgain(String(target.ID), market.currentDate) : false}
           currentDate={market.currentDate}
+          releaseClause={isMarketOpen ? (selectedMarketPlayer?.contract.releaseClause ?? 0) : 0}
+          releaseClauseDisabledReason={selectedMarketPlayer?.contract.releaseClause
+            ? (!isMarketOpen ? "La ventana de mercado está cerrada." : selectedClauseEligibility?.success ? null : selectedClauseEligibility?.reason ?? "No se puede pagar esta cláusula.")
+            : null}
+          onStartReleaseClauseNegotiation={() => {
+            if (market.startReleaseClauseNegotiation(String(target.ID))) {
+              setTarget(null);
+              setTab("deals");
+            }
+          }}
           onClose={() => setTarget(null)}
           onSubmit={({ amount, wageOffer, type, clauses }) => {
             market.makeOffer({ playerId: String(target.ID), amount, wageOffer, type, clauses });

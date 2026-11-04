@@ -468,6 +468,8 @@ function SquadPage() {
   const playerStats = usePlayersStore((s) => s.stats);
   const fixtures = usePlayersStore((s) => s.fixtures);
   const budget = usePlayersStore((s) => s.budget);
+  const wageBudget = usePlayersStore((s) => s.wageBudget);
+  const transferBudget = Math.max(0, budget - wageBudget);
   const setMyTeam = usePlayersStore((s) => s.setMyTeam);
   const hydrate = usePlayersStore((s) => s.hydrateMyTeam);
   const renewPlayerContract = usePlayersStore((s) => s.renewPlayerContract);
@@ -613,7 +615,7 @@ function SquadPage() {
             <SummaryMetric label="Jugadores" value={String(squad.length)} />
             <SummaryMetric label="OVR medio" value={avgOvr} accent="text-primary" />
             <SummaryMetric label="Valor plantilla" value={formatEuro(totalValue)} accent="text-emerald-400" />
-            <SummaryMetric label="Saldo fichajes" value={formatEuro(budget)} accent="text-primary" />
+            <SummaryMetric label="Saldo fichajes" value={formatEuro(transferBudget)} accent="text-primary" />
           </div>
         </div>
       </div>

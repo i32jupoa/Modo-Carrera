@@ -75,6 +75,7 @@ import {
   Ambulance,
 } from "lucide-react";
 import { loadLive, saveLive, subLimits, isFreeWindow, type LiveMatchState } from "@/lib/liveMatch";
+import { formatMatchMinuteWithMark } from "@/lib/matchTime";
 import { btnPrimary, btnSecondary, infoChip } from "@/components/match/matchUi";
 import { getCalledUpPlayers } from "@/lib/academy/academyRuntime";
 import { useAcademyStore } from "@/lib/academy/academyStore";
@@ -2657,7 +2658,7 @@ function LineupPage() {
                   <p className="mt-1 text-[0.65rem] text-muted-foreground">El partido permanece pausado mientras preparas los cambios.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                <span className={infoChip}>Partido en pausa · {live.minute}'</span>
+                <span className={infoChip}>Partido en pausa · {formatMatchMinuteWithMark(live.minute, live)}</span>
                 <span className={infoChip}>
                   Cambios {live.subsUsed + changes}/{limits.maxSubs}
                 </span>
@@ -2815,8 +2816,8 @@ function LineupPage() {
                   }}
                 >
                   {free
-                    ? `Aplicar cambios y volver al partido (${live.minute}') →`
-                    : `Guardar cambios y volver (${live.minute}') →`}
+                    ? `Aplicar cambios y volver al partido (${formatMatchMinuteWithMark(live.minute, live)}) →`
+                    : `Guardar cambios y volver (${formatMatchMinuteWithMark(live.minute, live)}) →`}
                 </button>
               </div>
             </div>

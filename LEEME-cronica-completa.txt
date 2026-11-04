@@ -1,0 +1,19 @@
+ACTUALIZACIÓN: CRÓNICA COMPLETA E IDÉNTICA EN PARTIDOS
+
+Cambios incluidos:
+- El partido en directo y el historial usan el mismo componente y la misma función para ordenar y filtrar acontecimientos.
+- La crónica histórica muestra goles, penaltis transformados y fallados, paradas/paradones, balones al palo, grandes ocasiones, VAR, tarjetas, lesiones, cambios e incidencias que estén guardadas en el resultado.
+- Los momentos especiales del partido jugado (incluidas acciones de penalti, paradas y VAR) se guardan dentro del resultado final para que no se pierdan al abrir Jornada, Copa o competiciones europeas.
+- Los partidos simulados de los demás equipos muestran los eventos que conserva el motor de simulación: goles, tarjetas, sustituciones, paradas, palos, lesiones y penaltis.
+- Se eliminó la generación aleatoria de goleadores/minutos/tarjetas al consultar partidos históricos antiguos sin datos individuales. En esos casos solo se muestran los acontecimientos realmente guardados.
+
+Para aplicar el ZIP ligero:
+1. Descomprime su contenido en la raíz del proyecto.
+2. Acepta reemplazar los archivos cuando se te pregunte.
+3. Reinicia el servidor de desarrollo.
+
+Pruebas ejecutadas:
+- node --experimental-strip-types scripts/match-chronicle-regression.mjs
+- node --experimental-strip-types scripts/match-report-history-regression.mjs
+
+La compilación y el typecheck global no se han podido ejecutar porque el entorno de trabajo no tiene instaladas las dependencias del proyecto (falta vite/client). La sintaxis de los archivos modificados sí se ha validado.

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useNotificationsStore } from "@/store/notificationsStore";
-import { usePlayersStore } from "@/store/playersStore";
+import { formatEuro, usePlayersStore } from "@/store/playersStore";
 import { usePlayersReady } from "@/components/PlayersLoading";
 import { getCurrentSaveId } from "@/lib/savedGames";
-import { loadSave } from "@/lib/store";
+import { loadSave, saveSaveWithRetry } from "@/lib/store";
 import {
   loadOrInitTransferSystem,
   resetTransferSystem,
@@ -16,6 +16,7 @@ import {
   snapshotUserDeals,
   restoreUserDeals,
   ensurePlayersRetired,
+  describeTransfer,
 } from "@/lib/transfers";
 import {
   attachWorldBridge,
@@ -56,19 +57,19 @@ function applyAutomaticSettlement(events: Array<{
       if (event.direction === "in") {
         // El usuario es el destino: asume la parte pactada de la ficha.
         const paidByUser = settlement.wage * destinationShare;
-        budget = Math.max(0, budget - settlement.fee - paidByUser);
+        budget = Math.max(0, budget - settlement.fee);
         wageBill += paidByUser;
       } else {
         // El usuario es el propietario: el destino aporta su parte y reduce
         // nuestra masa salarial en esa cuantía.
         const coveredByBorrower = settlement.wage * destinationShare;
-        budget += settlement.fee + coveredByBorrower;
+        budget += settlement.fee;
         wageBill = Math.max(0, wageBill - coveredByBorrower);
       }
     } else if (event.direction === "out") {
       // Venta definitiva: el ingreso y el salario liberado se hacen efectivos
       // sólo cuando termina el día de cierre administrativo.
-      budget += settlement.fee + Math.max(0, settlement.wage);
+      budget += settlement.fee;
       wageBill = Math.max(0, wageBill - Math.max(0, settlement.wage));
     }
   }
@@ -211,7 +212,49 @@ export function useMarketClock(): void {
     if (bootedFor.current === currentDate) return;
     bootedFor.current = currentDate;
     try {
-      syncMarketWithGameDate(currentDate);
+      const marketDay = syncMarketWithGameDate(currentDate);
+      const clauseDepartures = marketDay?.transfers.filter(
+        (record) => record.isReleaseClause && record.fromClubId === myTeamId,
+      ) ?? [];
+      if (clauseDepartures.length > 0) {
+        useNotificationsStore.getState().add(
+          clauseDepartures.map((record) => ({
+            direction: "out" as const,
+            kind: "good" as const,
+            section: "deals" as const,
+            title: "Clausulazo recibido",
+            text: `${describeTransfer(record)}. Has ingresado ${formatEuro(record.fee)} por la cláusula${record.sellerWageSaved ? ` y ${formatEuro(record.sellerWageSaved)} del salario anual liberado` : ""} en tu presupuesto de fichajes.`,
+          })),
+          currentDate,
+        );
+
+        // El aviso también se registra en el Buzón persistente de la carrera,
+        // no sólo en la bandeja de notificaciones rápidas del mercado.
+        const activeSave = loadSave();
+        if (activeSave && activeSave.myTeamId === myTeamId) {
+          const seasonNotifications = [...(activeSave.seasonNotifications ?? [])];
+          let changed = false;
+          for (const record of clauseDepartures) {
+            const id = `${activeSave.season}:release_clause_paid:${record.id}`;
+            if (seasonNotifications.some((entry) => entry.id === id)) continue;
+            seasonNotifications.push({
+              id,
+              type: "release_clause_paid",
+              season: activeSave.season,
+              date: record.date || currentDate,
+              playerId: record.playerId,
+              playerName: record.playerName,
+              teamId: myTeamId,
+              message: `${describeTransfer(record)}. Tu club ha ingresado ${formatEuro(record.fee)} por la cláusula${record.sellerWageSaved ? ` y ${formatEuro(record.sellerWageSaved)} del salario anual liberado` : ""} en el presupuesto de fichajes.`,
+              read: false,
+            });
+            changed = true;
+          }
+          if (changed && saveSaveWithRetry({ ...activeSave, seasonNotifications: seasonNotifications.slice(-250) })) {
+            if (typeof window !== "undefined") window.dispatchEvent(new Event("career-season-notifications-updated"));
+          }
+        }
+      }
       // Este es el reloj oficial del juego: las negociaciones del usuario deben
       // avanzar aquí, al mismo tiempo que el mercado mundial.
       const dealsBeforeAdvance = snapshotUserDeals();
@@ -238,6 +281,12 @@ export function useMarketClock(): void {
       }
       // Los fichajes que ha cerrado la IA pasan a las plantillas del juego.
       flushWorldMoves();
+      // Una cláusula sobre un jugador propio reduce inmediatamente la masa
+      // salarial real y acredita el precio más el salario liberado al total.
+      // Sin esta sincronización, la UI podía seguir mostrando la nómina anterior.
+      if (clauseDepartures.length > 0) {
+        usePlayersStore.getState().syncWageStateFromMarket();
+      }
     } catch (error) {
       // Un fallo puntual del motor mundial no debe tirar abajo la aplicación ni
       // resetear el estado de las negociaciones del usuario. Dejamos también

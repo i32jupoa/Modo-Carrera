@@ -34,7 +34,7 @@ interface NotificationsState {
   items: MarketNotification[];
   /** Novedades sin leer separadas entre negociaciones, ofertas y mensajes de Chat. */
   counts: Record<MarketNotificationSection, number>;
-  add: (events: Array<{ dealId?: string; direction: "in" | "out"; kind: NotificationKind; text: string }>, date: string) => void;
+  add: (events: Array<{ dealId?: string; direction: "in" | "out"; kind: NotificationKind; text: string; title?: string; section?: MarketNotificationSection }>, date: string) => void;
   addMailbox: (playerName: string, date: string, playerId?: string) => void;
   markMailboxRead: () => void;
   markSectionRead: (section: MarketNotificationSection) => void;
@@ -147,10 +147,10 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
         id: event.dealId
           ? `deal-${event.dealId}-${event.kind}-${event.text}`
           : `${date}-${Date.now().toString(36)}-${index}`,
-        title: titleForDeal(event.kind as UserDealEventKind, event.direction, enrich.playerName),
+        title: event.title ?? titleForDeal(event.kind as UserDealEventKind, event.direction, enrich.playerName),
         visual: enrich.visual,
         dealId: event.dealId,
-        section: event.direction === "out" ? "offers" : "deals",
+        section: event.section ?? (event.direction === "out" ? "offers" : "deals"),
         kind: event.kind,
         text: event.text,
         date,

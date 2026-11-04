@@ -87,6 +87,17 @@ export const NEWS_THEMES: Record<NewsTheme, NewsThemeStyle> = {
     card: "border-fuchsia-400/30 hover:border-fuchsia-300/60 bg-gradient-to-r from-fuchsia-500/10 to-transparent",
     bar: "bg-fuchsia-400",
   },
+  clausula: {
+    label: "Clausulazo",
+    emoji: "🔓",
+    window: "border-amber-400/40 bg-gradient-to-br from-amber-950 via-background to-background shadow-[0_0_60px_-15px_rgba(245,158,11,0.5)]",
+    header: "bg-gradient-to-r from-amber-500/35 via-yellow-500/10 to-transparent",
+    chip: "bg-amber-500/15 text-amber-200 border-amber-400/40",
+    accent: "text-amber-300",
+    block: "border-amber-400/20 bg-amber-500/5",
+    card: "border-amber-400/30 hover:border-amber-300/60 bg-gradient-to-r from-amber-500/10 to-transparent",
+    bar: "bg-amber-400",
+  },
   cesion: {
     label: "Cesión",
     emoji: "🔄",

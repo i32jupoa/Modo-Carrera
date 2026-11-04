@@ -572,6 +572,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
   let archiveSaved = false;
   let worldAttached = false;
   let userFinanceSummary: NonNullable<SeasonArchive["financeSummary"]> | undefined;
+  let userFinanceIncomeNotice: { amount: number; message: string } | undefined;
   let nextSeasonEconomyLedger: string[] = [...(current.seasonEconomyLedger ?? [])];
   let economySettlementFailed = false;
   let postSeasonTransferPlayerIds = new Set<string>();
@@ -981,6 +982,21 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
               promoted: Boolean(movementsByTeam.get(update.clubId) && String(movementsByTeam.get(update.clubId)?.reason).includes("promotion")),
               relegated: Boolean(movementsByTeam.get(update.clubId) && String(movementsByTeam.get(update.clubId)?.reason).includes("relegation")),
             };
+            if (update.appliedRevenue > 0) {
+              const sources = [
+                update.breakdown.broadcastRevenue > 0 ? "derechos televisivos" : null,
+                update.breakdown.leaguePositionPrize > 0 ? "premio por clasificación liguera" : null,
+                update.breakdown.domesticCupPrize > 0 ? "premio por ganar la copa nacional" : null,
+                update.breakdown.europeanParticipationRevenue > 0 ? "participación en competiciones europeas" : null,
+                update.breakdown.europeanChampionPrize > 0 ? "premio por conquistar una competición europea" : null,
+                update.breakdown.nextSeasonCommercialRevenue > 0 ? "ingresos comerciales por clasificación europea" : null,
+              ].filter(Boolean);
+              const sourceText = sources.length ? ` Conceptos incluidos: ${sources.join(", ")}.` : "";
+              userFinanceIncomeNotice = {
+                amount: update.appliedRevenue,
+                message: `El club ha recibido ingresos por la liquidación económica de la temporada.${sourceText}`,
+              };
+            }
           }
           setFinances({
             clubId: update.clubId,
@@ -1006,6 +1022,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
       nextSeasonEconomyLedger = [...(current.seasonEconomyLedger ?? [])];
       economySettlementFailed = true;
       userFinanceSummary = undefined;
+      userFinanceIncomeNotice = undefined;
       try {
         const { toast } = await import("sonner");
         toast.warning("La liquidación económica no se ha aplicado", {
@@ -1020,6 +1037,20 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
 
     lastRolloverStage = "next-save:assemble";
     const notifications: NonNullable<SaveGame["seasonNotifications"]> = [];
+    if (userFinanceIncomeNotice && userFinanceIncomeNotice.amount > 0) {
+      notifications.push(notification(
+        "financial_income",
+        dates.toSeason,
+        dates.nextStartDate,
+        userFinanceIncomeNotice.message,
+        {
+          id: `${dates.toSeason}:financial_income:season-economy:${current.myTeamId}`,
+          teamId: current.myTeamId,
+          amount: userFinanceIncomeNotice.amount,
+          category: "Liquidación económica anual",
+        },
+      ));
+    }
     for (const expiry of userExpiries) notifications.push(notification("contract_expired", dates.toSeason, dates.nextStartDate, `${expiry.playerName} ha terminado contrato y queda libre.`, { playerId: expiry.playerId, playerName: expiry.playerName, teamId: expiry.fromClubId }));
     for (const retirement of retirements.filter((entry) => entry.lastClubId === current.myTeamId)) {
       notifications.push(notification("player_retired", dates.toSeason, dates.nextStartDate, `${retirement.playerName} se retira a los ${retirement.age} años.`, { playerId: retirement.playerId, playerName: retirement.playerName, teamId: current.myTeamId }));

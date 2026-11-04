@@ -266,6 +266,8 @@ export interface OfferClauses {
   contractYears?: number;
   /** Prima de fichaje propuesta a un agente libre (campo de negociación del usuario). */
   signingBonus?: number;
+  /** Cláusula de rescisión incluida en el contrato ofrecido (euros). */
+  releaseClause?: number;
   /** Jugadores incluidos en el trato. */
   playerSwapIds: string[];
 }
@@ -295,6 +297,8 @@ export interface TransferOffer {
   wageOffer: number;
   type: TransferType;
   clauses: OfferClauses;
+  /** El importe corresponde al pago íntegro de la cláusula de rescisión. */
+  isReleaseClause?: boolean;
   status: NegotiationStatus;
   /** Fecha ISO de creación. */
   date: string;
@@ -337,6 +341,10 @@ export interface TransferRecord {
   wage: number;
   type: TransferType;
   clauses: OfferClauses;
+  /** El importe corresponde al pago íntegro de la cláusula de rescisión. */
+  isReleaseClause?: boolean;
+  /** Salario anual del club vendedor que se libera al ejecutarse la cláusula. */
+  sellerWageSaved?: number;
   /** Captura de la negociación del usuario para poder verla completa desde Entradas/Salidas. */
   userNegotiation?: {
     direction: "in" | "out";

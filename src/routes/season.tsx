@@ -35,6 +35,7 @@ import {
   LEAGUES_BY_COUNTRY,
 } from "@/data/teams";
 import { europeanCalendar } from "@/data/europeanCompetitions";
+import { formatMatchMinuteWithMark } from "@/lib/matchTime";
 
 import { type Fixture } from "@/lib/season";
 import { getSeasonCalendarAnchors, getSeasonStartYear } from "@/lib/season/calendarFactory";
@@ -596,7 +597,7 @@ function SeasonPage() {
                   {latestInjuries.map((injury, i) => <p key={`injury-${injury.playerId}-${i}`} className="text-xs">🩹 <strong>{injury.playerName}</strong>: {injury.injuryType ?? "lesión"}{injury.bodyPart ? ` (${injury.bodyPart})` : ""}; baja estimada de {injury.weeks} semana(s){injury.durationDays ? ` · ${injury.durationDays} días` : ""}.</p>)}
                   {latestDismissals.map((card, i) => {
                     const suspension = save.suspensions?.[save.myTeamId]?.find((item: any) => String(item.playerId) === String(card.playerId));
-                    return <p key={`red-${card.playerId}-${i}`} className="text-xs">🟥 <strong>{card.playerName}</strong>: expulsión en el {card.minute}′{card.isSecondYellow ? " por doble amarilla" : " por roja directa"}{suspension?.matchdaysRemaining ? ` · sanción pendiente: ${suspension.matchdaysRemaining} partido(s)` : ""}.</p>;
+                    return <p key={`red-${card.playerId}-${i}`} className="text-xs">🟥 <strong>{card.playerName}</strong>: expulsión en el {formatMatchMinuteWithMark(card.minute, card)}{card.isSecondYellow ? " por doble amarilla" : " por roja directa"}{suspension?.matchdaysRemaining ? ` · sanción pendiente: ${suspension.matchdaysRemaining} partido(s)` : ""}.</p>;
                   })}
                 </div>
               </div>

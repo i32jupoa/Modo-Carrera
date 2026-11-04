@@ -71,9 +71,12 @@ import {
 import type { DynamicPlayerStats, PlayerAttributeRatings } from "@/types/playerStats";
 
 import { addDaysToIso, GAME_START_DATE, isMarketOpenForIso } from "@/lib/transferWindows";
+import { migrateUserWageBudget, normalizeUserWageBudget, preserveUserWageBudget, userWageBudgetBounds } from "@/lib/transfers/SalaryBudget";
 import {
   hydrateMarketPlayerSignals,
   hydrateMarketPlayerInjuries,
+  hydrateMarketPlayerSquadRoles,
+  registerMarketPlayerSquadRole,
   recordMarketAppearance,
   recordMarketInjury,
   resetMarketPlayerSignals,
@@ -855,6 +858,9 @@ export function rebuildMarketPlayerSignalsFromStore(): void {
     };
   });
   hydrateMarketPlayerSignals(entries);
+  hydrateMarketPlayerSquadRoles(
+    Object.entries(state.stats ?? {}).map(([playerId, stats]) => ({ playerId, squadRole: stats.squadRole })),
+  );
   const injuries = Object.entries(state.stats ?? {})
     .map(([playerId, stats]) => {
       const player = state.getSimPlayer(playerId);
@@ -1224,7 +1230,7 @@ export type PlayersState = {
 
   budget: number;
 
-  /** Margen salarial anual disponible adicional (máximo 30% del presupuesto económico total). */
+  /** Reserva salarial asignada (5%-30% del presupuesto total); wageBill se registra aparte. */
   wageBudget: number;
 
   /** Masa salarial anual comprometida por los jugadores de la plantilla. */
@@ -1432,6 +1438,9 @@ function mutatePlayerStat(
   const stats = existing.dynamicStats ? existing : { ...existing, dynamicStats };
 
   next[playerId] = updater(stats);
+  if (next[playerId]?.squadRole !== stats.squadRole) {
+    registerMarketPlayerSquadRole(playerId, next[playerId]?.squadRole);
+  }
   if (batchedStats) batchedStats = next;
   else set({ stats: next });
 }
@@ -2961,7 +2970,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           prev.myTeamId === teamId && prev.budget > 0
             ? (prev.wageBudget ?? initialWageBudget(prev.budget)) / prev.budget
             : 0.2;
-        const wageBudget = wageAllocation(totalBudget, previousRatio);
+        const wageBudget = normalizeUserWageBudget(totalBudget, wageBill, previousRatio);
 
         set({
           myTeamId: teamId,
@@ -2992,7 +3001,7 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
           state.budget > 0
             ? (state.wageBudget || totalBudget * 0.2) / Math.max(1, state.budget)
             : 0.2;
-        const wageBudget = wageAllocation(totalBudget, ratio);
+        const wageBudget = normalizeUserWageBudget(totalBudget, wageBill, ratio);
 
         const hydratedSquad = syncSquadFromRoster(currentRosterIds).map((raw) => dynamicFcPlayerView(raw, state.stats[String(raw.ID)]));
         set({
@@ -3051,23 +3060,20 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         set({
           budget: total,
           wageBill,
-          wageBudget: wageAllocation(total, 0.2),
+          wageBudget: normalizeUserWageBudget(total, wageBill, 0.2),
         });
       },
 
       spendBudget: (cost) => {
         const state = get();
         const amount = Math.max(0, Math.round(cost));
-        if (amount <= 0 || state.budget < amount) return false;
+        const availableTransferBudget = Math.max(0, state.budget - state.wageBudget);
+        if (amount <= 0 || availableTransferBudget < amount) return false;
 
         const total = Math.max(0, state.budget - amount);
-        const ratio =
-          state.budget > 0
-            ? (state.wageBudget || state.budget * 0.2) / Math.max(1, state.budget)
-            : 0.2;
         set({
           budget: total,
-          wageBudget: wageAllocation(total, ratio),
+          wageBudget: preserveUserWageBudget(total, state.wageBill, state.wageBudget),
         });
         return true;
       },
@@ -3075,13 +3081,10 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
       setWageBudget: (value) => {
         const state = get();
         const total = Math.max(0, Math.round(state.budget || 0));
-        const requestedRatio = total > 0 ? Math.round(value) / total : 0.2;
-        const wageBill = state.myTeamId ? getClubWageBill(state.myTeamId) : state.wageBill;
-        set({
-          budget: total,
-          wageBudget: wageAllocation(total, requestedRatio),
-          wageBill,
-        });
+        const wageBill = state.myTeamId ? getClubWageBill(state.myTeamId) : Math.max(0, Math.round(state.wageBill));
+        const bounds = userWageBudgetBounds(total, wageBill, state.wageBudget);
+        const requested = Math.max(bounds.min, Math.min(bounds.max, Math.round(value)));
+        set({ budget: total, wageBudget: requested, wageBill });
       },
 
       syncWageStateFromMarket: () => {
@@ -3089,11 +3092,9 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         if (!state.myTeamId) return;
         const bill = getClubWageBill(state.myTeamId);
         const total = Math.max(0, Math.round(state.budget || 0));
-        const ratio =
-          total > 0 ? (state.wageBudget || total * 0.2) / Math.max(1, state.budget || total) : 0.2;
         set({
           wageBill: bill,
-          wageBudget: wageAllocation(total, ratio),
+          wageBudget: preserveUserWageBudget(total, bill, state.wageBudget),
           budget: total,
         });
       },
@@ -3183,11 +3184,11 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
         if (!fc) return { ok: false, reason: "Jugador no encontrado." };
 
-        if (state.budget < cost) {
+        const availableTransferBudget = Math.max(0, state.budget - state.wageBudget);
+        if (availableTransferBudget < cost) {
           return {
             ok: false,
-
-            reason: `Presupuesto insuficiente (disponible: ${formatEuro(state.budget)}).`,
+            reason: `Presupuesto de fichajes insuficiente (disponible: ${formatEuro(availableTransferBudget)}).`,
           };
         }
 
@@ -3295,14 +3296,14 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
         // Esto evita duplicar el ahorro salarial cuando el motor cierra una
         // negociación y la UI sincroniza la plantilla inmediatamente.
         const nextTotal = Math.max(0, Math.round(state.budget));
-        const ratio =
-          nextTotal > 0 ? (state.wageBudget || nextTotal * 0.2) / Math.max(1, state.budget) : 0.2;
 
         set({
           clubOverrides: { ...getClubOverrides() },
           budget: nextTotal,
           wageBill: nextWageBill,
-          wageBudget: wageAllocation(nextTotal, ratio),
+          // La asignación salarial no es caja de fichajes: al vender sólo
+          // aumenta el presupuesto por el precio y baja la masa salarial.
+          wageBudget: state.wageBudget,
           rosterIds,
           squad: syncSquadFromRoster(rosterIds),
         });
@@ -4002,7 +4003,12 @@ export const usePlayersStore: UseBoundStore<StoreApi<PlayersState>> = create<Pla
 
           stats: restoredStats,
 
-          wageBudget: saved.wageBudget ?? Math.round((saved.budget ?? INITIAL_BUDGET) * 0.68),
+          wageBudget: migrateUserWageBudget(
+            saved.budget ?? INITIAL_BUDGET,
+            saved.wageBudget,
+            saved.wageBill ?? 0,
+            0.20,
+          ),
           wageBill: saved.wageBill ?? 0,
 
           rosterIds,

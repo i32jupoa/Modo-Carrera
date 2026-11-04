@@ -1395,8 +1395,6 @@ html[data-game-active="true"] {
   --ring: oklch(0.72 0.19 150);
   --sidebar-primary: oklch(0.72 0.19 150);
   --sidebar-ring: oklch(0.72 0.19 150);
-  --market-accent: oklch(0.78 0.18 150);
-  --market-soft: color-mix(in oklab, var(--market-accent) 13%, transparent);
 }
 
 html[data-game-active="true"] .game-topbar {
@@ -1428,43 +1426,344 @@ html[data-game-active="true"] .game-ambient-club {
     radial-gradient(42rem 28rem at 0% 100%, color-mix(in oklab, var(--club-2) 12%, transparent), transparent 72%);
 }
 
-/* En el mercado, los antiguos avisos/detalles dorados pasan a verde.
-   La tarjeta de Salidas conserva su acento naranja original y los colores semánticos siguen intactos. */
-html[data-game-route="transfers"] [class*="text-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="text-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="text-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
-  color: var(--market-accent) !important;
+/* Mercado · paleta semántica de cuatro fases.
+   Verde = acción/éxito · amarillo = pendiente · naranja = negociación/atención
+   · rojo = rechazo/error. El resto de superficies son neutras; la economía
+   puede tomar los colores propios del club. */
+html[data-game-route="transfers"] {
+  --market-green: #42d392;
+  --market-yellow: #f5cf62;
+  --market-orange: #f59e57;
+  --market-red: #f06a78;
+  --primary: var(--market-green);
+  --primary-foreground: #071b13;
+  --accent: var(--market-yellow);
+  --accent-foreground: #211805;
+  --destructive: var(--market-red);
+  --destructive-foreground: #26090e;
+  --ring: var(--market-green);
+  --sidebar-primary: var(--market-green);
+  --sidebar-ring: var(--market-green);
 }
-html[data-game-route="transfers"] [class*="bg-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="bg-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="bg-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
-  background-color: var(--market-soft) !important;
+html[data-game-route="transfers"] body {
+  background-image:
+    radial-gradient(ellipse 70rem 30rem at 0% -15%, color-mix(in srgb, var(--market-green) 7%, transparent), transparent 70%),
+    radial-gradient(ellipse 54rem 28rem at 100% 100%, color-mix(in srgb, var(--market-orange) 6%, transparent), transparent 72%);
 }
-html[data-game-route="transfers"] [class*="border-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="border-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="border-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
-  border-color: color-mix(in oklab, var(--market-accent) 40%, transparent) !important;
+html[data-game-route="transfers"] .game-topbar {
+  border-bottom-color: color-mix(in oklab, var(--club) 24%, var(--border));
+  box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--club) 18%, transparent);
 }
-html[data-game-route="transfers"] [class*="shadow-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="shadow-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="shadow-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
-  --tw-shadow-color: color-mix(in oklab, var(--market-accent) 28%, transparent) !important;
+html[data-game-route="transfers"] .market-page {
+  --background: #101513;
+  --card: #171e1a;
+  --card-foreground: #f1f5f2;
+  --popover: #171e1a;
+  --popover-foreground: #f1f5f2;
+  --secondary: #222b26;
+  --secondary-foreground: #edf3ee;
+  --muted: #202823;
+  --muted-foreground: #a9b5ad;
+  --border: #344139;
+  --input: #232c26;
+  --primary: var(--market-green);
+  --primary-foreground: #071b13;
+  --accent: var(--market-yellow);
+  --accent-foreground: #211805;
+  --destructive: var(--market-red);
+  --destructive-foreground: #26090e;
+  --ring: var(--market-green);
+  position: relative;
+  isolation: isolate;
+  color-scheme: dark;
+  background-image:
+    radial-gradient(ellipse 34rem 22rem at 0% 0%, color-mix(in srgb, var(--market-green) 6%, transparent), transparent 72%),
+    radial-gradient(ellipse 30rem 24rem at 100% 18%, color-mix(in srgb, var(--market-orange) 5%, transparent), transparent 72%);
 }
-html[data-game-route="transfers"] [class*="rgba(245,158,11"]:not(.market-exits-banner):not(.market-exits-banner *) {
-  box-shadow: 0 0 28px color-mix(in oklab, var(--market-accent) 18%, transparent) !important;
+html[data-game-route="transfers"] .market-page .panel,
+html[data-game-route="transfers"] .market-page .panel-glow {
+  border-color: color-mix(in oklab, var(--border) 82%, white 18%);
+  background-color: color-mix(in oklab, var(--card) 94%, black);
 }
-html[data-game-route="transfers"] [class*="from-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="from-yellow"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="from-orange"]:not(.market-exits-banner):not(.market-exits-banner *) {
-  --tw-gradient-from: var(--market-accent) var(--tw-gradient-from-position) !important;
+html[data-game-route="transfers"] .market-page .panel-glow {
+  box-shadow: 0 16px 40px -28px rgba(0, 0, 0, .85), inset 0 1px 0 rgba(255,255,255,.045);
 }
-html[data-game-route="transfers"] [class*="to-orange"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="to-amber"]:not(.market-exits-banner):not(.market-exits-banner *),
-html[data-game-route="transfers"] [class*="to-yellow"]:not(.market-exits-banner):not(.market-exits-banner *) {
-  --tw-gradient-to: color-mix(in oklab, var(--market-accent) 78%, black) var(--tw-gradient-to-position) !important;
+html[data-game-route="transfers"] .market-page input:focus,
+html[data-game-route="transfers"] .market-page select:focus,
+html[data-game-route="transfers"] .market-page button:focus-visible {
+  outline-color: var(--market-green);
+}
+html[data-game-route="transfers"] .market-page .market-tab-notification-badge {
+  opacity: 1 !important;
+  font-weight: 900;
+}
+html[data-game-route="transfers"] .market-notification-indicator {
+  background-color: var(--market-yellow) !important;
+  color: #241b05 !important;
+}
+html[data-game-route="transfers"] .market-page .market-deal-card--pending {
+  border-color: color-mix(in srgb, var(--market-yellow) 72%, transparent) !important;
+  box-shadow: 0 10px 30px -20px color-mix(in srgb, var(--market-yellow) 38%, transparent);
+}
+html[data-game-route="transfers"] .market-page .market-action-button {
+  color: #062015 !important;
+  background: var(--market-green) !important;
+  border-color: color-mix(in srgb, var(--market-green) 78%, white) !important;
+}
+html[data-game-route="transfers"] .market-page .market-action-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--market-green) 86%, white) !important;
+}
+html[data-game-route="transfers"] .market-page .market-exits-banner {
+  border-color: color-mix(in srgb, var(--market-orange) 34%, transparent);
 }
 
+/* El panel económico usa el color real del club: su identidad visual queda
+   reservada a esta zona y no compite con los cuatro colores de estado. */
+html[data-game-route="transfers"] .market-page .market-budget-panel {
+  border-color: color-mix(in oklab, var(--club) 48%, var(--border));
+  background: linear-gradient(125deg,
+    color-mix(in oklab, var(--club) 10%, var(--card)),
+    var(--card) 54%,
+    color-mix(in oklab, var(--club-2) 9%, var(--card)));
+  box-shadow: 0 14px 38px -28px color-mix(in oklab, var(--club) 38%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 5%, transparent);
+}
+html[data-game-route="transfers"] .market-page .market-budget-panel .market-budget-metric {
+  border-color: color-mix(in oklab, var(--club) 34%, var(--border));
+  background: color-mix(in oklab, var(--club) 7%, var(--secondary));
+}
+html[data-game-route="transfers"] .market-page .market-budget-panel .text-primary {
+  color: var(--club) !important;
+}
+html[data-game-route="transfers"] .market-page .market-budget-slider [data-radix-slider-track] {
+  background: color-mix(in oklab, var(--club) 22%, var(--secondary));
+}
+html[data-game-route="transfers"] .market-page .market-budget-slider [data-radix-slider-range] {
+  background: var(--club);
+}
+html[data-game-route="transfers"] .market-page .market-budget-slider [data-radix-slider-thumb] {
+  border-color: color-mix(in oklab, var(--club) 75%, white);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--club) 18%, transparent);
+}
 
+/* Compatibilidad visual de componentes que aún conservan nombres de clases
+   históricos (cyan/azul y violeta/índigo). En el mercado se reinterpretan
+   dentro de la paleta semántica, también en diálogos Radix portados al body. */
+html[data-game-route="transfers"] .market-page [class*="text-cyan-"],
+html[data-game-route="transfers"] .market-page [class*="text-sky-"],
+html[data-game-route="transfers"] .market-page [class*="text-blue-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-cyan-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-sky-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-blue-"] {
+  color: var(--market-yellow) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="text-violet-"],
+html[data-game-route="transfers"] .market-page [class*="text-indigo-"],
+html[data-game-route="transfers"] .market-page [class*="text-purple-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-violet-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-indigo-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-purple-"] {
+  color: var(--market-orange) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="text-teal-"],
+html[data-game-route="transfers"] .market-page [class*="text-lime-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-teal-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-lime-"] {
+  color: var(--market-green) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="text-pink-"],
+html[data-game-route="transfers"] .market-page [class*="text-fuchsia-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-pink-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="text-fuchsia-"] {
+  color: var(--market-red) !important;
+}
+
+html[data-game-route="transfers"] .market-page [class~="bg-cyan-300"],
+html[data-game-route="transfers"] .market-page [class~="bg-cyan-400"],
+html[data-game-route="transfers"] .market-page [class~="bg-cyan-500"],
+html[data-game-route="transfers"] .market-page [class~="bg-sky-300"],
+html[data-game-route="transfers"] .market-page [class~="bg-sky-400"],
+html[data-game-route="transfers"] .market-page [class~="bg-sky-500"],
+html[data-game-route="transfers"] .market-page [class~="bg-blue-300"],
+html[data-game-route="transfers"] .market-page [class~="bg-blue-400"],
+html[data-game-route="transfers"] .market-page [class~="bg-blue-500"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-cyan-300"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-cyan-400"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-cyan-500"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-sky-300"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-sky-400"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-sky-500"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-blue-300"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-blue-400"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-blue-500"] {
+  background-color: var(--market-yellow) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="bg-cyan-300/"],
+html[data-game-route="transfers"] .market-page [class*="bg-cyan-400/"],
+html[data-game-route="transfers"] .market-page [class*="bg-cyan-500/"],
+html[data-game-route="transfers"] .market-page [class*="bg-sky-300/"],
+html[data-game-route="transfers"] .market-page [class*="bg-sky-400/"],
+html[data-game-route="transfers"] .market-page [class*="bg-sky-500/"],
+html[data-game-route="transfers"] .market-page [class*="bg-blue-300/"],
+html[data-game-route="transfers"] .market-page [class*="bg-blue-400/"],
+html[data-game-route="transfers"] .market-page [class*="bg-blue-500/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-cyan-300/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-cyan-400/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-cyan-500/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-sky-300/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-sky-400/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-sky-500/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-blue-300/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-blue-400/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-blue-500/"] {
+  background-color: color-mix(in srgb, var(--market-yellow) 14%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class~="bg-violet-300"],
+html[data-game-route="transfers"] .market-page [class~="bg-violet-400"],
+html[data-game-route="transfers"] .market-page [class~="bg-violet-500"],
+html[data-game-route="transfers"] .market-page [class~="bg-indigo-300"],
+html[data-game-route="transfers"] .market-page [class~="bg-indigo-400"],
+html[data-game-route="transfers"] .market-page [class~="bg-indigo-500"],
+html[data-game-route="transfers"] .market-page [class~="bg-purple-300"],
+html[data-game-route="transfers"] .market-page [class~="bg-purple-400"],
+html[data-game-route="transfers"] .market-page [class~="bg-purple-500"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-violet-300"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-violet-400"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-violet-500"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-indigo-300"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-indigo-400"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-indigo-500"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-purple-300"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-purple-400"],
+html[data-game-route="transfers"] [data-radix-portal] [class~="bg-purple-500"] {
+  background-color: var(--market-orange) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="bg-violet-300/"],
+html[data-game-route="transfers"] .market-page [class*="bg-violet-400/"],
+html[data-game-route="transfers"] .market-page [class*="bg-violet-500/"],
+html[data-game-route="transfers"] .market-page [class*="bg-indigo-300/"],
+html[data-game-route="transfers"] .market-page [class*="bg-indigo-400/"],
+html[data-game-route="transfers"] .market-page [class*="bg-indigo-500/"],
+html[data-game-route="transfers"] .market-page [class*="bg-purple-300/"],
+html[data-game-route="transfers"] .market-page [class*="bg-purple-400/"],
+html[data-game-route="transfers"] .market-page [class*="bg-purple-500/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-violet-300/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-violet-400/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-violet-500/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-indigo-300/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-indigo-400/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-indigo-500/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-purple-300/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-purple-400/"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-purple-500/"] {
+  background-color: color-mix(in srgb, var(--market-orange) 14%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="bg-teal-"],
+html[data-game-route="transfers"] .market-page [class*="bg-lime-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-teal-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-lime-"] {
+  background-color: color-mix(in srgb, var(--market-green) 14%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="bg-pink-"],
+html[data-game-route="transfers"] .market-page [class*="bg-fuchsia-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-pink-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="bg-fuchsia-"] {
+  background-color: color-mix(in srgb, var(--market-red) 14%, transparent) !important;
+}
+
+html[data-game-route="transfers"] .market-page [class*="border-cyan-"],
+html[data-game-route="transfers"] .market-page [class*="border-sky-"],
+html[data-game-route="transfers"] .market-page [class*="border-blue-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-cyan-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-sky-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-blue-"] {
+  border-color: color-mix(in srgb, var(--market-yellow) 42%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="border-violet-"],
+html[data-game-route="transfers"] .market-page [class*="border-indigo-"],
+html[data-game-route="transfers"] .market-page [class*="border-purple-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-violet-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-indigo-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-purple-"] {
+  border-color: color-mix(in srgb, var(--market-orange) 42%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="border-teal-"],
+html[data-game-route="transfers"] .market-page [class*="border-lime-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-teal-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-lime-"] {
+  border-color: color-mix(in srgb, var(--market-green) 42%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="border-pink-"],
+html[data-game-route="transfers"] .market-page [class*="border-fuchsia-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-pink-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="border-fuchsia-"] {
+  border-color: color-mix(in srgb, var(--market-red) 42%, transparent) !important;
+}
+
+/* Conserva los gradientes históricos, pero traduce sus paradas a la paleta. */
+html[data-game-route="transfers"] .market-page [class*="from-cyan-"],
+html[data-game-route="transfers"] .market-page [class*="from-sky-"],
+html[data-game-route="transfers"] .market-page [class*="from-blue-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="from-cyan-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="from-sky-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="from-blue-"] { --tw-gradient-from: color-mix(in srgb, var(--market-yellow) 16%, transparent) !important; }
+html[data-game-route="transfers"] .market-page [class*="via-cyan-"],
+html[data-game-route="transfers"] .market-page [class*="via-sky-"],
+html[data-game-route="transfers"] .market-page [class*="via-blue-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="via-cyan-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="via-sky-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="via-blue-"] { --tw-gradient-via: color-mix(in srgb, var(--market-yellow) 12%, transparent) !important; }
+html[data-game-route="transfers"] .market-page [class*="to-cyan-"],
+html[data-game-route="transfers"] .market-page [class*="to-sky-"],
+html[data-game-route="transfers"] .market-page [class*="to-blue-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="to-cyan-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="to-sky-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="to-blue-"] { --tw-gradient-to: color-mix(in srgb, var(--market-yellow) 10%, transparent) !important; }
+html[data-game-route="transfers"] .market-page [class*="from-violet-"],
+html[data-game-route="transfers"] .market-page [class*="from-indigo-"],
+html[data-game-route="transfers"] .market-page [class*="from-purple-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="from-violet-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="from-indigo-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="from-purple-"] { --tw-gradient-from: color-mix(in srgb, var(--market-orange) 16%, transparent) !important; }
+html[data-game-route="transfers"] .market-page [class*="to-violet-"],
+html[data-game-route="transfers"] .market-page [class*="to-indigo-"],
+html[data-game-route="transfers"] .market-page [class*="to-purple-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="to-violet-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="to-indigo-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="to-purple-"] { --tw-gradient-to: color-mix(in srgb, var(--market-orange) 10%, transparent) !important; }
+/* Acentos secundarios residuales (anillos y sombras) siguen las mismas fases. */
+html[data-game-route="transfers"] .market-page [class*="ring-cyan-"],
+html[data-game-route="transfers"] .market-page [class*="ring-sky-"],
+html[data-game-route="transfers"] .market-page [class*="ring-blue-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="ring-cyan-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="ring-sky-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="ring-blue-"] {
+  --tw-ring-color: color-mix(in srgb, var(--market-yellow) 34%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="ring-violet-"],
+html[data-game-route="transfers"] .market-page [class*="ring-indigo-"],
+html[data-game-route="transfers"] .market-page [class*="ring-purple-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="ring-violet-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="ring-indigo-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="ring-purple-"] {
+  --tw-ring-color: color-mix(in srgb, var(--market-orange) 34%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="shadow-cyan-"],
+html[data-game-route="transfers"] .market-page [class*="shadow-sky-"],
+html[data-game-route="transfers"] .market-page [class*="shadow-blue-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="shadow-cyan-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="shadow-sky-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="shadow-blue-"] {
+  --tw-shadow-color: color-mix(in srgb, var(--market-yellow) 12%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page [class*="shadow-violet-"],
+html[data-game-route="transfers"] .market-page [class*="shadow-indigo-"],
+html[data-game-route="transfers"] .market-page [class*="shadow-purple-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="shadow-violet-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="shadow-indigo-"],
+html[data-game-route="transfers"] [data-radix-portal] [class*="shadow-purple-"] {
+  --tw-shadow-color: color-mix(in srgb, var(--market-orange) 12%, transparent) !important;
+}
 
 /* --------------------------------------------------------------------------
    Matchday UI refresh — one visual system for the live match experience.
@@ -2310,4 +2609,83 @@ html[data-game-route="transfers"] [class*="to-yellow"]:not(.market-exits-banner)
 }
 @media (max-width: 520px) {
   .match-competition-logo-frame { width: 2.65rem; height: 2.1rem; padding: .27rem .32rem; }
+}
+
+
+/* Estados adicionales del mercado:
+   azul = cesiones; violeta = acuerdo entre clubes pendiente del jugador.
+   Estos dos tonos se reservan a los contenedores marcados para no alterar
+   los colores de los demás controles del mercado. */
+html[data-game-route="transfers"] .market-page {
+  --market-blue: #49a9ff;
+  --market-violet: #bd83ff;
+}
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="text-cyan-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="text-sky-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="text-blue-"] {
+  color: var(--market-blue) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="bg-cyan-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="bg-sky-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="bg-blue-"] {
+  background-color: color-mix(in srgb, var(--market-blue) 14%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="border-cyan-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="border-sky-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="border-blue-"] {
+  border-color: color-mix(in srgb, var(--market-blue) 46%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="from-cyan-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="from-sky-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="from-blue-"] {
+  --tw-gradient-from: color-mix(in srgb, var(--market-blue) 16%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="to-cyan-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="to-sky-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="to-blue-"] {
+  --tw-gradient-to: color-mix(in srgb, var(--market-blue) 10%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="ring-cyan-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="ring-sky-"],
+html[data-game-route="transfers"] .market-page :is(.market-loan-tone, .market-loan-tone *)[class*="ring-blue-"] {
+  --tw-ring-color: color-mix(in srgb, var(--market-blue) 34%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="text-violet-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="text-indigo-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="text-purple-"] {
+  color: var(--market-violet) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="bg-violet-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="bg-indigo-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="bg-purple-"] {
+  background-color: color-mix(in srgb, var(--market-violet) 14%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="border-violet-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="border-indigo-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="border-purple-"] {
+  border-color: color-mix(in srgb, var(--market-violet) 50%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="from-violet-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="from-indigo-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="from-purple-"] {
+  --tw-gradient-from: color-mix(in srgb, var(--market-violet) 16%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="to-violet-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="to-indigo-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="to-purple-"] {
+  --tw-gradient-to: color-mix(in srgb, var(--market-violet) 10%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="ring-violet-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="ring-indigo-"],
+html[data-game-route="transfers"] .market-page :is(.market-player-decision-tone, .market-player-decision-tone *)[class*="ring-purple-"] {
+  --tw-ring-color: color-mix(in srgb, var(--market-violet) 34%, transparent) !important;
+}
+
+/* El componente panel usa un borde neutro con mayor especificidad; estos
+   estados explícitos conservan el marco de color de la tarjeta completa. */
+html[data-game-route="transfers"] .market-page .market-rejected-tone {
+  border-color: color-mix(in srgb, var(--market-red) 58%, transparent) !important;
+}
+html[data-game-route="transfers"] .market-page .market-accepted-tone {
+  border-color: color-mix(in srgb, var(--market-green) 58%, transparent) !important;
 }

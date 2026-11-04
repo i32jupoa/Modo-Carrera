@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { addSquadMilestoneNotifications, removeHatTrickInboxNotifications } from '../src/lib/seasonInbox.ts';
+import { addFinancialIncomeNotification, addSquadMilestoneNotifications, removeHatTrickInboxNotifications } from '../src/lib/seasonInbox.ts';
 
 const base = {
   existing: [],
@@ -35,6 +35,28 @@ const skippedDate = addSquadMilestoneNotifications({
 });
 assert.equal(skippedDate.length, 1, 'un salto de pocos días no debe perder el aviso de recuperación');
 
+const financialIncome = addFinancialIncomeNotification([], {
+  id: '2027-28:financial_income:ucl:advanceQF-club-user',
+  season: '2027-28',
+  date: '2028-03-14',
+  teamId: 'club-user',
+  amount: 12_500_000,
+  category: 'Premio deportivo · Champions League',
+  message: 'El club ha recibido un premio por alcanzar los cuartos de final de la Champions League.',
+});
+assert.equal(financialIncome.length, 1, 'un ingreso debe generar un comunicado del buzón');
+assert.equal(financialIncome[0].type, 'financial_income');
+assert.equal(financialIncome[0].amount, 12_500_000);
+assert.equal(addFinancialIncomeNotification(financialIncome, {
+  id: financialIncome[0].id,
+  season: '2027-28', date: '2028-03-14', teamId: 'club-user', amount: 12_500_000,
+  category: 'Premio deportivo · Champions League', message: 'Duplicado',
+}).length, 1, 'los avisos financieros no deben duplicarse');
+assert.equal(addFinancialIncomeNotification(financialIncome, {
+  id: 'zero', season: '2027-28', date: '2028-03-14', teamId: 'club-user', amount: 0,
+  category: 'Premio', message: 'Sin ingreso',
+}).length, 1, 'no se deben notificar importes nulos');
+
 const storeSource = await readFile(new URL('../src/lib/store.ts', import.meta.url), 'utf8');
 const dailyMailbox = storeSource.slice(storeSource.indexOf('export function applyDailyMailboxMessages'), storeSource.indexOf('function simulateFixtureInline'));
 assert.ok(dailyMailbox.indexOf('seasonNotifications: addSquadMilestoneNotifications') < dailyMailbox.indexOf('if (hasUserMatch || squad.length === 0) return'), 'los avisos de plantilla deben añadirse antes del retorno por partido del usuario');
@@ -44,6 +66,8 @@ assert.doesNotMatch(storeSource, /player_hat_trick:/, 'no se deben generar nuevo
 const mailboxUi = await readFile(new URL('../src/routes/mailbox.tsx', import.meta.url), 'utf8');
 assert.match(mailboxUi, /player_recovered:/, 'el buzón debe mostrar recuperaciones');
 assert.match(mailboxUi, /contract_expiring_soon:/, 'el buzón debe mostrar contratos próximos a vencer');
+assert.match(mailboxUi, /financial_income:/, 'el buzón debe mostrar ingresos no procedentes de fichajes');
+assert.match(mailboxUi, /formatEuro\(Number\(item.amount\)\)/, 'el buzón debe mostrar el importe ingresado');
 
 const legacy = [
   { id: 'a', type: 'player_hat_trick' },

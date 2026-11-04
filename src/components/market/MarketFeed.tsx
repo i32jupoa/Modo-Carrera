@@ -488,10 +488,13 @@ export function MarketFeed({
                     <div className="min-w-0">
                       <p className="font-bold truncate">{record.playerName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {clubName(record.fromClubId)} → {clubName(record.toClubId)} ·{" "}
-                        {record.fee > 0 ? formatEuro(record.fee) : describeTransfer(record)} ·{" "}
-                        {record.date}
+                        {record.isReleaseClause
+                          ? describeTransfer(record)
+                          : `${clubName(record.fromClubId)} → ${clubName(record.toClubId)} · ${record.fee > 0 ? formatEuro(record.fee) : describeTransfer(record)} · ${record.date}`}
                       </p>
+                      {record.isReleaseClause && (
+                        <p className="text-[0.65rem] text-muted-foreground">{record.date}</p>
+                      )}
                     </div>
                   </li>
                 );

@@ -20,6 +20,9 @@ interface Props {
   wageBill?: number;
   currentWage?: number;
   currentDate: string;
+  releaseClause?: number;
+  releaseClauseDisabledReason?: string | null;
+  onStartReleaseClauseNegotiation?: () => void;
   /**
    * El jugador acaba de fichar en firme esta misma ventana: no se puede
    * volver a ofertar por él en firme hasta la siguiente. El traspaso queda
@@ -58,17 +61,20 @@ export function NegotiationModal({
   wageBill = 0,
   currentWage = 0,
   currentDate,
+  releaseClause = 0,
+  releaseClauseDisabledReason = null,
+  onStartReleaseClauseNegotiation,
   transferLocked = false,
   movementBlocked = false,
   onSubmit,
   onClose,
 }: Props) {
   const scoutingData = report && scoutingEntry ? scoutingNegotiationDisplay(report, scoutingEntry, formatEuro) : null;
-  const [operation, setOperation] = useState<"transfer" | "loan">(
+  const [operation, setOperation] = useState<"transfer" | "loan" | "release-clause">(
     transferLocked ? "loan" : "transfer",
   );
   const [loanType, setLoanType] = useState<"loan" | "loan-option" | "loan-obligation">("loan");
-  const type = operation === "transfer" ? "permanent" : loanType;
+  const type = operation === "loan" ? loanType : "permanent";
   const [amount, setAmount] = useState<number | "">("");
   const [sellOn, setSellOn] = useState(0);
 
@@ -86,7 +92,12 @@ export function NegotiationModal({
   const transferBudget = Math.max(0, budget - wageBudget);
   const wageCommitmentEuros = type === "permanent" ? 0 : Math.round(wageEuros * (wageShare / 100));
   const overBudget = amountEuros > transferBudget;
-  const overWageBudget = wageCommitmentEuros > Math.max(0, wageBudget);
+  const availableWageRoom = Math.max(0, wageBudget - wageBill);
+  const overWageBudget = wageCommitmentEuros > availableWageRoom;
+  const clauseBudgetReason = releaseClause > transferBudget
+    ? "No tienes presupuesto de fichajes suficiente para pagar íntegramente la cláusula."
+    : null;
+  const clauseDisabledReason = releaseClauseDisabledReason ?? clauseBudgetReason;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-auto">
@@ -111,7 +122,7 @@ export function NegotiationModal({
         </div>
 
         {movementBlocked && (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs font-semibold text-amber-200">
+          <div className="rounded-xl border border-orange-500/30 bg-orange-500/10 px-3 py-2.5 text-xs font-semibold text-orange-200">
             Este jugador ya ha cambiado de equipo este año o temporada y no puede volver a moverse hasta la siguiente.
           </div>
         )}
@@ -135,18 +146,18 @@ export function NegotiationModal({
         </div>
 
         {report && scoutingEntry && !report.available && (
-          <p className="text-xs text-yellow-400">
+          <p className="text-xs text-cyan-400">
             El club lo considera intransferible: hará falta una oferta muy por encima de su valor.
           </p>
         )}
 
         {transferLocked && !movementBlocked && (
-          <p className="text-xs text-amber-400">
+          <p className="text-xs text-orange-400">
             {playerName} acaba de fichar en firme esta ventana: solo se puede negociar una cesión hasta la próxima.
           </p>
         )}
 
-        <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
+        {operation !== "release-clause" && <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
           {isFreeAgent ? (
             <>
               <p className="text-[0.62rem] uppercase tracking-wider text-primary font-black">Negociación directa</p>
@@ -164,13 +175,13 @@ export function NegotiationModal({
               </p>
             </>
           )}
-        </div>
+        </div>}
 
         {!isFreeAgent && <div className="space-y-2">
           <label className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">
             Tipo de operación
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className={`grid ${releaseClause > 0 ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
             <button
               type="button"
               disabled={transferLocked || movementBlocked}
@@ -198,6 +209,19 @@ export function NegotiationModal({
             >
               Cesión
             </button>
+            {releaseClause > 0 && (
+              <button
+                type="button"
+                onClick={() => setOperation("release-clause")}
+                className={`rounded-xl border px-3 py-3 text-sm font-black transition ${
+                  operation === "release-clause"
+                    ? "border-cyan-400 bg-cyan-400/15 text-cyan-200"
+                    : "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Cláusula
+              </button>
+            )}
           </div>
         </div>}
 
@@ -310,12 +334,36 @@ export function NegotiationModal({
           </div>
         )}
 
-        <div className="space-y-1 text-xs text-muted-foreground">
+        {releaseClause > 0 && !isFreeAgent && operation === "release-clause" && (
+          <section className="space-y-3 rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[0.65rem] uppercase tracking-wider font-black text-cyan-300">Paso 1 de 2 · Negociación con el jugador</p>
+                <p className="mt-1 text-lg font-black text-cyan-100">{formatEuro(releaseClause)}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Primero negociarás salario, años y rol directamente con el jugador, como en un fichaje normal tras el acuerdo entre clubes. El club vendedor no negocia ni puede rechazar la cláusula y todavía no se realiza ningún pago.</p>
+              </div>
+              <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-[0.58rem] font-black uppercase text-cyan-200">Pago en paso 2</span>
+            </div>
+            <p className="text-xs text-muted-foreground">La cláusula se descontará del presupuesto de fichajes. El salario acordado se validará y cargará al presupuesto salarial.</p>
+            <button
+              type="button"
+              disabled={!onStartReleaseClauseNegotiation || !!clauseDisabledReason || movementBlocked}
+              onClick={() => onStartReleaseClauseNegotiation?.()}
+              className="w-full rounded-lg border border-cyan-400/40 bg-cyan-400/15 px-3 py-2.5 text-sm font-black text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Negociar contrato con el jugador
+            </button>
+            {clauseDisabledReason && <p className="text-xs font-semibold text-cyan-200">{clauseDisabledReason}</p>}
+            {movementBlocked && <p className="text-xs font-semibold text-cyan-200">El jugador no puede cambiar de club otra vez durante esta ventana.</p>}
+          </section>
+        )}
+
+        {operation !== "release-clause" && <div className="space-y-1 text-xs text-muted-foreground">
           <p>Presupuesto total: <span className="text-foreground font-bold">{formatEuro(budget)}</span></p>
           <p>Dinero para fichajes: <span className="text-foreground font-bold">{formatEuro(transferBudget)}</span></p>
           {type !== "permanent" && (
             <>
-              <p>Presupuesto salarial: <span className="text-foreground font-bold">{formatEuro(wageBudget)} al año</span></p>
+              <p>Margen salarial disponible: <span className="text-foreground font-bold">{formatEuro(availableWageRoom)} al año</span></p>
               <p>Mi club pagará el <span className="text-foreground font-bold">{wageShare}%</span> del sueldo actual y {clubName} pagará el <span className="text-foreground font-bold">{100 - wageShare}%</span>.</p>
             </>
           )}
@@ -325,8 +373,9 @@ export function NegotiationModal({
           {isFreeAgent && (
             <p>Salario, rol, años de contrato y prima de fichaje se negocian juntos directamente con el jugador.</p>
           )}
-        </div>
+        </div>}
 
+        {operation !== "release-clause" && (<>
         <div className="flex gap-2">
           <button
             type="button"
@@ -363,7 +412,10 @@ export function NegotiationModal({
           {isFreeAgent
             ? "Al ser agente libre no existe negociación con ningún club vendedor."
             : "Si el club acepta, se abrirá el paso 2 para negociar directamente con el jugador."}
-        </p>
+        </p></>)}
+        {operation === "release-clause" && (
+          <button type="button" onClick={onClose} className="w-full rounded-lg bg-secondary py-2 text-sm font-bold">Cancelar</button>
+        )}
       </div>
     </div>
   );

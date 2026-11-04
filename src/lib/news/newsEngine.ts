@@ -17,7 +17,7 @@ import type { SaveGame } from "@/lib/store";
 import type { TeamOfRoundData } from "@/lib/teamOfRound";
 import { getPlayer } from "@/lib/transfers/PlayerIndex";
 import { listRenewals } from "@/lib/transfers/RenewalLog";
-import { listTransfers } from "@/lib/transfers/TransferHistory";
+import { describeTransfer, listTransfers } from "@/lib/transfers/TransferHistory";
 import { listRumors } from "@/lib/transfers/RumorEngine";
 import { filterStoriesByEntityCooldown, isWithinNewsWindow } from "./newsRules";
 import {
@@ -50,6 +50,7 @@ export type NewsTheme =
   | "uel"
   | "uecl"
   | "fichaje"
+  | "clausula"
   | "cesion"
   | "renovacion"
   | "lesion"
@@ -61,6 +62,7 @@ export interface NewsTransfer {
   toId: string;
   kind: "permanent" | "loan" | "free";
   fee: number;
+  isReleaseClause?: boolean;
 }
 
 export interface NewsInjury {
@@ -1435,7 +1437,7 @@ function marketNews(ctx: Ctx, refDay: number): NewsItem[] {
     const facts: NewsFact[] = [];
     if (fromName) facts.push({ label: "Procedencia", value: fromName });
     facts.push({ label: "Destino", value: toName });
-    if (!isFree && fee > 0) facts.push({ label: isLoan ? "Cesión" : "Traspaso", value: formatM(fee) });
+    if (!isFree && fee > 0) facts.push({ label: t.isReleaseClause ? "Cláusula de rescisión" : isLoan ? "Cesión" : "Traspaso", value: formatM(fee) });
     if (wageTxt) facts.push({ label: "Salario", value: wageTxt });
     if (p) facts.push({ label: "Jugador", value: `${p.age} años · Media ${p.ovr}${posTxt ? ` · ${p.position}` : ""}` });
 
@@ -1456,6 +1458,10 @@ function marketNews(ctx: Ctx, refDay: number): NewsItem[] {
         `Gratis y con ${ovr ? `media ${ovr}` : "calidad"}: ${t.playerName} ficha por ${the(toName)}`,
       ]);
       body.push(`${The(toName)} incorpora sin pagar traspaso a ${t.playerName}${age ? `, de ${age}` : ""}.`);
+    } else if (t.isReleaseClause && fromName) {
+      icon = "🔓";
+      title = describeTransfer(t as Parameters<typeof describeTransfer>[0]);
+      body.push(title);
     } else {
       const big = fee >= 100_000_000;
       icon = big ? "💰" : "💼";
@@ -1490,12 +1496,13 @@ function marketNews(ctx: Ctx, refDay: number): NewsItem[] {
       score: clamp(score, 5, 100),
       when: t.date ? `Mercado · ${t.date}` : "Mercado",
       mine,
-      theme: isLoan ? "cesion" : "fichaje",
+      theme: t.isReleaseClause ? "clausula" : isLoan ? "cesion" : "fichaje",
       transfer: {
         fromId: t.fromClubId ?? undefined,
         toId: t.toClubId,
         kind: isLoan ? "loan" : isFree ? "free" : "permanent",
         fee: isFree ? 0 : fee,
+        isReleaseClause: !!t.isReleaseClause,
       },
     });
   }

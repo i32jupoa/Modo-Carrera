@@ -11,6 +11,7 @@ import {
 } from "@/store/playersStore";
 import { getSaveItem, getSaveItemAsync, setSaveItem, removeSaveItem } from "./saveStorage";
 import { resetMarketIndex, setRetiredPlayersLedger } from "@/lib/transfers/PlayerIndex";
+import { migrateUserWageBudget } from "@/lib/transfers/SalaryBudget";
 
 const STORAGE_KEY = "fcsim:save:v2";
 const STORAGE_KEY_MULTIPLE = "fcsim:saves:v2";
@@ -412,7 +413,15 @@ export function restorePlayersStoreState(save: SaveGame & { playersStoreState?: 
     clubOverrides,
     dynamicPlayers,
     budget: snap.budget,
-    wageBudget: snap.wageBudget,
+    // La restauración de una carrera no pasa por el merge de Zustand. Migramos
+    // aquí también el campo salarial para que los guardados existentes vuelvan
+    // a mostrar la distribución original (5%-30%, 20% por defecto).
+    wageBudget: migrateUserWageBudget(
+      snap.budget ?? 0,
+      snap.wageBudget,
+      snap.wageBill ?? 0,
+      0.20,
+    ),
     wageBill: snap.wageBill,
     dismissedMatchIds: snap.dismissedMatchIds ?? [],
   } as any);

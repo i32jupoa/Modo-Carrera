@@ -42,6 +42,7 @@ import {
   snapshotTransferHistory,
 } from "./TransferHistory";
 import { restoreRumors, snapshotRumors } from "./RumorEngine";
+import { restoreReleaseClauseState, snapshotReleaseClauseState } from "./ReleaseClauseEngine";
 import { restoreUserDeals, snapshotUserDeals, type UserDeal } from "./UserNegotiation";
 import {
   restorePursuitMemory,
@@ -102,6 +103,8 @@ export interface TransferSaveData {
   archivedWindows?: string[];
   /** Renovaciones de contrato registradas (para las noticias). */
   renewals?: RenewalRecord[];
+  /** Contadores anti-exploit de cláusulas (opcional en partidas antiguas). */
+  releaseClauses?: ReturnType<typeof snapshotReleaseClauseState>;
 }
 
 /** Construye la instantánea completa del sistema de mercado. */
@@ -117,6 +120,7 @@ export function snapshotTransferSystem(): TransferSaveData {
     userDeals: snapshotUserDeals(),
     pursuits: snapshotPursuitMemory(),
     renewals: snapshotRenewals(),
+    releaseClauses: snapshotReleaseClauseState(),
   };
 }
 
@@ -127,6 +131,7 @@ export function applyTransferSnapshot(data: TransferSaveData): boolean {
   restoreFinances(data.finances ?? []);
   restoreTransferHistory(data.history ?? []);
   restoreRenewals(data.renewals);
+  restoreReleaseClauseState(data.releaseClauses);
   restoreRumors(data.rumors ?? []);
   restoreUserDeals(data.userDeals ?? []);
   restorePursuitMemory(data.pursuits ?? []);

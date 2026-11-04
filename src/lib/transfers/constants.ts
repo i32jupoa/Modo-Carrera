@@ -7,6 +7,27 @@
 
 import type { PositionGroup } from "./types";
 
+
+// ============================================================================
+// PRESUPUESTO SALARIAL DEL CLUB DEL USUARIO
+// ============================================================================
+
+/**
+ * Reparto original del presupuesto total del usuario: 20% inicial para
+ * salarios, con un deslizador entre 5% y 30%. La masa salarial real se muestra
+ * por separado y no puede invertir automáticamente la distribución de caja.
+ */
+export const USER_WAGE_BUDGET_RULES = {
+  /** Asignación salarial objetivo inicial sobre el presupuesto total. */
+  defaultShare: 0.20,
+  /** Por encima de este porcentaje se interpreta como la antigua bolsa de fichajes invertida. */
+  legacyTransferAllocationThreshold: 0.55,
+  /** Suelo habitual del deslizador. */
+  minimumShare: 0.05,
+  /** Techo habitual del deslizador cuando la plantilla es económica. */
+  standardMaximumShare: 0.30,
+} as const;
+
 // ============================================================================
 // CALENDARIO Y RITMO DE LA IA
 // ============================================================================
@@ -699,3 +720,95 @@ export const MARKET_STORAGE_KEY_PREFIX = "fcsim:market:v1";
  * (ver `Persistence.ts`) de un modo incompatible con el formato anterior.
  */
 export const MARKET_STATE_VERSION = 3;
+
+
+/** Ajustes del sistema de cláusulas de rescisión. */
+export const RELEASE_CLAUSE_RULES = {
+  /**
+   * Probabilidad por candidato y oportunidad. Se eleva respecto a V1.5:
+   * el mercado tiene cientos de clubes-ventana y sólo evalúa oportunidades
+   * cuando cada comprador entra en la rotación diaria. La satisfacción sigue
+   * aplicando un freno fuerte mediante happyPlayerProbabilityFloor y desireExponent.
+   */
+  maxProbability: 0.65,
+  baseProbability: 0.50,
+  desireExponent: 2.0,
+  /** Los clubes pueden interesarse también por jugadores satisfechos, sobre todo si la cláusula es una ganga. */
+  happyPlayerProbabilityFloor: 0.025,
+  /** Probabilidad mínima por intento antes de aplicar el descuento específico de promesas. */
+  happyPlayerMinimumAttemptChance: { star: 0.035, starter: 0.050, rotation: 0.065, secondary: 0.075, prospect: 0.025 },
+  /** Las cláusulas IA-IA empiezan el segundo día; las rondas contra el usuario tienen su propio calendario aleatorio. */
+  minimumWindowDay: 2,
+  /** En invierno la actividad de cláusulas es mucho menos frecuente. */
+  winterProbabilityFactor: 0.42,
+  acceptanceThreshold: 0.52,
+  minimumWageRatio: 0.98,
+  discontentWageDiscount: 0.12,
+  ambitionWagePremium: 0.42,
+  /** Exigencia salarial adicional por satisfacción, lealtad y rol actual. */
+  contentmentWagePremium: 1.15,
+  loyaltyWagePremium: 0.95,
+  roleWagePremium: {
+    star: 0.42,
+    starter: 0.28,
+    rotation: 0.12,
+    secondary: 0,
+    prospect: 0.05,
+  },
+  /** Menor probabilidad de salida cuando el jugador es importante para su club. */
+  roleProbabilityMultiplier: {
+    star: 0.5,
+    starter: 0.75,
+    rotation: 1,
+    secondary: 1,
+    prospect: 0.62,
+  },
+  roleAcceptanceResistance: {
+    star: 0.18,
+    starter: 0.12,
+    rotation: 0.05,
+    secondary: 0,
+    prospect: 0.12,
+  },
+  /**
+   * Las promesas jóvenes con margen de desarrollo son bastante más difíciles
+   * de sacar mediante una cláusula: suelen ser activos estratégicos del club.
+   */
+  promiseWagePremium: 0.75,
+  promiseAcceptanceResistance: 0.16,
+  /**
+   * Las salidas del club del usuario se buscan en rondas globales repartidas
+   * por toda la ventana. El primer día ya es elegible, pero nunca está
+   * garantizado: cada fecha necesita superar un disparador pseudoaleatorio.
+   * Las oportunidades prueban varios compradores y jugadores para que el
+   * riesgo no desaparezca por reducir demasiado el volumen del muestreo.
+   */
+  userIncomingQuietWindowChance: { summer: 0.10, winter: 0.18 },
+  userIncomingQuietWindowMultiplier: 0.55,
+  userIncomingDailyOpportunityChance: { summer: 0.40, winter: 0.28 },
+  userIncomingStartDay: { summer: 1, winter: 1 },
+  userIncomingBuyerAttemptsPerOpportunity: { summer: 8, winter: 5 },
+  userIncomingPlayerAttemptsPerBuyer: { summer: 4, winter: 3 },
+  /** Resistencia contractual adicional de jugadores felices y leales. */
+  contentmentAcceptancePremium: 0.50,
+  loyaltyAcceptancePremium: 0.45,
+  loyaltyPenalty: 0.30,
+  /** Máximos específicos de salidas del club del usuario: 2 en verano y 1 en invierno. */
+  maxUserIncomingByWindow: { summer: 2, winter: 1 },
+  /**
+   * Volumen IA-IA: objetivo aproximado de 200+ operaciones en verano, con
+   * margen de seguridad hasta 280. No se garantiza una cifra fija: presupuesto,
+   * plantilla mínima, necesidad, cláusula y aceptación siguen siendo filtros.
+   */
+  maxPerClubPerWindow: { summer: 3, winter: 1 },
+  maxAiGlobalByWindow: { summer: 280, winter: 24 },
+  maxGlobalPerDay: { summer: 12, winter: 2 },
+  /** Candidatos distintos evaluados por comprador y día activo de mercado. */
+  aiAttemptsPerClubDay: { summer: 5, winter: 2 },
+  /** Universo vendedor muestreado por comprador y día para encontrar objetivos diversos. */
+  aiSellerSampleSize: 48,
+  /** Oferta máxima de salario de la IA como múltiplo de la demanda calculada. */
+  aiMaximumWageMultiplier: 3.25,
+  /** El jugador recién llegado queda protegido salvo que quiera salir. */
+  protectionUntilNextWindow: true,
+} as const;

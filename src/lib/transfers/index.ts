@@ -16,6 +16,7 @@ import { resetTransferHistory } from "./TransferHistory";
 import { resetRumors } from "./RumorEngine";
 import { resetMarketLocks } from "./MarketLocks";
 import { resetUserDeals } from "./UserNegotiation";
+import { resetReleaseClauseState } from "./ReleaseClauseEngine";
 import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "../season/seasonRolloverLock";
 import {
   getSimulationState,
@@ -52,6 +53,7 @@ export * from "./MarketLocks";
 export * from "./MarketSimulation";
 export * from "./Persistence";
 export * from "./UserNegotiation";
+export * from "./ReleaseClauseEngine";
 export * from "./Scouting";
 export * from "./ScoutingReport";
 
@@ -78,6 +80,7 @@ export function initializeTransferSystem(date: string): MarketSimulationState {
  */
 const MODULE_RESETTERS: Array<() => void> = [
   resetMarketLocks,
+  resetReleaseClauseState,
   resetSimulation,
   resetUserDeals,
   resetRumors,

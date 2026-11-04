@@ -10,6 +10,7 @@ import { tacticsModifiers, resolveMatchTactics, tacticalMatchupMultiplier, TACTI
 import { type PosCode } from "@/lib/positions";
 import { type FormationName } from "@/lib/formations";
 import { drainPerMinute, fatigueInjuryRisk, staminaPerformanceMultiplier } from "@/lib/liveMatch";
+import type { MatchPostReport } from "@/lib/matchReport";
 
 export type { MatchStats, PlayerRating };
 
@@ -573,6 +574,8 @@ export type SimResult = {
   xgHome: number;
   xgAway: number;
   highlights?: HighlightEvent[];
+  /** Resolved live-only moments (saves, penalty decisions, VAR, injuries, etc.) for historical chronicle replay. */
+  keyMoments?: any[];
   stats?: MatchStats;
   ratings?: PlayerRating[];
   mvp?: PlayerRating | null;
@@ -616,6 +619,8 @@ export type SimResult = {
   energyAtEnd?: Record<string, number>;
   /** Guard for the user-team post-match satisfaction/mailbox hook. */
   satisfactionApplied?: boolean;
+  /** Compact post-match text persisted with the fixture for every competition. */
+  postMatchReport?: MatchPostReport;
   /** Backward-compatible guard preventing duplicate stat commits for this result. */
   matchStatsApplied?: boolean;
 };
@@ -1440,6 +1445,11 @@ export function simulateMatchFast(
       xgHome: 0,
       xgAway: 0,
       highlights: [],
+      stats: {
+        home: { possession: 50, shots: 0, shotsOnTarget: 0, corners: 0, fouls: 0, offsides: 0, passes: 0, passesCompleted: 0, passAccuracy: 0, saves: 0, xg: 0 },
+        away: { possession: 50, shots: 0, shotsOnTarget: 0, corners: 0, fouls: 0, offsides: 0, passes: 0, passesCompleted: 0, passAccuracy: 0, saves: 0, xg: 0 },
+        timeline: [],
+      },
       ratings: [],
       mvp: null,
       homeLineup: homeXI,
@@ -1925,6 +1935,20 @@ export function simulateMatchFast(
     awaySaves,
   });
 
+  // Fast/background simulations now retain the same aggregate match metrics
+  // as user-played fixtures. This powers the historical statistics tab for
+  // every AI-vs-AI match; the save layer drops only the minute timeline.
+  const stats = buildMatchStats({
+    xgHome: lh,
+    xgAway: la,
+    homeGoals,
+    awayGoals,
+    homeGoalMinutes: events.filter((event) => event.team === "home").map((event) => event.minute),
+    awayGoalMinutes: events.filter((event) => event.team === "away").map((event) => event.minute),
+    homeStrength: homeXI.reduce((sum, player) => sum + Number(player.rating || 0), 0) / Math.max(1, homeXI.length),
+    awayStrength: awayXI.reduce((sum, player) => sum + Number(player.rating || 0), 0) / Math.max(1, awayXI.length),
+  });
+
   return {
     homeGoals,
     awayGoals,
@@ -1933,6 +1957,7 @@ export function simulateMatchFast(
     injuries,
     xgHome: lh,
     xgAway: la,
+    stats,
     tacticalImpact: tacticalImpactSummary(homeTactics, awayTactics, homeXI, awayXI),
     highlights,
     ratings,

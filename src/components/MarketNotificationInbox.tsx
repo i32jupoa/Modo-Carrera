@@ -85,7 +85,7 @@ export function MarketNotificationInbox() {
         <button type="button" className="relative inline-flex items-center gap-2 rounded-xl border border-border/60 bg-card/70 px-3 py-2 text-sm font-bold hover:border-primary/50" aria-label="Abrir bandeja de notificaciones">
           <Bell className="h-4 w-4 text-primary" />
           <span className="hidden sm:inline">Novedades</span>
-          {unread > 0 && <span className="grid min-w-5 h-5 place-items-center rounded-full bg-yellow-400 px-1.5 text-[0.62rem] font-black text-black">{unread > 99 ? "99+" : unread}</span>}
+          {unread > 0 && <span className="grid min-w-5 h-5 place-items-center rounded-full market-notification-indicator bg-yellow-400 px-1.5 text-[0.62rem] font-black text-black">{unread > 99 ? "99+" : unread}</span>}
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(390px,calc(100vw-2rem))] p-0">
@@ -115,7 +115,7 @@ export function MarketNotificationInbox() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <p className="min-w-0 flex-1 text-xs font-bold leading-snug">{notification.text}</p>
-                            {!notification.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-yellow-400" />}
+                            {!notification.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full market-notification-indicator bg-yellow-400" />}
                           </div>
                           <Visual notification={notification} />
                         </div>

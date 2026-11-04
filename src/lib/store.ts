@@ -5,6 +5,7 @@ import { getSaveItem, setSaveItem, removeSaveItem, isSaveStorageFallback } from 
 
 import { saveTransferSystem } from "./transfers/Persistence";
 import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "./season/seasonRolloverLock";
+import { preserveUserWageBudget } from "./transfers/SalaryBudget";
 import { getPlayer as getMarketPlayer, getClubPlayers } from "./transfers/PlayerIndex";
 import {
   LeagueId,
@@ -68,6 +69,7 @@ import { migrateSeasonEconomyFields } from "@/lib/season/seasonEconomyMigration"
 import { nationalCupDateForSeason, nationalCupStartForSeason } from "@/lib/calendarRules";
 
 import { addDaysToIso, transferWindowKey } from "@/lib/transferWindows";
+import { buildMatchPostReport } from "@/lib/matchReport";
 import { applySeasonEndProgressionToAll } from "@/lib/seasonEndProgression";
 import { applySeasonEndProgressionToPlayer } from "@/lib/progressionHelper";
 import { applyMonthlyProgressionToPlayer } from "@/lib/progressionHelper";
@@ -145,7 +147,7 @@ import { assignSquadRoles } from "@/lib/squadRoles";
 import { SATISFACTION_CONFIG, computePostMatchSatisfaction, clampMorale, hydrateMailboxWantsOutOverrides, injuryWasActiveBeforeMatch, wasSuspendedBeforeMatch } from "@/lib/satisfaction";
 import { createEmptyMailbox, generateMailboxMessages, resolveMailboxPromises, releasePendingMailboxResolutions, type MailboxState } from "@/lib/mailbox";
 import { useNotificationsStore } from "@/store/notificationsStore";
-import { addSquadMilestoneNotifications, removeHatTrickInboxNotifications, type SeasonInboxNotification as SeasonInboxNotice } from "@/lib/seasonInbox";
+import { addFinancialIncomeNotification, addSquadMilestoneNotifications, removeHatTrickInboxNotifications, type SeasonInboxNotification as SeasonInboxNotice } from "@/lib/seasonInbox";
 
 import {
   ALL_FORMATIONS,
@@ -1077,6 +1079,8 @@ export type SaveGame = {
 
   /** Prize milestone keys already paid to the user's team (avoid duplicates). */
   uclPrizesAwarded?: string[];
+  /** Ledger de ingresos no procedentes de fichajes, con IDs idempotentes por temporada. */
+  financialIncomeLedger?: string[];
 
   // UCL Swiss format (new)
 
@@ -1534,6 +1538,10 @@ function loadSaveImpl(): SaveGame | null {
     // previous career's promotions or relegations.
     setActiveTeamLeagueOverrides(parsed.teamLeagueOverrides);
 
+    if (!Array.isArray(parsed.financialIncomeLedger)) {
+      parsed.financialIncomeLedger = [];
+      needsMigrationSave = true;
+    }
     if (!Array.isArray(parsed.seasonRolloverLedger)) {
       parsed.seasonRolloverLedger = [];
       needsMigrationSave = true;
@@ -2024,12 +2032,11 @@ function loadSaveImpl(): SaveGame | null {
 /**
  * Aligera la partida antes de guardarla.
  *
- * Cada partido simulado guardaba narración, estadísticas y notas de los 22
- * jugadores. Con todas las ligas, copas y Champions eso desbordaba la cuota de
- * `localStorage` ("exceeded the quota") a mitad de temporada. Aquí se conserva
- * el resultado, los goles y las tarjetas (lo que alimenta clasificaciones,
- * pichichis y sanciones) y se descarta el detalle pesado, salvo en los últimos
- * partidos de tu equipo, que son los que puedes volver a abrir.
+ * Cada partido conserva ahora un historial compacto, también cuando lo juegan
+ * dos equipos de la IA: estadísticas agregadas, eventos, calificaciones,
+ * alineaciones resumidas y el informe post-partido. Solo se descartan las
+ * líneas minuto a minuto de estadísticas y los mapas de energía, que ocupan
+ * mucho espacio y no son necesarios para consultar el acta histórica.
  */
 const DETAILED_MATCHES_KEPT = 6;
 
@@ -2066,7 +2073,8 @@ function isCompactHighlights(highlights: any): boolean {
 
 function isAlreadySlimResult(result: any): boolean {
   if (!result || typeof result !== "object") return false;
-  if (result.stats != null || result.energyAtEnd != null) return false;
+  if (result.energyAtEnd != null) return false;
+  if (result.stats != null && Array.isArray(result.stats.timeline) && result.stats.timeline.length > 0) return false;
   if (!isCompactHighlights(result.highlights)) return false;
   return [
     "homeLineup",
@@ -2078,8 +2086,33 @@ function isAlreadySlimResult(result: any): boolean {
   ].every((key) => !Array.isArray(result[key]) || result[key].every(isCompactPlayerSnapshot));
 }
 
-function slimResult(result: any, keepDetail: boolean): any {
-  if (!result || keepDetail || isAlreadySlimResult(result)) return result;
+function slimResult(result: any, keepDetail: boolean, fixture?: any): any {
+  if (!result) return result;
+
+  // Every played fixture receives a compact, reproducible post-match report.
+  // This applies to AI-vs-AI matches too, not only fixtures involving the user.
+  const postMatchReport = fixture
+    ? buildMatchPostReport(fixture, result, {
+        homeName: teamById(fixture.homeId)?.name ?? fixture.homeId,
+        awayName: teamById(fixture.awayId)?.name ?? fixture.awayId,
+        competitionName: fixture.europeanCompetition === "ucl"
+          ? "Champions League"
+          : fixture.europeanCompetition === "uel"
+            ? "Europa League"
+            : fixture.europeanCompetition === "uecl"
+              ? "Conference League"
+              : fixture.competition === "cup"
+                ? "Copa nacional"
+                : LEAGUES[fixture.league]?.name ?? String(fixture.league ?? "Liga"),
+      })
+    : result.postMatchReport;
+
+  if (keepDetail) {
+    return postMatchReport === result.postMatchReport
+      ? result
+      : { ...result, postMatchReport };
+  }
+  if (isAlreadySlimResult(result) && postMatchReport?.signature === result.postMatchReport?.signature) return result;
 
   // Old saves can contain full Player objects in four lineup snapshots per
   // match, plus duplicate homeLineup/awayLineup and energyAtEnd maps. Keep the
@@ -2094,8 +2127,20 @@ function slimResult(result: any, keepDetail: boolean): any {
     awayStartingLineup,
     homeFinalLineup,
     awayFinalLineup,
+    postMatchReport: _previousPostMatchReport,
     ...rest
   } = result;
+
+  // Keep the aggregate numbers needed by the historical statistics tab, but
+  // drop the 90-minute timeline to avoid multiplying save size across every
+  // league and European competition.
+  const compactStats = stats
+    ? {
+        home: stats.home,
+        away: stats.away,
+        timeline: [],
+      }
+    : undefined;
 
   const compactHighlights = Array.isArray(rest.highlights)
     ? rest.highlights.map((h: any) => ({
@@ -2129,6 +2174,8 @@ function slimResult(result: any, keepDetail: boolean): any {
   const awayFinal = compactPlayerSnapshots(awayFinalLineup);
   const compact: Record<string, any> = {
     ...rest,
+    ...(compactStats ? { stats: compactStats } : {}),
+    ...(postMatchReport ? { postMatchReport } : {}),
     ...(compactHighlights ? { highlights: compactHighlights } : {}),
     // Keep participant IDs/positions for awards, appearance accounting and
     // clean-sheet calculations. These arrays used to retain full Player
@@ -2151,7 +2198,7 @@ function slimFixtures(list: any[] | undefined, myTeamId: string, detailedIds: Se
   const compacted = list.map((f) => {
     if (!f?.result) return f;
     const mine = f.homeId === myTeamId || f.awayId === myTeamId;
-    const result = slimResult(f.result, mine && detailedIds.has(String(f.id)));
+    const result = slimResult(f.result, mine && detailedIds.has(String(f.id)), f);
     if (result === f.result) return f;
     changed = true;
     return { ...f, result };
@@ -2251,12 +2298,17 @@ function saveSaveImpl(s: SaveGame): boolean {
 
   // Publicamos el nuevo estado en memoria inmediatamente. La navegación y
   // los siguientes renders ya no esperan a compactar toda la temporada.
+  const previousSeasonUnreadCount = (parsedSaveCache?.save.seasonNotifications ?? []).filter((item) => !item.read).length;
+  const nextSeasonUnreadCount = (s.seasonNotifications ?? []).filter((item) => !item.read).length;
   parsedSaveCache = {
     saveId: activeId,
     save: s,
     raw: parsedSaveCache?.raw ?? null,
     authoritative: true,
   };
+  if (previousSeasonUnreadCount !== nextSeasonUnreadCount) {
+    window.dispatchEvent(new Event("career-season-notifications-updated"));
+  }
   pendingSaveForDisk = s;
   pendingSaveRevision += 1;
 
@@ -2718,6 +2770,7 @@ export function newSave(myTeamId: string): SaveGame {
     ueclChampion: null,
     uelPrizesAwarded: [],
     ueclPrizesAwarded: [],
+    financialIncomeLedger: [],
     uel: null,
     uecl: null,
     mailbox: createEmptyMailbox(),
@@ -2916,6 +2969,7 @@ function createFastMutationSnapshot(save: SaveGame): SaveGame {
     uclFixtures: Array.isArray(save.uclFixtures) ? [...save.uclFixtures] : [],
     uelFixtures: Array.isArray(save.uelFixtures) ? [...save.uelFixtures] : [],
     ueclFixtures: Array.isArray(save.ueclFixtures) ? [...save.ueclFixtures] : [],
+    financialIncomeLedger: Array.isArray(save.financialIncomeLedger) ? [...save.financialIncomeLedger] : [],
     uelPrizesAwarded: Array.isArray(save.uelPrizesAwarded) ? [...save.uelPrizesAwarded] : [],
     ueclPrizesAwarded: Array.isArray(save.ueclPrizesAwarded) ? [...save.ueclPrizesAwarded] : [],
     currentMatchday: { ...save.currentMatchday },
@@ -5820,18 +5874,57 @@ export const UCL_PRIZES = {
   champion: 25_000_000,
 } as const;
 
-function addToUserBudget(save: SaveGame, teamId: string, amount: number) {
-  if (!amount || teamId !== save.myTeamId) return;
+function addToUserBudget(
+  save: SaveGame,
+  teamId: string,
+  amount: number,
+  income: { key: string; category: string; description: string; date?: string },
+) {
+  const cleanAmount = Math.max(0, Math.round(Number(amount) || 0));
+  if (cleanAmount <= 0 || teamId !== save.myTeamId) return;
+  const incomeId = `${save.season}:financial_income:${income.key}`;
+  const ledger = Array.isArray(save.financialIncomeLedger) ? save.financialIncomeLedger : [];
+  if (ledger.includes(incomeId)) return;
+
   try {
     usePlayersStore.setState((s: any) => {
       const oldTotal = Math.max(0, Math.round(s.budget || 0));
-      const nextTotal = Math.max(0, Math.round(oldTotal + amount));
-      const ratio =
-        oldTotal > 0 ? Math.max(0.05, Math.min(0.3, (s.wageBudget || 0) / oldTotal)) : 0.2;
-      const wageBudget = Math.round(nextTotal * ratio);
+      const nextTotal = Math.max(0, Math.round(oldTotal + cleanAmount));
+      const wageBudget = preserveUserWageBudget(nextTotal, s.wageBill ?? 0, s.wageBudget ?? 0);
       return { budget: nextTotal, wageBudget };
     });
-  } catch {}
+  } catch {
+    return;
+  }
+
+  save.financialIncomeLedger = [...ledger, incomeId].slice(-1000);
+  const date = income.date ?? save.currentDate ?? `${getSeasonStartYear(save.season)}-07-01`;
+  save.seasonNotifications = addFinancialIncomeNotification(save.seasonNotifications ?? [], {
+    id: incomeId,
+    season: save.season,
+    date,
+    teamId,
+    amount: cleanAmount,
+    category: income.category,
+    message: income.description,
+  });
+}
+
+function europeanCompetitionLabel(save: SaveGame): { id: "ucl" | "uel" | "uecl"; name: string } {
+  const competition = save.uclFixtures?.find((fixture) => fixture.europeanCompetition)?.europeanCompetition;
+  if (competition === "uel") return { id: "uel", name: "Europa League" };
+  if (competition === "uecl") return { id: "uecl", name: "Conference League" };
+  return { id: "ucl", name: "Champions League" };
+}
+
+function uefaPrizeDescription(key: string, competitionName: string): string {
+  if (key === "participation") return `El club ha recibido un premio por participar en la fase liga de la ${competitionName}.`;
+  if (key.startsWith("advanceR16-")) return `El club ha recibido un premio por clasificarse para los octavos de final de la ${competitionName}.`;
+  if (key.startsWith("advanceQF-")) return `El club ha recibido un premio por alcanzar los cuartos de final de la ${competitionName}.`;
+  if (key.startsWith("advanceSF-")) return `El club ha recibido un premio por alcanzar las semifinales de la ${competitionName}.`;
+  if (key.startsWith("finalist-")) return `El club ha recibido un premio por clasificarse para la final de la ${competitionName}.`;
+  if (key.startsWith("champion-")) return `El club ha recibido el premio económico por ganar la ${competitionName}.`;
+  return `El club ha recibido un premio deportivo de la ${competitionName}.`;
 }
 
 function grantUCLPrizeOnce(save: SaveGame, key: string, teamId: string, amount: number) {
@@ -5839,7 +5932,13 @@ function grantUCLPrizeOnce(save: SaveGame, key: string, teamId: string, amount: 
   const progressionKeys = Array.isArray(save.uclPrizesAwarded) ? save.uclPrizesAwarded : [];
   if (progressionKeys.includes(key)) return;
   save.uclPrizesAwarded = [...progressionKeys, key];
-  addToUserBudget(save, teamId, amount);
+  const competition = europeanCompetitionLabel(save);
+  addToUserBudget(save, teamId, amount, {
+    key: `${competition.id}:${key}`,
+    category: `Premio deportivo · ${competition.name}`,
+    description: uefaPrizeDescription(key, competition.name),
+    date: save.currentDate,
+  });
 }
 
 /**
@@ -5866,19 +5965,34 @@ function applyUCLMatchAftermath(save: SaveGame, homeId: string, awayId: string):
     }
   }
 
-  // Prize money — participation + league-phase W/D for user's team
+  // Prize money — participation + league-phase W/D for user's team.
+  // Every non-transfer payment creates a persistent, idempotent inbox entry.
   if (next.myTeamId === homeId || next.myTeamId === awayId) {
-    grantUCLPrizeOnce(next, "participation", next.myTeamId, UCL_PRIZES.participation);
     const fx = next.uclFixtures?.find(
       (f) =>
         f.homeId === homeId && f.awayId === awayId && f.result && f.round?.startsWith("Jornada"),
     );
+    const competition = europeanCompetitionLabel(next);
+    grantUCLPrizeOnce(next, "participation", next.myTeamId, UCL_PRIZES.participation);
     if (fx?.result) {
       const isHome = next.myTeamId === homeId;
       const gf = isHome ? fx.result.homeGoals : fx.result.awayGoals;
       const ga = isHome ? fx.result.awayGoals : fx.result.homeGoals;
-      if (gf > ga) addToUserBudget(next, next.myTeamId, UCL_PRIZES.leagueWin);
-      else if (gf === ga) addToUserBudget(next, next.myTeamId, UCL_PRIZES.leagueDraw);
+      if (gf > ga) {
+        addToUserBudget(next, next.myTeamId, UCL_PRIZES.leagueWin, {
+          key: `${competition.id}:match:${fx.id}:win`,
+          category: `Premio por partido · ${competition.name}`,
+          description: `El club ha recibido un premio por ganar su partido de la fase liga de la ${competition.name}.`,
+          date: fx.date ?? next.currentDate,
+        });
+      } else if (gf === ga) {
+        addToUserBudget(next, next.myTeamId, UCL_PRIZES.leagueDraw, {
+          key: `${competition.id}:match:${fx.id}:draw`,
+          category: `Premio por partido · ${competition.name}`,
+          description: `El club ha recibido un premio por empatar su partido de la fase liga de la ${competition.name}.`,
+          date: fx.date ?? next.currentDate,
+        });
+      }
     }
   }
 

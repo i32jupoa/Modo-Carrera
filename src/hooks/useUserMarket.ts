@@ -27,12 +27,14 @@ import {
   saveTransferSystem,
   scoutPlayer,
   setUserPlayerTransferListed,
+  setUserDealPinned,
   submitUserLoanOutOffer,
   setUserPlayerLoanListed,
   submitUserOffer,
   summarize,
   syncUserFinances,
   canAfford,
+  startReleaseClauseNegotiation,
   withdrawUserDeal,
   type OfferClauses,
   type Rumor,
@@ -86,6 +88,7 @@ export interface UserMarketApi {
     type?: TransferType;
     clauses?: Partial<OfferClauses>;
   }) => void;
+  startReleaseClauseNegotiation: (playerId: string) => boolean;
   setLoanListed: (playerId: string, listed: boolean) => void;
   makeLoanOutOffer: (input: {
     playerId: string;
@@ -105,6 +108,7 @@ export interface UserMarketApi {
   counterIncoming: (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => void;
   counterOutgoing: (dealId: string, demand: number, clauses?: Partial<OfferClauses>) => void;
   rejectIncoming: (dealId: string) => void;
+  setOfferPinned: (dealId: string, pinned: boolean) => void;
   toggleTransferList: (playerId: string, listed: boolean) => void;
   clearFinished: () => void;
 }
@@ -186,8 +190,13 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
    */
   const syncBudget = useCallback(() => {
     if (!myTeamId) return;
-    const current = usePlayersStore.getState();
+    // `getFinances` reconcilia primero los guardados antiguos y, si procede,
+    // sube el límite salarial hasta cubrir la masa real. Leemos Zustand DESPUÉS
+    // de esa reconciliación: leerlo antes reinyectaba el límite antiguo en el
+    // ledger y volvía a bloquear la negociación en el siguiente paso.
+    usePlayersStore.getState().syncWageStateFromMarket();
     const market = getFinances(myTeamId);
+    const current = usePlayersStore.getState();
     setFinances({
       ...market,
       clubId: myTeamId,
@@ -236,9 +245,11 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
   const makeOffer = useCallback<UserMarketApi["makeOffer"]>(
     ({ playerId, amount, wageOffer, type, clauses }) => {
       if (!myTeamId) return;
+      syncBudget();
       const store = usePlayersStore.getState();
       const totalBudget = Math.max(0, store.budget);
       const wageAllocation = Math.max(0, store.wageBudget);
+      const wageRoom = Math.max(0, wageAllocation - Math.max(0, store.wageBill));
       const transferBudget = Math.max(0, totalBudget - wageAllocation);
       const isLoan =
         type === "loan" || type === "loan-option" || type === "loan-obligation";
@@ -253,7 +264,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       // con el jugador: la ficha se discute después de que el club acepte la
       // operación. Solo una cesión puede necesitar controlar ya el sueldo que
       // asume nuestro club.
-      if (isLoan && wageCommitment > wageAllocation) {
+      if (isLoan && wageCommitment > wageRoom) {
         toast.error("No tienes margen salarial suficiente para asumir esa parte de la ficha.");
         return;
       }
@@ -275,8 +286,24 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
         result.reason,
       );
     },
-    [myTeamId, currentDate, commit],
+    [myTeamId, currentDate, commit, syncBudget],
   );
+
+  const beginReleaseClauseNegotiation = useCallback((playerId: string): boolean => {
+    if (!myTeamId) return false;
+    syncBudget();
+    const result = startReleaseClauseNegotiation({
+      playerId,
+      userClubId: myTeamId,
+      date: currentDate,
+    });
+    if (!result.ok || !result.deal) {
+      commit(undefined, result.reason ?? "No se pudo iniciar la negociación de la cláusula.");
+      return false;
+    }
+    commit(`Negociación abierta con ${result.deal.playerName}. Primero debes acordar su contrato; todavía no se ha pagado la cláusula.`);
+    return true;
+  }, [myTeamId, currentDate, syncBudget, commit]);
 
   const setLoanListed = useCallback((playerId: string, listed: boolean) => {
     setUserPlayerLoanListed(playerId, listed);
@@ -394,16 +421,15 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
           const current = usePlayersStore.getState();
           const coveredWage =
             (result.wage ?? 0) * Math.max(0, Math.min(1, result.record.clauses?.wageShare ?? 0));
-          const nextBudget = Math.max(0, startingBudget + result.fee + coveredWage);
+          // La prima se ingresa en fichajes. La parte del sueldo asumida por
+          // el club cesionario libera margen salarial, no se convierte en caja.
+          const nextBudget = Math.max(0, startingBudget + result.fee);
           const originalWage = Math.max(0, result.wage ?? 0);
           const retainedWage = originalWage - coveredWage;
-          const nextWageBill = Math.max(0, (startingWageBill ?? current.wageBill) - originalWage + retainedWage);
-          const ratio = startingBudget > 0
-            ? Math.max(0.05, Math.min(0.30, current.wageBudget / startingBudget))
-            : 0.20;
+          const nextWageBill = Math.max(0, (startingWageBill ?? current.wageBill) - coveredWage);
           usePlayersStore.setState({
             budget: nextBudget,
-            wageBudget: Math.round(nextBudget * ratio),
+            wageBudget: current.wageBudget,
             wageBill: Math.round(nextWageBill),
           });
         }
@@ -419,18 +445,14 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       // registrar la venta para evitar duplicar el dinero.
       const sold = store.sellPlayer(result.record.playerId, 0);
 
-      // Reafirmamos la caja con la aritmética de la operación cerrada:
-      // presupuesto anterior + precio de venta + salario anual liberado.
-      // El salario viene del contrato anterior guardado por finalizeUserDeal.
+      // Reafirmamos la caja con el precio de venta solamente. El salario
+      // liberado ya reduce wageBill al reconciliar la plantilla y amplía el
+      // margen salarial; no es un ingreso de fichajes.
       if (startingBudget !== undefined) {
         const current = usePlayersStore.getState();
-        const nextBudget = Math.max(0, startingBudget + result.fee + Math.max(0, result.wage ?? 0));
-        const ratio = startingBudget > 0
-          ? Math.max(0.05, Math.min(0.30, current.wageBudget / startingBudget))
-          : 0.20;
         usePlayersStore.setState({
-          budget: nextBudget,
-          wageBudget: Math.round(nextBudget * ratio),
+          budget: Math.max(0, startingBudget + result.fee),
+          wageBudget: current.wageBudget,
         });
       }
 
@@ -468,6 +490,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       }
       const store = usePlayersStore.getState();
       const startingBudget = store.budget;
+      const startingWageBudget = store.wageBudget;
       const startingWageBill = store.wageBill;
 
       // Una negociación de SALIDA (vendes tú) también puede llegar a la fase
@@ -544,14 +567,12 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
 
         const loanWageShare = Math.max(0, Math.min(1, result.record.clauses?.wageShare ?? 0.5));
         const wagePaidByUser = Math.max(0, (result.wage ?? 0) * loanWageShare);
-        const nextBudget = Math.max(0, startingBudget - result.fee - wagePaidByUser);
-        const currentAfterLoan = usePlayersStore.getState();
-        const nextRatio = startingBudget > 0
-          ? Math.max(0.05, Math.min(0.30, currentAfterLoan.wageBudget / startingBudget))
-          : 0.20;
+        // La prima de cesión sale de fichajes; la parte del sueldo que
+        // asumimos consume únicamente el margen salarial (wageBill).
+        const nextBudget = Math.max(0, startingBudget - result.fee);
         usePlayersStore.setState({
           budget: nextBudget,
-          wageBudget: Math.round(nextBudget * nextRatio),
+          wageBudget: startingWageBudget,
           wageBill: Math.round(startingWageBill + wagePaidByUser),
         });
         const currentSaveAfterLoan = loadSave();
@@ -586,22 +607,29 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
       }
 
       const feePaid = result.fee;
-      const wagePaid = isLoan
-        ? wageCommitment
-        : result.record.wage;
-      const nextBudget = Math.max(0, startingBudget - feePaid - wagePaid);
-      const nextRatio = startingBudget > 0
-        ? Math.max(0.05, Math.min(0.30, store.wageBudget / startingBudget))
-        : 0.20;
+      // El motor ya ha actualizado el presupuesto a través de
+      // BudgetManager.registerSigning. Reconciliamos sólo la caja de fichajes;
+      // el salario queda reflejado en la masa salarial recalculada por buyPlayer.
+      const nextBudget = Math.max(0, startingBudget - feePaid);
       usePlayersStore.setState({
         budget: nextBudget,
-        wageBudget: Math.round(nextBudget * nextRatio),
+        wageBudget: startingWageBudget,
       });
       const currentSaveAfterEntry = loadSave();
       if (currentSaveAfterEntry) recalculateUserSquadRoles(currentSaveAfterEntry, true);
       flushWorldMoves();
       syncBudget();
-      commit(`Fichaje cerrado por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
+      if (result.record.isReleaseClause) {
+        useNotificationsStore.getState().add([{
+          direction: "in",
+          kind: "good",
+          title: "Cláusula pagada",
+          text: `Has pagado la cláusula a ${result.record.fromClubId ?? "su club de origen"} por ${formatEuro(result.fee)} y has fichado a ${result.record.playerName}.`,
+        }], currentDate);
+        commit(`Clausulazo completado: ${result.record.playerName} por ${formatEuro(result.fee)}. El pago se ha descontado del presupuesto de fichajes y el salario del margen salarial.`);
+      } else {
+        commit(`Fichaje cerrado por ${(result.fee / 1_000_000).toFixed(1)}M €.`);
+      }
     },
     [currentDate, commit, myTeamId, syncBudget, applyUserExit],
   );
@@ -664,6 +692,16 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     [currentDate, commit],
   );
 
+  const setOfferPinned = useCallback(
+    (dealId: string, pinned: boolean) => {
+      if (!setUserDealPinned(dealId, pinned)) return;
+      // El pin se guarda dentro de UserDeal, por lo que viaja con el guardado
+      // de la partida y no depende del almacenamiento del navegador.
+      commit();
+    },
+    [commit],
+  );
+
   const toggleTransferList = useCallback(
     (playerId: string, listed: boolean) => {
       setUserPlayerTransferListed(playerId, listed);
@@ -698,6 +736,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     startScouting: beginScouting,
     removeScouting: deleteScouting,
     makeOffer,
+    startReleaseClauseNegotiation: beginReleaseClauseNegotiation,
     setLoanListed,
     makeLoanOutOffer,
     improveOffer,
@@ -709,6 +748,7 @@ export function useUserMarket(enabled: boolean): UserMarketApi {
     counterIncoming,
     counterOutgoing,
     rejectIncoming,
+    setOfferPinned,
     toggleTransferList,
     clearFinished,
   };

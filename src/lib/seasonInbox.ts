@@ -11,7 +11,9 @@ export type SeasonNotificationType =
   | "player_recovered"
   | "player_of_round"
   | "player_of_month"
-  | "player_of_european_round";
+  | "player_of_european_round"
+  | "release_clause_paid"
+  | "financial_income";
 
 export interface SeasonInboxNotification {
   id: string;
@@ -22,7 +24,39 @@ export interface SeasonInboxNotification {
   playerName?: string;
   teamId?: string;
   message: string;
+  /** Importe ingresado por conceptos ajenos a fichajes. */
+  amount?: number;
+  /** Origen legible del ingreso (premio UEFA, liquidación anual, etc.). */
+  category?: string;
   read?: boolean;
+}
+
+
+export function addFinancialIncomeNotification(
+  existing: SeasonInboxNotification[],
+  input: {
+    id: string;
+    season: string;
+    date: string;
+    teamId: string;
+    amount: number;
+    category: string;
+    message: string;
+  },
+): SeasonInboxNotification[] {
+  const amount = Math.max(0, Math.round(Number(input.amount) || 0));
+  if (!input.id || amount <= 0 || existing.some((item) => item.id === input.id)) return existing;
+  return [...existing, {
+    id: input.id,
+    type: "financial_income",
+    season: input.season,
+    date: input.date,
+    teamId: input.teamId,
+    amount,
+    category: input.category,
+    message: input.message,
+    read: false,
+  }].slice(-250);
 }
 
 export interface RecoveryCandidate {

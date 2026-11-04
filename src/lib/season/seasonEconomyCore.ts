@@ -1,3 +1,4 @@
+import { preserveUserWageBudget } from "../transfers/SalaryBudget";
 /**
  * Núcleo determinista de economía de fin de temporada.
  * No importa React, el store ni APIs del navegador: recibe cifras explícitas
@@ -211,8 +212,7 @@ export function calculateSeasonEconomyForClub(input: SeasonEconomyClubInput): Se
   let totalBudget: number;
 
   if (input.mode === "user") {
-    const previousRatio = currentBudget > 0 ? clamp(oldWageBudget / currentBudget, 0.05, 0.3) : 0.2;
-    wageBudget = Math.max(wageBill, Math.round(budget * previousRatio));
+    wageBudget = preserveUserWageBudget(budget, wageBill, oldWageBudget || Math.round(budget * 0.20));
     totalBudget = budget;
   } else {
     // In the AI ledger, transfer and wage allocations are separate buckets.

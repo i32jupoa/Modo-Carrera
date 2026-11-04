@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
+    "test:release-clause-incoming": "node scripts/release-clause-user-incoming-regression.mjs",
     "test:season-balance": "node scripts/season-balance-test.mjs",
     "test:calendar-jump": "node scripts/calendar-jump-invariants.mjs",
     "test:season-calendar": "node --experimental-strip-types scripts/season-calendar-test.mjs",
@@ -50,7 +51,9 @@
     "test:promotion-playoff-calendar": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/promotion-playoff-calendar-regression.mjs",
     "test:career-calendar-creation": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/career-calendar-creation-regression.mjs",
     "test:season-inbox": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/season-inbox-lifecycle-test.mjs",
-    "test:season-inbox-visual": "node scripts/season-inbox-visual-regression.mjs"
+    "test:season-inbox-visual": "node scripts/season-inbox-visual-regression.mjs",
+    "test:match-report-history": "node --experimental-strip-types scripts/match-report-history-regression.mjs",
+    "test:match-chronicle": "node --experimental-strip-types scripts/match-chronicle-regression.mjs"
   },
   "overrides": {
     "rolldown": "1.2.1"

@@ -1,0 +1,26 @@
+CAMBIO: AVISOS DE INGRESOS EN EL BUZÓN
+
+Qué incluye:
+- Cada premio UEFA recibido por el club del usuario genera un comunicado en el Buzón: participación, victoria/empate en fase liga y premios por avanzar de ronda o ganar la competición.
+- La liquidación económica de fin de temporada genera un comunicado con el total ingresado y sus conceptos (televisión, clasificación liguera, copa y competiciones europeas, según corresponda).
+- Las tarjetas muestran el concepto, el importe recibido y la fecha.
+- Los ingresos se registran con una clave persistente para evitar duplicados al repetir simulaciones o cargar la partida.
+- Se excluyen los ingresos por fichajes/ventas, que pertenecen al registro del mercado.
+
+Archivos principales modificados:
+- src/lib/seasonInbox.ts
+- src/lib/store.ts
+- src/lib/season/seasonRollover.ts
+- src/routes/mailbox.tsx
+- scripts/season-inbox-lifecycle-test.mjs
+
+Para aplicar el ZIP de cambios, descomprime conservando las rutas dentro de la carpeta raíz del proyecto y acepta reemplazar los archivos.
+
+Pruebas ejecutadas correctamente:
+- season-inbox-lifecycle-test
+- season-inbox-visual-regression
+- season-economy-test
+- season-rollover-test
+- ucl-knockout-seeding-regression
+
+La compilación completa no se pudo ejecutar porque este entorno no tiene instaladas las dependencias de Vite (falta vite/client).

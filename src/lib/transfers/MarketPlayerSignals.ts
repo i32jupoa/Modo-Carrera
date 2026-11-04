@@ -1,3 +1,5 @@
+import type { SquadRole } from "./types";
+
 /**
  * Señales de uso de plantilla y lesiones que necesita el mercado de la IA.
  *
@@ -37,6 +39,7 @@ interface InjurySignal {
 
 const usage = new Map<string, Map<string, UsageBucket>>();
 const injuries = new Map<string, InjurySignal>();
+const squadRoles = new Map<string, SquadRole>();
 
 function seasonOf(date: string): number {
   const month = Number(date.slice(5, 7));
@@ -52,6 +55,28 @@ function usageKey(season: number, clubId: string): string {
 export function resetMarketPlayerSignals(): void {
   usage.clear();
   injuries.clear();
+  squadRoles.clear();
+}
+
+/** Restaura los roles de plantilla persistidos sin acoplar el mercado a Zustand. */
+export function hydrateMarketPlayerSquadRoles(
+  entries: readonly { playerId: string; squadRole?: SquadRole | null }[],
+): void {
+  squadRoles.clear();
+  for (const entry of entries) {
+    if (entry.playerId && entry.squadRole) squadRoles.set(String(entry.playerId), entry.squadRole);
+  }
+}
+
+/** Actualiza el rol cuando se negocia o recalcula la importancia de un jugador. */
+export function registerMarketPlayerSquadRole(playerId: string, squadRole?: SquadRole | null): void {
+  if (!playerId) return;
+  if (squadRole) squadRoles.set(String(playerId), squadRole);
+  else squadRoles.delete(String(playerId));
+}
+
+export function getMarketPlayerSquadRole(playerId: string): SquadRole | undefined {
+  return squadRoles.get(String(playerId));
 }
 
 /** Registra una aparición real del jugador para su club y temporada. */

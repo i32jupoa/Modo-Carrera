@@ -14,18 +14,30 @@
  * Todo lo que ocurre se vuelca en `TransferHistory` y `RumorEngine`.
  */
 
-import { BALANCE, ELITE_EXIT, MARKET_TIMING, MARKET_VARIATION, WINTER_MARKET, SQUAD_LIMITS } from "./constants";
+import { BALANCE, ELITE_EXIT, MARKET_TIMING, MARKET_VARIATION, RELEASE_CLAUSE_RULES, WINTER_MARKET, SQUAD_LIMITS } from "./constants";
 import {
   TRANSFER_WINDOWS,
   isSummerTransferWindow,
   isWinterTransferWindow,
   parseDateOnly,
+  daysIntoTransferWindow,
 } from "../transferWindows";
 import { getMarketIndex, getClubPlayers } from "./PlayerIndex";
+import {
+  attemptReleaseClause,
+  isAiReleaseClauseTimingAllowed,
+  releaseClauseAiQuotaReason,
+  releaseClauseProbability,
+  releaseClauseTargetQualityMultiplier,
+  releaseClauseUserIncomingQuotaReason,
+  claimUserReleaseClauseOpportunity,
+  hasUserReleaseClauseTargetBeenTried,
+  markUserReleaseClauseTargetTried,
+} from "./ReleaseClauseEngine";
 import { listAllBids } from "./BidWar";
 import { getClubProfile } from "./ClubStrategy";
 import { shoppingRamp } from "./MarketPacing";
-import { getFinances, getUserClubId, needsToSell, refillForNewWindow } from "./BudgetManager";
+import { getFinances, getUserClubId, maxSpend, needsToSell, refillForNewWindow } from "./BudgetManager";
 import { expireStaleNegotiations, listNegotiations } from "./NegotiationEngine";
 import {
   attemptEliteDeparture,
@@ -58,7 +70,7 @@ import { reconcileAcademyLoans } from "@/lib/academy/academyLoanBridge";
 import { POSITION_GROUPS } from "./types";
 import { getLongTermInjuredPlayerIds } from "./MarketPlayerSignals";
 import { isSeasonRolloverInProgress, trackMarketBackgroundTask } from "../season/seasonRolloverLock";
-import type { MarketDayResult, MarketSimulationState, MarketWindow } from "./types";
+import type { MarketDayResult, MarketPlayer, MarketSimulationState, MarketWindow } from "./types";
 
 // ============================================================================
 // CALENDARIO
@@ -294,6 +306,174 @@ function allClubIds(): string[] {
   return Array.from(getMarketIndex().byClub.keys());
 }
 
+/** Ordena candidatos con necesidad real y rota su orden de forma reproducible.
+ * La puntuación se calcula y ordena una sola vez por comprador/día: así se
+ * pueden probar varios objetivos sin volver a recorrer toda la muestra. */
+function selectReleaseClauseCandidates(
+  players: readonly MarketPlayer[],
+  buyerClubId: string,
+  date: string,
+  seedKey: string,
+): MarketPlayer[] {
+  const buyerTransferRoom = maxSpend(buyerClubId);
+  const eligible = players
+    .map((player) => {
+      const probability = releaseClauseProbability(player, buyerClubId, date);
+      const clause = Math.max(0, Math.round(player.contract.releaseClause));
+      if (clause <= 0 || clause > buyerTransferRoom) return { player, priority: 0 };
+      // La IA no debe quedarse sólo con suplentes baratos. La probabilidad
+      // sigue pesando, pero OVR y valor elevan moderadamente la prioridad de
+      // titulares y jugadores de primer nivel cuando el comprador puede pagarlos.
+      const quality = releaseClauseTargetQualityMultiplier(player);
+      const affordability = Math.pow(Math.max(0.05, Math.min(1, buyerTransferRoom / clause)), 0.12);
+      return { player, priority: probability * quality * affordability };
+    })
+    .filter((entry) => entry.priority > 0)
+    .sort((a, b) => b.priority - a.priority);
+  if (eligible.length === 0) return [];
+  // Una shortlist amplia da variedad de ligas y evita concentrarlo todo en
+  // los mismos nombres de la clasificación de probabilidades.
+  const shortlist = eligible.slice(0, Math.min(24, eligible.length));
+  const start = Math.min(shortlist.length - 1, Math.floor(seededUnit(buyerClubId, date, seedKey) * shortlist.length));
+  return Array.from({ length: shortlist.length }, (_, index) => shortlist[(start + index) % shortlist.length].player);
+}
+
+/**
+ * Una ronda aleatoria de interés por jugadores del club del usuario.
+ * Se evalúa una sola vez por fecha: el primer día puede haber interés, pero
+ * no está forzado. Cada ronda prueba varios compradores y candidatos para
+ * evitar que el muestreo quede tan reducido que no genere ninguna operación.
+ */
+function resolveAiReleaseClauseAgainstUser(
+  protectedClubId: string | null,
+  date: string,
+  result: MarketDayResult,
+): void {
+  if (!protectedClubId || windowForDate(date) === "closed") return;
+  if (!claimUserReleaseClauseOpportunity(date)) return;
+  if (releaseClauseUserIncomingQuotaReason(date)) return;
+
+  const windowType = windowForDate(date) === "winter" ? "winter" : "summer";
+  const windowDay = daysIntoTransferWindow(date);
+  if (windowDay < RELEASE_CLAUSE_RULES.userIncomingStartDay[windowType]) return;
+
+  // Cada ventana tiene personalidad propia: algunas son tranquilas y otras
+  // algo más movidas. La semilla mantiene el resultado estable al cargar.
+  const windowActivity = seededUnit(protectedClubId, windowKey(date), "user-clause-window-activity");
+  const isQuietWindow = windowActivity < RELEASE_CLAUSE_RULES.userIncomingQuietWindowChance[windowType];
+  // Una ventana tranquila reduce mucho las rondas, pero no las anula por
+  // completo: así no se condena una partida a cero clausulazos por una única
+  // semilla al abrir el mercado.
+  const activityMultiplier = isQuietWindow
+    ? RELEASE_CLAUSE_RULES.userIncomingQuietWindowMultiplier
+    : windowActivity >= 0.84 ? 1.4 : windowActivity >= 0.66 ? 1.15 : 1;
+  const dailyChance = RELEASE_CLAUSE_RULES.userIncomingDailyOpportunityChance[windowType] * activityMultiplier;
+  if (seededUnit(protectedClubId, date, "user-clause-daily-opportunity") >= dailyChance) return;
+
+  const userPlayers = getClubPlayers(protectedClubId);
+  // No gastar una de las pocas plazas de muestreo en un comprador que no puede
+  // pagar ninguna cláusula de la plantilla. Esto evita rondas vacías por azar
+  // cuando los clubes activos de ese día son de presupuestos modestos.
+  // Los compradores no tienen que estar en la rotación de fichajes de hoy:
+  // esa lista sólo incluye una fracción de la liga y dejaba fuera a muchos
+  // clubes grandes en la mayoría de fechas. Las cláusulas tienen una ronda
+  // global propia, así que buscamos entre todos los clubes con presupuesto.
+  const buyers = allClubIds().filter((clubId) =>
+    clubId !== protectedClubId &&
+    getClubPlayers(clubId).length < SQUAD_LIMITS.maxSquadSize &&
+    userPlayers.some((player) =>
+      player.contract.releaseClause > 0 &&
+      player.contract.releaseClause <= maxSpend(clubId),
+    ),
+  );
+  if (buyers.length === 0) return;
+  const start = Math.floor(seededUnit(protectedClubId, date, "user-clause-buyer-start") * buyers.length);
+  const buyerAttempts = Math.min(
+    RELEASE_CLAUSE_RULES.userIncomingBuyerAttemptsPerOpportunity[windowType],
+    buyers.length,
+  );
+  for (let buyerOffset = 0; buyerOffset < buyerAttempts; buyerOffset += 1) {
+    if (releaseClauseUserIncomingQuotaReason(date)) break;
+    const buyerClubId = buyers[(start + buyerOffset) % buyers.length];
+    const candidates = selectReleaseClauseCandidates(
+      userPlayers,
+      buyerClubId,
+      date,
+      `user-clause-target-${buyerOffset}`,
+    ).filter((player) => !hasUserReleaseClauseTargetBeenTried(date, player.id, buyerClubId));
+    const playerAttempts = Math.min(
+      RELEASE_CLAUSE_RULES.userIncomingPlayerAttemptsPerBuyer[windowType],
+      candidates.length,
+    );
+
+    for (let candidateIndex = 0; candidateIndex < playerAttempts; candidateIndex += 1) {
+      const target = candidates[candidateIndex];
+      if (!target) continue;
+      const incoming = attemptReleaseClause({ playerId: target.id, buyerClubId, date, allowFirstDay: true });
+      if (incoming.success && incoming.transfer) {
+        markUserReleaseClauseTargetTried(date, target.id, buyerClubId);
+        result.transfers.push(incoming.transfer);
+        publishConfirmedTransferRumor(
+          result,
+          incoming.transfer.toClubId,
+          incoming.transfer.playerId,
+          incoming.transfer.fromClubId,
+          date,
+        );
+        return;
+      }
+      // Un fallo de presupuesto, capacidad de plantilla o tirada de riesgo
+      // pertenece al comprador y no debe vetar al jugador ante otros clubes.
+      // Si el jugador rechaza el proyecto/contrato, o su situación lo impide,
+      // sí queda fuera de nuevas tentativas durante esta ventana.
+      const buyerSpecificFailure =
+        incoming.reason === "El club no considera asumible el riesgo de pagar la cláusula." ||
+        incoming.reason.startsWith("Presupuesto o límite salarial insuficiente") ||
+        incoming.reason.startsWith("La plantilla compradora ha alcanzado") ||
+        incoming.reason.startsWith("Este club ya alcanzó su límite");
+      if (!buyerSpecificFailure) markUserReleaseClauseTargetTried(date, target.id, buyerClubId);
+    }
+  }
+}
+
+/** Oportunidad de clausulazo IA-IA. Los objetivos del club del usuario se
+ * resuelven aparte, con una ronda global y mucho menos frecuente. */
+function resolveAiReleaseClauseOpportunities(
+  buyerClubId: string,
+  protectedClubId: string | null,
+  date: string,
+  result: MarketDayResult,
+): void {
+  if (!protectedClubId || buyerClubId === protectedClubId || !isAiReleaseClauseTimingAllowed(date)) return;
+
+  // Un comprador IA busca objetivos en varias plantillas IA. La muestra rota
+  // por comprador y fecha para repartir los movimientos por toda la ventana.
+  const sellers = allClubIds().filter((sellerId) => sellerId !== buyerClubId && sellerId !== protectedClubId);
+  if (sellers.length === 0) return;
+  if (releaseClauseAiQuotaReason(buyerClubId, date)) return;
+
+  const windowType = date.slice(5, 7) === "01" ? "winter" : "summer";
+  const sampleSize = Math.min(RELEASE_CLAUSE_RULES.aiSellerSampleSize, sellers.length);
+  const start = Math.floor(seededUnit(buyerClubId, date, "ai-clause-seller-start") * sellers.length);
+  const sampledSellers = Array.from({ length: sampleSize }, (_, index) => sellers[(start + index) % sellers.length]);
+  const aiTargets = sampledSellers.flatMap((sellerId) => getClubPlayers(sellerId));
+  const aiCandidates = selectReleaseClauseCandidates(aiTargets, buyerClubId, date, "ai-clause-target");
+  const maxAttempts = Math.min(RELEASE_CLAUSE_RULES.aiAttemptsPerClubDay[windowType], aiCandidates.length);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (releaseClauseAiQuotaReason(buyerClubId, date)) break;
+    const aiTarget = aiCandidates[attempt];
+    if (!aiTarget) break;
+
+    const interAi = attemptReleaseClause({ playerId: aiTarget.id, buyerClubId, date });
+    if (interAi.success && interAi.transfer) {
+      result.transfers.push(interAi.transfer);
+      publishConfirmedTransferRumor(result, interAi.transfer.toClubId, interAi.transfer.playerId, interAi.transfer.fromClubId, date);
+      // Una sola llegada de cláusula por comprador y día.
+      break;
+    }
+  }
+}
 
 /**
  * Revisa contratos de todos los clubes IA dos veces por temporada: enero y
@@ -1027,7 +1207,13 @@ export function simulateDay(date: string): MarketDayResult {
   // Las renovaciones no dependen del muestreo diario de clubes activos.
   runScheduledContractReview(date, result);
 
-  for (const clubId of activeClubsForDate(date, state)) {
+  const activeClubIds = activeClubsForDate(date, state);
+  const protectedClub = getUserClubId();
+  // El interés de otros clubes por tu plantilla se decide una sola vez al día,
+  // no dentro del bucle de cada comprador activo.
+  resolveAiReleaseClauseAgainstUser(protectedClub, date, result);
+
+  for (const clubId of activeClubIds) {
     try {
       const clubSize = getClubPlayers(clubId).length;
       if (clubSize < SQUAD_LIMITS.minSquadSize) {
@@ -1036,6 +1222,8 @@ export function simulateDay(date: string): MarketDayResult {
           console.info(`[academy] ${emergency.promoted.length} promoción de emergencia para ${clubId}`);
         }
       }
+      // Los clausulazos IA-IA siguen su propia actividad y cupos globales.
+      resolveAiReleaseClauseOpportunities(clubId, protectedClub, date, result);
       runClubDay(clubId, date, state, result);
     } catch (error) {
       // Robustez de simulación: un club corrupto/migrado nunca puede dejar

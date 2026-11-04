@@ -1296,6 +1296,11 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
   // crear la oferta y puede haber quedado desactualizado (o directamente sin
   // usar, como en las salidas forzadas más abajo en este archivo).
   const sellerId = player.clubId;
+  // Capturar la ficha ANTES de actualizar el contrato al del comprador.
+  // `updatePlayer()` modifica el mismo objeto del índice y, si leyéramos la
+  // ficha más abajo, devolveríamos al vendedor el salario nuevo en vez del
+  // salario que realmente deja de pagar.
+  const sellerWageBeforeTransfer = Math.max(0, Math.round(player.contract.wage || 0));
 
   if (sellerId !== buyerId && !canPlayerMoveAgain(player.id, date)) {
     return null;
@@ -1331,6 +1336,7 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
     wage: offer.wageOffer,
     type: offer.type,
     clauses: offer.clauses,
+    isReleaseClause: offer.isReleaseClause === true,
   };
 
   // Los jugadores incluidos en un intercambio también cuentan como un
@@ -1390,9 +1396,10 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
       contract: {
         yearsLeft: Math.max(1, Math.min(6, Math.round(offer.clauses.contractYears ?? contractYearsFor(player.age)))),
         wage: offer.wageOffer,
-        releaseClause: Math.round(
+        releaseClause: Math.max(0, Math.round(
+          offer.clauses.releaseClause ??
           Math.max(player.value, offer.amount) * CONTRACT_RULES.releaseClauseFactor,
-        ),
+        )),
         signingBonus: Math.round(offer.wageOffer * CONTRACT_RULES.signingBonusShare),
       },
     });
@@ -1408,7 +1415,7 @@ export function completeTransfer(offer: TransferOffer, date: string): TransferRe
     registerLoanOut(sellerId, offer.wageOffer, coveredByBorrower);
   }
   if (sellerId && !isLoan) {
-    registerSale(sellerId, offer.amount, player.contract.wage);
+    registerSale(sellerId, offer.amount, sellerWageBeforeTransfer, offer.isReleaseClause === true);
     if (sellerId !== buyerId) recordBuyerSellerDeal(date, buyerId, sellerId);
   }
 

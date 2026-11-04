@@ -77,7 +77,7 @@ function ScoutStars({ rating }: { rating: number }) {
   return (
     <span className="inline-flex items-center gap-0.5 text-xs" aria-label={`${rating.toLocaleString("es-ES")} de 5 estrellas`}>
       {Array.from({ length: 5 }, (_, index) => (
-        <span key={index} className={rating >= index + 1 ? "text-amber-300" : rating >= index + 0.5 ? "text-amber-200/70" : "text-muted-foreground/30"}>★</span>
+        <span key={index} className={rating >= index + 1 ? "text-orange-300" : rating >= index + 0.5 ? "text-orange-200/70" : "text-muted-foreground/30"}>★</span>
       ))}
     </span>
   );
@@ -98,16 +98,16 @@ function YouthScoutCard({
 }) {
   return (
     <article className="panel flex min-w-[220px] max-w-[242px] shrink-0 snap-start flex-col overflow-hidden">
-      <div className="border-b border-border/50 bg-gradient-to-br from-emerald-500/15 via-card to-card p-3">
+      <div className="border-b border-border/50 bg-gradient-to-br from-violet-500/15 via-card to-card p-3">
         <div className="flex items-start gap-2.5">
-          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full border border-emerald-500/25 bg-secondary/70 shadow-lg">
+          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full border border-violet-500/30 bg-secondary/70 shadow-lg">
             <img src={scout.photoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
             <span className="absolute inset-x-1 bottom-1 rounded-full bg-black/45 px-1.5 py-0.5 text-center text-[0.48rem] font-black text-white/90">{scout.rating.toLocaleString("es-ES")}★</span>
           </div>
           <div className="min-w-0 flex-1">
             <p className="break-words text-sm font-black leading-tight">{scout.name}</p>
             <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground"><CountryFlag country={scout.country} size="sm" /><span>{scout.country}</span></div>
-            <div className="mt-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-1.5 py-0.5"><ScoutStars rating={scout.rating} /></div>
+            <div className="mt-1.5 rounded-lg border border-orange-500/20 bg-orange-500/5 px-1.5 py-0.5"><ScoutStars rating={scout.rating} /></div>
           </div>
         </div>
       </div>
@@ -115,7 +115,7 @@ function YouthScoutCard({
         <div className="flex items-end justify-between gap-3">
           <div>
             <p className="text-[0.58rem] uppercase tracking-wider text-muted-foreground">Contratación · 50% menos</p>
-            <p className="scoreline text-lg font-black text-emerald-300">{formatEuro(scout.cost)}</p>
+            <p className="scoreline text-lg font-black text-cyan-300">{formatEuro(scout.cost)}</p>
           </div>
           <div className="text-right"><p className="text-[0.58rem] uppercase tracking-wider text-muted-foreground">Informe</p><p className="font-black">Mensual</p></div>
         </div>
@@ -144,14 +144,14 @@ function ProspectCard({
   const positionLabel = prospect.positions.map((position) => POS_NAME[position]).join(" / ");
   const highPotential = prospect.potentialEstimate.min >= 80;
   return (
-    <article className="group overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-card/85 via-card/65 to-emerald-500/[0.035] p-3 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-emerald-400/25 hover:shadow-lg hover:shadow-emerald-950/10">
+    <article className="group overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-card/85 via-card/65 to-violet-500/[0.05] p-3 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-violet-400/30 hover:shadow-lg hover:shadow-violet-950/10">
       <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-start gap-2.5">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-emerald-500/20 bg-gradient-to-br from-emerald-400/20 to-cyan-500/10 text-emerald-300 shadow-inner"><GraduationCap className="h-5 w-5" /></div>
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-violet-500/25 bg-gradient-to-br from-violet-400/20 to-cyan-500/10 text-violet-300 shadow-inner"><GraduationCap className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm font-black">{prospect.name}</p>
-              {highPotential && <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 text-[0.58rem] font-black text-emerald-300">Alto potencial</span>}
+              {highPotential && <span className="rounded-md border border-violet-400/30 bg-violet-400/10 px-1.5 py-0.5 text-[0.58rem] font-black text-violet-300">Alto potencial</span>}
               {signed && <span className="rounded-md border border-border bg-secondary px-1.5 py-0.5 text-[0.58rem] font-black text-muted-foreground">En cantera</span>}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -164,7 +164,7 @@ function ProspectCard({
             <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
               <div className="rounded-lg border border-border/40 bg-secondary/30 px-2 py-1"><p className="text-[0.52rem] font-bold uppercase tracking-wider text-muted-foreground">Media</p><p className="scoreline text-sm font-black">{prospect.ovr}</p></div>
               <div className="rounded-lg border border-border/40 bg-secondary/30 px-2 py-1"><p className="text-[0.52rem] font-bold uppercase tracking-wider text-muted-foreground">Potencial estimado</p><p className="scoreline text-sm font-black">{prospect.potentialEstimate.min}–{prospect.potentialEstimate.max}</p></div>
-              <div className="col-span-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2 py-1 sm:col-span-1"><p className="text-[0.52rem] font-bold uppercase tracking-wider text-muted-foreground">Coste de incorporación</p><p className="scoreline text-sm font-black text-emerald-300">{formatEuro(prospect.price)}</p></div>
+              <div className="col-span-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-2 py-1 sm:col-span-1"><p className="text-[0.52rem] font-bold uppercase tracking-wider text-muted-foreground">Coste de incorporación</p><p className="scoreline text-sm font-black text-cyan-300">{formatEuro(prospect.price)}</p></div>
             </div>
           </div>
         </div>
@@ -189,13 +189,13 @@ function ReportSection({
   const remaining = daysUntil(currentDate, report.readyAt);
   return (
     <section className="overflow-hidden rounded-xl border border-border/60 bg-card/65 shadow-sm backdrop-blur-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/50 bg-gradient-to-r from-emerald-500/[0.09] via-transparent to-cyan-500/[0.045] p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/50 bg-gradient-to-r from-violet-500/[0.10] via-transparent to-cyan-500/[0.055] p-3">
         <div className="flex min-w-0 items-start gap-2.5">
-          <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg border ${pending ? "border-amber-400/25 bg-amber-400/10 text-amber-300" : "border-emerald-400/25 bg-emerald-400/10 text-emerald-300"}`}>
+          <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg border ${pending ? "border-orange-400/25 bg-orange-400/10 text-orange-300" : "border-emerald-400/25 bg-emerald-400/10 text-emerald-300"}`}>
             {pending ? <CalendarClock className="h-4 w-4" /> : <BadgeCheck className="h-4 w-4" />}
           </div>
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-black capitalize">Informe de {daysInMonthLabel(report.readyAt.slice(0, 7))}</h3><span className={`rounded-full border px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider ${pending ? "border-amber-400/25 bg-amber-400/10 text-amber-200" : "border-emerald-400/25 bg-emerald-400/10 text-emerald-200"}`}>{pending ? "En investigación" : "Informe disponible"}</span></div>
+            <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-black capitalize">Informe de {daysInMonthLabel(report.readyAt.slice(0, 7))}</h3><span className={`rounded-full border px-2 py-0.5 text-[0.55rem] font-black uppercase tracking-wider ${pending ? "border-orange-400/25 bg-orange-400/10 text-orange-200" : "border-emerald-400/25 bg-emerald-400/10 text-emerald-200"}`}>{pending ? "En investigación" : "Informe disponible"}</span></div>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{report.scoutName} · {academyCountryLabel(report.country)} · {report.positions.map((position) => POS_NAME[position]).join(", ")}</p>
             <p className="mt-1 text-[0.62rem] text-muted-foreground">Búsqueda: {formatIsoDate(report.startedAt)} · {pending ? `Entrega prevista: ${formatIsoDate(report.readyAt)}` : `Entregado: ${formatIsoDate(report.readyAt)}`}</p>
           </div>
@@ -208,16 +208,16 @@ function ReportSection({
       {pending ? (
         <div className="p-3 md:p-4">
           <div className="mx-auto max-w-xl text-center">
-            <div className="relative mx-auto grid h-12 w-12 place-items-center rounded-xl border border-amber-400/20 bg-gradient-to-br from-amber-400/15 to-orange-500/5 text-amber-300 shadow-inner">
+            <div className="relative mx-auto grid h-12 w-12 place-items-center rounded-xl border border-orange-400/20 bg-gradient-to-br from-orange-400/15 to-orange-500/5 text-orange-300 shadow-inner">
               <Clock3 className="h-5 w-5" />
-              <span className="absolute -right-1 -top-1 h-3 w-3 animate-pulse rounded-full bg-amber-300 ring-4 ring-card" />
+              <span className="absolute -right-1 -top-1 h-3 w-3 animate-pulse rounded-full bg-orange-300 ring-4 ring-card" />
             </div>
             <p className="mt-3 text-base font-black">La red de ojeadores está trabajando</p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Los nombres, medias y potenciales permanecerán ocultos hasta que termine el seguimiento de 30 días.</p>
-            <div className="mx-auto mt-3 max-w-sm rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2">
-              <p className="scoreline text-xl font-black text-amber-200">{remaining} {remaining === 1 ? "día" : "días"}</p>
+            <div className="mx-auto mt-3 max-w-sm rounded-lg border border-orange-400/20 bg-orange-400/[0.06] px-3 py-2">
+              <p className="scoreline text-xl font-black text-orange-200">{remaining} {remaining === 1 ? "día" : "días"}</p>
               <p className="mt-0.5 text-[0.65rem] font-semibold text-muted-foreground">para recibir el informe completo</p>
-              <div className="mt-2 h-1 overflow-hidden rounded-full bg-secondary/80"><div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-emerald-400" style={{ width: `${Math.max(2, Math.min(100, ((30 - remaining) / 30) * 100))}%` }} /></div>
+              <div className="mt-2 h-1 overflow-hidden rounded-full bg-secondary/80"><div className="h-full rounded-full bg-gradient-to-r from-orange-400 to-emerald-400" style={{ width: `${Math.max(2, Math.min(100, ((30 - remaining) / 30) * 100))}%` }} /></div>
             </div>
           </div>
         </div>
@@ -452,15 +452,15 @@ export function YouthScoutingPanel({ currentDate, teamId, budget }: { currentDat
 
   return (
     <div className="space-y-3">
-      <div className="panel-glow relative isolate overflow-hidden rounded-xl border border-emerald-400/15 bg-gradient-to-br from-emerald-500/[0.13] via-card/80 to-cyan-500/[0.07] shadow-lg shadow-emerald-950/10">
-        <div className="pointer-events-none absolute -right-12 -top-20 -z-10 h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl" />
+      <div className="panel-glow relative isolate overflow-hidden rounded-xl border border-violet-400/20 bg-gradient-to-br from-violet-500/[0.14] via-card/80 to-cyan-500/[0.08] shadow-lg shadow-emerald-950/10">
+        <div className="pointer-events-none absolute -right-12 -top-20 -z-10 h-64 w-64 rounded-full bg-violet-400/10 blur-3xl" />
         <div className="grid gap-3 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:p-3">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[0.58rem] font-black uppercase tracking-[0.18em] text-emerald-200"><Sparkles className="h-3 w-3" /> Red internacional de talento</div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-violet-400/25 bg-violet-400/10 px-2 py-0.5 text-[0.58rem] font-black uppercase tracking-[0.18em] text-violet-200"><Sparkles className="h-3 w-3" /> Red internacional de talento</div>
             <h2 className="mt-2 text-lg font-black tracking-tight md:text-xl">Ojeador de canteras</h2>
             <p className="mt-1.5 max-w-3xl text-xs leading-relaxed text-muted-foreground sm:text-sm">Explora las academias de clubes reales, filtra por país y hasta tres posiciones, y recibe un informe completo tras 30 días de seguimiento. La decisión final y la negociación del contrato siempre son tuyas.</p>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[0.6rem] font-bold">
-              <span className="inline-flex items-center gap-1 rounded-lg border border-border/50 bg-background/35 px-2 py-1"><Clock3 className="h-3.5 w-3.5 text-amber-300" /> Informes a 30 días</span>
+              <span className="inline-flex items-center gap-1 rounded-lg border border-border/50 bg-background/35 px-2 py-1"><Clock3 className="h-3.5 w-3.5 text-orange-300" /> Informes a 30 días</span>
               <span className="inline-flex items-center gap-1 rounded-lg border border-border/50 bg-background/35 px-2 py-1"><Users className="h-3.5 w-3.5 text-emerald-300" /> 5–8 promesas por informe</span>
               <span className="inline-flex items-center gap-1 rounded-lg border border-border/50 bg-background/35 px-2 py-1"><BadgeCheck className="h-3.5 w-3.5 text-cyan-300" /> Contrato negociable</span>
             </div>
@@ -497,7 +497,7 @@ export function YouthScoutingPanel({ currentDate, teamId, budget }: { currentDat
             <div className="mb-3"><h3 className="text-sm font-black">Configurar búsqueda</h3><p className="mt-1 text-xs text-muted-foreground">Elige país y hasta 3 posiciones. Solo se inicia una búsqueda cuando pulses el botón. Cada ojeador puede tener una búsqueda activa.</p></div>
             <div className="grid gap-3 lg:grid-cols-[minmax(180px,0.7fr)_1.3fr]">
               <label><span className="mb-1.5 block text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">País</span><select value={country} onChange={(event) => setCountry(event.target.value)} className="w-full rounded-lg border border-border bg-secondary px-2.5 py-2 text-xs outline-none focus:border-primary"><option value="">Seleccionar país</option>{COUNTRY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-              <div><div className="mb-1.5 flex flex-wrap items-center justify-between gap-2"><span className="text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Posiciones deseadas</span><span className={`rounded-full border px-2 py-0.5 text-[0.58rem] font-black ${positions.length === 3 ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "border-border/60 bg-secondary/50 text-muted-foreground"}`}>{positions.length}/3 seleccionadas</span></div><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{POSITION_GROUPS.map((group) => <div key={group.label} className="rounded-lg border border-border/50 bg-secondary/20 p-2"><p className="mb-2 text-[0.6rem] font-black uppercase tracking-wider text-muted-foreground">{group.label}</p><div className="flex flex-wrap gap-1">{group.positions.map((position) => <button key={position} type="button" aria-pressed={positions.includes(position)} onClick={() => togglePosition(position)} disabled={!positions.includes(position) && positions.length >= 3} className={`rounded-md border px-1.5 py-1 text-[0.68rem] font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${positions.includes(position) ? "border-emerald-400/40 bg-emerald-400/15 text-emerald-200 shadow-sm" : "border-border/50 bg-card/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>{position}</button>)}</div></div>)}</div></div>
+              <div><div className="mb-1.5 flex flex-wrap items-center justify-between gap-2"><span className="text-[0.62rem] font-black uppercase tracking-wider text-muted-foreground">Posiciones deseadas</span><span className={`rounded-full border px-2 py-0.5 text-[0.58rem] font-black ${positions.length === 3 ? "border-orange-400/30 bg-orange-400/10 text-orange-200" : "border-border/60 bg-secondary/50 text-muted-foreground"}`}>{positions.length}/3 seleccionadas</span></div><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{POSITION_GROUPS.map((group) => <div key={group.label} className="rounded-lg border border-border/50 bg-secondary/20 p-2"><p className="mb-2 text-[0.6rem] font-black uppercase tracking-wider text-muted-foreground">{group.label}</p><div className="flex flex-wrap gap-1">{group.positions.map((position) => <button key={position} type="button" aria-pressed={positions.includes(position)} onClick={() => togglePosition(position)} disabled={!positions.includes(position) && positions.length >= 3} className={`rounded-md border px-1.5 py-1 text-[0.68rem] font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${positions.includes(position) ? "border-emerald-400/40 bg-emerald-400/15 text-emerald-200 shadow-sm" : "border-border/50 bg-card/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>{position}</button>)}</div></div>)}</div></div>
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">{country ? COUNTRY_OPTIONS.find((option) => option.value === country)?.label : "Ningún país seleccionado"} · {positions.length ? positions.join(", ") : "Ninguna posición seleccionada"}</p><button type="button" disabled={!country || positions.length === 0 || positions.length > 3} onClick={handleSaveSearch} className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-black text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"><Search className="h-4 w-4" />Iniciar búsqueda · 30 días</button></div>
           </div>

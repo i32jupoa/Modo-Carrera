@@ -7,6 +7,7 @@ import { TeamLogo } from "@/components/TeamLogo";
 import { getLeagueLogoUrl } from "@/components/LeagueLogo";
 import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
+import { formatMatchMinuteWithMark, getMatchMinuteElapsedValue, getMatchMinuteSortValue } from "@/lib/matchTime";
 
 type ShowcaseTeam = {
   id?: string;
@@ -350,6 +351,19 @@ type MatchTimelineEventInput = {
   title?: string;
   body?: string;
   reason?: string;
+  minuteLabel?: string;
+  displayMinuteLabel?: string;
+  displayMinute?: string;
+  clockLabel?: string;
+  matchPeriod?: string;
+  phase?: string;
+  isExtraTime?: boolean;
+  stoppagePeriod?: string;
+  addedTimePeriod?: string;
+  stoppageElapsed?: number | string;
+  addedMinute?: number | string;
+  addedTimeBase?: number | string;
+  minuteBase?: number | string;
 };
 
 type MatchTimelineEvent = MatchTimelineEventInput & {
@@ -375,7 +389,7 @@ function normalizeFinalTimelineEvents(
   const unique = new Map<string, MatchTimelineEvent>();
   for (const item of source) {
     const type = String(item.type ?? item.kind ?? "moment").toLowerCase();
-    const minute = Number(item.minute);
+    const minute = getMatchMinuteElapsedValue(item.minute, item);
     if (!Number.isFinite(minute) || minute < 0) continue;
     const teamRaw = item.team ?? item.teamSide;
     const team = teamRaw === "home" || teamRaw === "away" ? teamRaw : undefined;
@@ -400,7 +414,8 @@ function normalizeFinalTimelineEvents(
     const normalizedPlayerId = playerId || String(item.inId ?? item.outId ?? "");
     // Canonical keys make the saved result, live feed and the match chronicle
     // cooperate without repeating the very same goal/card/highlight twice.
-    const key = `${Math.floor(minute)}:${kind}:${normalizedType}:${team ?? "unknown"}:${normalizedPlayerId || playerName}:${playerInName}:${playerOutName}`;
+    const period = String(item.matchPeriod ?? item.phase ?? item.stoppagePeriod ?? item.addedTimePeriod ?? (item.isExtraTime ? "extraTime" : "regular"));
+    const key = `${period}:${Math.floor(minute)}:${kind}:${normalizedType}:${team ?? "unknown"}:${normalizedPlayerId || playerName}:${playerInName}:${playerOutName}`;
     if (unique.has(key)) continue;
     const teamName = team === "home" ? home.name : team === "away" ? away.name : "";
     const eventText = (item.body || item.detail || item.reason || "").trim();
@@ -446,12 +461,12 @@ function normalizeFinalTimelineEvents(
       description,
     });
   }
-  return [...unique.values()].sort((a, b) => a.minute - b.minute || a.key.localeCompare(b.key));
+  return [...unique.values()].sort((a, b) => getMatchMinuteSortValue(a.minute, a) - getMatchMinuteSortValue(b.minute, b) || a.key.localeCompare(b.key));
 }
 
 function summarizeEventPhase(label: string, events: MatchTimelineEvent[]): string {
   if (!events.length) return `${label}: no se registraron acciones destacadas en la crónica durante este tramo.`;
-  const phrases = events.slice(0, 4).map((event) => `${event.minute}′, ${event.description.replace(/\.$/, "")}`);
+  const phrases = events.slice(0, 4).map((event) => `${formatMatchMinuteWithMark(event.minute, event)}, ${event.description.replace(/\.$/, "")}`);
   const remaining = events.length - phrases.length;
   return `${label}: ${phrases.join(". ")}${remaining > 0 ? `. Además, se registraron ${remaining} ${remaining === 1 ? "acción destacada" : "acciones destacadas"} más` : ""}.`;
 }
@@ -482,28 +497,35 @@ function buildMatchDevelopmentNarrative(
             : `El encuentro terminó en empate ${homeScore}-${awayScore}: ambos equipos encontraron el gol, pero ninguno logró conservar una ventaja definitiva.`
           : `${homeScore > awayScore ? home.name : away.name} se llevó el partido por ${homeScore}-${awayScore}. El resultado final premió al equipo que terminó por delante, con el desarrollo detallado en los acontecimientos siguientes.`;
 
-  const firstHalf = events.filter((event) => event.minute <= 45);
-  const secondHalf = events.filter((event) => event.minute > 45 && event.minute <= 90);
-  const latePhase = events.filter((event) => event.minute > 90);
+  const periodKey = (event: MatchTimelineEvent) => String(event.stoppagePeriod ?? event.addedTimePeriod ?? "");
+  const isFirstHalfAdded = (event: MatchTimelineEvent) => ["firstHalf", "first_half", "firstHalfStoppage", "first_half_stoppage"].includes(periodKey(event));
+  const isSecondHalfAdded = (event: MatchTimelineEvent) => ["secondHalf", "second_half", "secondHalfStoppage", "second_half_stoppage"].includes(periodKey(event));
+  const isExtraTimeAdded = (event: MatchTimelineEvent) => ["extraFirstHalf", "extra_first_half", "extraFirstHalfStoppage", "extra_first_half_stoppage", "extraSecondHalf", "extra_second_half", "extraSecondHalfStoppage", "extra_second_half_stoppage"].includes(periodKey(event));
+  const isExtraTimeEvent = (event: MatchTimelineEvent) => event.isExtraTime === true || ["extratime", "extra_time", "et"].includes(String(event.matchPeriod ?? event.phase ?? "").toLowerCase()) || isExtraTimeAdded(event);
+  const firstHalf = events.filter((event) => event.minute <= 45 || isFirstHalfAdded(event));
+  const secondHalf = events.filter((event) => !isFirstHalfAdded(event) && !isExtraTimeEvent(event) && event.minute > 45 && event.minute <= 90);
+  const regularAddedTime = events.filter((event) => isSecondHalfAdded(event) || (!isExtraTimeEvent(event) && event.minute > 90));
+  const extraTimeEvents = events.filter(isExtraTimeEvent);
   const phases = [
     { title: "PRIMERA PARTE", body: summarizeEventPhase("Antes del descanso", firstHalf) },
     { title: "SEGUNDA PARTE", body: summarizeEventPhase("Tras el descanso", secondHalf) },
   ];
-  if (latePhase.length) phases.push({ title: extraTime ? "PRÓRROGA" : "TIEMPO AÑADIDO", body: summarizeEventPhase(extraTime ? "En la prórroga" : "En el tramo final", latePhase) });
+  if (regularAddedTime.length) phases.push({ title: "TIEMPO AÑADIDO", body: summarizeEventPhase("En el tiempo añadido", regularAddedTime) });
+  if (extraTimeEvents.length) phases.push({ title: "PRÓRROGA", body: summarizeEventPhase("En la prórroga", extraTimeEvents) });
 
   let turningPoint: string | null = null;
   const redCard = events.find((event) => event.kind === "card" && event.type === "red_card");
   const missedPenalty = events.find((event) => event.type === "penalty_missed" || event.type === "penalty_save");
   const lastGoal = [...events].reverse().find((event) => event.kind === "goal");
   if (redCard && difference > 0) {
-    turningPoint = `Uno de los momentos que pudo condicionar el desenlace fue la expulsión registrada en el minuto ${redCard.minute}′: a partir de ahí, ${redCard.team === "home" ? home.name : redCard.team === "away" ? away.name : "el equipo afectado"} tuvo que reorganizarse con un futbolista menos.`;
+    turningPoint = `Uno de los momentos que pudo condicionar el desenlace fue la expulsión registrada en el minuto ${formatMatchMinuteWithMark(redCard.minute, redCard)}: a partir de ahí, ${redCard.team === "home" ? home.name : redCard.team === "away" ? away.name : "el equipo afectado"} tuvo que reorganizarse con un futbolista menos.`;
   } else if (lastGoal && difference > 0) {
     const scoringTeam = lastGoal.team === "home" ? home : away;
-    turningPoint = `El último cambio en el marcador llegó en el minuto ${lastGoal.minute}′: ${lastGoal.description.replace(/\.$/, "")}. Ese fue el último gol registrado antes del resultado definitivo.`;
+    turningPoint = `El último cambio en el marcador llegó en el minuto ${formatMatchMinuteWithMark(lastGoal.minute, lastGoal)}: ${lastGoal.description.replace(/\.$/, "")}. Ese fue el último gol registrado antes del resultado definitivo.`;
   } else if (missedPenalty) {
-    turningPoint = `La acción desde el punto de penalti del minuto ${missedPenalty.minute}′ fue una oportunidad importante que no terminó en gol y forma parte de los momentos clave del encuentro.`;
+    turningPoint = `La acción desde el punto de penalti del minuto ${formatMatchMinuteWithMark(missedPenalty.minute, missedPenalty)} fue una oportunidad importante que no terminó en gol y forma parte de los momentos clave del encuentro.`;
   } else if (lastGoal) {
-    turningPoint = `El último gol llegó en el minuto ${lastGoal.minute}′: ${lastGoal.description.replace(/\.$/, "")}. Sin más goles registrados después, el empate se mantuvo hasta el final.`;
+    turningPoint = `El último gol llegó en el minuto ${formatMatchMinuteWithMark(lastGoal.minute, lastGoal)}: ${lastGoal.description.replace(/\.$/, "")}. Sin más goles registrados después, el empate se mantuvo hasta el final.`;
   } else if (!events.length) {
     turningPoint = "No hay suficientes eventos individuales guardados para señalar una jugada decisiva concreta; por eso el resumen evita atribuir el resultado a una acción que no figure en la crónica.";
   }
@@ -568,12 +590,12 @@ export function MatchFinalSummary({
   const mvp = result?.mvp;
   const uniqueGoalEvents = new Map<string, any>();
   goalEvents
-    .filter((event) => ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(event.type) && Number.isFinite(Number(event.minute)) && (event.scorerName || event.playerName))
+    .filter((event) => ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(event.type) && getMatchMinuteElapsedValue(event.minute, event) !== null && (event.scorerName || event.playerName))
     .forEach((event) => {
       const key = `${event.type}:${event.team}:${event.minute}:${event.scorerId ?? event.scorerName ?? event.playerName}`;
       if (!uniqueGoalEvents.has(key)) uniqueGoalEvents.set(key, event);
     });
-  const validGoals = [...uniqueGoalEvents.values()].sort((a, b) => Number(a.minute) - Number(b.minute));
+  const validGoals = [...uniqueGoalEvents.values()].sort((a, b) => getMatchMinuteSortValue(a.minute, a) - getMatchMinuteSortValue(b.minute, b));
   const matchLengthLabel = extraTime ? "Tras prórroga" : "Tiempo reglamentario";
   const matchTimeline = normalizeFinalTimelineEvents(timelineEvents, goalEvents, home, away);
   const scoreAfterGoal = new Map<string, string>();
@@ -704,7 +726,7 @@ export function MatchFinalSummary({
                 const kindLabel = event.kind === "goal" ? "GOL" : event.kind === "card" ? (event.type === "red_card" ? "EXPULSIÓN" : "TARJETA") : event.kind === "substitution" ? "CAMBIO" : event.kind === "highlight" ? "OCASIÓN" : "EVENTO";
                 return (
                   <div key={event.key} className="flex items-start gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.025] px-2.5 py-2">
-                    <span className="w-9 shrink-0 pt-0.5 text-[0.62rem] font-black tabular-nums text-white/55">{event.minute}′</span>
+                    <span className="w-9 shrink-0 pt-0.5 text-[0.62rem] font-black tabular-nums text-white/55">{formatMatchMinuteWithMark(event.minute, event)}</span>
                     <span className={`mt-0.5 shrink-0 rounded px-1.5 py-1 text-[0.46rem] font-black tracking-wider ${event.kind === "goal" ? "bg-emerald-300/10 text-emerald-200" : event.kind === "card" ? event.type === "red_card" ? "bg-rose-400/15 text-rose-200" : "bg-amber-300/10 text-amber-100" : "bg-white/[0.06] text-white/45"}`}>{kindLabel}</span>
                     <p className="min-w-0 flex-1 text-[0.65rem] leading-relaxed text-white/70">{event.description}{event.assistName && event.kind === "goal" ? ` Asistencia: ${event.assistName}.` : ""}</p>
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -739,8 +761,15 @@ export function MatchFinalSummary({
                 const name = event.scorerName || event.playerName;
                 return (
                   <div key={`${event.minute}-${event.scorerId || name}-${index}`} className="match-final-goal flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2" style={{ ["--team-accent" as string]: isAway ? awayColor : homeColor } as CSSProperties}>
-                    <span className="match-final-goal-minute">{event.minute}′</span>
+                    <span className="match-final-goal-minute">{formatMatchMinuteWithMark(event.minute, event)}</span>
                     <span className="match-final-ball"><CircleDot className="h-3.5 w-3.5" /></span>
+                    <PlayerFace
+                      name={name}
+                      image={faceUrl(event.scorerId)}
+                      size={34}
+                      showRing={false}
+                      className="shrink-0 border border-white/10 shadow-sm"
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-bold">{name}{event.type === "own_goal" ? " · Propia puerta" : ""}</div>
                       {event.assistName && <div className="mt-0.5 truncate text-[0.58rem] text-white/45">Asistencia: {event.assistName}</div>}

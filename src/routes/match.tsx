@@ -48,10 +48,12 @@ import {
 import { accumulateStats, computePlayerRatings, type MatchStats } from "@/lib/matchStats";
 import { MatchStatsPanel } from "@/components/match/MatchStatsPanel";
 import { MatchIntroPanel, MatchFinalSummary } from "@/components/match/MatchShowcase";
+import { MatchChronicle } from "@/components/match/MatchChronicle";
 import { buildMatchPreviewAnalysis } from "@/lib/matchPreviewAnalysis";
 import { MatchPlayerDetailsModal } from "@/components/match/MatchPlayerDetailsModal";
 import { HalftimeOverlay } from "@/components/match/HalftimeOverlay";
 import { MatchTimeline } from "@/components/match/MatchTimeline";
+import { markExtraTimeEvent } from "@/lib/matchTime";
 import { MomentumBar } from "@/components/match/MomentumBar";
 import { resolveMatchTeamColors } from "@/lib/matchPresentation";
 import { PlayerRatingsPanel } from "@/components/match/PlayerRatingsPanel";
@@ -549,6 +551,15 @@ function MatchPage() {
         : null;
       stoppagePeriodRef.current = storedStoppagePeriod;
       stoppageElapsedRef.current = Math.max(0, Number((st as any).stoppageElapsed) || 0);
+      if (storedStoppagePeriod) {
+        const baseMinute = storedStoppagePeriod === "firstHalf" ? 45
+          : storedStoppagePeriod === "secondHalf" ? 90
+          : storedStoppagePeriod === "extraFirstHalf" ? 105 : 120;
+        const elapsed = stoppageElapsedRef.current;
+        setClockLabelOverride(elapsed > 0 ? `${baseMinute}+${elapsed}'` : `${baseMinute}'`);
+      } else {
+        setClockLabelOverride(null);
+      }
       const safeLineup = (Array.isArray(st.lineup) ? st.lineup : [])
         .map((id: any) => String(id ?? ""))
         .slice(0, 11);
@@ -796,7 +807,7 @@ function MatchPage() {
       halftimePendingAfterMomentRef.current = false;
       pendingSceneRef.current = (st.scene as any) || null;
 
-      if (st.scene?.moment) setLiveMoment(st.scene.moment);
+      if (st.scene?.moment) setLiveMoment(withCurrentMatchClockContext(st.scene.moment) as LiveMoment);
 
       if (atBreak) {
         setHalftimeOverlayDismissed(dismissHalftimeOverlayOnReturn);
@@ -1136,8 +1147,10 @@ function MatchPage() {
     // Store only the CPU side's preplanned extra-time substitutions. The user
     // can make the additional change(s) manually through Dirección de equipo.
     const cpuSide = userIsHome ? "away" : "home";
-    extraTimeSubsRef.current = (etResult.substitutions || []).filter((s: any) => s.team === cpuSide);
-    extraTimeEventsRef.current = etResult.events;
+    extraTimeSubsRef.current = (etResult.substitutions || [])
+      .filter((s: any) => s.team === cpuSide)
+      .map((substitution: any) => markExtraTimeEvent(substitution));
+    extraTimeEventsRef.current = (etResult.events || []).map((event: any) => markExtraTimeEvent(event));
 
     // Reset minute to 90 for extra time playback
     setMinute(90);
@@ -1185,6 +1198,7 @@ function MatchPage() {
           xi[outIndex] = incoming;
           oppBenchRef.current = oppBenchRef.current.filter((p: any) => p.id !== incoming.id);
           const entry = {
+            ...markExtraTimeEvent({ minute: m }),
             minute: m,
             team: cpuSide,
             inName: incoming.name,
@@ -1205,7 +1219,7 @@ function MatchPage() {
       const etBoundaryLabel = m === 105 ? "105+1'" : m === 120 ? "120+1'" : undefined;
       const eventsAtMinute = extraTimeEventsRef.current.filter((e) => e.minute === m).map((event: any) => etBoundaryLabel ? { ...event, displayMinuteLabel: etBoundaryLabel } : event);
       if (eventsAtMinute.length > 0) {
-        setFeed((prev) => [...prev, ...eventsAtMinute]);
+        setFeed((prev) => [...prev, ...eventsAtMinute.map((event: any) => markExtraTimeEvent(event))]);
 
         // Update scores using refs for immediate access
         eventsAtMinute.forEach((ev) => {
@@ -1684,9 +1698,9 @@ function MatchPage() {
     // result.extraTime, so every competition (Copa/UCL/UEL/UECL) can render
     // them in Alineación and the match chronicle.
     const liveSubstitutions = buildPlayedSubstitutions();
-    const extraTimeSubstitutions = liveSubstitutions.filter(
-      (sub: any) => Number(sub?.minute ?? 0) > 90,
-    );
+    const extraTimeSubstitutions = liveSubstitutions
+      .filter((sub: any) => sub.matchPeriod === "extraTime")
+      .map((sub: any) => markExtraTimeEvent(sub));
 
     if (isUCL) {
       const s = loadSave();
@@ -1919,13 +1933,28 @@ function MatchPage() {
         console.log("Has extraTime:", !!foundFixture.result.extraTime);
         console.log("Has penalties:", !!foundFixture.result.penalties);
 
-        allEventsRef.current = foundFixture.result.events ?? [];
+        const savedExtraTimeEvents = (foundFixture.result.extraTime?.events || []).map((event: any) => markExtraTimeEvent(event));
+        const sameSavedGoal = (a: any, b: any) =>
+          Number(a.minute) === Number(b.minute) && a.team === b.team && a.type === b.type &&
+          String(a.scorerId ?? a.playerName ?? "") === String(b.scorerId ?? b.playerName ?? "");
+        const storedEvents = [
+          ...(foundFixture.result.events || []).map((event: any) =>
+            savedExtraTimeEvents.some((extra: any) => sameSavedGoal(event, extra))
+              ? markExtraTimeEvent(event)
+              : event,
+          ),
+          ...savedExtraTimeEvents.filter((extra: any) =>
+            !(foundFixture.result.events || []).some((event: any) => sameSavedGoal(event, extra)),
+          ),
+        ];
+        allEventsRef.current = storedEvents;
         allCardsRef.current = foundFixture.result.cards || [];
         allHighlightsRef.current = foundFixture.result.highlights || [];
         const storedSubstitutions = mergeMatchSubstitutions(foundFixture.result);
         setSubFeed(
           storedSubstitutions
             .map((sb: any) => ({
+              ...sb,
               minute: sb.minute,
               team: sb.team,
               inName: sb.playerInName ?? sb.inName,
@@ -1939,18 +1968,17 @@ function MatchPage() {
         awayScoreRef.current = Number(foundFixture.result.awayGoals) || 0;
         setHomeScore(homeScoreRef.current);
         setAwayScore(awayScoreRef.current);
-        setFeed((foundFixture.result.events ?? []).slice().reverse());
+        setFeed(storedEvents.slice().reverse());
         setCardFeed((foundFixture.result.cards || []).slice().reverse());
         setMinute(90);
 
-        // Load extra time data if present
+        // Load extra time data with its distinct clock phase.
         if (foundFixture.result.extraTime) {
-
           setExtraTimeHomeScore(foundFixture.result.extraTime.homeGoals);
           setExtraTimeAwayScore(foundFixture.result.extraTime.awayGoals);
           extraTimeHomeScoreRef.current = foundFixture.result.extraTime.homeGoals;
           extraTimeAwayScoreRef.current = foundFixture.result.extraTime.awayGoals;
-          extraTimeEventsRef.current = foundFixture.result.extraTime.events || [];
+          extraTimeEventsRef.current = savedExtraTimeEvents;
           setMinute(120);
         }
 
@@ -2372,12 +2400,39 @@ function MatchPage() {
   const isChronicleMoment = (moment: Partial<LiveMoment> | null | undefined) =>
     !!moment && CHRONICLE_ONLY_TYPES.has(String(moment.type ?? ""));
 
+  function withCurrentMatchClockContext<T extends Record<string, any>>(item: T): T {
+    const eventMinute = Number(item.minute ?? minuteRef.current);
+    const isExtraTime = isExtraTimeRef.current;
+    const periodBase = stoppagePeriodRef.current === "firstHalf" ? 45
+      : stoppagePeriodRef.current === "secondHalf" ? 90
+      : stoppagePeriodRef.current === "extraFirstHalf" ? 105
+      : stoppagePeriodRef.current === "extraSecondHalf" ? 120
+      : null;
+    const boundaryLabel = eventMinute === 45 ? "45+1"
+      : eventMinute === 90 ? "90+1"
+      : eventMinute === 105 && isExtraTime ? "105+1"
+      : eventMinute === 120 && isExtraTime ? "120+1"
+      : null;
+    return {
+      ...item,
+      matchPeriod: item.matchPeriod ?? (isExtraTime ? "extraTime" : "regular"),
+      ...(stoppagePeriodRef.current ? {
+        stoppagePeriod: item.stoppagePeriod ?? stoppagePeriodRef.current,
+        stoppageElapsed: item.stoppageElapsed ?? stoppageElapsedRef.current,
+      } : {}),
+      ...(!item.minuteLabel && !item.displayMinuteLabel && boundaryLabel
+        ? { displayMinuteLabel: boundaryLabel }
+        : {}),
+      ...(periodBase !== null && item.addedTimeBase === undefined ? { addedTimeBase: periodBase } : {}),
+    };
+  }
+
   function recordChronicleMoment(moment: LiveMoment) {
     // Prelude/presentation scenes (e.g. "SE CARGA EL DISPARO") pause the
     // match but must never become a permanent chronicle entry. The chronicle
     // is reserved for the resolved football event.
     if (!isChronicleMoment(moment)) return;
-    const normalized = { ...moment } as LiveMoment;
+    const normalized = withCurrentMatchClockContext(moment) as LiveMoment;
     const same = (a: LiveMoment, b: LiveMoment) =>
       a.id === b.id ||
       (Number(a.minute ?? -1) === Number(b.minute ?? -2) &&
@@ -2862,6 +2917,7 @@ function MatchPage() {
     const fx = fixtureRef.current;
     const mySide = mySideOf(fx);
     const mine = subsRef.current.map((s: any) => ({
+      ...s,
       minute: s.minute,
       team: mySide,
       playerOutId: s.outId,
@@ -2870,6 +2926,7 @@ function MatchPage() {
       playerInName: s.inName,
     }));
     const opp = oppSubsDoneRef.current.map((s: any) => ({
+      ...s,
       minute: s.minute,
       team: s.team,
       playerOutId: s.playerOutId,
@@ -3372,6 +3429,9 @@ function MatchPage() {
       cards,
       highlights,
       substitutions,
+      // Resolved match moments are part of the official result. Keeping them
+      // here lets Jornadas/Europa/Champions reproduce the exact live chronicle.
+      keyMoments: keyMomentsRef.current.slice(-200),
     };
     fixtureRef.current = { ...fx, result: nextResult } as any;
     allEventsRef.current = events;
@@ -3628,7 +3688,8 @@ function MatchPage() {
   }
 
   function pushCommentary(entry: CommentaryEntry) {
-    const next = [entry, ...commentaryEntriesRef.current].slice(0, 12);
+    const contextualEntry = withCurrentMatchClockContext(entry) as CommentaryEntry;
+    const next = [contextualEntry, ...commentaryEntriesRef.current].slice(0, 12);
     commentaryEntriesRef.current = next;
     setCommentaryEntries(next);
   }
@@ -3751,9 +3812,10 @@ function MatchPage() {
       window.clearTimeout(momentTimerRef.current);
       momentTimerRef.current = null;
     }
-    setLiveMoment(moment);
+    const contextualMoment = withCurrentMatchClockContext(moment) as LiveMoment;
+    setLiveMoment(contextualMoment);
     if (recordKeyMoment) {
-      recordChronicleMoment(moment);
+      recordChronicleMoment(contextualMoment);
     }
     pausedRef.current = true;
     pauseReasonRef.current = "moment";
@@ -3798,7 +3860,7 @@ function MatchPage() {
             extraTime: false,
           },
         };
-        setLiveMoment(pendingSceneRef.current.moment);
+        setLiveMoment(withCurrentMatchClockContext(pendingSceneRef.current.moment) as LiveMoment);
         return;
       }
 
@@ -3879,7 +3941,7 @@ function MatchPage() {
             cards: scene.source?.cards || [],
           },
         };
-        setLiveMoment(pendingSceneRef.current.moment);
+        setLiveMoment(withCurrentMatchClockContext(pendingSceneRef.current.moment) as LiveMoment);
         persistLive();
         return;
       }
@@ -3896,7 +3958,7 @@ function MatchPage() {
             extraTime: false,
           },
         };
-        setLiveMoment(pendingSceneRef.current.moment);
+        setLiveMoment(withCurrentMatchClockContext(pendingSceneRef.current.moment) as LiveMoment);
         return;
       }
 
@@ -3912,7 +3974,7 @@ function MatchPage() {
             extraTime: false,
           },
         };
-        setLiveMoment(pendingSceneRef.current.moment);
+        setLiveMoment(withCurrentMatchClockContext(pendingSceneRef.current.moment) as LiveMoment);
         return;
       }
 
@@ -3962,7 +4024,7 @@ function MatchPage() {
             extraTime: false,
           },
         };
-        setLiveMoment(pendingSceneRef.current.moment);
+        setLiveMoment(withCurrentMatchClockContext(pendingSceneRef.current.moment) as LiveMoment);
         return;
       }
       if (processDeferredInjuriesAt(currentMinute)) return;
@@ -4241,6 +4303,7 @@ function MatchPage() {
       halftimePendingAfterMomentRef.current = true;
     pendingPenaltyZoneRef.current = null;
     setPendingPenalty({
+      ...withCurrentMatchClockContext({ minute: Number(source.minute) || minuteRef.current }),
       minute: Number(source.minute) || minuteRef.current,
       teamName:
         source.team === "home"
@@ -4694,7 +4757,10 @@ function MatchPage() {
     }
 
     const boundaryLabel = m === 45 ? "45+1'" : m === 90 ? "90+1'" : m === 105 ? "105+1'" : m === 120 ? "120+1'" : undefined;
-    const withBoundaryLabel = (item: any) => boundaryLabel ? { ...item, displayMinuteLabel: boundaryLabel } : item;
+    const withBoundaryLabel = (item: any) => {
+      const contextual = isExtraTimeRef.current ? markExtraTimeEvent(item) : item;
+      return boundaryLabel ? { ...contextual, displayMinuteLabel: boundaryLabel } : contextual;
+    };
     const events = rawEvents.map((event) => withBoundaryLabel(remapEventToPitch(event)));
     const cards = rawCards
       .map((card) => remapCardToPitch(card))
@@ -5175,7 +5241,7 @@ function MatchPage() {
           awayName: away.name,
         });
         pendingSceneRef.current = { kind: "resolution", moment: resolution, source: { minute } };
-        setLiveMoment(resolution);
+        setLiveMoment(withCurrentMatchClockContext(resolution) as LiveMoment);
         persistLive();
         return;
       }
@@ -5219,7 +5285,7 @@ function MatchPage() {
           cards: applied.cards,
         },
       };
-      setLiveMoment(resolution);
+      setLiveMoment(withCurrentMatchClockContext(resolution) as LiveMoment);
       persistLive();
       return;
     }
@@ -5242,7 +5308,7 @@ function MatchPage() {
         moment: resolution,
         source: { minute, cards: applied.cards },
       };
-      setLiveMoment(resolution);
+      setLiveMoment(withCurrentMatchClockContext(resolution) as LiveMoment);
       persistLive();
       return;
     }
@@ -5854,6 +5920,7 @@ function MatchPage() {
     }
 
     const entry = {
+      ...withCurrentMatchClockContext({ minute: m }),
       minute: m,
       outId: injury.playerId,
       outName: injury.playerName,
@@ -6023,6 +6090,7 @@ function MatchPage() {
     }
 
     const entry = {
+      ...withCurrentMatchClockContext({ minute: m }),
       minute: m,
       outId: worst.id,
       outName: worst.p.name,
@@ -6867,10 +6935,10 @@ function MatchPage() {
           homeColor={matchTeamColors.homeColor}
           awayColor={matchTeamColors.awayColor}
           result={fixture.result}
-          goalEvents={[...feed, ...(fixture.result?.extraTime?.events ?? [])]}
+          goalEvents={[...feed, ...((fixture.result?.extraTime?.events ?? []) as any[]).map((event: any) => markExtraTimeEvent(event))]}
           timelineEvents={[
             ...feed.map((event: any) => ({ ...event, kind: "goal", playerName: event.scorerName ?? event.playerName })),
-            ...(fixture.result?.extraTime?.events ?? []).map((event: any) => ({ ...event, kind: "goal", playerName: event.scorerName ?? event.playerName })),
+            ...((fixture.result?.extraTime?.events ?? []) as any[]).map((event: any) => ({ ...markExtraTimeEvent(event), kind: "goal", playerName: event.scorerName ?? event.playerName })),
             ...cardFeed.map((event: any) => ({ ...event, kind: "card", type: event.cardType === "red" || event.isSecondYellow ? "red_card" : "yellow_card" })),
             ...((fixture.result as any)?.cards ?? []).map((event: any) => ({ ...event, kind: "card", type: event.cardType === "red" || event.isSecondYellow ? "red_card" : "yellow_card" })),
             ...highlightFeed.map((event: any) => ({ ...event, kind: "highlight" })),
@@ -7453,6 +7521,10 @@ function MatchPage() {
                   highlights={highlightFeed}
                   substitutions={subFeed}
                   moments={keyMoments as any}
+                  clockLabel={liveMinuteLabel}
+                  matchPeriod={isExtraTimeRef.current ? "extraTime" : "regular"}
+                  stoppagePeriod={stoppagePeriodRef.current}
+                  stoppageElapsed={stoppageElapsedRef.current}
                 />
               </div>
               <div className="mt-2.5">
@@ -7481,270 +7553,17 @@ function MatchPage() {
                 Sin eventos aún... el partido está disputado.
               </p>
             ) : (
-              <div className="match-event-list max-h-[min(68vh,760px)] space-y-0.5 overflow-y-auto pr-1">
-                {(() => {
-                  // Only the highlights that add colour to the chronicle without flooding it.
-                  const KEEP: Record<string, { icon: string; label: string }> = {
-                    woodwork: { icon: "🥅", label: "Al palo" },
-                    big_chance: { icon: "❌", label: "Fallo" },
-                    penalty_missed: { icon: "❌", label: "Penalti fallado" },
-                    // "penalty_awarded" is intentionally NOT kept: a penalty is
-                    // reported with a single line (scored or missed).
-                    var_disallowed: { icon: "📺", label: "Gol anulado (VAR)" },
-                    injury: { icon: "🚑", label: "Lesión" },
-                    save: { icon: "🧤", label: "Paradón" },
-                  };
-                  const liveMomentAlreadyShows = (h: any) =>
-                    keyMoments.some(
-                      (moment: any) =>
-                        Number(moment.minute ?? -1) === Number(h.minute ?? -2) &&
-                        (moment.playerId ? String(moment.playerId) === String(h.playerId ?? "") : true) &&
-                        (moment.teamSide ? moment.teamSide === h.team : true) &&
-                        ["save", "injury", "injury_substitution", "var", "var_disallowed", "penalty_missed", "penalty_save", "penalty_goal"].includes(String(moment.type ?? "")),
-                    );
-                  const hls = highlightFeed.filter((h: any) => KEEP[h.type]);
-                  const liveMoments = keyMoments
-                    .filter(isChronicleMoment)
-                    .map((m: any) => ({
-                      kind: "moment",
-                      minute: Number(m.minute ?? 0),
-                      data: m,
-                    }));
-                  const items = [
-                    ...liveMoments,
-                    ...cardFeed.map((c: any) => ({ kind: "card", minute: c.minute, data: c })),
-                    ...feed.map((e: any) => ({ kind: "goal", minute: e.minute, data: e })),
-                    ...hls
-                      .filter((h: any) => !liveMomentAlreadyShows(h))
-                      .map((h: any) => ({ kind: "highlight", minute: h.minute, data: h })),
-                    ...subFeed.map((s: any) => ({ kind: "sub", minute: s.minute, data: s })),
-                  ].sort((a, b) => {
-                    const minuteDiff = Number(b.minute) - Number(a.minute);
-                    if (minuteDiff !== 0) return minuteDiff;
-                    const rank: Record<string, number> = {
-                      moment: 10,
-                      card: 20,
-                      goal: 30,
-                      highlight: 40,
-                      sub: 90,
-                    };
-                    return (rank[a.kind] ?? 50) - (rank[b.kind] ?? 50);
-                  });
-
-                  return items.map((item, i) => {
-                    const teamOf = (t: string) => (t === "home" ? home : away);
-                    if (item.kind === "moment") {
-                      const m = item.data as any;
-                      const mTeam = m.teamSide ? teamOf(m.teamSide) : null;
-                      return (
-                        <div
-                          key={`moment-${m.id}-${i}`}
-                          className="match-event-row flex items-start gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2.5 last:border-b-0"
-                        >
-                          <span className="scoreline w-10 shrink-0 pt-0.5 text-sm font-bold text-primary">
-                            {m.minute}'
-                          </span>
-                          <span className="w-5 shrink-0 text-center text-base">{m.emoji || m.kicker?.slice(0, 2) || "⚡"}</span>
-                          {mTeam ? (
-                            <TeamLogo
-                              teamName={mTeam.name}
-                              leagueName={getLeagueName(mTeam.league)}
-                              size={22}
-                            />
-                          ) : (
-                            <span className="w-[22px] shrink-0" />
-                          )}
-                          {m.playerId ? (
-                            <PlayerFace
-                              name={m.playerName || "Jugador"}
-                              image={faceUrl(m.playerId)}
-                              size={24}
-                              showRing={false}
-                              className="shrink-0"
-                            />
-                          ) : (
-                            <span className="w-6 shrink-0" />
-                          )}
-                          <div className="min-w-0 text-sm">
-                            <span className="font-black">{m.playerName || m.title || m.kicker || "Jugada"}</span>
-                            {m.playerName && m.title && <span className="text-muted-foreground"> · {m.title}</span>}
-                            {m.body && <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{m.body}</div>}
-                            {!m.body && m.detail && <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{m.detail}</div>}
-                            {mTeam && <span className="ml-1 text-muted-foreground">({mTeam.short})</span>}
-                          </div>
-                        </div>
-                      );
-                    }
-                    if (item.kind === "card") {
-                      const card = item.data as CardEvent;
-                      const cardTeam = teamOf(card.team);
-                      const cardText = card.isSecondYellow
-                        ? "2ª amarilla → roja"
-                        : card.cardType === "yellow"
-                          ? "Tarjeta amarilla"
-                          : "Tarjeta roja";
-                      return (
-                        <div
-                          key={`card-${i}`}
-                          className="match-event-row flex items-center gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2 last:border-0"
-                        >
-                          <span className="scoreline text-sm text-primary font-bold w-10">
-                            {card.minute}'
-                          </span>
-                          <span
-                            className={`w-5 h-3 rounded-sm shrink-0 ${card.cardType === "yellow" ? "bg-yellow-400" : "bg-red-500"}`}
-                          />
-                          <TeamLogo
-                            teamName={cardTeam.name}
-                            leagueName={getLeagueName(cardTeam.league)}
-                            size={22}
-                          />
-                          <PlayerFace
-                            name={card.playerName}
-                            image={faceUrl(card.playerId)}
-                            size={24}
-                            showRing={false}
-                            className="shrink-0"
-                          />
-                          <div className="text-sm min-w-0">
-                            <span className="font-bold">{card.playerName}</span>
-                            <span className="text-muted-foreground"> · {cardText}</span>
-                            <span className="text-muted-foreground"> ({cardTeam.short})</span>
-                          </div>
-                        </div>
-                      );
-                    }
-                    if (item.kind === "sub") {
-                      const s = item.data;
-                      const subTeam = teamOf(s.team);
-                      return (
-                        <div
-                          key={`sub-${i}`}
-                          className="match-event-row flex items-center gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2 last:border-0"
-                        >
-                          <span className="scoreline text-sm text-primary font-bold w-10">
-                            {s.minute}'
-                          </span>
-                          <span className="text-base w-5 text-center shrink-0">🔄</span>
-                          <TeamLogo
-                            teamName={subTeam.name}
-                            leagueName={getLeagueName(subTeam.league)}
-                            size={22}
-                          />
-                          <PlayerFace
-                            name={s.inName}
-                            image={faceUrl(s.playerInId)}
-                            size={24}
-                            showRing={false}
-                            className="shrink-0"
-                          />
-                          <div className="text-sm min-w-0 truncate">
-                            <span className="text-primary font-bold">{s.inName}</span>
-                            <span className="text-muted-foreground"> por </span>
-                            <span className="text-destructive">{s.outName}</span>
-                            <span className="text-muted-foreground"> ({subTeam.short})</span>
-                          </div>
-                        </div>
-                      );
-                    }
-                    if (item.kind === "highlight") {
-                      const h = item.data;
-                      const hTeam = teamOf(h.team);
-                      const meta = KEEP[h.type];
-                      return (
-                        <div
-                          key={`hl-${i}`}
-                          className="match-event-row flex items-center gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2 last:border-0"
-                        >
-                          <span className="scoreline text-sm text-muted-foreground font-bold w-10">
-                            {h.minute}'
-                          </span>
-                          <span className="text-base w-5 text-center shrink-0">{meta.icon}</span>
-                          <TeamLogo
-                            teamName={hTeam.name}
-                            leagueName={getLeagueName(hTeam.league)}
-                            size={22}
-                          />
-                          <PlayerFace
-                            name={h.playerName || "Jugador"}
-                            image={faceUrl(h.playerId)}
-                            size={24}
-                            showRing={false}
-                            className="shrink-0"
-                          />
-                          <div className="text-sm min-w-0 truncate">
-                            <span className="font-semibold">{h.playerName}</span>
-                            <span className="text-muted-foreground">
-                              {" "}
-                              · {h.detail || meta.label}
-                            </span>
-                            <span className="text-muted-foreground"> ({hTeam.short})</span>
-                          </div>
-                        </div>
-                      );
-                    }
-                    const e = item.data;
-                    const scoringTeam = teamOf(e.team);
-                    const isPenalty = e.type === "penalty" || e.type === "penalty_goal";
-                    const isFreeKick = e.type === "free_kick_goal";
-                    const isOwnGoal = e.type === "own_goal";
-                    return (
-                      <div
-                        key={`goal-${i}`}
-                        className="match-event-row flex items-center gap-2.5 rounded-lg border-b border-border/40 px-1.5 py-2 last:border-0"
-                      >
-                        <span className="scoreline text-sm text-primary font-bold w-10">
-                          {e.minute}'
-                        </span>
-                        <span className="text-lg">
-                          {isPenalty ? (
-                            <span className="px-1.5 py-0.5 text-[0.8rem] font-bold rounded bg-white/6">
-                              P
-                            </span>
-                          ) : (
-                            <span className="w-3 h-3 inline-block rounded-full bg-white/80" />
-                          )}
-                        </span>
-                        <TeamLogo
-                          teamName={scoringTeam.name}
-                          leagueName={getLeagueName(scoringTeam.league)}
-                          size={22}
-                        />
-                        <PlayerFace
-                          name={e.scorerName || "Jugador"}
-                          image={faceUrl(e.scorerId)}
-                          size={24}
-                          showRing={false}
-                          className="shrink-0"
-                        />
-                        <div className="text-sm min-w-0">
-                          <span className="font-bold">{e.scorerName}</span>
-                          {isOwnGoal && (
-                            <span className="text-muted-foreground"> · en propia puerta</span>
-                          )}
-                          {/* A penalty shows one single line including who conceded it. */}
-                          {isPenalty && e.detail && (
-                            <span className="text-muted-foreground"> · {e.detail}</span>
-                          )}
-                          {isFreeKick && (
-                            <span className="text-muted-foreground">
-                              {" "}
-                              · {e.detail || "falta directa"}
-                            </span>
-                          )}
-                          {!isPenalty && !isFreeKick && !isOwnGoal && e.assistName && (
-                            <span className="text-muted-foreground"> · asist. {e.assistName}</span>
-                          )}
-                          {!isPenalty && !isFreeKick && !isOwnGoal && e.detail && (
-                            <span className="text-muted-foreground"> · {e.detail}</span>
-                          )}
-                          <span className="text-muted-foreground"> ({scoringTeam.short})</span>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
+              <MatchChronicle
+                home={home}
+                away={away}
+                events={feed}
+                cards={cardFeed}
+                highlights={highlightFeed}
+                substitutions={subFeed}
+                moments={keyMoments}
+                className="match-event-list max-h-[min(68vh,760px)] space-y-0.5 overflow-y-auto pr-1"
+                emptyMessage="Sin eventos aún... el partido está disputado."
+              />
             )}
 
             {phase === "done" && fixture.result && (
