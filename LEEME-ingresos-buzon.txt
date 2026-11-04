@@ -24,3 +24,9 @@ Pruebas ejecutadas correctamente:
 - ucl-knockout-seeding-regression
 
 La compilación completa no se pudo ejecutar porque este entorno no tiene instaladas las dependencias de Vite (falta vite/client).
+
+ACTUALIZACION: PREMIO DE PARTICIPACION EUROPEA
+- El premio por participar en la fase liga de Champions, Europa League o Conference se acredita al inicio de la campaña, con fecha 1 de julio.
+- Se aplica al crear una carrera y al preparar cada nueva temporada; las partidas antiguas se reparan al cargarse.
+- El primer partido ya no dispara este premio. El ledger por competición evita duplicados.
+- Si una partida antigua ya recibió el dinero tras su primer partido, se conserva el ingreso y se corrige la fecha del aviso del buzón a 1 de julio.

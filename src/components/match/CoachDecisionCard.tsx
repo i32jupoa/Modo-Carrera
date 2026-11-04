@@ -1,22 +1,11 @@
 import { motion } from "framer-motion";
 import { Brain, ShieldAlert, Swords, Zap } from "lucide-react";
 import { TeamLogo } from "@/components/TeamLogo";
+import { formatMatchMinuteWithMark, type MatchMinuteContext } from "@/lib/matchTime";
+import type { CoachDecision as MatchCoachDecision, CoachDecisionOption as MatchCoachDecisionOption } from "@/lib/liveMatchEngine";
 
-export interface CoachDecisionOption {
-  id: string;
-  label: string;
-  description: string;
-  tone?: "neutral" | "attack" | "defense" | "intense";
-  effects?: Record<string, number>;
-}
-
-export interface CoachDecisionData {
-  id: string;
-  minute: number;
-  title: string;
-  prompt: string;
-  options: CoachDecisionOption[];
-}
+export type CoachDecisionOption = MatchCoachDecisionOption;
+export type CoachDecisionData = MatchCoachDecision & MatchMinuteContext;
 
 const iconForTone = (tone?: CoachDecisionOption["tone"]) => {
   if (tone === "attack") return <Swords className="h-4 w-4" />;
@@ -38,37 +27,37 @@ export function CoachDecisionCard({
 
   return (
     <motion.div
-      className="fixed inset-x-0 bottom-2 z-[80] flex justify-center px-2"
+      className="fixed inset-0 z-[95] flex items-center justify-center overflow-y-auto bg-black/75 px-3 py-5 backdrop-blur-md md:px-6"
       initial={{ opacity: 0, y: 32 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 24 }}
     >
-      <div className="w-full max-w-3xl rounded-xl border border-primary/40 bg-card/95 backdrop-blur-xl shadow-2xl p-3">
-        <div className="flex flex-col md:flex-row md:items-start gap-3">
-          <div className="hidden md:flex shrink-0 rounded-lg bg-primary/10 border border-primary/20 p-2 text-primary">
-            <Brain className="h-5 w-5" />
+      <div className="my-auto w-full max-w-4xl rounded-2xl border border-primary/45 bg-card/98 p-5 shadow-[0_28px_100px_rgba(0,0,0,.62)] md:p-7">
+        <div className="flex flex-col gap-4">
+          <div className="flex w-fit items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs font-black uppercase tracking-wider text-primary">
+            <Brain className="h-4 w-4" /> Partido en pausa · Decide con calma
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-[0.65rem] font-black uppercase tracking-[0.18em] text-primary">
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-primary">
               {team && <TeamLogo teamName={team.name} leagueName={team.leagueName} size={19} />}
-              <span>{decision.minute}'</span>
+              <span>{formatMatchMinuteWithMark(decision.minute, decision)}</span>
               <span>•</span>
               <span>Orden del entrenador</span>
             </div>
-            <h3 className="mt-1 text-base md:text-lg font-black">{decision.title}</h3>
-            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{decision.prompt}</p>
-            <div className="mt-2 grid gap-1.5 md:grid-cols-3">
+            <h3 className="mt-2 text-xl font-black leading-tight md:text-2xl">{decision.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground md:text-base">{decision.prompt}</p>
+            <div className="mt-2 grid gap-3 md:grid-cols-3">
               {decision.options.map((option) => (
                 <button
                   key={option.id}
                   onClick={() => onChoose(option.id)}
-                  className="group rounded-lg border border-border bg-background/60 px-3 py-2.5 text-left transition hover:border-primary/60 hover:bg-primary/5"
+                  className="group min-h-32 rounded-xl border border-border bg-background/60 px-4 py-4 text-left transition hover:border-primary/60 hover:bg-primary/5 md:px-4 md:py-5"
                 >
-                  <div className="flex items-center gap-2 text-xs font-black">
+                  <div className="flex items-center gap-2 text-sm font-black md:text-base">
                     <span className="text-primary">{iconForTone(option.tone)}</span>
                     {option.label}
                   </div>
-                  <div className="mt-1 text-[0.68rem] text-muted-foreground group-hover:text-foreground/80 line-clamp-2">
+                  <div className="mt-2 text-sm leading-relaxed text-muted-foreground group-hover:text-foreground/80">
                     {option.description}
                   </div>
                   {option.effects && (

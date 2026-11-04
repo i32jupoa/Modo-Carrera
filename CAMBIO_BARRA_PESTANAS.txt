@@ -1,0 +1,12 @@
+CORRECCIÓN DE LA BARRA DE PESTAÑAS DEL DETALLE DE PARTIDO
+
+Archivo modificado:
+src/components/MatchStatsModal.tsx
+
+Cambios:
+- La barra superior mantiene una altura fija y cinco columnas iguales.
+- Los botones tienen ancho mínimo cero y no pueden ensancharse por el texto.
+- En pantallas estrechas se abrevian Estadísticas y Alineaciones para que las cinco opciones sigan visibles en una sola fila.
+- El contenido de Crónica queda limitado al ancho del diálogo y ya no puede empujar la barra.
+
+Para instalar el cambio ligero, descomprime el ZIP conservando la ruta de carpetas y acepta reemplazar el archivo.

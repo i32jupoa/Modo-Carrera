@@ -7,6 +7,7 @@ import { TeamLogo } from "@/components/TeamLogo";
 import { getLeagueLogoUrl } from "@/components/LeagueLogo";
 import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
+import { MatchMomentumChart } from "@/components/match/MatchMomentumChart";
 import { formatMatchMinuteWithMark, getMatchMinuteElapsedValue, getMatchMinuteSortValue } from "@/lib/matchTime";
 
 type ShowcaseTeam = {
@@ -612,6 +613,38 @@ export function MatchFinalSummary({
   });
   const development = buildMatchDevelopmentNarrative(home, away, homeScore, awayScore, annotatedTimeline, result?.stats, result, extraTime);
 
+  const momentumHistory = Array.isArray(result?.momentumHistory) ? result.momentumHistory : [];
+  const momentumMinuteStats = Array.isArray(result?.stats?.timeline) ? result.stats.timeline : [];
+  const momentumEvents = (() => {
+    const candidates = [
+      ...(Array.isArray(result?.events) ? result.events : goalEvents),
+      ...(Array.isArray(result?.extraTime?.events) ? result.extraTime.events : []),
+    ];
+    const unique = new Map<string, any>();
+    for (const event of candidates) {
+      const key = `${event?.minute ?? ""}:${event?.team ?? ""}:${event?.type ?? ""}:${event?.scorerId ?? event?.playerId ?? event?.scorerName ?? event?.playerName ?? ""}`;
+      if (!unique.has(key)) unique.set(key, event);
+    }
+    return [...unique.values()];
+  })();
+  const momentumHighlights = [
+    ...(Array.isArray(result?.highlights) ? result.highlights : []),
+    ...(Array.isArray(result?.extraTime?.highlights) ? result.extraTime.highlights : []),
+  ];
+  const momentumMoments = Array.isArray(result?.keyMoments) ? result.keyMoments : [];
+  const regularAdded = Math.max(0, Number(result?.stoppageTime?.secondHalf) || 0);
+  const extraAdded = Math.max(0, Number(result?.stoppageTime?.extraSecondHalf) || 0);
+  const momentumFinalMinute = Math.max(
+    90 + regularAdded,
+    Number(result?.momentumFinalMinute) || 0,
+    extraTime ? 120 + extraAdded : 0,
+    ...momentumEvents.map((event: any) => getMatchMinuteElapsedValue(event?.minute, event) ?? 0),
+    ...momentumHighlights.map((event: any) => getMatchMinuteElapsedValue(event?.minute, event) ?? 0),
+    ...momentumMoments.map((event: any) => getMatchMinuteElapsedValue(event?.minute, event) ?? 0),
+  );
+  const momentumPeriod = extraTime ? "extraTime" : "regular";
+  const hasMomentumData = momentumHistory.length > 0 || momentumMinuteStats.length > 0 || momentumEvents.length > 0 || momentumHighlights.length > 0 || momentumMoments.length > 0;
+
   return (
     <motion.section
       className="match-final-hero mb-4 overflow-hidden rounded-[1.35rem] border"
@@ -692,6 +725,27 @@ export function MatchFinalSummary({
           <span className="match-final-count">{matchTimeline.length} {matchTimeline.length === 1 ? "evento" : "eventos"}</span>
         </div>
         <p className="max-w-5xl text-sm leading-relaxed text-white/75">{development.intro}</p>
+        {hasMomentumData && (
+          <div className="mt-3 mx-auto w-full max-w-[460px]">
+            <MatchMomentumChart
+              minute={momentumFinalMinute}
+              homeLabel={home.short}
+              awayLabel={away.short}
+              homeName={home.name}
+              awayName={away.name}
+              momentumHistory={momentumHistory}
+              userSide={result?.momentumUserSide === "away" ? "away" : "home"}
+              minuteStats={momentumMinuteStats}
+              events={momentumEvents}
+              highlights={momentumHighlights}
+              moments={momentumMoments}
+              matchPeriod={momentumPeriod}
+              homeColor={homeColor}
+              awayColor={awayColor}
+              completed
+            />
+          </div>
+        )}
         {development.stats.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             {development.stats.map((item) => (

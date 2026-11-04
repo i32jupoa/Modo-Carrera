@@ -3,6 +3,7 @@ import { Crosshair, Shield } from "lucide-react";
 import { PlayerFace } from "@/components/PlayerFace";
 import { TeamLogo } from "@/components/TeamLogo";
 import { faceUrl } from "@/lib/playerFaces";
+import { formatMatchMinuteWithMark, type MatchMinuteContext } from "@/lib/matchTime";
 
 export type PenaltyZoneId =
   | "top-left"
@@ -26,7 +27,7 @@ export interface PenaltyResolution {
   detail: string;
 }
 
-export interface PendingPenalty {
+export interface PendingPenalty extends MatchMinuteContext {
   minute: number;
   teamName: string;
   attacking: boolean;
@@ -112,7 +113,7 @@ export function PenaltyDecisionModal({
                   />
                 )}
                 <div className="text-xs font-black uppercase tracking-[0.2em] text-primary">
-                  {penalty.minute}' · Penalti
+                  {formatMatchMinuteWithMark(penalty.minute, penalty)} · Penalti
                 </div>
               </div>
               <div className="mt-1 text-3xl">🚨</div>

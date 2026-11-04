@@ -1,3 +1,5 @@
+import { formatMatchMinuteWithMark, getMatchMinuteSortValue, markExtraTimeEvent } from "@/lib/matchTime";
+
 /** Small, durable post-match copy stored with every played fixture. */
 export type MatchPostReport = {
   version: 1;
@@ -74,11 +76,24 @@ export function buildMatchPostReport(
     ? decidedOnPenalties ? `${winner} gana en la tanda de penaltis` : `${winner} se lleva la victoria`
     : `Empate entre ${homeName} y ${awayName}`;
 
+  const extraTimeEvents = Array.isArray(result.extraTime?.events) ? result.extraTime!.events! : [];
+  const sameEvent = (a: any, b: any) =>
+    number(a.minute) === number(b.minute) &&
+    a.team === b.team &&
+    (a.scorerId ?? a.playerName) === (b.scorerId ?? b.playerName) &&
+    a.type === b.type;
+  const baseEvents = (Array.isArray(result.events) ? result.events : []).map((event: any) =>
+    extraTimeEvents.some((extraEvent: any) => sameEvent(event, extraEvent))
+      ? markExtraTimeEvent(event)
+      : event,
+  );
   const goals = [
-    ...(Array.isArray(result.events) ? result.events : []),
-    ...(Array.isArray(result.extraTime?.events) ? result.extraTime!.events! : []),
+    ...baseEvents,
+    ...extraTimeEvents
+      .filter((event: any) => !baseEvents.some((base: any) => sameEvent(base, event)))
+      .map((event: any) => markExtraTimeEvent(event)),
   ].filter((event: any) => ["goal", "penalty_goal", "free_kick_goal", "own_goal"].includes(String(event?.type ?? "")))
-    .sort((a: any, b: any) => number(a.minute) - number(b.minute));
+    .sort((a: any, b: any) => getMatchMinuteSortValue(a.minute, a) - getMatchMinuteSortValue(b.minute, b));
 
   const statsHome = result.stats?.home;
   const statsAway = result.stats?.away;
@@ -110,7 +125,7 @@ export function buildMatchPostReport(
       const teamName = event.team === "away" ? awayName : homeName;
       const scorer = String(event.scorerName || "Autor no registrado");
       const suffix = event.type === "own_goal" ? " (en propia puerta)" : event.type === "penalty_goal" ? " (penalti)" : event.type === "free_kick_goal" ? " (falta directa)" : "";
-      return `${number(event.minute)}′ ${scorer}${suffix} para ${teamName}`;
+      return `${formatMatchMinuteWithMark(event.minute, event)} ${scorer}${suffix} para ${teamName}`;
     });
     paragraphs.push(`Los goles llegaron así: ${goalText.join("; ")}.`);
   } else if (homeGoals + awayGoals > 0) {

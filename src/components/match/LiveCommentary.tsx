@@ -3,8 +3,9 @@ import { Radio, Clock3, Sparkles, ChevronRight, MessageCircle } from "lucide-rea
 import { PlayerFace } from "@/components/PlayerFace";
 import { TeamLogo } from "@/components/TeamLogo";
 import { faceUrl } from "@/lib/playerFaces";
+import { formatMatchMinuteWithMark, type MatchMinuteContext } from "@/lib/matchTime";
 
-export interface CommentaryEntry {
+export interface CommentaryEntry extends MatchMinuteContext {
   id: string;
   minute: number;
   text: string;
@@ -88,7 +89,7 @@ export function LiveCommentary({
           <div className={`flex items-start gap-2.5 ${compact ? "p-2.5 pl-3.5" : "p-3.5 pl-4"}`}>
             <div className="match-commentary-minute flex shrink-0 flex-col items-center justify-center rounded-lg border border-border/60 bg-background/55 px-2 py-1.5">
               <Clock3 className="mb-1 h-3 w-3 text-primary" />
-              <span className="scoreline text-sm font-black tabular-nums text-foreground">{latest.minute}'</span>
+              <span className="scoreline text-sm font-black tabular-nums text-foreground">{formatMatchMinuteWithMark(latest.minute, latest)}</span>
             </div>
             <div className="min-w-0 flex-1">
               <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
@@ -138,7 +139,7 @@ export function LiveCommentary({
                 transition={{ delay: index * 0.025, duration: 0.16 }}
                 className="group flex min-w-0 items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:border-border/50 hover:bg-background/35"
               >
-                <span className="w-8 shrink-0 rounded-md bg-secondary/60 px-1 py-1 text-center text-[0.59rem] font-black tabular-nums text-foreground/80">{entry.minute}'</span>
+                <span className="w-8 shrink-0 rounded-md bg-secondary/60 px-1 py-1 text-center text-[0.59rem] font-black tabular-nums text-foreground/80">{formatMatchMinuteWithMark(entry.minute, entry)}</span>
                 {team ? <TeamLogo teamName={team.name} leagueName={team.leagueName} size={18} className="shrink-0" /> : <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-primary/10"><Radio className="h-2.5 w-2.5 text-primary" /></span>}
                 <span className="min-w-0 flex-1 truncate text-[0.64rem] leading-relaxed text-muted-foreground transition-colors group-hover:text-foreground">{entry.text}</span>
                 <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/35 transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />

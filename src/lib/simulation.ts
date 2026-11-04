@@ -619,6 +619,12 @@ export type SimResult = {
   energyAtEnd?: Record<string, number>;
   /** Guard for the user-team post-match satisfaction/mailbox hook. */
   satisfactionApplied?: boolean;
+  /** Minute-by-minute manager-side momentum, persisted for post-match/history charts. */
+  momentumHistory?: Array<{ minute: number; value: number }>;
+  /** Which side the live momentum values represent (the managed club). */
+  momentumUserSide?: "home" | "away";
+  /** Played-through minute used to render the final chart (90 or 120). */
+  momentumFinalMinute?: number;
   /** Compact post-match text persisted with the fixture for every competition. */
   postMatchReport?: MatchPostReport;
   /** Backward-compatible guard preventing duplicate stat commits for this result. */
@@ -1410,6 +1416,45 @@ function cachedLeagueTeamCount(leagueId: string): number {
   return count;
 }
 
+/** Build a deterministic home-oriented momentum curve for instant/AI simulations.
+ * It uses the same scored chances, saves, penalties and woodwork that are
+ * persisted with the fixture, so a skipped match still has a meaningful chart.
+ */
+function buildFastMatchMomentumHistory(
+  homeStrength: number,
+  awayStrength: number,
+  events: MatchEvent[],
+  highlights: HighlightEvent[],
+): Array<{ minute: number; value: number }> {
+  const strengthBias = Math.max(-12, Math.min(12, (homeStrength - awayStrength) * 0.34));
+  const impulses = new Map<number, number>();
+  const add = (minute: number, side: "home" | "away", weight: number) => {
+    if (!Number.isFinite(minute) || minute < 1 || minute > 90) return;
+    impulses.set(minute, (impulses.get(minute) ?? 0) + (side === "home" ? weight : -weight));
+  };
+  for (const event of events) {
+    const weight = event.type === "penalty_goal" ? 13 : event.type === "goal" || event.type === "own_goal" || event.type === "free_kick_goal" ? 11 : 0;
+    add(event.minute, event.team, weight);
+  }
+  for (const item of highlights) {
+    const weight = item.type === "big_chance" ? 9 : item.type === "woodwork" ? 10 : item.type === "penalty_missed" ? 10 : item.type === "var_disallowed" ? 8 : item.type === "save" ? 6 : item.type === "penalty_awarded" ? 7 : 0;
+    // Saves are recorded against the defending goalkeeper; the attacking
+    // team created the pressure that caused the save.
+    const side = item.type === "save" ? (item.team === "home" ? "away" : "home") : item.team;
+    add(item.minute, side, weight);
+  }
+  let value = 50 + strengthBias;
+  const history = [{ minute: 0, value: Math.max(8, Math.min(92, value)) }];
+  for (let minute = 1; minute <= 90; minute++) {
+    const impulse = impulses.get(minute) ?? 0;
+    const ebb = Math.sin(minute * 0.47) * 1.8 + Math.sin(minute * 0.19 + 1.4) * 1.2;
+    value += (50 + strengthBias - value) * 0.13 + ebb + impulse;
+    value = Math.max(6, Math.min(94, value));
+    history.push({ minute, value: Number(value.toFixed(2)) });
+  }
+  return history;
+}
+
 export function simulateMatchFast(
   home: Team,
   away: Team,
@@ -1958,6 +2003,14 @@ export function simulateMatchFast(
     xgHome: lh,
     xgAway: la,
     stats,
+    momentumHistory: buildFastMatchMomentumHistory(
+      homeXI.reduce((sum, player) => sum + Number(player.rating || 0), 0) / Math.max(1, homeXI.length),
+      awayXI.reduce((sum, player) => sum + Number(player.rating || 0), 0) / Math.max(1, awayXI.length),
+      events,
+      highlights,
+    ),
+    momentumUserSide: "home",
+    momentumFinalMinute: 90,
     tacticalImpact: tacticalImpactSummary(homeTactics, awayTactics, homeXI, awayXI),
     highlights,
     ratings,
@@ -2658,6 +2711,14 @@ export function simulateMatch(
     tacticalImpact: tacticalImpactSummary(homeTactics, awayTactics, homeXI, awayXI),
     highlights,
     stats,
+    momentumHistory: buildFastMatchMomentumHistory(
+      homeXI.reduce((sum, player) => sum + Number(player.rating || 0), 0) / Math.max(1, homeXI.length),
+      awayXI.reduce((sum, player) => sum + Number(player.rating || 0), 0) / Math.max(1, awayXI.length),
+      events,
+      highlights,
+    ),
+    momentumUserSide: "home",
+    momentumFinalMinute: 90,
     ratings,
     mvp,
     homeLineup: homeXI,

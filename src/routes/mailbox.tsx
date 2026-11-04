@@ -37,19 +37,19 @@ type MessageMeta = {
 };
 
 const META: Record<SeasonNotification["type"], MessageMeta> = {
-  contract_expired: { label: "Contrato", icon: FileText, tone: "text-amber-300 bg-amber-400/10 border-amber-400/25", accent: "#d9a441", wash: "from-amber-500/12 via-transparent to-transparent", kicker: "GESTIÓN DE PLANTILLA" },
+  contract_expired: { label: "Contrato", icon: FileText, tone: "text-sky-300 bg-sky-400/10 border-sky-400/25", accent: "#38bdf8", wash: "from-sky-500/12 via-transparent to-transparent", kicker: "GESTIÓN DE PLANTILLA" },
   player_retired: { label: "Retirada", icon: UserRound, tone: "text-violet-300 bg-violet-400/10 border-violet-400/25", accent: "#a78bfa", wash: "from-violet-500/12 via-transparent to-transparent", kicker: "CARRERA DEL JUGADOR" },
-  promoted: { label: "Ascenso", icon: ArrowUpCircle, tone: "text-emerald-300 bg-emerald-400/10 border-emerald-400/25", accent: "#34d399", wash: "from-emerald-500/12 via-transparent to-transparent", kicker: "OBJETIVO CONSEGUIDO" },
+  promoted: { label: "Ascenso", icon: ArrowUpCircle, tone: "text-lime-300 bg-lime-400/10 border-lime-400/25", accent: "#a3e635", wash: "from-lime-500/12 via-transparent to-transparent", kicker: "OBJETIVO CONSEGUIDO" },
   relegated: { label: "Descenso", icon: ArrowDownCircle, tone: "text-red-300 bg-red-400/10 border-red-400/25", accent: "#fb7185", wash: "from-rose-500/12 via-transparent to-transparent", kicker: "RESULTADO DE TEMPORADA" },
-  season_started: { label: "Nueva temporada", icon: CalendarDays, tone: "text-sky-300 bg-sky-400/10 border-sky-400/25", accent: "#38bdf8", wash: "from-sky-500/12 via-transparent to-transparent", kicker: "NUEVO CURSO" },
+  season_started: { label: "Nueva temporada", icon: CalendarDays, tone: "text-indigo-300 bg-indigo-400/10 border-indigo-400/25", accent: "#818cf8", wash: "from-indigo-500/12 via-transparent to-transparent", kicker: "NUEVO CURSO" },
   player_injured: { label: "Lesión", icon: Activity, tone: "text-rose-300 bg-rose-400/10 border-rose-400/25", accent: "#fb7185", wash: "from-rose-500/12 via-transparent to-transparent", kicker: "PARTE MÉDICO" },
-  player_recovered: { label: "Recuperación", icon: HeartPulse, tone: "text-emerald-300 bg-emerald-400/10 border-emerald-400/25", accent: "#34d399", wash: "from-emerald-500/12 via-transparent to-transparent", kicker: "PARTE MÉDICO" },
+  player_recovered: { label: "Recuperación", icon: HeartPulse, tone: "text-teal-300 bg-teal-400/10 border-teal-400/25", accent: "#2dd4bf", wash: "from-teal-500/12 via-transparent to-transparent", kicker: "PARTE MÉDICO" },
   contract_one_year: { label: "Contrato: queda un año", icon: Clock, tone: "text-sky-300 bg-sky-400/10 border-sky-400/25", accent: "#38bdf8", wash: "from-sky-500/12 via-transparent to-transparent", kicker: "PLANIFICACIÓN · CONTRATOS" },
-  contract_expiring_soon: { label: "Contrato: quedan tres meses", icon: Clock, tone: "text-amber-300 bg-amber-400/10 border-amber-400/25", accent: "#fbbf24", wash: "from-amber-500/12 via-transparent to-transparent", kicker: "ATENCIÓN · CONTRATOS" },
-  player_of_round: { label: "Jugador de la jornada", icon: Trophy, tone: "text-yellow-300 bg-yellow-400/10 border-yellow-400/25", accent: "#eab308", wash: "from-yellow-500/12 via-transparent to-transparent", kicker: "MEJOR DE LA LIGA" },
+  contract_expiring_soon: { label: "Contrato: quedan tres meses", icon: Clock, tone: "text-sky-300 bg-sky-400/10 border-sky-400/25", accent: "#38bdf8", wash: "from-sky-500/12 via-transparent to-transparent", kicker: "ATENCIÓN · CONTRATOS" },
+  player_of_round: { label: "Jugador de la jornada", icon: Trophy, tone: "text-amber-300 bg-amber-400/10 border-amber-400/25", accent: "#f59e0b", wash: "from-amber-500/12 via-transparent to-transparent", kicker: "MEJOR DE LA LIGA" },
   player_of_month: { label: "Jugador del mes", icon: Trophy, tone: "text-amber-300 bg-amber-400/10 border-amber-400/25", accent: "#f59e0b", wash: "from-amber-500/12 via-transparent to-transparent", kicker: "PREMIO MENSUAL" },
-  player_of_european_round: { label: "Jugador de la jornada europea", icon: Trophy, tone: "text-sky-300 bg-sky-400/10 border-sky-400/25", accent: "#38bdf8", wash: "from-sky-500/12 via-transparent to-transparent", kicker: "COMPETICIONES UEFA" },
-  release_clause_paid: { label: "Clausulazo", icon: Bell, tone: "text-amber-300 bg-amber-400/10 border-amber-400/25", accent: "#f59e0b", wash: "from-amber-500/12 via-transparent to-transparent", kicker: "SALIDA POR CLÁUSULA" },
+  player_of_european_round: { label: "Jugador de la jornada europea", icon: Trophy, tone: "text-amber-300 bg-amber-400/10 border-amber-400/25", accent: "#f59e0b", wash: "from-amber-500/12 via-transparent to-transparent", kicker: "COMPETICIONES UEFA" },
+  release_clause_paid: { label: "Clausulazo", icon: Bell, tone: "text-fuchsia-300 bg-fuchsia-400/10 border-fuchsia-400/25", accent: "#e879f9", wash: "from-fuchsia-500/12 via-transparent to-transparent", kicker: "SALIDA POR CLÁUSULA" },
   financial_income: { label: "Ingreso del club", icon: Coins, tone: "text-emerald-300 bg-emerald-400/10 border-emerald-400/25", accent: "#34d399", wash: "from-emerald-500/12 via-transparent to-transparent", kicker: "INGRESOS Y PREMIOS" },
 };
 
@@ -197,7 +197,7 @@ function SeasonInboxPage() {
                           <h2 className="text-sm font-black leading-tight sm:text-[0.95rem]">{hasPlayer ? playerName : meta.label}</h2>
                           <span className={`rounded-md border px-2 py-0.5 text-[0.55rem] font-bold ${meta.tone}`}>{item.category ?? meta.label}</span>
                           {Number.isFinite(Number(item.amount)) && Number(item.amount) > 0 && (
-                            <span className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-black tabular-nums text-emerald-300">+{formatEuro(Number(item.amount))}</span>
+                            <span className={`rounded-lg border px-2.5 py-1 text-xs font-black tabular-nums ${meta.tone}`}>+{formatEuro(Number(item.amount))}</span>
                           )}
                         </div>
                         <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-muted-foreground sm:text-[0.8rem]">{item.message}</p>

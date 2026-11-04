@@ -3,6 +3,7 @@ import { TeamLogo } from "@/components/TeamLogo";
 import { LEAGUES } from "@/data/teams";
 import { faceUrl } from "@/lib/playerFaces";
 import { buildMatchChronicleItems } from "@/lib/matchChronicle";
+import { formatMatchMinuteWithMark } from "@/lib/matchTime";
 
 type ChronicleTeam = {
   id?: string;
@@ -70,7 +71,7 @@ export function MatchChronicle({
     <div className={className}>
       {items.map((item, index) => {
         const data = item.data;
-        const minute = `${item.minute}'`;
+        const minute = formatMatchMinuteWithMark(item.minute, data);
         if (item.kind === "moment") {
           const side = data.teamSide ?? data.team;
           const team = teamOf(side);

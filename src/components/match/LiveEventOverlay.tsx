@@ -14,8 +14,9 @@ import {
 import { PlayerFace } from "@/components/PlayerFace";
 import { TeamLogo } from "@/components/TeamLogo";
 import { faceUrl } from "@/lib/playerFaces";
+import { formatMatchMinuteWithMark, type MatchMinuteContext } from "@/lib/matchTime";
 
-export interface LiveEventOverlayData {
+export interface LiveEventOverlayData extends MatchMinuteContext {
   id: string;
   type: string;
   minute: number;
@@ -247,7 +248,7 @@ export function LiveEventOverlay({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-[0.62rem] font-black uppercase tracking-[0.19em] text-white/50">
                     <Clock3 className="h-3.5 w-3.5" />
-                    <span>{event.minute}'</span>
+                    <span>{formatMatchMinuteWithMark(event.minute, event)}</span>
                     <span>·</span>
                     <span className="truncate">{event.teamName}</span>
                   </div>

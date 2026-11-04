@@ -53,7 +53,9 @@
     "test:season-inbox": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/season-inbox-lifecycle-test.mjs",
     "test:season-inbox-visual": "node scripts/season-inbox-visual-regression.mjs",
     "test:match-report-history": "node --experimental-strip-types scripts/match-report-history-regression.mjs",
-    "test:match-chronicle": "node --experimental-strip-types scripts/match-chronicle-regression.mjs"
+    "test:match-chronicle": "node --experimental-strip-types scripts/match-chronicle-regression.mjs",
+    "test:match-momentum-timeline": "node --experimental-strip-types --experimental-loader ./scripts/ts-alias-loader.mjs scripts/match-momentum-timeline-regression.mjs",
+    "test:match-momentum-persistence": "node scripts/match-momentum-persistence-regression.mjs"
   },
   "overrides": {
     "rolldown": "1.2.1"

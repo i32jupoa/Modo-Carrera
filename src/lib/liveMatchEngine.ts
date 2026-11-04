@@ -1,4 +1,5 @@
 import type { MatchEvent, CardEvent, HighlightEvent } from "@/lib/simulation";
+import type { MatchMinuteContext } from "@/lib/matchTime";
 
 export type MomentumPoint = { minute: number; value: number };
 
@@ -19,7 +20,7 @@ export type DangerChoice = {
   effects: Partial<LiveManagerEffects>;
 };
 
-export type LiveMoment = {
+export type LiveMoment = MatchMinuteContext & {
   id: string;
   type: string;
   minute: number;

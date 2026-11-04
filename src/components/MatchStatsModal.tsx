@@ -1153,7 +1153,11 @@ export function MatchStatsModal({ fixture, onClose }: MatchStatsModalProps) {
               awayScore={displayAwayGoals}
               homeColor={matchColors.homeColor}
               awayColor={matchColors.awayColor}
-              result={{ ...result, mvp: summaryMvp }}
+              result={{
+                ...result,
+                mvp: summaryMvp,
+                momentumUserSide: result.momentumUserSide ?? (fixture.homeId === save?.myTeamId ? "home" : "away"),
+              }}
               goalEvents={summaryGoalEvents}
               timelineEvents={summaryTimelineEvents}
             />

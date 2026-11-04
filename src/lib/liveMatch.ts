@@ -69,6 +69,10 @@ export type LiveMatchState = {
   /** Sistema e instante del último cambio, persistidos para reanudar el partido. */
   activeTactics?: any;
   lastTacticChangeMinute?: number;
+  /** Coach prompt currently awaiting the manager; preserved when opening Cambios. */
+  coachDecision?: any;
+  /** Last answered prompt, used to avoid immediate repeat decisions after reload. */
+  lastCoachDecision?: { id: string; minute: number; kind?: string } | null;
   scene?: {
     kind: "prelude" | "resolution" | "var" | "penalty_intro";
     moment?: any;
@@ -208,6 +212,8 @@ function sanitizeLoadedLiveState(raw: any): LiveMatchState {
     outcomeBias: Number.isFinite(Number(raw?.outcomeBias)) ? Number(raw.outcomeBias) : 0,
     activeTactics: raw?.activeTactics && typeof raw.activeTactics === "object" ? raw.activeTactics : undefined,
     lastTacticChangeMinute: Number.isFinite(Number(raw?.lastTacticChangeMinute)) ? Number(raw.lastTacticChangeMinute) : -99,
+    coachDecision: raw?.coachDecision && typeof raw.coachDecision === "object" ? raw.coachDecision : undefined,
+    lastCoachDecision: raw?.lastCoachDecision && typeof raw.lastCoachDecision === "object" ? raw.lastCoachDecision : null,
     scene: raw?.scene && typeof raw.scene === "object" ? raw.scene : null,
   } as LiveMatchState;
 }

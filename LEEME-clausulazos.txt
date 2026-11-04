@@ -1,0 +1,20 @@
+MEJORA DEL SISTEMA DE CLAUSULAZOS
+
+Archivos principales incluidos:
+- src/lib/transfers/constants.ts
+- src/lib/transfers/ReleaseClauseEngine.ts
+- src/lib/transfers/MarketSimulation.ts
+- src/lib/transfers/__tests__/ReleaseClauseEngine.test.ts
+- scripts/release-clause-user-incoming-regression.mjs
+
+Qué cambia:
+- Aumenta la frecuencia de oportunidades, compradores evaluados y objetivos probados por ronda, sin garantizar salidas.
+- Se elimina el límite accidental que reducía a tres los jugadores distintos evaluados en toda una fecha, aunque hubiera varios compradores.
+- Se mantiene la posibilidad de ventanas tranquilas y los máximos de 2 salidas por cláusula en verano y 1 en invierno.
+- Los roles, la lealtad y la protección de promesas siguen influyendo; la protección de promesas también se aplica ahora a la probabilidad calculada, no solo al mínimo residual.
+- Se compara la cláusula con el valor de mercado. Las cláusulas claramente infravaloradas reciben mayor prioridad e interés.
+- Si la cláusula es igual o inferior al 115 % del valor de mercado, un club que ya esté interesado ejecuta el pago directo de la cláusula en vez de fallar una tirada de riesgo o negociar con el club vendedor.
+- El pago directo no elimina las comprobaciones de presupuesto, límite de plantilla, contrato y aceptación del jugador.
+- Se añaden pruebas para detectar cláusulas ganga, priorizar esos objetivos y comprobar el aumento de actividad.
+
+Para aplicar el ZIP ligero, copia la carpeta `football-sim-master-main` sobre la del proyecto y acepta reemplazar los archivos incluidos.

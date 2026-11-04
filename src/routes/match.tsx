@@ -54,7 +54,6 @@ import { MatchPlayerDetailsModal } from "@/components/match/MatchPlayerDetailsMo
 import { HalftimeOverlay } from "@/components/match/HalftimeOverlay";
 import { MatchTimeline } from "@/components/match/MatchTimeline";
 import { markExtraTimeEvent } from "@/lib/matchTime";
-import { MomentumBar } from "@/components/match/MomentumBar";
 import { resolveMatchTeamColors } from "@/lib/matchPresentation";
 import { PlayerRatingsPanel } from "@/components/match/PlayerRatingsPanel";
 import {
@@ -80,22 +79,14 @@ import {
 } from "@/lib/liveMatch";
 import {
   loadTactics,
-  saveTactics,
   DEFAULT_TACTICS,
   normalizeTactics,
   tacticsModifiers,
   tacticalMatchupMultiplier,
   resolveMatchTactics,
-  setTacticalSystem,
   TACTICAL_SYSTEMS,
-  TACTICAL_MENTALITIES,
-  TACTICAL_OPTIONS_BY_MENTALITY,
   TACTICAL_GAME_STYLES,
-  setTacticalGameStyle,
   type TeamTactics,
-  type TacticalSystem,
-  type TacticalMentality,
-  type GameStyle,
 } from "@/lib/teamTactics";
 import {
   btnPrimary,
@@ -105,7 +96,7 @@ import {
   segmentBase,
   segmentItem,
 } from "@/components/match/matchUi";
-import { Pause, Play, FastForward, ClipboardList, Trophy, ArrowLeftRight, ArrowUpRight, CircleDot, Shield, Zap, Goal, ChevronUp, ChevronDown } from "lucide-react";
+import { Pause, Play, FastForward, ClipboardList, Trophy, ChevronUp, ChevronDown } from "lucide-react";
 import { isPlayerInjuredAtDate, usePlayersStore, withPlayerStatsBatch } from "@/store/playersStore";
 import { addDaysToIso } from "@/lib/transferWindows";
 import { getPlayerShootingStats } from "@/data/players";
@@ -115,6 +106,7 @@ import { faceUrl } from "@/lib/playerFaces";
 import { CountryFlag } from "@/components/CountryFlag";
 import { LeagueLogo } from "@/components/LeagueLogo";
 import { LiveEventOverlay } from "@/components/match/LiveEventOverlay";
+import { CoachDecisionCard } from "@/components/match/CoachDecisionCard";
 import { LiveCommentary, type CommentaryEntry } from "@/components/match/LiveCommentary";
 import {
   PenaltyDecisionModal,
@@ -136,6 +128,7 @@ import {
   buildCoachDecision,
   type LiveManagerEffects,
   type LiveMoment,
+  type CoachDecision,
 } from "@/lib/liveMatchEngine";
 
 // Helper to get league name from league ID
@@ -223,20 +216,7 @@ function promotionAggregateTiedAtScores(
 
 export const Route = createFileRoute("/match")({ component: MatchPage });
 
-const TACTIC_ICONS: Record<TacticalSystem, any> = {
-  gegenpress: Zap,
-  possession: CircleDot,
-  low_block_counter: Shield,
-  vertical_transition: ArrowUpRight,
-  wing_play: ArrowLeftRight,
-  direct_play: Goal,
-  offside_trap: Shield,
-  inside_overload: CircleDot,
-  set_piece: Goal,
-  close_out: Shield,
-  mid_block_press: Shield,
-  build_up: CircleDot,
-};
+
 
 function getEuropeanFixtureList(save: any, competition?: string): any[] {
   if (competition === "uel") return Array.isArray(save?.uelFixtures) ? save.uelFixtures : [];
@@ -385,10 +365,14 @@ function MatchPage() {
   const [managerEffects, setManagerEffects] = useState<LiveManagerEffects>(DEFAULT_MANAGER_EFFECTS);
   const managerEffectsRef = useRef<LiveManagerEffects>({ ...DEFAULT_MANAGER_EFFECTS });
   const [activeTactics, setActiveTactics] = useState<TeamTactics>(() => loadTactics(""));
-  const [expandedTacticMentality, setExpandedTacticMentality] = useState<TacticalMentality | null>(null);
   const activeTacticsRef = useRef<TeamTactics>(activeTactics);
   const lastTacticChangeMinuteRef = useRef(-99);
   const lastCoachDecisionRef = useRef<{ id: string; minute: number; kind?: string } | null>(null);
+  const [pendingCoachDecision, setPendingCoachDecision] = useState<CoachDecision | null>(null);
+  const pendingCoachDecisionRef = useRef<CoachDecision | null>(null);
+  // The live decision is computed below the initial-save guard; keep its value in a ref
+  // so the effect that pauses the match can be declared with the other unconditional hooks.
+  const liveCoachDecisionRef = useRef<CoachDecision | null>(null);
   const [commentaryEntries, setCommentaryEntries] = useState<CommentaryEntry[]>([]);
   const commentaryEntriesRef = useRef<CommentaryEntry[]>([]);
   const lastNarrativeMinuteRef = useRef(-99);
@@ -607,8 +591,14 @@ function MatchPage() {
       myTeamIdRef.current = s.myTeamId;
       const savedTactics = normalizeTactics(loadTactics(s.myTeamId));
       const snapshotTactics = normalizeTactics(st.activeTactics ?? savedTactics);
+      const tacticalFields = [
+        "system", "mentality", "gameStyle", "pressure", "defenseLine", "tempo",
+        "width", "attackingWidth", "passingStyle", "counterAttack", "timeWasting",
+        "marking", "aggressionLevel", "captainId", "penaltyTakerId", "freekickTakerId",
+        "cornerTakerId", "aiManaged",
+      ] as const;
       const lineupEditorChangedTactic = resumeLive && (
-        snapshotTactics.system !== savedTactics.system ||
+        tacticalFields.some((field) => snapshotTactics[field] !== savedTactics[field]) ||
         snapshotTactics.secondaryInstructions.join("|") !== savedTactics.secondaryInstructions.join("|")
       );
       const restoredTactics = resolveMatchTactics(
@@ -622,6 +612,9 @@ function MatchPage() {
       lastTacticChangeMinuteRef.current = lineupEditorChangedTactic
         ? Number(st.minute ?? 0)
         : Number(st.lastTacticChangeMinute ?? -99);
+      lastCoachDecisionRef.current = st.lastCoachDecision ?? null;
+      pendingCoachDecisionRef.current = st.coachDecision ?? null;
+      setPendingCoachDecision(pendingCoachDecisionRef.current);
 
       allEventsRef.current = restoredResult.events;
       allCardsRef.current = restoredResult.cards;
@@ -828,6 +821,16 @@ function MatchPage() {
         pauseReasonRef.current = "moment";
         setIsPaused(true);
         setPauseReason("moment");
+        resumeClockRef.current = null;
+        setResumeClockPending(false);
+        return;
+      }
+
+      if (st.coachDecision) {
+        pausedRef.current = true;
+        pauseReasonRef.current = "coach";
+        setIsPaused(true);
+        setPauseReason("coach");
         resumeClockRef.current = null;
         setResumeClockPending(false);
         return;
@@ -2285,6 +2288,8 @@ function MatchPage() {
     setActiveTactics(initialTactics);
     lastTacticChangeMinuteRef.current = -99;
     lastCoachDecisionRef.current = null;
+    pendingCoachDecisionRef.current = null;
+    setPendingCoachDecision(null);
 
     // IMPORTANT: only players explicitly registered as substitutes can enter
     // during this match. Everyone else remains in "Reservas" and is never
@@ -2512,6 +2517,8 @@ function MatchPage() {
       outcomeBias: outcomeBiasRef.current,
       activeTactics: activeTacticsRef.current,
       lastTacticChangeMinute: lastTacticChangeMinuteRef.current,
+      coachDecision: pendingCoachDecisionRef.current ?? undefined,
+      lastCoachDecision: lastCoachDecisionRef.current ?? undefined,
       narrative: commentaryEntries.slice(0, 12),
       keyMoments: keyMomentsRef.current.slice(-200),
       playedEvents: playedEventsRef.current.slice(),
@@ -3429,9 +3436,26 @@ function MatchPage() {
       cards,
       highlights,
       substitutions,
+      // Persist the announced added-time durations so the final momentum chart
+      // keeps its true endpoint after the live stoppage clock is cleared.
+      stoppageTime: { ...stoppageTimesRef.current },
       // Resolved match moments are part of the official result. Keeping them
       // here lets Jornadas/Europa/Champions reproduce the exact live chronicle.
       keyMoments: keyMomentsRef.current.slice(-200),
+      // Persist the exact momentum curve shown during the match so the same
+      // dominance chart can be replayed in the post-match screen and history.
+      momentumHistory: momentumHistoryRef.current.map((point) => ({
+        minute: Number(point.minute) || 0,
+        value: Math.max(0, Math.min(100, Number(point.value) || 50)),
+      })),
+      momentumUserSide: mySide,
+      momentumFinalMinute: Math.max(
+        90 + Math.max(0, Number(stoppageTimesRef.current?.secondHalf) || 0),
+        Number(minuteRef.current) || 90,
+        isExtraTimeRef.current || extraTimeEventsRef.current.length > 0
+          ? 120 + Math.max(0, Number(stoppageTimesRef.current?.extraSecondHalf) || 0)
+          : 0,
+      ),
     };
     fixtureRef.current = { ...fx, result: nextResult } as any;
     allEventsRef.current = events;
@@ -3694,92 +3718,6 @@ function MatchPage() {
     setCommentaryEntries(next);
   }
 
-  function updateLiveTacticalImpact(tactics: TeamTactics, mods: ReturnType<typeof tacticsModifiers>) {
-    const fx = fixtureRef.current;
-    if (!fx?.result) return;
-    const side = mySideOf(fx);
-    const previous = fx.result.tacticalImpact ?? {};
-    const current = previous[side] ?? {};
-    const commentary = TACTICAL_SYSTEMS.find((item) => item.id === tactics.system)?.description
-      ?? "El equipo mantiene su plan de partido.";
-    const nextImpact = {
-      ...current,
-      system: tactics.system,
-      mentality: tactics.mentality,
-      gameStyle: tactics.gameStyle,
-      highRecoveries: Math.max(0, Math.round(4 + mods.highRecoveries * 18)),
-      counterAttacks: Math.max(0, Math.round(1.5 + mods.counterThreat * 16)),
-      crosses: Math.max(0, Math.round(4 + mods.crossThreat * 19)),
-      setPieceThreat: Math.round(mods.setPieceThreat * 100),
-      commentary: [commentary, ...(current.commentary ?? [])].slice(0, 2),
-    };
-    // La tarjeta de estadísticas finales y la instantánea reanudable leen el
-    // mismo resultado; no se depende de un estado React obsoleto.
-    fixtureRef.current = {
-      ...fx,
-      result: { ...fx.result, tacticalImpact: { ...previous, [side]: nextImpact } },
-    } as any;
-  }
-
-  function changeActiveTactic(change: { system?: TacticalSystem; gameStyle?: GameStyle }) {
-    const myId = myTeamIdRef.current || save?.myTeamId;
-    if (!myId) return;
-    const currentMinute = minuteRef.current;
-    const elapsed = currentMinute - lastTacticChangeMinuteRef.current;
-    const isHalfTime = ["halftime", "et_break", "et_halftime"].includes(String(pauseReasonRef.current ?? pauseReason));
-    if (elapsed < 14 && !isHalfTime) {
-      toast.info(`Podrás ajustar el plan en ${14 - elapsed} min.`);
-      return;
-    }
-    const current = activeTacticsRef.current;
-    let next = current;
-    if (change.system) next = setTacticalSystem(next, change.system);
-    if (change.gameStyle) next = setTacticalGameStyle(next, change.gameStyle);
-    if (current.system === next.system && current.gameStyle === next.gameStyle) return;
-
-    const xi = myXIRef.current.map((id) => playerById(id)).filter(Boolean) as any[];
-    const oldMods = tacticsModifiers(current, xi, { minute: currentMinute, averageStamina: currentAvgStamina() });
-    const nextMods = tacticsModifiers(next, xi, { minute: currentMinute, averageStamina: currentAvgStamina() });
-    activeTacticsRef.current = next;
-    setActiveTactics(next);
-    if (change.system) setExpandedTacticMentality(next.mentality);
-    saveTactics(myId, next);
-    lastTacticChangeMinuteRef.current = currentMinute;
-
-    // Ajustar una decisión táctica tiene un pequeño coste físico para el once.
-    const cost = isHalfTime ? 1.7 : 2.6;
-    const nextStamina = { ...staminaRef.current };
-    for (const id of myXIRef.current) nextStamina[id] = Math.max(0, (nextStamina[id] ?? STAMINA_START) - cost);
-    staminaRef.current = nextStamina;
-    setStamina(nextStamina);
-
-    applyDecisionToUpcomingFootball({
-      attack: Math.max(0.92, Math.min(1.08, nextMods.attack / Math.max(0.01, oldMods.attack))),
-      defense: Math.max(0.92, Math.min(1.08, nextMods.defense / Math.max(0.01, oldMods.defense))),
-      counter: Math.max(0.92, Math.min(1.08, (1 + nextMods.counterThreat) / Math.max(0.01, 1 + oldMods.counterThreat))),
-      staminaMultiplier: nextMods.stamina / Math.max(0.01, oldMods.stamina),
-      risk: (nextMods.defensiveRisk - oldMods.defensiveRisk) * 100,
-      width: Math.max(0.92, Math.min(1.08, (1 + nextMods.crossThreat) / Math.max(0.01, 1 + oldMods.crossThreat))),
-      central: Math.max(0.92, Math.min(1.08, (1 + nextMods.centralThreat) / Math.max(0.01, 1 + oldMods.centralThreat))),
-      longBall: Math.max(0.92, Math.min(1.08, (1 + nextMods.longBallThreat) / Math.max(0.01, 1 + oldMods.longBallThreat))),
-    });
-    updateLiveTacticalImpact(next, nextMods);
-    const definition = TACTICAL_SYSTEMS.find((item) => item.id === next.system);
-    const style = TACTICAL_GAME_STYLES.find((item) => item.id === next.gameStyle);
-    const changedLabel = change.system ? definition?.name : style?.name;
-    const adjustmentNarrative = change.system
-      ? definition?.commentary[0]
-      : style?.description;
-    pushCommentary({
-      id: `tactic-change-${currentMinute}-${next.system}-${next.gameStyle}`,
-      minute: currentMinute,
-      tone: "dramatic",
-      text: `Ajuste táctico: ${changedLabel ?? "nuevo plan"}. ${adjustmentNarrative ?? "El equipo ajusta su forma de jugar."}`,
-    });
-    toast.success(`Ajuste aplicado. Coste: -${cost.toFixed(1)} de energía al once.`);
-    persistLive();
-  }
-
   function applyCoachOption(option: any, decision: any) {
     const effects = option?.effects ?? {};
     const current = { ...managerEffectsRef.current };
@@ -3802,6 +3740,22 @@ function MatchPage() {
     pushCommentary({ id: `coach-${decision.id}-${option.id}`, minute: minuteRef.current, tone: "normal", text: `Decisión del banquillo: ${option.label}. ${option.description}` });
     toast.success(`Decisión aplicada: ${option.label}`);
     persistLive();
+  }
+
+  function chooseCoachDecision(optionId: string) {
+    const decision = pendingCoachDecisionRef.current;
+    if (!decision) return;
+    const option = decision.options.find((candidate) => candidate.id === optionId);
+    if (!option) return;
+
+    // Clear the pending prompt before persisting/applying it, so a reload or
+    // detour through Cambios cannot show the same decision twice.
+    pendingCoachDecisionRef.current = null;
+    setPendingCoachDecision(null);
+    applyCoachOption(option, decision);
+    if (pauseReasonRef.current === "coach" || pauseReason === "coach") {
+      resumeMatch();
+    }
   }
 
   function showLiveMoment(moment: LiveMoment, _duration = 2200, recordKeyMoment = true) {
@@ -4172,8 +4126,16 @@ function MatchPage() {
   function registerMomentum(next: number, m: number) {
     momentumRef.current = next;
     setMomentum(next);
-    const point = { minute: m, value: next };
-    momentumHistoryRef.current = [...momentumHistoryRef.current, point].slice(-91);
+    const periodBase = stoppagePeriodRef.current === "firstHalf" ? 45
+      : stoppagePeriodRef.current === "secondHalf" ? 90
+      : stoppagePeriodRef.current === "extraFirstHalf" ? 105
+      : stoppagePeriodRef.current === "extraSecondHalf" ? 120
+      : null;
+    const elapsedMinute = periodBase !== null && stoppageElapsedRef.current > 0
+      ? periodBase + stoppageElapsedRef.current
+      : m;
+    const point = { minute: elapsedMinute, value: next };
+    momentumHistoryRef.current = [...momentumHistoryRef.current, point].slice(-130);
   }
 
   function currentAvgStamina() {
@@ -6542,6 +6504,20 @@ function MatchPage() {
     };
   }, []);
 
+  // This effect must stay above the early return below: hooks cannot be conditional.
+  // The decision itself is calculated later in the render and exposed via the ref.
+  liveCoachDecisionRef.current = null;
+  useEffect(() => {
+    const decision = liveCoachDecisionRef.current;
+    if (!decision || pendingCoachDecisionRef.current) return;
+    if (phase !== "playing" && phase !== "extra_time") return;
+    if (liveMoment || pendingPenalty || pausedRef.current) return;
+
+    pendingCoachDecisionRef.current = decision;
+    setPendingCoachDecision(decision);
+    pauseMatch("coach");
+  });
+
   if (!save || !fixtureRef.current) return null;
   const fixture = fixtureRef.current;
   const home = teamById(fixture.homeId);
@@ -6808,24 +6784,24 @@ function MatchPage() {
     return `${phase === "done" ? finalHome : homeScore + extraTimeHomeScore} : ${phase === "done" ? finalAway : awayScore + extraTimeAwayScore}`;
   })();
 
+  const liveStoppageBase = stoppagePeriodRef.current === "firstHalf" ? 45
+    : stoppagePeriodRef.current === "secondHalf" ? 90
+    : stoppagePeriodRef.current === "extraFirstHalf" ? 105
+    : stoppagePeriodRef.current === "extraSecondHalf" ? 120
+    : null;
+  const currentStoppageElapsedMinute = liveStoppageBase !== null && stoppageElapsedRef.current > 0
+    ? liveStoppageBase + stoppageElapsedRef.current
+    : minute;
   const timelineMinute = Math.max(
+    currentStoppageElapsedMinute,
     minute,
-    phase === "done" ? (fixture.result?.extraTime ? 120 : 90) : 0,
+    phase === "done" ? (fixture.result?.extraTime ? 120 + Math.max(0, Number(fixture.result?.stoppageTime?.extraSecondHalf) || 0) : 90 + Math.max(0, Number(fixture.result?.stoppageTime?.secondHalf) || 0)) : 0,
     ...feed.filter((event: any) => event.type !== "penalty").map((event: any) => Number(event.minute) || 0),
     ...cardFeed.map((event: any) => Number(event.minute) || 0),
     ...highlightFeed.map((event: any) => Number(event.minute) || 0),
     ...subFeed.map((event: any) => Number(event.minute) || 0),
     ...keyMoments.map((event: any) => Number(event.minute) || 0),
   );
-
-  // Momentum is stored relative to the user's team; convert it to home/away
-  // percentages for the broadcast bar without restoring the removed match-rhythm chart.
-  const homeMomentumShare = isHome ? momentum : 100 - momentum;
-  const momentumStatus = homeMomentumShare >= 59
-    ? `${home.short} domina`
-    : homeMomentumShare <= 41
-      ? `${away.short} domina`
-      : "Partido equilibrado";
 
   // Build a data-backed editorial preview only before kickoff. It reads the
   // career's real previous results, standings and registered tactical setups;
@@ -6844,17 +6820,10 @@ function MatchPage() {
       })
     : null;
 
-  const currentXIForTactics = myXIRef.current.map((id) => playerById(id)).filter(Boolean) as any[];
-  const liveTacticalMods = tacticsModifiers(activeTactics, currentXIForTactics, {
-    minute,
-    scoreDiff: (isHome ? homeScore - awayScore : awayScore - homeScore),
-    averageStamina: currentAvgStamina(),
-  });
-  const liveTacticDefinition = TACTICAL_SYSTEMS.find((item) => item.id === activeTactics.system);
-  const liveGameStyleDefinition = TACTICAL_GAME_STYLES.find((item) => item.id === activeTactics.gameStyle);
-  const liveTacticIntensity = liveTacticalMods.stamina > 1.08 ? "Desgaste alto" : liveTacticalMods.stamina < 0.95 ? "Desgaste bajo" : "Desgaste normal";
   const coachDiff = isHome ? homeScore - awayScore : awayScore - homeScore;
-  const liveCoachDecision = (phase === "playing" || phase === "extra_time")
+  const coachDecisionCoolingDown = !!lastCoachDecisionRef.current &&
+    minute - lastCoachDecisionRef.current.minute < 10;
+  const liveCoachDecision = (phase === "playing" || phase === "extra_time") && !coachDecisionCoolingDown && !pendingCoachDecision
     ? buildCoachDecision({
         minute,
         homeScore,
@@ -6868,6 +6837,8 @@ function MatchPage() {
         lastDecisionKind: lastCoachDecisionRef.current?.kind as any,
       })
     : null;
+  // Updated during render; the unconditional effect above reads this after commit.
+  liveCoachDecisionRef.current = liveCoachDecision;
 
   return (
     <div
@@ -7135,119 +7106,6 @@ function MatchPage() {
               )}
               {phase === "playing" && (
                 <div className="w-full space-y-2">
-                  <div className="rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/[0.08] via-card/80 to-background/50 p-3.5 text-left panel-glow shadow-[0_16px_45px_-34px_hsl(var(--primary)/.65)]">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        {(() => {
-                          const Icon = TACTIC_ICONS[activeTactics.system];
-                          return <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span>;
-                        })()}
-                        <div className="min-w-0">
-                          <div className="text-[0.57rem] font-black uppercase tracking-[0.14em] text-primary">Plan activo</div>
-                          <div className="truncate text-sm font-black">{liveTacticDefinition?.name ?? "Plan de partido"}</div>
-                          <div className="mt-0.5 text-[0.64rem] text-muted-foreground">Mentalidad {activeTactics.mentality === "defensive" ? "defensiva" : activeTactics.mentality === "offensive" ? "ofensiva" : "equilibrada"} · {liveGameStyleDefinition?.name ?? "Mixto"} · {liveTacticIntensity}</div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3 space-y-3 border-t border-border/60 pt-3">
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-3 gap-1.5">
-                            {TACTICAL_MENTALITIES.map((mentality) => {
-                              const open = expandedTacticMentality === mentality.id;
-                              const current = activeTactics.mentality === mentality.id;
-                              return (
-                                <button
-                                  key={mentality.id}
-                                  aria-expanded={open}
-                                  onClick={() => setExpandedTacticMentality(open ? null : mentality.id)}
-                                  className={`rounded-lg border px-2 py-2 text-[0.62rem] font-black transition ${
-                                    mentality.id === "defensive"
-                                      ? open ? "border-blue-500 bg-blue-600 text-white" : current ? "border-blue-500/50 bg-blue-500/10 text-blue-300" : "border-blue-500/25 bg-blue-500/[0.045] text-blue-300/85 hover:border-blue-500/55"
-                                      : mentality.id === "balanced"
-                                        ? open ? "border-emerald-500 bg-emerald-600 text-white" : current ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300" : "border-emerald-500/25 bg-emerald-500/[0.045] text-emerald-300/85 hover:border-emerald-500/55"
-                                        : open ? "border-red-500 bg-red-600 text-white" : current ? "border-red-500/50 bg-red-500/10 text-red-300" : "border-red-500/25 bg-red-500/[0.045] text-red-300/85 hover:border-red-500/55"
-                                  }`}
-                                >
-                                  {mentality.name}
-                                  {current && <span className={`ml-1 inline-block h-1.5 w-1.5 rounded-full ${open ? "bg-white" : mentality.id === "defensive" ? "bg-blue-400" : mentality.id === "balanced" ? "bg-emerald-400" : "bg-red-400"} align-middle`} />}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {expandedTacticMentality ? (
-                            <div>
-                              <div className="mb-1.5 text-[0.56rem] text-muted-foreground">{TACTICAL_MENTALITIES.find((item) => item.id === expandedTacticMentality)?.description}</div>
-                              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-                                {TACTICAL_OPTIONS_BY_MENTALITY[expandedTacticMentality].map((system) => {
-                                  const selected = activeTactics.system === system.id;
-                                  const remaining = lastTacticChangeMinuteRef.current <= -90 || ["halftime", "et_break", "et_halftime"].includes(String(pauseReasonRef.current ?? pauseReason)) ? 0 : Math.max(0, 14 - (minute - lastTacticChangeMinuteRef.current));
-                                  const Icon = TACTIC_ICONS[system.id];
-                                  return (
-                                    <button key={system.id} disabled={(!selected && remaining > 0)} onClick={() => changeActiveTactic({ system: system.id })} className={`rounded-xl border p-2.5 text-left transition-all ${selected ? "border-primary/60 bg-gradient-to-br from-primary/[0.12] to-card/80 shadow-[0_8px_22px_-17px_hsl(var(--primary)/.75)]" : "border-border/70 bg-background/45 hover:border-primary/45 hover:bg-card/70"} disabled:cursor-not-allowed disabled:opacity-60`}>
-                                      <span className="flex items-center gap-1.5">
-                                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${selected ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}><Icon className="h-3 w-3" /></span>
-                                        <span className="min-w-0 flex-1 text-[0.66rem] font-extrabold">{system.name}</span>
-                                        {selected && <span className="text-[0.5rem] font-black uppercase text-primary">Activa</span>}
-                                      </span>
-                                      <span className="mt-1.5 block text-[0.58rem] leading-snug text-muted-foreground">{system.description}</span>
-                                      <span className="mt-2 grid grid-cols-1 gap-1.5 border-t border-border/50 pt-2">
-                                        <span className="rounded-md border border-emerald-500/15 bg-emerald-500/[0.055] px-2 py-1.5">
-                                          <span className="block text-[0.46rem] font-black uppercase tracking-wider text-emerald-400/90">A favor</span>
-                                          <span className="mt-0.5 block text-[0.55rem] leading-snug text-foreground/90">{system.advantages[0]}</span>
-                                        </span>
-                                        <span className="rounded-md border border-rose-500/15 bg-rose-500/[0.045] px-2 py-1.5">
-                                          <span className="block text-[0.46rem] font-black uppercase tracking-wider text-rose-400/90">A cambio</span>
-                                          <span className="mt-0.5 block text-[0.55rem] leading-snug text-foreground/85">{system.risks[0]}</span>
-                                        </span>
-                                      </span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="rounded-lg border border-border/50 bg-background/25 px-2.5 py-2 text-[0.58rem] text-muted-foreground">
-                              Plan actual: <span className="font-bold text-foreground">{liveTacticDefinition?.name ?? "Plan equilibrado"}</span>. Elige una mentalidad para ver sus opciones.
-                            </div>
-                          )}
-                          <div className="border-t border-border/60 pt-2">
-                            <div className="mb-1.5 text-[0.58rem] font-black uppercase tracking-[0.12em] text-muted-foreground">Estilo de juego</div>
-                            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
-                              {TACTICAL_GAME_STYLES.map((style) => {
-                                const selected = activeTactics.gameStyle === style.id;
-                                const remaining = lastTacticChangeMinuteRef.current <= -90 || ["halftime", "et_break", "et_halftime"].includes(String(pauseReasonRef.current ?? pauseReason)) ? 0 : Math.max(0, 14 - (minute - lastTacticChangeMinuteRef.current));
-                                return (
-                                  <button key={style.id} disabled={(!selected && remaining > 0)} onClick={() => changeActiveTactic({ gameStyle: style.id })} className={`rounded-lg border px-2 py-2 text-left transition ${selected ? "border-primary/60 bg-primary/10 text-primary" : "border-border/70 bg-background/50 hover:border-primary/50"} disabled:cursor-not-allowed disabled:opacity-60`}>
-                                    <span className="block text-[0.62rem] font-extrabold">{style.name}</span>
-                                    <span className="mt-1 block text-[0.54rem] leading-snug text-muted-foreground">{style.description}</span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                              <div className="rounded-md border border-emerald-500/15 bg-emerald-500/[0.055] px-2.5 py-2">
-                                <span className="block text-[0.46rem] font-black uppercase tracking-wider text-emerald-400/90">A favor</span>
-                                <span className="mt-0.5 block text-[0.55rem] leading-snug text-foreground/90">{liveGameStyleDefinition?.advantage}</span>
-                              </div>
-                              <div className="rounded-md border border-rose-500/15 bg-rose-500/[0.045] px-2.5 py-2">
-                                <span className="block text-[0.46rem] font-black uppercase tracking-wider text-rose-400/90">A cambio</span>
-                                <span className="mt-0.5 block text-[0.55rem] leading-snug text-foreground/85">{liveGameStyleDefinition?.risk}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                        {liveCoachDecision && lastCoachDecisionRef.current?.id !== liveCoachDecision.id && (
-                          <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-2.5">
-                            <div className="text-[0.62rem] font-black uppercase tracking-wider text-amber-500">{liveCoachDecision.title}</div>
-                            <p className="mt-1 text-xs text-muted-foreground">{liveCoachDecision.prompt}</p>
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {liveCoachDecision.options.map((option) => <button key={option.id} onClick={() => applyCoachOption(option, liveCoachDecision)} className={`${btnSecondary} h-8 px-2.5 text-[0.65rem]`}>{option.label}</button>)}
-                            </div>
-                          </div>
-                        )}
-                      <p className="text-[0.61rem] text-muted-foreground">Cada ajuste cuesta 2,6 de energía (1,7 en el descanso). Puedes ajustar táctica o estilo cada 14 minutos; en el descanso no hay espera.</p>
-                    </div>
-                  </div>
                   <div className="flex flex-wrap items-center justify-center gap-1.5">
                     <div className={segmentBase}>
                       {[1, 2, 4].map((value) => (
@@ -7305,7 +7163,7 @@ function MatchPage() {
                     </button>
                     <button
                       onClick={goEditLineupLive}
-                      title="Cambios y táctica"
+                      title="Cambios y tácticas"
                       className={`${btnSecondary} px-3 py-1.5 text-xs`}
                     >
                       <ClipboardList className="h-3.5 w-3.5" /> Cambios
@@ -7332,6 +7190,13 @@ function MatchPage() {
                         <Pause className="h-4 w-4" /> Pausar
                       </>
                     )}
+                  </button>
+                  <button
+                    onClick={goEditLineupLive}
+                    title="Cambios y tácticas"
+                    className={btnSecondary}
+                  >
+                    <ClipboardList className="h-3.5 w-3.5" /> Cambios
                   </button>
                   <button onClick={skipExtraTimeToEnd} className={btnGhost}>
                     <FastForward className="h-3.5 w-3.5" /> Saltar al final
@@ -7525,15 +7390,9 @@ function MatchPage() {
                   matchPeriod={isExtraTimeRef.current ? "extraTime" : "regular"}
                   stoppagePeriod={stoppagePeriodRef.current}
                   stoppageElapsed={stoppageElapsedRef.current}
-                />
-              </div>
-              <div className="mt-2.5">
-                <MomentumBar
-                  value={100 - homeMomentumShare}
-                  homeLabel={home.short}
-                  awayLabel={away.short}
-                  status={momentumStatus}
-                  compact
+                  momentumHistory={momentumHistoryRef.current}
+                  userSide={isHome ? "home" : "away"}
+                  minuteStats={fixture.result?.stats?.timeline ?? []}
                   homeColor={matchTeamColors.homeColor}
                   awayColor={matchTeamColors.awayColor}
                 />
@@ -7649,6 +7508,15 @@ function MatchPage() {
                 : null
             }
             onContinue={continueLiveMoment}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {pendingCoachDecision && (phase === "playing" || phase === "extra_time") && (
+          <CoachDecisionCard
+            decision={pendingCoachDecision}
+            team={{ name: isHome ? home.name : away.name, leagueName: getLeagueName(isHome ? home.league : away.league) }}
+            onChoose={chooseCoachDecision}
           />
         )}
       </AnimatePresence>

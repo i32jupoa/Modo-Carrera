@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, CircleDot, Gauge, Sparkles } from "lucide-react";
 import { PlayerFace } from "@/components/PlayerFace";
 import { faceUrl } from "@/lib/playerFaces";
+import { formatMatchMinuteWithMark, type MatchMinuteContext } from "@/lib/matchTime";
 
 export type RouletteOutcome = {
   id: string;
@@ -12,7 +13,7 @@ export type RouletteOutcome = {
   weight: number;
 };
 
-export type LiveRouletteData = {
+export type LiveRouletteData = MatchMinuteContext & {
   id: string;
   minute: number;
   teamName: string;
@@ -172,7 +173,7 @@ function RouletteCard({
                 <span>{data.stageLabel || "Resolución de la jugada"}</span>
               </div>
               <div className="mt-1 flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-white/60">
-                <span>{data.minute}'</span>
+                <span>{formatMatchMinuteWithMark(data.minute, data)}</span>
                 <span>·</span>
                 <span className="truncate">{data.teamName}</span>
               </div>
