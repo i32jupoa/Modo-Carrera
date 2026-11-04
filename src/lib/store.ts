@@ -2716,7 +2716,7 @@ export function newSave(myTeamId: string): SaveGame {
 
   const ucl: import("@/lib/season").Fixture[] = []; // UCL fixtures generated on draw day, not at init
 
-  return {
+  const initialSave: SaveGame = {
     version: 2,
 
     myTeamId,
@@ -2775,6 +2775,10 @@ export function newSave(myTeamId: string): SaveGame {
     uecl: null,
     mailbox: createEmptyMailbox(),
   };
+
+  // El premio de participación se acredita al arrancar la campaña (1 de julio),
+  // cuando las plazas europeas ya están determinadas; no debe esperar al primer partido.
+  return grantEuropeanParticipationAtSeasonStart(initialSave);
 }
 
 /* ============================================================
@@ -5941,6 +5945,79 @@ function grantUCLPrizeOnce(save: SaveGame, key: string, teamId: string, amount: 
   });
 }
 
+const EUROPEAN_PARTICIPATION_COMPETITIONS = [
+  { id: "ucl", name: "Champions League", ledger: "uclPrizesAwarded" },
+  { id: "uel", name: "Europa League", ledger: "uelPrizesAwarded" },
+  { id: "uecl", name: "Conference League", ledger: "ueclPrizesAwarded" },
+] as const;
+
+/**
+ * Acredita el premio por participar en la fase liga el 1 de julio de la campaña.
+ * Se llama al crear una carrera, al cargar partidas antiguas y al cerrar la
+ * temporada anterior. El ledger por competición hace la operación idempotente.
+ * Si una partida antigua ya cobró el premio al disputar su primer encuentro,
+ * se conserva el dinero y se corrige la fecha del aviso a 1 de julio.
+ */
+export function grantEuropeanParticipationAtSeasonStart(save: SaveGame): SaveGame {
+  if (!save?.myTeamId) return save;
+
+  const seasonStartDate = `${getSeasonStartYear(save.season)}-07-01`;
+  const financialLedger = Array.isArray(save.financialIncomeLedger) ? save.financialIncomeLedger : [];
+  const notifications = Array.isArray(save.seasonNotifications) ? save.seasonNotifications : [];
+  let nextNotifications = notifications;
+
+  for (const competition of EUROPEAN_PARTICIPATION_COMPETITIONS) {
+    const participants = getEuropeanParticipantsForSave(save, competition.id);
+    if (!participants.includes(save.myTeamId)) continue;
+
+    const progressionLedger = Array.isArray((save as any)[competition.ledger])
+      ? (save as any)[competition.ledger] as string[]
+      : [];
+    const incomeId = `${save.season}:financial_income:${competition.id}:participation`;
+    const wasAlreadyPaid = progressionLedger.includes("participation") || financialLedger.includes(incomeId);
+
+    if (!progressionLedger.includes("participation")) {
+      (save as any)[competition.ledger] = [...progressionLedger, "participation"];
+    }
+
+    if (wasAlreadyPaid) {
+      // Migración visual: el ingreso pudo abonarse al primer partido en versiones
+      // anteriores. No se vuelve a sumar al presupuesto; solo se fecha el aviso
+      // en el día en que debió recibirse.
+      const existingIndex = nextNotifications.findIndex((item: any) => item.id === incomeId);
+      if (existingIndex >= 0) {
+        nextNotifications = nextNotifications.map((item: any) => item.id === incomeId
+          ? { ...item, date: seasonStartDate }
+          : item);
+      } else {
+        nextNotifications = addFinancialIncomeNotification(nextNotifications, {
+          id: incomeId,
+          season: save.season,
+          date: seasonStartDate,
+          teamId: save.myTeamId,
+          amount: UCL_PRIZES.participation,
+          category: `Premio deportivo · ${competition.name}`,
+          message: `El club ha recibido un premio por participar en la fase liga de la ${competition.name}.`,
+        });
+      }
+      continue;
+    }
+
+    addToUserBudget(save, save.myTeamId, UCL_PRIZES.participation, {
+      key: `${competition.id}:participation`,
+      category: `Premio deportivo · ${competition.name}`,
+      description: `El club ha recibido un premio por participar en la fase liga de la ${competition.name}.`,
+      date: seasonStartDate,
+    });
+    // addToUserBudget crea un array nuevo con el comunicado; sincronízalo para
+    // no sobrescribirlo al finalizar esta migración/abono.
+    nextNotifications = Array.isArray(save.seasonNotifications) ? save.seasonNotifications : nextNotifications;
+  }
+
+  save.seasonNotifications = nextNotifications;
+  return save;
+}
+
 /**
  * Apply post-match aftermath for a UCL fixture to BOTH teams:
  *  - decrement suspension counters by 1 (remove completed)
@@ -5973,7 +6050,6 @@ function applyUCLMatchAftermath(save: SaveGame, homeId: string, awayId: string):
         f.homeId === homeId && f.awayId === awayId && f.result && f.round?.startsWith("Jornada"),
     );
     const competition = europeanCompetitionLabel(next);
-    grantUCLPrizeOnce(next, "participation", next.myTeamId, UCL_PRIZES.participation);
     if (fx?.result) {
       const isHome = next.myTeamId === homeId;
       const gf = isHome ? fx.result.homeGoals : fx.result.awayGoals;

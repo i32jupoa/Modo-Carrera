@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { getAllTeams, teamById, LEAGUES } from "@/data/teams";
-import { loadSave, newSave, saveSave, initializeUserSquadRoles } from "@/lib/store";
+import { loadSave, newSave, saveSave, initializeUserSquadRoles, grantEuropeanParticipationAtSeasonStart } from "@/lib/store";
 import {
   loadAllSaves,
   addSaveToMultiple,
@@ -141,6 +141,10 @@ function Index() {
     // ambas reescribirían rosterIds/squad y perderías los fichajes).
     restorePlayersStoreState(save);
     save = initializeUserSquadRoles(save);
+    // Para partidas heredadas que todavía no han cobrado este hito, abónalo al
+    // cargar el guardado. Si ya se cobró tras el primer partido, solo se corrige
+    // la fecha del comunicado a 1 de julio, sin duplicar el ingreso.
+    save = grantEuropeanParticipationAtSeasonStart(save);
 
     // Antes de que el motor de mercado tome decisiones síncronas, hidrata las
     // academias IA guardadas para esta carrera. Así no se regenera una cantera

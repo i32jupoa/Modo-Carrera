@@ -522,7 +522,7 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
   if (typeof window === "undefined") throw new Error("El cambio de temporada solo puede ejecutarse en el navegador.");
   const { initSaveStorage, getSaveItem, setSaveItem, removeSaveItem, flushSaveStorage } = await import("../saveStorage");
   const { getCurrentSaveId, persistCurrentSave, restorePlayersStoreState } = await import("../savedGames");
-  const { loadSave, saveSave, applySeasonEndProgressionToAllPlayers, recalculateUserSquadRoles, initializeEuropeanCompetition, initializeChampionsCompetition } = await import("../store");
+  const { loadSave, saveSave, applySeasonEndProgressionToAllPlayers, recalculateUserSquadRoles, initializeEuropeanCompetition, initializeChampionsCompetition, grantEuropeanParticipationAtSeasonStart } = await import("../store");
   const { usePlayersStore, defaultStats } = await import("@/store/playersStore");
   const { invalidateSquadsCache } = await import("@/data/players");
   const { getAllTeams, getTeamLeagueId, setActiveTeamLeagueOverrides, teamById } = await import("@/data/teams");
@@ -1124,6 +1124,9 @@ async function runAdvanceToNextSeason(save: SaveGame, options: AdvanceSeasonOpti
     nextSave = initializeChampionsCompetition(nextSave);
     nextSave = initializeEuropeanCompetition(nextSave, "uel");
     nextSave = initializeEuropeanCompetition(nextSave, "uecl");
+    // El premio de participación se acredita con fecha 1 de julio de la nueva
+    // campaña, justo al preparar las plazas, no al disputar la primera jornada.
+    nextSave = grantEuropeanParticipationAtSeasonStart(nextSave);
     nextSave = recalculateUserSquadRoles(nextSave, true, true);
     const archive = { ...archiveBase, retirements, ...(userFinanceSummary ? { financeSummary: userFinanceSummary } : {}) };
     lastRolloverStage = "archive:persist-final";
