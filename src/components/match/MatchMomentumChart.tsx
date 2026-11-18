@@ -50,15 +50,7 @@ export function MatchMomentumChart({
 }: MatchMomentumChartProps) {
   const clockContext = { matchPeriod, stoppagePeriod, stoppageElapsed };
   const currentElapsedMinute = getMatchMinuteElapsedValue(minute, clockContext) ?? minute;
-  const chartEndMinute = Math.max(
-    90,
-    currentElapsedMinute,
-    Math.floor(Number(minute) || 0),
-    matchPeriod === "extraTime" ? 120 : 0,
-    ...events.map((item: any) => getMatchMinuteElapsedValue(item?.minute, item) ?? 0),
-    ...highlights.map((item: any) => getMatchMinuteElapsedValue(item?.minute, item) ?? 0),
-    ...moments.map((item: any) => getMatchMinuteElapsedValue(item?.minute, item) ?? 0),
-  );
+  const chartEndMinute = Math.max(90, currentElapsedMinute, matchPeriod === "extraTime" ? 120 : 0);
   const bars = buildMatchMomentumTimeline({
     currentMinute: currentElapsedMinute,
     scaleMinute: chartEndMinute,
@@ -75,16 +67,15 @@ export function MatchMomentumChart({
     : currentBar?.side === "away"
       ? `${awayLabel} ${completed ? "dominó el último tramo" : "domina ahora"}`
       : "Partido equilibrado";
-  const baseTicks = chartEndMinute > 90
+  const ticks = chartEndMinute > 90
     ? [0, 15, 30, 45, 60, 75, 90, 105, 120].filter((tick) => tick <= chartEndMinute)
     : [0, 15, 30, 45, 60, 75, 90];
-  const ticks = baseTicks.includes(chartEndMinute) ? baseTicks : [...baseTicks, chartEndMinute].sort((a, b) => a - b);
   const markerPosition = Math.max(0, Math.min(100, (currentElapsedMinute / chartEndMinute) * 100));
   const momentMarkers = (() => {
-    const markers: Array<{ minute: number; side: TeamSide; symbol: string; label: string; key: string; clockContext: any }> = [];
+    const markers: Array<{ minute: number; side: TeamSide; symbol: string; label: string; key: string }> = [];
     const seen = new Set<string>();
-    const add = (minuteValue: unknown, sideValue: unknown, type: string, detail = "", clockContext: any = {}) => {
-      const minute = Math.floor(getMatchMinuteElapsedValue(minuteValue, clockContext) ?? Number.NaN);
+    const add = (minuteValue: unknown, sideValue: unknown, type: string, detail = "") => {
+      const minute = Math.floor(Number(minuteValue));
       const side = sideValue === "home" || sideValue === "away" ? sideValue : null;
       if (!side || !Number.isFinite(minute) || minute < 1 || minute > currentElapsedMinute) return;
       const normalized = type.toLowerCase();
@@ -99,10 +90,10 @@ export function MatchMomentumChart({
       const key = `${minute}:${side}:${label}:${detail}`;
       if (seen.has(key)) return;
       seen.add(key);
-      markers.push({ minute, side, symbol, label, key, clockContext: { ...clockContext } });
+      markers.push({ minute, side, symbol, label, key });
     };
-    for (const event of events) add(event?.minute, event?.teamSide ?? event?.team, String(event?.type ?? ""), String(event?.detail ?? ""), event);
-    for (const item of [...highlights, ...moments]) add(item?.minute, item?.teamSide ?? item?.team, String(item?.type ?? ""), String(item?.detail ?? ""), item);
+    for (const event of events) add(event?.minute, event?.teamSide ?? event?.team, String(event?.type ?? ""), String(event?.detail ?? ""));
+    for (const item of [...highlights, ...moments]) add(item?.minute, item?.teamSide ?? item?.team, String(item?.type ?? ""), String(item?.detail ?? ""));
     return markers.sort((a, b) => a.minute - b.minute);
   })();
 
@@ -162,7 +153,7 @@ export function MatchMomentumChart({
             key={item.key}
             className={`pointer-events-none absolute z-[3] flex h-4 min-w-4 -translate-x-1/2 items-center justify-center rounded-full border border-white/70 bg-slate-950/90 px-0.5 text-[9px] leading-none shadow ${item.side === "home" ? "top-0.5" : "bottom-0.5"}`}
             style={{ left: `${Math.max(1.5, Math.min(98.5, (item.minute / chartEndMinute) * 100))}%` }}
-            title={`${formatMatchMinuteWithMark(item.minute, item.clockContext)} · ${item.label} · ${item.side === "home" ? homeName ?? homeLabel : awayName ?? awayLabel}`}
+            title={`${formatMatchMinuteWithMark(item.minute, { matchPeriod })} · ${item.label} · ${item.side === "home" ? homeName ?? homeLabel : awayName ?? awayLabel}`}
             aria-label={`${item.label}, ${item.side === "home" ? homeLabel : awayLabel}`}
           >{item.symbol}</div>
         ))}
@@ -176,7 +167,7 @@ export function MatchMomentumChart({
       <div className="relative mt-1.5 h-3 text-[0.53rem] tabular-nums text-muted-foreground">
         {ticks.map((tick) => (
           <span key={tick} className="absolute -translate-x-1/2" style={{ left: `${(tick / chartEndMinute) * 100}%` }}>
-            {tick === 0 ? "0'" : formatMatchMinuteWithMark(tick, { matchPeriod: tick > 120 ? "extraTime" : "regular" })}
+            {tick === 0 ? "0'" : `${tick}'`}
           </span>
         ))}
       </div>

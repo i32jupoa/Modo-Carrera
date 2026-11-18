@@ -632,17 +632,12 @@ export function MatchFinalSummary({
     ...(Array.isArray(result?.extraTime?.highlights) ? result.extraTime.highlights : []),
   ];
   const momentumMoments = Array.isArray(result?.keyMoments) ? result.keyMoments : [];
-  const regularAdded = Math.max(0, Number(result?.stoppageTime?.secondHalf) || 0);
-  const extraAdded = Math.max(0, Number(result?.stoppageTime?.extraSecondHalf) || 0);
   const momentumFinalMinute = Math.max(
-    90 + regularAdded,
+    90,
     Number(result?.momentumFinalMinute) || 0,
-    extraTime ? 120 + extraAdded : 0,
-    ...momentumEvents.map((event: any) => getMatchMinuteElapsedValue(event?.minute, event) ?? 0),
-    ...momentumHighlights.map((event: any) => getMatchMinuteElapsedValue(event?.minute, event) ?? 0),
-    ...momentumMoments.map((event: any) => getMatchMinuteElapsedValue(event?.minute, event) ?? 0),
+    extraTime ? 120 : 0,
   );
-  const momentumPeriod = extraTime ? "extraTime" : "regular";
+  const momentumPeriod = momentumFinalMinute > 90 || extraTime ? "extraTime" : "regular";
   const hasMomentumData = momentumHistory.length > 0 || momentumMinuteStats.length > 0 || momentumEvents.length > 0 || momentumHighlights.length > 0 || momentumMoments.length > 0;
 
   return (
